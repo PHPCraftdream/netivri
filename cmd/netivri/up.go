@@ -14,13 +14,20 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/core"
 )
 
+type upOptions struct {
+	Foreground bool
+	Port       int
+	Bind       string
+	Home       string
+}
+
 // defaultHome resolves the state directory: NETIVRI_HOME, then
-// os.UserConfigDir()/netivri (docs/cli.md --home default).
-func defaultHome() (string, error) {
-	if v := os.Getenv("NETIVRI_HOME"); v != "" {
+// userConfigDir()/netivri (docs/cli.md --home default).
+func defaultHome(env func(string) string, userConfigDir func() (string, error)) (string, error) {
+	if v := env("NETIVRI_HOME"); v != "" {
 		return v, nil
 	}
-	dir, err := os.UserConfigDir()
+	dir, err := userConfigDir()
 	if err != nil {
 		return "", err
 	}
@@ -36,12 +43,14 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func runUp(args []string) {
+// parseUp parses `up` flags and validates the result.
+func parseUp(args []string, env func(string) string, userConfigDir func() (string, error)) (upOptions, error) {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	foreground := fs.Bool("foreground", false, "run in the foreground (required in v1)")
-	port := fs.Int("port", 7890, "mixed proxy port, 0 for a random free port")
-	bind := fs.String("bind", "127.0.0.1", "bind address")
+	opts := upOptions{Port: 7890, Bind: "127.0.0.1"}
+	fs.BoolVar(&opts.Foreground, "foreground", false, "run in the foreground (required in v1)")
+	fs.IntVar(&opts.Port, "port", 7890, "mixed proxy port, 0 for a random free port")
+	fs.StringVar(&opts.Bind, "bind", "127.0.0.1", "bind address")
 	homeFlag := fs.String("home", "", "state directory (default NETIVRI_HOME or user config dir)")
 	// Global flags from docs/cli.md, accepted for compatibility: --json and
 	// --no-color are no-ops (output is always JSON without ANSI); --quiet
@@ -51,29 +60,37 @@ func runUp(args []string) {
 	_ = fs.Bool("no-color", false, "disable ANSI colors (never used)")
 
 	if err := fs.Parse(args); err != nil {
-		cli.Fail(cli.Usage("up: %v", err))
+		return opts, cli.Usage("up: %v", err)
 	}
 	if fs.NArg() > 0 {
-		cli.Fail(cli.Usage("up: unexpected argument %q", fs.Arg(0)))
+		return opts, cli.Usage("up: unexpected argument %q", fs.Arg(0))
 	}
-	if !*foreground {
-		cli.Fail(cli.Usage("daemon mode is not implemented yet; use --foreground"))
+	if !opts.Foreground {
+		return opts, cli.Usage("daemon mode is not implemented yet; use --foreground")
 	}
-	if !isLoopbackHost(*bind) {
-		cli.Fail(&cli.Error{
+	if !isLoopbackHost(opts.Bind) {
+		return opts, &cli.Error{
 			Code:    "AUTH_REQUIRED",
 			Message: "non-loopback bind requires authentication",
 			Hint:    "keep --bind on 127.0.0.1 or ::1 until proxy authentication exists",
 			Exit:    cli.ExitUsage,
-		})
-	}
-	home := *homeFlag
-	if home == "" {
-		h, err := defaultHome()
-		if err != nil {
-			cli.Fail(&cli.Error{Code: "INTERNAL", Message: "resolve home directory: " + err.Error(), Exit: cli.ExitInternal})
 		}
-		home = h
+	}
+	opts.Home = *homeFlag
+	if opts.Home == "" {
+		h, err := defaultHome(env, userConfigDir)
+		if err != nil {
+			return opts, &cli.Error{Code: "INTERNAL", Message: "resolve home directory: " + err.Error(), Exit: cli.ExitInternal}
+		}
+		opts.Home = h
+	}
+	return opts, nil
+}
+
+func runUp(args []string, stdout io.Writer) error {
+	opts, err := parseUp(args, os.Getenv, os.UserConfigDir)
+	if err != nil {
+		return err
 	}
 
 	// Installed before Start so a signal during startup is not lost.
@@ -83,12 +100,12 @@ func runUp(args []string) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	inst, err := core.Start(ctx, core.Options{HomeDir: home, Bind: *bind, Port: *port})
+	inst, err := core.Start(ctx, core.Options{HomeDir: opts.Home, Bind: opts.Bind, Port: opts.Port})
 	if err != nil {
-		cli.Fail(err)
+		return err
 	}
 
-	cli.Success(os.Stdout, map[string]any{
+	cli.Success(stdout, map[string]any{
 		"daemon":    "running",
 		"pid":       os.Getpid(),
 		"listen":    inst.Addr(),
@@ -97,4 +114,5 @@ func runUp(args []string) {
 
 	<-sig
 	_ = inst.Close()
+	return nil
 }

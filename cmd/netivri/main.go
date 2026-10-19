@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -8,18 +9,25 @@ import (
 
 var version = "0.0.0-dev"
 
-func main() {
-	args := os.Args[1:]
+// dispatch routes the arguments and returns the failure to report, if any.
+func dispatch(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		cli.Fail(cli.Usage("no command; see docs/cli.md"))
+		return cli.Usage("no command; see docs/cli.md")
 	}
 
 	switch args[0] {
 	case "up":
-		runUp(args[1:])
+		return runUp(args[1:], stdout)
 	case "version":
-		cli.Success(os.Stdout, map[string]string{"version": version})
+		cli.Success(stdout, map[string]string{"version": version})
+		return nil
 	default:
-		cli.Fail(cli.Usage("unknown or not yet implemented command %q", args[0]))
+		return cli.Usage("unknown or not yet implemented command %q", args[0])
+	}
+}
+
+func main() {
+	if err := dispatch(os.Args[1:], os.Stdout); err != nil {
+		cli.Fail(err)
 	}
 }

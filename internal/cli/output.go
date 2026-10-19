@@ -3,6 +3,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,14 +48,20 @@ func Success(w io.Writer, data any) {
 	writeJSON(w, envelope{SchemaVersion: SchemaVersion, OK: true, Data: data})
 }
 
-// Fail writes the error envelope to stderr and exits with its code.
-func Fail(err error) {
-	e, ok := err.(*Error)
-	if !ok {
+// Render writes the error envelope to w and returns the process exit code.
+// A wrapped *Error (errors.As) keeps its code.
+func Render(w io.Writer, err error) int {
+	var e *Error
+	if !errors.As(err, &e) {
 		e = &Error{Code: "INTERNAL", Message: err.Error(), Exit: ExitInternal}
 	}
-	writeJSON(os.Stderr, envelope{SchemaVersion: SchemaVersion, OK: false, Error: e})
-	os.Exit(e.Exit)
+	writeJSON(w, envelope{SchemaVersion: SchemaVersion, OK: false, Error: e})
+	return e.Exit
+}
+
+// Fail writes the error envelope to stderr and exits with its code.
+func Fail(err error) {
+	os.Exit(Render(os.Stderr, err))
 }
 
 func writeJSON(w io.Writer, v any) {
