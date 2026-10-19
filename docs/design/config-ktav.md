@@ -39,10 +39,17 @@ Consequences:
 ## Usage in netivri
 
 - Read: `ktav.LoadsInto(src, &cfg)` into typed structs.
-- Write-back (e.g. the password hash after `init`): a targeted edit of the
-  affected line(s), then `ktav.FormatSource` to normalize while keeping every
-  comment. Never regenerate the file from a Go value with `Dumps`: that drops
-  comments and key order.
+- Write-back (e.g. the password hash after `init`): whole-file
+  regeneration via `Dumps` over the config struct (deterministic field
+  order) plus a generated header comment, with a mandatory round-trip
+  check: the rendered text is parsed back with `LoadsStrict` and
+  decoded onto the defaults, and must be deeply equal to the input
+  before anything is written. The earlier design — a comment-preserving
+  targeted edit via `FormatSource` — was dropped: it required a
+  structural editor (scope tracking, key-path matching, raw-marker
+  rules) that proved error-prone without the ability to run it
+  locally. Comments are not preserved across rewrites; the header
+  comment says so.
 - Strict parsing (`LoadsStrict`) for the config file, so lossy numeric
   spellings are rejected instead of silently coerced.
 - Atomic save: temp file in the same directory + rename; file readable by the
@@ -53,4 +60,4 @@ Consequences:
 - Start with `KTAV_LIB_PATH` set and the network blocked: config loads, no
   outgoing connection is made.
 - Library missing → clear error, still no connection.
-- Round trip: load → targeted edit → save keeps comments and key order.
+- Round trip: netivri renders with `Dumps`, parses back with `LoadsStrict`, decodes onto the defaults and requires deep equality before writing; comments are regenerated, not preserved.
