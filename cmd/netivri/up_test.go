@@ -51,12 +51,12 @@ func TestParseUpFlags(t *testing.T) {
 		{
 			name: "explicit flags",
 			args: []string{"--foreground", "--port", "1234", "--bind", "::1", "--home", "/tmp/h", "--json", "--quiet", "--no-color"},
-			want: upOptions{Foreground: true, Port: 1234, Bind: "::1", Home: "/tmp/h"},
+			want: upOptions{Foreground: true, Port: 1234, Bind: "::1", PortSet: true, BindSet: true, Home: "/tmp/h"},
 		},
 		{
 			name: "equals form and port 0",
 			args: []string{"-foreground", "--port=0", "--bind=localhost"},
-			want: upOptions{Foreground: true, Port: 0, Bind: "localhost", Home: filepath.Join(tConfigDir, "netivri")},
+			want: upOptions{Foreground: true, Port: 0, Bind: "localhost", PortSet: true, BindSet: true, Home: filepath.Join(tConfigDir, "netivri")},
 		},
 		{
 			name: "single-dash boolean form",
@@ -107,15 +107,16 @@ func TestParseUpUsageErrors(t *testing.T) {
 }
 
 func TestParseUpNonLoopbackBind(t *testing.T) {
+	// parseUp itself no longer rejects non-loopback binds: that check
+	// moves to mergeUp, which knows whether authentication is enabled.
 	for _, bind := range []string{"0.0.0.0", "192.168.1.5", "example.com", ""} {
 		t.Run("bind="+bind, func(t *testing.T) {
-			_, err := parseUp([]string{"--foreground", "--bind", bind}, okEnv, okConfig)
-			ce, ok := err.(*cli.Error)
-			if !ok {
-				t.Fatalf("want *cli.Error, got %T (%v)", err, err)
+			opts, err := parseUp([]string{"--foreground", "--bind", bind}, okEnv, okConfig)
+			if err != nil {
+				t.Fatalf("parseUp(--bind %s): %v", bind, err)
 			}
-			if ce.Code != "AUTH_REQUIRED" || ce.Exit != cli.ExitUsage {
-				t.Errorf("code/exit = %q/%d, want AUTH_REQUIRED/%d", ce.Code, ce.Exit, cli.ExitUsage)
+			if opts.Bind != bind || !opts.BindSet {
+				t.Errorf("Bind/BindSet = %q/%v, want %q/true", opts.Bind, opts.BindSet, bind)
 			}
 		})
 	}
