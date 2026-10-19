@@ -31,7 +31,7 @@ netivri use NODE
 netivri use --country CC [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
-netivri up [--port 7890] [--bind 127.0.0.1] [--foreground]
+netivri up [--foreground] [--port 7890] [--bind 127.0.0.1] [--home DIR]
 netivri down
 netivri status
 
@@ -61,6 +61,39 @@ Failure: one JSON object on stderr, non-zero exit code.
 
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
+
+### `up --foreground`
+
+Runs the proxy in the foreground: prints one JSON line on stdout, then blocks
+until SIGINT / SIGTERM, then exits 0. Until the daemon exists, `--foreground`
+is required; plain `up` is a usage error.
+
+```json
+{"schema_version": 1, "ok": true,
+ "data": {"daemon": "running", "pid": 12345, "listen": "127.0.0.1:7890",
+          "protocols": ["socks5", "socks4", "http"]}}
+```
+
+`listen` is the actual bound address: with `--port 0` it is the random free
+port that was picked.
+
+### The dual-protocol port
+
+`up` exposes one local TCP port that speaks both proxy protocols on the same
+socket. The protocol is auto-detected from the first byte of each connection:
+
+| First byte | Protocol |
+|---|---|
+| `0x05` | SOCKS5 |
+| `0x04` | SOCKS4 / SOCKS4a |
+| anything else | HTTP proxy (plain requests and `CONNECT`) |
+
+Default bind is `127.0.0.1:7890`. TCP only in v1: SOCKS5 `UDP ASSOCIATE` is
+accepted but no relay is set up, so UDP through the proxy does not work.
+
+There is no proxy authentication in v1, so a non-loopback `--bind` is
+rejected with `AUTH_REQUIRED`. Loopback means `127.0.0.0/8`, `::1` and
+`localhost`.
 
 ### `status`
 
@@ -112,6 +145,7 @@ name). Prefer `exit`.
 | Code | Exit | Meaning |
 |---|---|---|
 | `USAGE` | 2 | Bad flags or arguments |
+| `AUTH_REQUIRED` | 2 | Non-loopback `--bind` rejected; no proxy authentication in v1 |
 | `SUB_FETCH_FAILED` | 3 | Subscription URL did not return a valid list |
 | `SUB_PARSE_FAILED` | 3 | Response is not YAML or share links |
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
@@ -133,7 +167,8 @@ name). Prefer `exit`.
 ## Security
 
 - The proxy binds to `127.0.0.1` by default. Binding elsewhere requires an
-  explicit `--bind`.
+  explicit `--bind` and, until authentication exists, is rejected
+  (`AUTH_REQUIRED`).
 - The control channel is a named pipe / Unix socket restricted to the current
   user. No TCP control API.
 - Subscription URLs contain secrets: they are stored in the state directory

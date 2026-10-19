@@ -15,6 +15,8 @@ func main() {
 	}
 
 	switch args[0] {
+	case "up":
+		runUp(args[1:])
 	case "version":
 		cli.Success(os.Stdout, map[string]string{"version": version})
 	default:
