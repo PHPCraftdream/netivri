@@ -5,9 +5,16 @@
 # with "/<suffix>". Unmatched packages use the "default" floor.
 # Lines starting with "#" are comments. Package paths with zero testable
 # statements are ignored.
+#
+# Floors measure the unit level only. They sit a few points under the lowest
+# value seen on ubuntu, windows and macos; raise them when a package grows
+# tests, never lower them to make a run pass.
 default 60
-cmd/netivri 0
-# Packages that have no tests yet. Raise these floors in the same change that
-# adds their tests (#27 for cli and cmd, #7 for core).
-internal/cli 0
+cmd/netivri 70
+internal/cli 85
+internal/auth 85
+internal/config 75
+internal/testutil 80
+# The core logic runs under the integration level (embedded Mihomo, loopback
+# sockets), which this unit-level report does not measure.
 internal/core 0
