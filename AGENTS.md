@@ -45,3 +45,12 @@ To verify a change, push it and read the CI result.
 - Changing the JSON shape or exit/error codes is breaking: bump `schema_version`.
 - Builds and tests run only in CI — see the main rule at the top.
 - No TUN, no system proxy changes in v1.
+
+## Testing
+
+See [`docs/testing.md`](docs/testing.md) for the full strategy. Hard rules:
+
+- Every change ships tests in the right scope, in the same change.
+- Scopes are **package** (AREA: `go test ./internal/foo/...`) plus **level**
+  (build tags: unit = no tag, `integration`, `e2e`, `bench`).
+- Tests run only in GitHub CI — never locally (see the main rule above).

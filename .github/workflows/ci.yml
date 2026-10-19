@@ -4,6 +4,33 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: "Go package patterns for go test"
+        type: string
+        default: "./..."
+      tags:
+        description: "Extra build tags (comma-separated)"
+        type: string
+        default: ""
+      run:
+        description: "-run regex to select tests"
+        type: string
+        default: ""
+      os:
+        description: "Runner OS"
+        type: choice
+        options:
+          - all
+          - ubuntu
+          - windows
+          - macos
+        default: all
+      race:
+        description: "Enable race detector"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -12,7 +39,28 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  PACKAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.packages || './...' }}
+  TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.tags || '' }}
+  RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.run || '' }}
+  RACE: ${{ (github.event_name != 'workflow_dispatch' || inputs.race) && '1' || '0' }}
+
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix_os: ${{ steps.cfg.outputs.matrix_os }}
+    steps:
+      - name: Compute OS matrix
+        id: cfg
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
+            echo 'matrix_os=["${{ inputs.os }}-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'matrix_os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -40,13 +88,20 @@ jobs:
 
       - name: go vet
         shell: bash
-        run: go vet ./...
+        run: |
+          go vet ./...
+          go vet -tags integration,e2e,bench ./...
 
-  test:
+      - name: Build (all levels)
+        shell: bash
+        run: go build -tags integration,e2e,bench ./...
+
+  unit:
+    needs: setup
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: ${{ fromJSON(needs.setup.outputs.matrix_os) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -61,19 +116,118 @@ jobs:
           path="$(bash scripts/fetch-ktav-lib.sh "$(go env GOOS)" "$(go env GOARCH)" .ktav-lib)"
           echo "KTAV_LIB_PATH=${path}" >> "$GITHUB_ENV"
 
-      - name: Build
+      - name: Unit tests
         shell: bash
-        run: go build ./...
+        env:
+          CI_PACKAGES: ${{ env.PACKAGES }}
+          # Unit stays hermetic: user tags are ignored here, and the
+          # coverage floors measure unit tests only.
+          CI_TAGS: ""
+          CI_RUN: ${{ env.RUN }}
+          CI_RACE: ${{ env.RACE }}
+          CI_COVER: "1"
+        run: bash scripts/ci-test.sh
 
-      - name: Test
-        shell: bash
-        if: matrix.os != 'windows-latest'
-        run: go test ./... -count=1 -race
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.out
+          if-no-files-found: ignore
 
-      - name: Test (windows)
+      - name: Check coverage floors
+        if: env.PACKAGES == './...' && env.RUN == ''
         shell: bash
-        if: matrix.os == 'windows-latest'
-        run: go test ./... -count=1
+        run: bash scripts/check-coverage.sh coverage.out | tee "${GITHUB_STEP_SUMMARY}"
+
+  integration:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.setup.outputs.matrix_os) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch Ktav native library
+        shell: bash
+        run: |
+          path="$(bash scripts/fetch-ktav-lib.sh "$(go env GOOS)" "$(go env GOARCH)" .ktav-lib)"
+          echo "KTAV_LIB_PATH=${path}" >> "$GITHUB_ENV"
+
+      - name: Integration tests
+        shell: bash
+        env:
+          CI_PACKAGES: ${{ env.PACKAGES }}
+          CI_RUN: ${{ env.RUN }}
+          CI_RACE: ${{ matrix.os != 'windows-latest' && env.RACE || '0' }}
+          CI_COVER: "0"
+          CI_TAGS: integration${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}
+        run: bash scripts/ci-test.sh
+
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: E2E tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          targets="${{ env.PACKAGES }}"
+          if [ -z "${targets}" ]; then
+            targets="./..."
+          fi
+          # Resolve the Go package patterns to directories (a go list failure
+          # fails the step), then look for e2e-tagged test files directly in
+          # those package directories only.
+          dirs="$(go list -tags e2e -f '{{.Dir}}' ${targets})"
+          found=0
+          for d in ${dirs}; do
+            for f in "${d}"/*_test.go; do
+              [ -e "${f}" ] || continue
+              if grep -qE '^//go:build .*\be2e\b' "${f}"; then
+                found=1
+              fi
+            done
+          done
+          if [ "${found}" = "1" ]; then
+            export CI_PACKAGES="${{ env.PACKAGES }}"
+            export CI_TAGS="e2e${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}"
+            export CI_RUN="${{ env.RUN }}"
+            export CI_RACE="0"
+            export CI_COVER="0"
+            bash scripts/ci-test.sh
+          else
+            echo "no e2e test files (*_test.go with '//go:build ... e2e') found; skipping"
+          fi
+
+  bench:
+    if: github.event_name == 'workflow_dispatch' && contains(inputs.tags, 'bench')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Benchmarks
+        shell: bash
+        run: go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchtime 1x -count=1 ${{ env.PACKAGES }}
 
   licenses:
     runs-on: ubuntu-latest
@@ -92,3 +246,17 @@ jobs:
       - name: Check licenses
         shell: bash
         run: go-licenses check ./... --allowed_licenses=GPL-3.0,MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,Unlicense,BlueOak-1.0.0
+
+  ci-ok:
+    if: always()
+    needs: [setup, lint, unit, integration, e2e, bench, licenses]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate result
+        shell: bash
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" || "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "one or more CI jobs failed or were cancelled"
+            exit 1
+          fi
+          echo "all CI jobs passed"

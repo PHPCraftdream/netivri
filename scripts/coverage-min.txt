@@ -1,0 +1,13 @@
+# Coverage floors.
+#
+# Format: whitespace-separated lines "<package-import-path-suffix> <min-percent>".
+# A package matches a floor when its import path equals the suffix or ends
+# with "/<suffix>". Unmatched packages use the "default" floor.
+# Lines starting with "#" are comments. Package paths with zero testable
+# statements are ignored.
+default 60
+cmd/netivri 0
+# Packages that have no tests yet. Raise these floors in the same change that
+# adds their tests (#27 for cli and cmd, #7 for core).
+internal/cli 0
+internal/core 0
