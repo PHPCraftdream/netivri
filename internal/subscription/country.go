@@ -12,6 +12,8 @@ var ambiguousISO = map[string]struct{}{
 	"AN": {}, "AS": {}, "AT": {}, "BE": {}, "BY": {}, "CA": {}, "DO": {}, "ES": {}, "HE": {}, "ID": {},
 	"IF": {}, "IN": {}, "IS": {}, "IT": {}, "LA": {}, "ME": {}, "MY": {}, "NO": {}, "OK": {}, "OR": {},
 	"PA": {}, "SO": {}, "UP": {}, "US": {}, "WE": {},
+	// "St" abbreviates Saint ("St Petersburg"), not Sao Tome and Principe.
+	"ST": {},
 }
 
 // delimChars are the punctuation characters around an ISO token that make
