@@ -4,7 +4,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
+
+// saveMu serialises in-process writers: Windows fails a rename when another
+// rename onto the same target is in flight.
+var saveMu sync.Mutex
 
 // Save renders the configuration with Marshal and writes it atomically.
 func Save(path string, cfg *Config) error {
@@ -20,6 +25,8 @@ func Save(path string, cfg *Config) error {
 // over the target, so readers never observe a partial file. The parent
 // directory is created with mode 0700 when missing.
 func writeFileAtomic(path string, data []byte) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
@@ -45,7 +52,7 @@ func writeFileAtomic(path string, data []byte) error {
 		_ = os.Remove(name)
 		return fmt.Errorf("close config: %w", err)
 	}
-	if err := os.Rename(name, path); err != nil {
+	if err := renameReplace(name, path); err != nil {
 		_ = os.Remove(name)
 		return fmt.Errorf("replace config: %w", err)
 	}
