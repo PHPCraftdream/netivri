@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        shell: bash
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "${out}" ]; then
+            echo "gofmt needed on:"
+            echo "${out}"
+            exit 1
+          fi
+
+      - name: go mod tidy
+        shell: bash
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: go vet
+        shell: bash
+        run: go vet ./...
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch Ktav native library
+        shell: bash
+        run: |
+          path="$(bash scripts/fetch-ktav-lib.sh "$(go env GOOS)" "$(go env GOARCH)" .ktav-lib)"
+          echo "KTAV_LIB_PATH=${path}" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: go build ./...
+
+      - name: Test
+        shell: bash
+        if: matrix.os != 'windows-latest'
+        run: go test ./... -count=1 -race
+
+      - name: Test (windows)
+        shell: bash
+        if: matrix.os == 'windows-latest'
+        run: go test ./... -count=1
+
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install go-licenses
+        shell: bash
+        run: go install github.com/google/go-licenses@v1.6.0
+
+      # A failure here needs human review: never auto-allow a license.
+      - name: Check licenses
+        shell: bash
+        run: go-licenses check ./... --allowed_licenses=GPL-3.0,MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,Unlicense,BlueOak-1.0.0
