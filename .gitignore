@@ -1,0 +1,12 @@
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+*.log
+/.netivri/
+
+# /wrush task worktrees — always created here, in-tree
+/worktrees/
+# rush agent prompts and outputs
+/.rush/
