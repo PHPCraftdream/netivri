@@ -1,0 +1,127 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and upload artifacts without publishing'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  KTAV_VERSION: '0.8.0'
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [windows, linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build binary
+        run: |
+          set -euo pipefail
+          mkdir -p build dist
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.version.outputs.version }}" \
+            -o "build/netivri${{ matrix.goos == 'windows' && '.exe' || '' }}" ./cmd/netivri
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+
+      - name: Fetch Ktav native library
+        shell: bash
+        run: |
+          set -euo pipefail
+          KTAV_LIB="$(bash scripts/fetch-ktav-lib.sh \
+            "${{ matrix.goos }}" "${{ matrix.goarch }}" staging | tail -n 1)"
+          echo "KTAV_LIB=$KTAV_LIB" >> "$GITHUB_ENV"
+
+      - name: Stage and archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          NAME="netivri_${VER}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p "pkg/$NAME"
+          BIN="netivri${{ matrix.goos == 'windows' && '.exe' || '' }}"
+          cp "build/$BIN" "pkg/$NAME/"
+          cp "$KTAV_LIB" "pkg/$NAME/"
+          cp LICENSE README.md "pkg/$NAME/"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            (cd pkg && zip -q "$NAME.zip" "$NAME/*")
+            mv "pkg/$NAME.zip" dist/
+          else
+            tar -czf "dist/$NAME.tar.gz" -C pkg "$NAME"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: checksums and release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-*
+
+      - name: Generate SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum netivri_*.zip netivri_*.tar.gz > SHA256SUMS
+
+      - name: Upload checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: artifacts/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz
