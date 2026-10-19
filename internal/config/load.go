@@ -79,8 +79,12 @@ func Load(path string) (*Config, error) {
 }
 
 // LoadOrDefault loads the configuration file, falling back to Default()
-// when the file does not exist. Any other error is propagated.
+// when the file does not exist. Any other error is propagated. A missing
+// file never needs the Ktav native library.
 func LoadOrDefault(path string) (*Config, error) {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return Default(), nil
+	}
 	cfg, err := Load(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

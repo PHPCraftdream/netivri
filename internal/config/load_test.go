@@ -73,6 +73,19 @@ func TestLoadOrDefaultFallsBack(t *testing.T) {
 	}
 }
 
+// A missing file yields the defaults without touching the Ktav native
+// library, even when KTAV_LIB_PATH points at nothing.
+func TestLoadOrDefaultMissingFileNeedsNoLibrary(t *testing.T) {
+	t.Setenv("KTAV_LIB_PATH", filepath.Join(t.TempDir(), "no-such-lib.so"))
+	cfg, err := LoadOrDefault(filepath.Join(t.TempDir(), "absent.ktav"))
+	if err != nil {
+		t.Fatalf("LoadOrDefault: %v", err)
+	}
+	if cfg.Listen.Port != Default().Listen.Port {
+		t.Fatalf("cfg = %+v, want defaults", cfg)
+	}
+}
+
 // A minimal existing file inherits the defaults for every key it does
 // not set.
 func TestLoadMinimalFileInheritsDefaults(t *testing.T) {
