@@ -413,14 +413,16 @@ func (p *socksProxy) handle(conn net.Conn) {
 // proxy. Client connections are tracked in a connSet whose wait group
 // covers the handlers only; the accept loop has its own signal.
 type silentSocksProxy struct {
-	ln        net.Listener
-	cs        *connSet
-	serveDone chan struct{}
+	ln           net.Listener
+	cs           *connSet
+	serveDone    chan struct{}
+	accepted     chan struct{} // closed once the first connection is registered
+	acceptedOnce sync.Once
 }
 
 func newSilentSocksProxy(t *testing.T) *silentSocksProxy {
 	t.Helper()
-	p := &silentSocksProxy{cs: newConnSet(), serveDone: make(chan struct{})}
+	p := &silentSocksProxy{cs: newConnSet(), serveDone: make(chan struct{}), accepted: make(chan struct{})}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -437,9 +439,16 @@ func newSilentSocksProxy(t *testing.T) *silentSocksProxy {
 
 func (p *silentSocksProxy) addr() string { return p.ln.Addr().String() }
 
-// waitHandlers reports whether every accepted connection's handler returned
-// within d (the handler returns when the client closes its side).
+// waitHandlers reports whether the connection's handler returned within d
+// (it returns when the client closes its side). It first waits until the
+// connection is registered, so WaitGroup.Add never races with Wait.
 func (p *silentSocksProxy) waitHandlers(d time.Duration) bool {
+	deadline := time.After(d)
+	select {
+	case <-p.accepted:
+	case <-deadline:
+		return false
+	}
 	ch := make(chan struct{})
 	go func() {
 		p.cs.wg.Wait()
@@ -448,7 +457,7 @@ func (p *silentSocksProxy) waitHandlers(d time.Duration) bool {
 	select {
 	case <-ch:
 		return true
-	case <-time.After(d):
+	case <-deadline:
 		return false
 	}
 }
@@ -468,5 +477,6 @@ func (p *silentSocksProxy) serve() {
 			_ = conn.SetDeadline(time.Now().Add(handlerReadTimeout))
 			_, _ = io.Copy(io.Discard, conn)
 		})
+		p.acceptedOnce.Do(func() { close(p.accepted) })
 	}
 }
