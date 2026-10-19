@@ -185,6 +185,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Fetch Ktav native library
+        shell: bash
+        run: |
+          path="$(bash scripts/fetch-ktav-lib.sh "$(go env GOOS)" "$(go env GOARCH)" .ktav-lib)"
+          echo "KTAV_LIB_PATH=${path}" >> "$GITHUB_ENV"
+
       - name: E2E tests
         shell: bash
         run: |
