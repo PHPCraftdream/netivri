@@ -25,6 +25,8 @@ version is `0.0.0-dryrun`. Use it to check packaging before tagging.
 - The Ktav native library (`ktav_cabi.dll`, `libktav_cabi.so` or
   `libktav_cabi.dylib`) next to the binary.
 - `LICENSE`, `README.md`.
+- `THIRD_PARTY_LICENSES/` — license texts of the linked Go modules (see
+  `docs/licenses.md`).
 
 The native library ships with every archive because the Ktav Go binding
 resolves `$KTAV_LIB_PATH` first, and netivri sets that in-process before the

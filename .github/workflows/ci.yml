@@ -242,10 +242,19 @@ jobs:
         shell: bash
         run: go install github.com/google/go-licenses@v1.6.0
 
-      # A failure here needs human review: never auto-allow a license.
+      # Allow-list plus two audited ignores (see docs/licenses.md). Any new
+      # failure needs human review: never auto-allow a license.
       - name: Check licenses
         shell: bash
-        run: go-licenses check ./... --allowed_licenses=GPL-3.0,MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,Unlicense,BlueOak-1.0.0
+        run: |
+          go-licenses check ./... \
+            --allowed_licenses=GPL-3.0,LGPL-3.0,MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,MPL-2.0,Unlicense,CC0-1.0,BlueOak-1.0.0 \
+            --ignore=github.com/metacubex/chacha \
+            --ignore=github.com/rasky/go-lzo
+
+      - name: Collect third-party notices
+        shell: bash
+        run: bash scripts/collect-licenses.sh "${RUNNER_TEMP}/third-party"
 
   ci-ok:
     if: always()

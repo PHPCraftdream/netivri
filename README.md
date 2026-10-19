@@ -53,3 +53,4 @@ SPDX: `GPL-3.0-only`. See [`LICENSE`](LICENSE).
 
 The license is inherited from Mihomo and its dependencies (`sing`,
 `sing-tun`), which are GPL-3.0 and are linked into the `netivri` binary.
+Third-party license policy and audited exceptions: [`docs/licenses.md`](docs/licenses.md).

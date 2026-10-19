@@ -63,6 +63,14 @@ jobs:
             "${{ matrix.goos }}" "${{ matrix.goarch }}" staging | tail -n 1)"
           echo "KTAV_LIB=$KTAV_LIB" >> "$GITHUB_ENV"
 
+      - name: Collect third-party licenses
+        shell: bash
+        run: bash scripts/collect-licenses.sh build/THIRD_PARTY_LICENSES
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+
       - name: Stage and archive
         shell: bash
         run: |
@@ -74,6 +82,7 @@ jobs:
           cp "build/$BIN" "pkg/$NAME/"
           cp "$KTAV_LIB" "pkg/$NAME/"
           cp LICENSE README.md "pkg/$NAME/"
+          cp -R build/THIRD_PARTY_LICENSES "pkg/$NAME/"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             (cd pkg && zip -q "$NAME.zip" "$NAME/*")
             mv "pkg/$NAME.zip" dist/
