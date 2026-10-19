@@ -20,7 +20,7 @@ in `go.mod`). Re-check an entry whenever the module version changes.
 |---|---|---|---|
 | `github.com/Yawning/aez` | `CC0-1.0` not in the original list | CC0 1.0 public-domain dedication, GPL-compatible | added `CC0-1.0` to the allow-list |
 | `github.com/easytier/easytier/easytier-go` | `LGPL-3.0` not in the original list | LGPL-3.0, may be combined into a GPL-3.0 work | added `LGPL-3.0` to the allow-list |
-| `github.com/metacubex/chacha` | license not classified (empty) | `LICENSE` is MIT; a second copyright line defeats the classifier | `--ignore`; MIT text is shipped in the notices |
+| `github.com/metacubex/chacha` | license not classified (empty) | at the pinned v0.1.5 there is no root license file; `chachapoly1305/LICENSE` and `poly1305/LICENSE` are MIT (Andreas Auernhammer) and the `chacha` package is his MIT-licensed code (its header points to a `LICENSE` file); later versions add a root MIT `LICENSE` | `--ignore`; the subdirectory MIT texts are shipped in the notices |
 | `github.com/rasky/go-lzo` | `GPL-2.0` | `LICENSE.gpl` is the GPLv2 text, the README states `GPL-2.0-or-later` (it is a port of LZO, which is GPL-2.0-or-later); no per-file headers | `--ignore`; `or-later` allows combining into GPL-3.0. Blanket `GPL-2.0` is deliberately not allowed, it could be `-only` elsewhere |
 
 Mihomo itself bundles `go-lzo` under `GPL-3.0`, so netivri inherits the same
@@ -32,7 +32,8 @@ dependency path (or the feature that pulls it) instead of widening the list.
 MIT, BSD and Apache-2.0 require the license text to travel with binaries.
 `scripts/collect-licenses.sh` copies the `LICENSE`/`NOTICE`/`COPYING` files of
 every third-party Go module linked into `./cmd/netivri` (per target
-GOOS/GOARCH) into `THIRD_PARTY_LICENSES/<module path>/`. The release workflow
+GOOS/GOARCH) into `THIRD_PARTY_LICENSES/<module path>/`; a module without a
+root license file contributes the license files found in its subdirectories. The release workflow
 puts that directory into every archive. The script fails when a module has no
 license file, and the `licenses` CI job runs it on linux/amd64 on every push.
 
