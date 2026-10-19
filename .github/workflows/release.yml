@@ -84,7 +84,7 @@ jobs:
           cp LICENSE README.md "pkg/$NAME/"
           cp -R build/THIRD_PARTY_LICENSES "pkg/$NAME/"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            (cd pkg && zip -q "$NAME.zip" "$NAME/*")
+            (cd pkg && zip -q -r "$NAME.zip" "$NAME")
             mv "pkg/$NAME.zip" dist/
           else
             tar -czf "dist/$NAME.tar.gz" -C pkg "$NAME"
