@@ -199,21 +199,21 @@ jobs:
           if [ -z "${targets}" ]; then
             targets="./..."
           fi
-          # Resolve the Go package patterns to directories (a go list failure
-          # fails the step), then look for e2e-tagged test files directly in
-          # those package directories only.
-          dirs="$(go list -tags e2e -f '{{.Dir}}' ${targets})"
-          found=0
-          for d in ${dirs}; do
-            for f in "${d}"/*_test.go; do
+          # Resolve the Go package patterns (a go list failure fails the
+          # step) and keep only the packages that have e2e-tagged test files
+          # directly in their directory: the e2e job runs just those.
+          pkgs=""
+          while read -r dir ipath; do
+            for f in "${dir}"/*_test.go; do
               [ -e "${f}" ] || continue
               if grep -qE '^//go:build .*\be2e\b' "${f}"; then
-                found=1
+                pkgs="${pkgs} ${ipath}"
+                break
               fi
             done
-          done
-          if [ "${found}" = "1" ]; then
-            export CI_PACKAGES="${{ env.PACKAGES }}"
+          done < <(go list -tags e2e -f '{{.Dir}} {{.ImportPath}}' ${targets})
+          if [ -n "${pkgs}" ]; then
+            export CI_PACKAGES="${pkgs# }"
             export CI_TAGS="e2e${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}"
             export CI_RUN="${{ env.RUN }}"
             export CI_RACE="0"
