@@ -353,6 +353,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 		Authenticator:  authenticator,
 		Countries:      countries,
 		AccountCountry: accountRoutes,
+		Warm:           warmOptions(countries),
 	})
 	if err != nil {
 		return err
@@ -377,6 +378,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			StartedAt:  startedAt,
 			Version:    version,
 			Accounts:   accountStatus(cfg, inst.AccountRoutes()),
+			Warm:       warmInfo(inst),
 		}
 	}
 	ctrl, err := daemon.StartServer(token, status, func() { close(stopRequested) })

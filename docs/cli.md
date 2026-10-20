@@ -202,9 +202,19 @@ Reports the live status of the running instance.
 
 Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
-`node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds) and
-`version` (the daemon binary's version). The selection fields of the
-planned shape below are not included yet; they arrive with `netivri use`.
+`node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
+`version` (the daemon binary's version), `accounts` (see `account`) and
+`warm`. The selection fields of the planned shape below are not included
+yet; they arrive with `netivri use`.
+
+`warm` is present while the daemon keeps country nodes warm (an account has an
+exit country): background probes of every node proxy through the node itself,
+every 45 seconds, with the counters
+`{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
+"nodes": [{"name", "alive", "delay_ms"}]}`. `nodes[].name` is an internal proxy
+name (`netivri-<CC>-<index>`), never a provider name; `delay_ms` is `0` until a
+probe succeeded. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
+The probes request `http://www.gstatic.com/generate_204` through each node.
 
 When no daemon is running: error `DAEMON_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control

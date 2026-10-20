@@ -29,6 +29,23 @@ type AccountInfo struct {
 	ExitCountry string `json:"exit_country"`
 }
 
+// NodeHealth is the last probe result of one node proxy.
+type NodeHealth struct {
+	Name    string `json:"name"` // internal proxy name, never the provider name
+	Alive   bool   `json:"alive"`
+	DelayMS int64  `json:"delay_ms"` // 0 until a probe succeeded
+}
+
+// WarmInfo is the warm-up state of the running instance.
+type WarmInfo struct {
+	Probes        uint64       `json:"probes"`
+	ProbeFailures uint64       `json:"probe_failures"`
+	PoolHits      uint64       `json:"pool_hits"`
+	PoolMisses    uint64       `json:"pool_misses"`
+	PoolDiscards  uint64       `json:"pool_discards"`
+	Nodes         []NodeHealth `json:"nodes"`
+}
+
 // Status is the live answer of GET /v1/status.
 type Status struct {
 	Daemon     string        `json:"daemon"`
@@ -41,6 +58,7 @@ type Status struct {
 	StartedAt  string        `json:"started_at"`
 	Version    string        `json:"version"`
 	Accounts   []AccountInfo `json:"accounts,omitempty"`
+	Warm       *WarmInfo     `json:"warm,omitempty"`
 }
 
 // Server is the loopback control HTTP server. It always binds 127.0.0.1:0,

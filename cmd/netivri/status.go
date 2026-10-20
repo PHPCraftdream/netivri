@@ -37,7 +37,7 @@ func runStatus(args []string, stdout io.Writer) error {
 	}
 	accounts := append([]daemon.AccountInfo{}, st.Accounts...)
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Login < accounts[j].Login })
-	cli.Success(stdout, map[string]any{
+	data := map[string]any{
 		"daemon":         "running",
 		"foreground":     st.Foreground,
 		"pid":            st.PID,
@@ -49,7 +49,11 @@ func runStatus(args []string, stdout io.Writer) error {
 		"uptime_seconds": uptimeSeconds(st.StartedAt),
 		"version":        st.Version,
 		"accounts":       accounts,
-	})
+	}
+	if st.Warm != nil {
+		data["warm"] = st.Warm
+	}
+	cli.Success(stdout, data)
 	return nil
 }
 

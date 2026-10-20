@@ -9,6 +9,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
@@ -87,6 +88,44 @@ func buildAccountCountryPool(accounts []config.Account, snapshots []*subscriptio
 		}
 	}
 	return countries, nil
+}
+
+// warmOptions turns background probing on, with the default interval and no
+// pool, whenever there are country nodes to keep warm.
+func warmOptions(countries map[string][]map[string]any) *core.WarmOptions {
+	if len(countries) == 0 {
+		return nil
+	}
+	return &core.WarmOptions{}
+}
+
+// warmInfo converts the warm-up counters of the instance for the status
+// answer; nil when the instance runs without warm-up.
+func warmInfo(inst *core.Instance) *daemon.WarmInfo {
+	stats, ok := inst.WarmStats()
+	if !ok {
+		return nil
+	}
+	return warmInfoOf(stats)
+}
+
+func warmInfoOf(stats core.WarmStats) *daemon.WarmInfo {
+	info := &daemon.WarmInfo{
+		Probes:        stats.Probes,
+		ProbeFailures: stats.ProbeFailures,
+		PoolHits:      stats.PoolHits,
+		PoolMisses:    stats.PoolMisses,
+		PoolDiscards:  stats.PoolDiscards,
+		Nodes:         make([]daemon.NodeHealth, 0, len(stats.Nodes)),
+	}
+	for _, n := range stats.Nodes {
+		info.Nodes = append(info.Nodes, daemon.NodeHealth{
+			Name:    n.Name,
+			Alive:   n.Alive,
+			DelayMS: n.Delay.Milliseconds(),
+		})
+	}
+	return info
 }
 
 func accountStatus(cfg *config.Config, routes map[string]string) []daemon.AccountInfo {
