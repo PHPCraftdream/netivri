@@ -205,7 +205,13 @@ bound node is down, the next connection rebinds to the best remaining node.
 A failed dial that makes the node down is retried once on the re-selected
 node; any other failure is returned to the client.
 
-UDP associations use the same choice (key: login and destination IP).
+UDP associations use the same choice and the same site key as TCP (login and
+site), so one site keeps one exit node over TCP and UDP.
+
+The hit path (a bound, healthy node) takes one shard lock and one atomic
+load and allocates nothing; selection runs only for a new site or a down
+node. Look-up, selection and installation of a binding are one atomic step per
+key, so concurrent first connections to a site agree on one node.
 
 ### Go contract: `internal/core` additions
 
@@ -242,19 +248,18 @@ both the sticky group's health table and `Observer.ObserveProbe`.
 ## Wiring (`cmd/netivri`)
 
 - `routePool` also returns labels (`provider/<node id>`) in node order.
-- `up` opens `<home>/stats.db` (unless `stats.enabled` is false), calls
-  `SetNodes`, passes an adapter of the store as `core.Observer`, closes the
-  store after the core.
+- `up` opens `<home>/stats.db`, calls `SetNodes`, passes an adapter of the
+  store as `core.Observer`, closes the store after the core. A store that
+  cannot be opened is logged and the daemon runs without statistics: the
+  proxy never fails because of its bookkeeping.
 - The status answer gains `stats` (`path`, `dropped`) and `affinity`
   (`bindings`, `rebinds`).
 
 ### Configuration
 
-| Key | Default | Meaning |
-|---|---|---|
-| `stats.enabled` | `true` | Record node statistics. |
-| `stats.retention_days` | `7` | Raw sample retention, 1..365. |
-| `affinity.ttl_hours` | `24` | Idle time after which a site binding is dropped, 1..720. |
+None in the first version: retention (7 days raw) and the binding lifetime
+(24 hours idle) are constants. A switch is added when persisted bindings
+(which hold visited sites) land.
 
 ### `netivri stats`
 
