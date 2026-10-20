@@ -1,12 +1,12 @@
 // Package core embeds Mihomo as a library and exposes it as a local
 // dual-protocol (HTTP + SOCKS4/5) listener. See docs/design/mixed-port.md.
 //
-// With Options.Node set, Start builds a rule-mode config whose single
-// MATCH rule routes every connection through the selected upstream node
-// (fixed internal name "netivri-node"); domain destinations are passed to
-// the node unresolved. There is no direct fallback: if the node is
-// unreachable, connections fail. The node is chosen at Start time only;
-// switching it while the instance is running is out of scope for now.
+// With Options.Node set, Start builds a rule-mode config whose MATCH rule
+// routes the default route through the selected upstream node (fixed internal
+// name "netivri-node"); domain destinations are passed to the node unresolved.
+// Account mappings add per-user country routes while keeping the default route
+// intact. There is no fallback when a routed node is unreachable. Routes are
+// chosen at Start time only; hot-switching is not supported yet.
 package core
 
 import (
@@ -45,16 +45,21 @@ type Options struct {
 	// by internal/subscription). nil keeps Direct mode. The node is fixed for
 	// the lifetime of the instance; hot-switching is not supported yet.
 	Node map[string]any
+	// Countries maps upper-case country codes to candidate node mappings.
+	Countries map[string][]map[string]any
+	// AccountCountry maps authenticated logins to their exit country.
+	AccountCountry map[string]string
 }
 
 // Instance is one running proxy listener.
 type Instance struct {
-	mu     sync.Mutex
-	closed bool
-	ln     *mixed.Listener
-	done   chan struct{} // closed by Close; stops the ctx watcher
-	tt     *trackedTunnel
-	route  string // "direct" or "node"; immutable after Start publishes the instance
+	mu            sync.Mutex
+	closed        bool
+	ln            *mixed.Listener
+	done          chan struct{} // closed by Close; stops the ctx watcher
+	tt            *trackedTunnel
+	route         string // "direct" or "node"; immutable after Start publishes the instance
+	accountRoutes map[string]string
 }
 
 var (
@@ -80,10 +85,10 @@ func silenceMihomoLog() {
 	})
 }
 
-// Start applies a minimal direct-mode Mihomo config (all executor listeners
-// on port 0, so Mihomo opens none) and opens netivri's own mixed listener.
-// Mihomo holds process-global state, so only one Instance may be open at a
-// time; Close it before starting another.
+// Start applies a minimal Mihomo config with executor listeners disabled
+// (all ports set to 0) and opens netivri's own mixed listener. Mihomo holds
+// process-global state, so only one Instance may be open at a time; Close it
+// before starting another.
 func Start(ctx context.Context, o Options) (*Instance, error) {
 	if o.HomeDir == "" {
 		return nil, errors.New("core: HomeDir is required")
@@ -114,20 +119,22 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	raw.Profile.StoreFakeIP = false
 	raw.GeoAutoUpdate = false
 	route := routeDirect
-	if o.Node != nil {
-		proxies, rules, err := prepareNode(o.Node)
-		if err != nil {
-			return nil, err
-		}
-		// Rule mode with a single MATCH rule: every connection is routed to
-		// the node, and domain destinations are handed to it unresolved
-		// (MATCH never triggers the local resolver; DNS stays disabled).
+	proxies, groups, rules, err := prepareRoutes(o)
+	if err != nil {
+		return nil, err
+	}
+	if o.Node != nil || len(o.AccountCountry) != 0 {
 		raw.Mode = tunnel.Rule
 		raw.Proxy = proxies
+		raw.ProxyGroup = groups
 		raw.Rule = rules
-		// No rule needs the process name; never look processes up.
+		// Rule mode uses MATCH for the default route; country-specific user
+		// rules take precedence and domain destinations remain unresolved.
+		// No rule needs process lookup, so keep it disabled.
 		raw.FindProcessMode = process.FindProcessOff
-		route = routeNode
+		if o.Node != nil {
+			route = routeNode
+		}
 	}
 
 	cfg, err := config.ParseRawConfig(raw)
@@ -162,7 +169,13 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		return nil, err
 	}
 
-	inst := &Instance{ln: ln, done: make(chan struct{}), route: route, tt: tt}
+	inst := &Instance{
+		ln:            ln,
+		done:          make(chan struct{}),
+		route:         route,
+		tt:            tt,
+		accountRoutes: copyAccountRoutes(o.AccountCountry),
+	}
 	current = inst
 
 	// Optional lifecycle: cancel ctx to stop the instance.
@@ -191,6 +204,11 @@ func (i *Instance) Addr() string {
 // Route reports how traffic leaves this instance: "direct" or "node".
 func (i *Instance) Route() string {
 	return i.route
+}
+
+// AccountRoutes returns a copy of the configured login-to-country routes.
+func (i *Instance) AccountRoutes() map[string]string {
+	return copyAccountRoutes(i.accountRoutes)
 }
 
 // Close stops the listener and the embedded core. Idempotent.
