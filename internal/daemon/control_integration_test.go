@@ -129,7 +129,7 @@ func TestProbeLiveDaemon(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	home := t.TempDir()
-	st := testState() // PID 4321, listen 127.0.0.1:7890, auth none
+	st := testState() // PID 4321, auth none; its listen differs from the live one
 	st.Control = s.Addr()
 	st.Token = "secret"
 	if err := WriteState(home, st); err != nil {
@@ -139,7 +139,7 @@ func TestProbeLiveDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProbeLive: %v", err)
 	}
-	if gotState.Listen != "127.0.0.1:7890" || gotState.Auth != "none" || gotState.Token != "secret" {
+	if gotState.Listen != st.Listen || gotState.Auth != "none" || gotState.Token != "secret" {
 		t.Errorf("state = listen %q auth %q, want the state file values", gotState.Listen, gotState.Auth)
 	}
 	if gotLive.Listen != "127.0.0.1:7891" || gotLive.Auth != "enabled" || gotLive.PID != 4321 {
