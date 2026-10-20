@@ -23,6 +23,8 @@ in `go.mod`). Re-check an entry whenever the module version changes.
 | `github.com/metacubex/chacha` | license not classified (empty) | at the pinned v0.1.5 there is no root license file; `chachapoly1305/LICENSE` and `poly1305/LICENSE` are MIT (Andreas Auernhammer) and the `chacha` package is his MIT-licensed code (its header points to a `LICENSE` file); later versions add a root MIT `LICENSE` | `--ignore`; the subdirectory MIT texts are shipped in the notices |
 | `github.com/rasky/go-lzo` | `GPL-2.0` | `LICENSE.gpl` is the GPLv2 text, the README states `GPL-2.0-or-later` (it is a port of LZO, which is GPL-2.0-or-later); no per-file headers | `--ignore`; `or-later` allows combining into GPL-3.0. Blanket `GPL-2.0` is deliberately not allowed, it could be `-only` elsewhere |
 
+| `modernc.org/mathutil` | license not classified (a dependency of the SQLite driver `modernc.org/sqlite`) | the root `LICENSE` of v1.7.1 is the standard BSD-3-Clause text ("The mathutil Authors", three conditions plus the usual disclaimer); the classifier does not match its wording | `--ignore`; the `LICENSE` is shipped in the notices |
+
 Mihomo itself bundles `go-lzo` under `GPL-3.0`, so netivri inherits the same
 position. If the author of `go-lzo` ever confirms `GPL-2.0-only`, drop the
 dependency path (or the feature that pulls it) instead of widening the list.

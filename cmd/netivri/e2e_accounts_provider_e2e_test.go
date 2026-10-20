@@ -135,10 +135,20 @@ func TestE2EAccountsProviderRouting(t *testing.T) {
 	if p1Up.count.Load() != 1 || p2Up.count.Load() != 1 {
 		t.Fatalf("bob upstream counts p1=%d p2=%d", p1Up.count.Load(), p2Up.count.Load())
 	}
-	// carol (DE, any provider) takes the DE node with the smallest id: de-p1.
+	// carol (DE, any provider) may use either DE node: the first connection
+	// binds the site to one of them and every further one follows it.
 	accountsClient(t, listen, "carol", pass, backend)
-	if p1Up.count.Load() != 2 || p2Up.count.Load() != 1 {
-		t.Fatalf("carol upstream counts p1=%d p2=%d", p1Up.count.Load(), p2Up.count.Load())
+	p1After, p2After := p1Up.count.Load(), p2Up.count.Load()
+	if p1After+p2After != 3 || p1After < 1 || p2After < 1 {
+		t.Fatalf("carol must use exactly one DE node: counts p1=%d p2=%d (before 1/1)", p1After, p2After)
+	}
+	accountsClient(t, listen, "carol", pass, backend)
+	if p1Up.count.Load()+p2Up.count.Load() != 4 {
+		t.Fatalf("carol's second connection did not reach a node: p1=%d p2=%d", p1Up.count.Load(), p2Up.count.Load())
+	}
+	if (p1Up.count.Load() == p1After+1) == (p2Up.count.Load() == p2After+1) {
+		t.Fatalf("carol's site moved between nodes: p1 %d->%d p2 %d->%d",
+			p1After, p1Up.count.Load(), p2After, p2Up.count.Load())
 	}
 	p.Stop()
 	assertNoSecrets(t, p.Stdout(), p.Stderr(), pass, hash)
