@@ -49,6 +49,10 @@ type Options struct {
 	Countries map[string][]map[string]any
 	// AccountCountry maps authenticated logins to their exit country.
 	AccountCountry map[string]string
+	// Warm optionally enables the background probes of the node proxies and,
+	// with PoolSize > 0, a pre-dial pool for the default node (see warm.go).
+	// nil disables both.
+	Warm *WarmOptions
 }
 
 // Instance is one running proxy listener.
@@ -60,6 +64,7 @@ type Instance struct {
 	tt            *trackedTunnel
 	route         string // "direct" or "node"; immutable after Start publishes the instance
 	accountRoutes map[string]string
+	warm          *warmer // nil without Options.Warm; immutable after Start publishes the instance
 }
 
 var (
@@ -169,12 +174,25 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		return nil, err
 	}
 
+	// Started after ApplyConfig (it reads the proxies Mihomo built) and
+	// stopped before executor.Shutdown, see Close.
+	var warm *warmer
+	if o.Warm != nil {
+		warm, err = startWarm(*o.Warm, o.Node)
+		if err != nil {
+			_ = ln.Close()
+			executor.Shutdown()
+			return nil, err
+		}
+	}
+
 	inst := &Instance{
 		ln:            ln,
 		done:          make(chan struct{}),
 		route:         route,
 		tt:            tt,
 		accountRoutes: copyAccountRoutes(o.AccountCountry),
+		warm:          warm,
 	}
 	current = inst
 
@@ -206,6 +224,15 @@ func (i *Instance) Route() string {
 	return i.route
 }
 
+// WarmStats returns the warm-up counters and node health, and false when the
+// instance runs without Options.Warm.
+func (i *Instance) WarmStats() (WarmStats, bool) {
+	if i.warm == nil {
+		return WarmStats{}, false
+	}
+	return i.warm.Stats(), true
+}
+
 // AccountRoutes returns a copy of the configured login-to-country routes.
 func (i *Instance) AccountRoutes() map[string]string {
 	return copyAccountRoutes(i.accountRoutes)
@@ -231,6 +258,8 @@ func (i *Instance) Close() error {
 	// No connection may outlive the instance: close the tracked ones and
 	// wait for their handlers before Mihomo's global state is torn down.
 	i.tt.closeAll(closeDrainTimeout)
+	// The probes and the pool dial through Mihomo's proxies: stop them first.
+	i.warm.Close()
 	executor.Shutdown()
 	if current == i {
 		current = nil // claim released only after the core is fully down

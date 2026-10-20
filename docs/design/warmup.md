@@ -432,3 +432,33 @@ actually are:
   sequentially (protocol/server dependent) — see §5/#16(1).
 - How many retry attempts `tunnel.handleTCPConn`'s `retry` wrapper makes
   (§3).
+
+## Implementation (tasks #15–#17)
+
+The standalone `startWarm` helper probes Mihomo leaf proxies through
+`C.Proxy.URLTest`, records the latest health state and counters, and returns a
+copied, sorted node snapshot from `Stats`. Defaults are a 45-second interval,
+five-second probe timeout, the gstatic URL, and a 30-second pool TTL. Call it
+after `executor.ApplyConfig`, retain the warmer, and call `Close` before
+`executor.Shutdown`; it is idempotent and bounds its waits. `core.Start`
+starts it when `Options.Warm` is set (after `ApplyConfig` and the listener, so
+a failed listen leaves nothing behind) and `Instance.Close` stops it before
+`executor.Shutdown`; `Instance.WarmStats` exposes the counters. The daemon sets
+`Options.Warm` (probes only, no pool) whenever accounts route through country
+nodes, and `status` prints the counters as `warm`.
+
+With `PoolSize > 0` and a node, the optional pool installs a proxy adapter for
+`netivri-node`, preserving other proxies and providers. It parks raw TCP
+sockets to the configured upstream address only; supported dial options are
+applied and unsupported transports/options are rejected. Reuse saves only TCP
+setup: proxy protocol, authentication, TLS and destination negotiation still
+occur for each dial. Idle sockets are checked for closure, expired, and closed
+on shutdown. This is not a pool of completed tunnels and does not guarantee a
+peer has not closed a socket between checking and use.
+
+Unit tests cover option normalization, leaf filtering, health snapshots and
+run-loop shutdown. Integration tests exercise actual `Start`/Mihomo probes
+through a loopback fake SOCKS5 upstream, including alive/dead results; pooled
+node round trips, hit/discard accounting and shutdown; and a bench-tagged
+through-node comparison against a delayed loopback fake upstream. Local
+builds, tests, vet and benchmarks were not run, per repository policy.
