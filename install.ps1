@@ -227,6 +227,52 @@ function Install-File([string]$Src, [string]$Dst) {
 # modes. SRC holds the binary and library; VER is the version string, empty
 # when unknown (-FromDir); LICROOT holds LICENSE and THIRD_PARTY_LICENSES
 # (not SRC for an npm package, where SRC is DIR\bin).
+# Update-UserPath DIR ADD: looks DIR up in the user PATH (entries are compared
+# after expanding %VARS%) and, with ADD, appends it. Returns $true when DIR is
+# on the PATH afterwards. The value is read and written raw, so its registry
+# type and every %VAR% entry survive: SetEnvironmentVariable would store the
+# value as REG_SZ and stop the %VAR% entries from expanding.
+function Update-UserPath([string]$Dir, [bool]$Add) {
+  $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Dir)
+  $full = [System.IO.Path]::GetFullPath($full).TrimEnd('\')
+  $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+  try {
+    $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+    $raw = ''
+    if ($key.GetValueNames() -contains 'Path') {
+      $kind = $key.GetValueKind('Path')
+      $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    }
+    foreach ($entry in @($raw -split ';')) {
+      if ($entry -eq '') { continue }
+      try {
+        $expanded = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($entry)).TrimEnd('\')
+      } catch {
+        continue
+      }
+      if ($expanded -ieq $full) { return $true }
+    }
+    if (-not $Add) { return $false }
+    $item = $full
+    # Keep the %LOCALAPPDATA% form when the value can expand it.
+    if ($kind -eq [Microsoft.Win32.RegistryValueKind]::ExpandString -and $env:LOCALAPPDATA) {
+      $local = [System.IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\')
+      if ($full.StartsWith($local + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $item = '%LOCALAPPDATA%' + $full.Substring($local.Length)
+      }
+    }
+    if ($raw) { $new = $raw.TrimEnd(';') + ';' + $item } else { $new = $item }
+    $key.SetValue('Path', $new, $kind)
+  } finally {
+    $key.Close()
+  }
+  # Setting and clearing a user variable broadcasts WM_SETTINGCHANGE, so new
+  # terminals see the change.
+  [Environment]::SetEnvironmentVariable('NETIVRI_ENV_REFRESH', '1', 'User')
+  [Environment]::SetEnvironmentVariable('NETIVRI_ENV_REFRESH', $null, 'User')
+  return $true
+}
+
 function Invoke-Install([string]$Src, [string]$Ver, [string]$LicRoot) {
   # Looked up BEFORE the replacement: once the running exe is renamed
   # aside, its process path no longer equals the installed path.
@@ -266,12 +312,10 @@ function Invoke-Install([string]$Src, [string]$Ver, [string]$LicRoot) {
     Write-Info "installed netivri to $InstallDir"
   }
 
-  $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $onPath = @($userPath -split ';') -contains $InstallDir
+  $onPath = Update-UserPath $InstallDir $false
   if ($AddToPath) {
     if (-not $onPath) {
-      if ($userPath) { $newPath = "$userPath;$InstallDir" } else { $newPath = $InstallDir }
-      [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+      [void](Update-UserPath $InstallDir $true)
       Write-Info "added $InstallDir to the user PATH (takes effect in new terminals)"
     }
   } elseif (-not $onPath) {

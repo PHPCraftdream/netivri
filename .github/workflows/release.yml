@@ -411,6 +411,77 @@ jobs:
           & .\install.ps1 -Uninstall -InstallDir $dir
           if (Test-Path (Join-Path $dir 'netivri.exe')) { throw 'uninstall left the binary behind' }
 
+      # -AddToPath must keep the registry type and the %VAR% entries of the
+      # user PATH. The runner's own value is restored at the end.
+      - name: Installer PATH handling (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.version.outputs.version }}'
+          $artifacts = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
+          $expand = [Microsoft.Win32.RegistryValueKind]::ExpandString
+          $plain = [Microsoft.Win32.RegistryValueKind]::String
+          $noExpand = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+          $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+          $hadPath = $key.GetValueNames() -contains 'Path'
+          $origKind = $expand
+          $origRaw = ''
+          if ($hadPath) {
+            $origKind = $key.GetValueKind('Path')
+            $origRaw = [string]$key.GetValue('Path', '', $noExpand)
+          }
+          function Expect([string]$what, $actual, $wanted) {
+            if ($actual -ne $wanted) { throw "$what`: got [$actual], wanted [$wanted]" }
+          }
+          try {
+            # REG_EXPAND_SZ with a %VAR% entry: kept verbatim, the install dir
+            # under %LOCALAPPDATA% is appended in its %VAR% form.
+            $seed = '%SystemRoot%\system32;C:\netivri-path-test\bin'
+            $key.SetValue('Path', $seed, $expand)
+            $dir = Join-Path $env:LOCALAPPDATA 'netivri-path-test\bin'
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -AddToPath -Quiet
+            if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 -AddToPath failed' }
+            $want = "$seed;%LOCALAPPDATA%\netivri-path-test\bin"
+            Expect 'PATH value' ([string]$key.GetValue('Path', '', $noExpand)) $want
+            Expect 'PATH kind' ([string]$key.GetValueKind('Path')) 'ExpandString'
+
+            # A second run finds the entry (through the expansion) and leaves
+            # the value alone.
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -AddToPath -Quiet
+            if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'second install.ps1 -AddToPath failed' }
+            Expect 'PATH value after a repeat' ([string]$key.GetValue('Path', '', $noExpand)) $want
+
+            # An entry that is already there in its expanded form is found.
+            $expandedDir = [System.IO.Path]::GetFullPath($dir).TrimEnd('\')
+            $key.SetValue('Path', "C:\a;$expandedDir", $expand)
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -AddToPath -Quiet
+            Expect 'PATH value with an expanded entry' ([string]$key.GetValue('Path', '', $noExpand)) "C:\a;$expandedDir"
+
+            # A directory outside %LOCALAPPDATA% is appended as a full path.
+            $dir2 = Join-Path $env:RUNNER_TEMP 'netivri-path-test2\bin'
+            $full2 = [System.IO.Path]::GetFullPath($dir2).TrimEnd('\')
+            $key.SetValue('Path', $seed, $expand)
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir2 -AddToPath -Quiet
+            Expect 'PATH value for an outside dir' ([string]$key.GetValue('Path', '', $noExpand)) "$seed;$full2"
+            Expect 'PATH kind for an outside dir' ([string]$key.GetValueKind('Path')) 'ExpandString'
+
+            # REG_SZ stays REG_SZ and never receives a %VAR% entry.
+            $key.SetValue('Path', 'C:\a;C:\b', $plain)
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -AddToPath -Quiet
+            Expect 'REG_SZ PATH value' ([string]$key.GetValue('Path', '', $noExpand)) "C:\a;C:\b;$expandedDir"
+            Expect 'REG_SZ PATH kind' ([string]$key.GetValueKind('Path')) 'String'
+
+            # No PATH value at all: created with the %VAR% form.
+            $key.DeleteValue('Path')
+            & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -AddToPath -Quiet
+            Expect 'new PATH value' ([string]$key.GetValue('Path', '', $noExpand)) '%LOCALAPPDATA%\netivri-path-test\bin'
+            Expect 'new PATH kind' ([string]$key.GetValueKind('Path')) 'ExpandString'
+          } finally {
+            if ($hadPath) { $key.SetValue('Path', $origRaw, $origKind) } else { $key.DeleteValue('Path', $false) }
+            $key.Close()
+          }
+
       - name: Standalone installer (PowerShell 7)
         if: runner.os == 'Windows'
         shell: pwsh

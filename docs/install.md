@@ -180,6 +180,13 @@ install directory and, when it is not already on `PATH`, the exact
 directory to the **user** `PATH` (existing sessions are unaffected);
 without it the same hint is printed instead.
 
+`-AddToPath` edits the registry value directly: the value type
+(`REG_EXPAND_SZ` or `REG_SZ`) and every existing entry stay as they are, so
+`%VAR%` entries keep expanding. A directory under `%LOCALAPPDATA%` (the
+default) is added as `%LOCALAPPDATA%\...` when the value can expand
+variables, otherwise as the full path. An entry that already points to the
+directory (in either form) is not added twice.
+
 ## Proxies
 
 - POSIX: the script does not strip proxy variables — `HTTPS_PROXY`,
