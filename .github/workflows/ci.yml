@@ -237,6 +237,31 @@ jobs:
         shell: bash
         run: go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchtime 1x -count=1 ${{ env.PACKAGES }}
 
+  npm:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.setup.outputs.matrix_os) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Syntax check
+        shell: bash
+        run: |
+          for f in npm/netivri/bin/netivri.js npm/scripts/build-packages.js npm/test/*.js; do
+            node --check "${f}"
+          done
+
+      - name: npm package tests
+        shell: bash
+        run: node --test npm/test/*.test.js
+
   licenses:
     runs-on: ubuntu-latest
     steps:
@@ -266,7 +291,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [setup, lint, unit, integration, e2e, bench, licenses]
+    needs: [setup, lint, unit, integration, e2e, bench, npm, licenses]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate result

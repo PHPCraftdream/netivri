@@ -96,6 +96,96 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  npm-packages:
+    name: npm packages
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-*
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release archives
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          for f in artifacts/netivri_*.tar.gz; do tar -xzf "$f" -C extracted; done
+          for f in artifacts/netivri_*.zip; do unzip -q "$f" -d extracted; done
+
+      - name: Build npm packages
+        run: |
+          set -euo pipefail
+          node npm/scripts/build-packages.js \
+            --version "${{ steps.version.outputs.version }}" \
+            --archive-dir extracted --out npm-out
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          mkdir -p npm-dist
+          for d in npm-out/*/; do
+            (cd "$d" && npm pack --pack-destination "${GITHUB_WORKSPACE}/npm-dist")
+          done
+          ls -l npm-dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist/*.tgz
+          if-no-files-found: error
+
+  npm-publish:
+    name: publish to npm
+    if: github.event_name == 'push'
+    needs: [publish, npm-packages]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+
+      # Publishes only when the repository secret NPM_TOKEN exists; the six
+      # platform packages go first, the main package last, so a half-failed
+      # run never leaves a main package pointing at missing binaries.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is not set: skipping the npm publish"
+            exit 0
+          fi
+          VER="${GITHUB_REF_NAME#v}"
+          for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
+            npm publish "npm-dist/netivri-${p}-${VER}.tgz" --access public
+          done
+          npm publish "npm-dist/netivri-${VER}.tgz" --access public
+
   publish:
     name: checksums and release
     needs: build

@@ -13,7 +13,23 @@ machine-readable errors. See [`AGENTS.md`](AGENTS.md) and
 
 ## Status
 
-Early design. Nothing is implemented yet.
+Work in progress. Working today: the local proxy on one dual-protocol port
+(`netivri up --foreground`: SOCKS5, SOCKS4 and HTTP, detected from the first
+byte), proxy authentication with a hashed password stored in the Ktav config
+(including the first-use `init` placeholder), the `sub` and `node` commands
+(subscriptions are fetched through a strict proxy, never silently directly),
+routing through one chosen upstream node in the core, release archives for
+Linux, macOS and Windows, and the installers. Not done yet: `netivri use`, the
+background daemon (`down`, `status`), health checks and connection warm-up.
+The sections below describe the target design.
+
+## Install
+
+- Standalone, no npm: `install.sh` / `install.ps1`, see
+  [`docs/install.md`](docs/install.md).
+- npm: `npm i -g netivri`, see [`docs/npm.md`](docs/npm.md) (published with
+  the first release).
+- Release archives with checksums: GitHub Releases.
 
 ## How it works
 
