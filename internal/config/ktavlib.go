@@ -52,6 +52,10 @@ func EnsureKtavLib() error {
 	if err != nil {
 		return ktavLibMissing(fmt.Sprintf("cannot locate the running executable: %v", err))
 	}
+	// A symlinked launcher must find the library next to the real binary.
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
 	path := filepath.Join(filepath.Dir(exe), libName())
 	abs, err := filepath.Abs(path)
 	if err != nil {
