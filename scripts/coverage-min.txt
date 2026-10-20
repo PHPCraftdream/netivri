@@ -18,3 +18,7 @@ internal/testutil 80
 # The core logic runs under the integration level (embedded Mihomo, loopback
 # sockets), which this unit-level report does not measure.
 internal/core 0
+# The control server, client and the detached spawn run under the integration
+# and e2e levels (loopback sockets, a real child process); the unit level
+# measures the pure parts only. Ratchet after the first green run.
+internal/daemon 50
