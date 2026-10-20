@@ -251,6 +251,66 @@ jobs:
           # Upgrade in place works.
           sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}"
 
+          # Re-installing while the daemon of the installed binary runs: the
+          # replacement is a rename, so the daemon keeps answering and the
+          # installer tells the user to restart it.
+          "${dir}/netivri" up --port 0 --home "${home}"
+          sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}" 2> "${RUNNER_TEMP}/reinstall.err"
+          cat "${RUNNER_TEMP}/reinstall.err"
+          grep -Eq 'note: (netivri is|a netivri process is) running' "${RUNNER_TEMP}/reinstall.err"
+          "${dir}/netivri" status --home "${home}"
+          "${dir}/netivri" version
+          "${dir}/netivri" down --home "${home}"
+
+          # --quiet prints nothing at all on success.
+          quiet_out="$(sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}" --quiet 2>&1)"
+          test -z "${quiet_out}"
+
+          # Local source mode: the extracted archive and an npm platform
+          # package layout; no download, no checksum.
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) plat=linux_amd64 ;;
+            Linux-aarch64) plat=linux_arm64 ;;
+            Darwin-x86_64) plat=darwin_amd64 ;;
+            Darwin-arm64) plat=darwin_arm64 ;;
+            *) echo "unexpected platform" >&2; exit 1 ;;
+          esac
+          ex="${RUNNER_TEMP}/netivri-extracted"
+          rm -rf "${ex}"
+          mkdir -p "${ex}"
+          tar -xzf "artifacts/netivri_${VER}_${plat}.tar.gz" -C "${ex}"
+          src="${ex}/netivri_${VER}_${plat}"
+          dir2="${RUNNER_TEMP}/netivri-inst2/bin"
+          rm -rf "${RUNNER_TEMP}/netivri-inst2"
+          sh install.sh --from-dir "${src}" --dir "${dir2}" --quiet
+          "${dir2}/netivri" sub list --home "${home}"
+          test -f "${dir2}/../share/netivri/LICENSE"
+          test -d "${dir2}/../share/netivri/THIRD_PARTY_LICENSES"
+
+          pkg="${RUNNER_TEMP}/netivri-pkg"
+          dir3="${RUNNER_TEMP}/netivri-inst3/bin"
+          rm -rf "${pkg}" "${RUNNER_TEMP}/netivri-inst3"
+          mkdir -p "${pkg}/bin"
+          cp "${src}"/netivri "${src}"/libktav_cabi.* "${pkg}/bin/"
+          cp "${src}/LICENSE" "${pkg}/LICENSE"
+          cp -R "${src}/THIRD_PARTY_LICENSES" "${pkg}/THIRD_PARTY_LICENSES"
+          sh install.sh --from-dir "${pkg}" --dir "${dir3}" --quiet
+          "${dir3}/netivri" sub list --home "${home}"
+          test -f "${dir3}/../share/netivri/LICENSE"
+
+          # A source directory without a binary, and --from-dir combined with
+          # --version, are refused.
+          if sh install.sh --from-dir "${RUNNER_TEMP}" --dir "${RUNNER_TEMP}/netivri-inst4/bin"; then
+            echo "installer accepted a directory without a binary" >&2
+            exit 1
+          fi
+          set +e
+          sh install.sh --from-dir "${src}" --version "${VER}" --dir "${RUNNER_TEMP}/netivri-inst4/bin"
+          rc=$?
+          set -e
+          test "${rc}" -eq 2
+          test ! -e "${RUNNER_TEMP}/netivri-inst4/bin/netivri"
+
           # A corrupted archive must be refused and install nothing.
           bad="${RUNNER_TEMP}/netivri-bad"
           rm -rf "${bad}" "${RUNNER_TEMP}/netivri-bad-inst"
@@ -283,6 +343,56 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "netivri version failed" }
           & (Join-Path $dir 'netivri.exe') sub list --home $home_
           if ($LASTEXITCODE -ne 0) { throw "netivri sub list failed (Ktav library missing?)" }
+
+          # Re-installing while a daemon runs from the install dir: the
+          # running exe and the mapped Ktav DLL cannot be overwritten, so the
+          # installer renames them aside and installs the new files.
+          $exe = Join-Path $dir 'netivri.exe'
+          & $exe up --port 0 --home $home_ | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'netivri up (daemon) failed' }
+          & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed while the daemon runs' }
+          $aside = @(Get-ChildItem -Path $dir -Filter '*.old-*')
+          if ($aside.Count -lt 1) { throw 'nothing was renamed aside although the daemon holds the files' }
+          & $exe status --home $home_ | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'the daemon stopped answering after the re-install' }
+          & $exe version | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'the re-installed binary does not run' }
+          & $exe down --home $home_ | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'netivri down failed' }
+          for ($i = 0; $i -lt 20 -and (Get-Process -Name netivri -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
+          & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -Quiet
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed after the daemon stopped' }
+          if (@(Get-ChildItem -Path $dir -Filter '*.old-*').Count -ne 0) { throw 'leftover .old-* files were not cleaned up' }
+
+          # Local source mode: the extracted archive and an npm package layout.
+          $ex = Join-Path $env:RUNNER_TEMP 'netivri-extracted'
+          if (Test-Path $ex) { Remove-Item -Recurse -Force $ex }
+          Expand-Archive -Path (Join-Path $artifacts "netivri_${ver}_windows_amd64.zip") -DestinationPath $ex
+          $src = Join-Path $ex "netivri_${ver}_windows_amd64"
+          $dir2 = Join-Path $env:RUNNER_TEMP 'netivri-inst2\bin'
+          & .\install.ps1 -FromDir $src -InstallDir $dir2 -Quiet
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 -FromDir (archive layout) failed' }
+          & (Join-Path $dir2 'netivri.exe') sub list --home $home_
+          if ($LASTEXITCODE -ne 0) { throw 'netivri sub list failed after -FromDir' }
+          if (-not (Test-Path (Join-Path $dir2 '..\share\netivri\LICENSE'))) { throw 'LICENSE was not installed (archive layout)' }
+          $pkg = Join-Path $env:RUNNER_TEMP 'netivri-pkg'
+          if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
+          New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'bin') | Out-Null
+          Copy-Item (Join-Path $src 'netivri.exe') (Join-Path $pkg 'bin')
+          Copy-Item (Join-Path $src 'ktav_cabi.dll') (Join-Path $pkg 'bin')
+          Copy-Item (Join-Path $src 'LICENSE') $pkg
+          Copy-Item -Recurse (Join-Path $src 'THIRD_PARTY_LICENSES') $pkg
+          $dir3 = Join-Path $env:RUNNER_TEMP 'netivri-inst3\bin'
+          & .\install.ps1 -FromDir $pkg -InstallDir $dir3 -Quiet
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 -FromDir (npm layout) failed' }
+          if (-not (Test-Path (Join-Path $dir3 '..\share\netivri\LICENSE'))) { throw 'LICENSE was not installed (npm layout)' }
+          $usageFailed = $false
+          try {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -FromDir $src -Version $ver -InstallDir (Join-Path $env:RUNNER_TEMP 'netivri-inst4\bin')
+            if ($LASTEXITCODE -eq 2) { $usageFailed = $true }
+          } catch { $usageFailed = $true }
+          if (-not $usageFailed) { throw '-FromDir together with -Version was not a usage error (exit 2)' }
 
           # A corrupted archive must be refused and install nothing.
           $bad = Join-Path $env:RUNNER_TEMP 'netivri-bad'
