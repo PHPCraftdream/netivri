@@ -3,14 +3,12 @@
 package main
 
 import (
-	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -222,27 +220,7 @@ func accountsClient(t *testing.T, proxy, user, pass, target string) {
 
 func accountsCommand(t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	full := append([]string{"account"}, args...)
-	full = append(full, "--home", home, "--json")
-	cmd := exec.CommandContext(ctx, netivriBin, full...)
-	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
-	var out, stderr strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &stderr
-	err := cmd.Run()
-	if ctx.Err() != nil {
-		t.Fatalf("account command timeout: %v", args)
-	}
-	code := 0
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else {
-			t.Fatalf("account command: %v", err)
-		}
-	}
-	return code, out.String(), stderr.String()
+	return accountsRun(t, home, append([]string{"account"}, args...)...)
 }
 
 func TestE2EAccountsRoutingAndCLI(t *testing.T) {
@@ -325,7 +303,7 @@ func TestE2EAccountsRoutingAndCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("account set-country: %s%s", out, stderr)
 	}
-	if listed := accountsListed(); !strings.Contains(listed, `"login":"carol","exit_country":"NL"`) {
+	if listed := accountsListed(); !strings.Contains(listed, `"login":"carol","provider":"","exit_country":"NL"`) {
 		t.Fatalf("set-country not persisted: %s", listed)
 	}
 	code, out, stderr = accountsCommand(t, home, "set-country", "carol", "--none")
@@ -333,7 +311,7 @@ func TestE2EAccountsRoutingAndCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("account set-country --none: %s%s", out, stderr)
 	}
-	if listed := accountsListed(); !strings.Contains(listed, `"login":"carol","exit_country":""`) {
+	if listed := accountsListed(); !strings.Contains(listed, `"login":"carol","provider":"","exit_country":""`) {
 		t.Fatalf("country not cleared: %s", listed)
 	}
 	code, out, stderr = accountsCommand(t, home, "rm", "carol")

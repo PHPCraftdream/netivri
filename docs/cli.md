@@ -24,13 +24,15 @@ netivri sub add <url> [--name N] [--via PROXY]
 netivri sub list
 netivri sub update [N | --all]            re-fetch
 netivri sub rm N
+netivri sub countries [NAME | --url URL [--via PROXY]]
 
 netivri node list [--sub N] [--country CC] [--alive]
 netivri node test [NODE | --all] [--exit] [--timeout 5s]
 
-netivri account add <login> [--country CC]
+netivri account add <login> [--provider NAME] [--country CC]
 netivri account list
 netivri account set-country <login> <CC> | <login> --none
+netivri account set-provider <login> <NAME> | <login> --none
 netivri account rm <login>
 
 netivri use NODE
@@ -71,40 +73,79 @@ not on stderr, not in error messages. The same holds for `--via` proxies.
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
 
+### `sub countries`
+
+Lists the exit countries of a provider or of a subscription URL. Three
+forms; the URL is never printed.
+
+- `sub countries NAME`: the stored snapshot, no network.
+- `sub countries`: every configured provider (config order) plus `countries`,
+  the summed union of their stored snapshots.
+- `sub countries --url URL [--via PROXY]`: fetches through the same strict
+  path as `sub add` (`--via` wins over `fetch.proxy`, no direct fallback),
+  parses and prints, but stores nothing and touches no config. Fetch and
+  parse failures use the `FETCH_*` / `SUBSCRIPTION_*` codes of `sub add`.
+  `--url` together with a NAME, `--via` without `--url` and an empty
+  `--url` are usage errors.
+
+A configured provider without a stored snapshot is reported with null
+fields (like `sub list`); a corrupt snapshot is `SUB_SNAPSHOT_INVALID`.
+
+```json
+{"provider": "main", "nodes": 24, "countries": [{"code": "DE", "nodes": 12}, {"code": "NL", "nodes": 8}], "unknown": 4}
+{"providers": [{"name": "main", "nodes": 24, "countries": [{"code": "DE", "nodes": 12}], "unknown": 0},
+               {"name": "alt", "nodes": null, "countries": null, "unknown": null}],
+ "countries": [{"code": "DE", "nodes": 12}]}
+{"nodes": 3, "countries": [{"code": "DE", "nodes": 2}, {"code": "NL", "nodes": 1}], "unknown": 0}
+```
+
+These are the `data` values for the NAME form, the no-argument form and the
+`--url` form.
+
 ### `account`
 
-An account is a proxy login with an optional exit country (the design is in
-[design/accounts.md](design/accounts.md)).
+An account is a proxy login with an optional provider (a subscription name)
+and exit country (the design is in [design/accounts.md](design/accounts.md)).
 
 - `add` creates the account with the `init` password placeholder: the first
-  client that authenticates with that login sets the password. Repeating
-  `add` with the same login and country succeeds with `existing: true`; a
-  different country is `ACCOUNT_EXISTS` (exit 6).
-- `list` reports `login`, `exit_country` and `password_set` (`false` until
-  the placeholder is claimed); it never returns a password or a hash.
+  client that authenticates with that login sets the password. `--provider
+  NAME` binds it to a provider (subscription). Repeating `add` with the same
+  provider and country succeeds with `existing: true`; any difference is
+  `ACCOUNT_EXISTS` (exit 6).
+- `list` reports `login`, `provider`, `exit_country` and `password_set`
+  (`false` until the placeholder is claimed); it never returns a password or
+  a hash.
 - `set-country` takes an ISO 3166-1 alpha-2 code or `--none` to clear it.
+- `set-provider` binds the account to a provider, or `--none` clears it. A
+  provider must match `[A-Za-z0-9._-]{1,64}` (usage error otherwise) and be
+  a configured subscription (`SUB_NOT_FOUND`, exit 5).
 - `rm` of an unknown login is `ACCOUNT_NOT_FOUND` (exit 5); it is not
   idempotent.
 - `ACCOUNT_INVALID` and `COUNTRY_INVALID` are usage errors (exit 2).
 
 ```json
-{"account": {"login": "alice", "exit_country": "DE", "password_set": false}, "existing": false}
-{"accounts": [{"login": "alice", "exit_country": "DE", "password_set": false}]}
-{"account": {"login": "alice", "exit_country": "NL", "password_set": false}}
+{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}, "existing": false}
+{"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}]}
+{"account": {"login": "alice", "provider": "", "exit_country": "NL", "password_set": false}}
 {"removed": "alice"}
 ```
 
-These are the `data` values, respectively, for add, list, set-country and rm.
+These are the `data` values, respectively, for add, list, set-country/
+set-provider and rm.
 
-Routing is applied by `up`. An account with an exit country needs stored
-subscription snapshots that hold nodes of that country; `up` does not require
-those nodes to be alive. If no stored node matches, `up` fails with
-`NO_NODES_FOR_COUNTRY` (exit 5, hint `netivri sub update`) before binding
-anything. The nodes of a country are ordered by node id and used only for the
-accounts of that country: there is no fallback to a direct connection or to
-another country. Accounts without a country, and `auth`'s account, take the
-default route, which is direct until a node is selected. Changes take effect
-after the daemon restarts (`down`, then `up`).
+Routing is applied by `up`. An account with a provider and/or an exit country
+needs stored subscription snapshots that hold matching nodes (provider set:
+only that provider; country set: only nodes of that country); `up` does not
+require those nodes to be alive. If no stored node matches, `up` fails with
+`NO_NODES_FOR_COUNTRY` (exit 5, hint `netivri sub update`; the message names
+the country and/or the provider, never a URL) before binding anything.
+
+The nodes of a route are ordered by ascending node id (ties across
+providers by provider name) and used only for the accounts of that
+route: there is no fallback to a direct connection or to another
+country or provider. Accounts without a provider and country, and
+auth's account, take the default route, which is direct until a node is selected.
+Changes take effect after the daemon restarts (`down`, then `up`).
 
 ### `up`
 
@@ -203,8 +244,8 @@ Reports the live status of the running instance.
 Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
-`version` (the daemon binary's version), `accounts` (see `account`) and
-`warm`. The selection fields of the planned shape below are not included
+`version` (the daemon binary's version), `accounts` (see `account`; each record is
+`{"login", "provider", "exit_country"}`, sorted by login) and `warm`. The selection fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
@@ -212,7 +253,7 @@ exit country): background probes of every node proxy through the node itself,
 every 45 seconds, with the counters
 `{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
 "nodes": [{"name", "alive", "delay_ms"}]}`. `nodes[].name` is an internal proxy
-name (`netivri-<CC>-<index>`), never a provider name; `delay_ms` is `0` until a
+name (`netivri-r<R>-<N>`, the route and the node index), never a provider name; `delay_ms` is `0` until a
 probe succeeded. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
 The probes request `http://www.gstatic.com/generate_204` through each node.
 
@@ -395,10 +436,11 @@ Raw proxy mappings (credentials) are never printed.
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
+| `SUB_IN_USE` | 6 | `sub rm` of a subscription an account is bound to as its provider (nothing is removed; hint: `netivri account set-provider LOGIN --none`) |
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
-| `NO_NODES_FOR_COUNTRY` | 5 | No stored node exits in the country an account asks for (`up`); the nodes need not be alive |
+| `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
 | `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
@@ -420,7 +462,9 @@ Raw proxy mappings (credentials) are never printed.
 - `down` when not running: exit 0.
 - `status` when not running: `DAEMON_NOT_RUNNING`, exit 4.
 - `use` with the current selection: exit 0.
-- `account add` with the same login and country, and repeated `account set-country` with the same country: exit 0; `account rm` is not idempotent.
+- `account add` with the same login, provider and country, repeated `account
+  set-country` with the same country and repeated `account set-provider` with
+  the same provider: exit 0; `account rm` and `sub rm` are not idempotent.
 
 ## Security
 

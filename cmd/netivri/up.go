@@ -263,7 +263,7 @@ func runUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return failStartup(opts.Handshake, err)
 	}
-	if _, _, err := accountCountryPool(opts.Home, cfg); err != nil {
+	if _, _, err := accountRoutePool(opts.Home, cfg); err != nil {
 		return failStartup(opts.Handshake, err)
 	}
 	if !opts.Foreground {
@@ -318,7 +318,7 @@ func runUpForeground(opts upOptions, stdout io.Writer, bind string, port int, cf
 var runForegroundInner = serve
 
 func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
-	countries, accountRoutes, err := accountCountryPool(opts.Home, cfg)
+	countries, accountRoutes, err := accountRoutePool(opts.Home, cfg)
 	if err != nil {
 		return err
 	}
@@ -347,13 +347,13 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	inst, err := core.Start(ctx, core.Options{
-		HomeDir:        opts.Home,
-		Bind:           bind,
-		Port:           port,
-		Authenticator:  authenticator,
-		Countries:      countries,
-		AccountCountry: accountRoutes,
-		Warm:           warmOptions(countries),
+		HomeDir:       opts.Home,
+		Bind:          bind,
+		Port:          port,
+		Authenticator: authenticator,
+		RouteNodes:    countries,
+		AccountRoute:  accountRoutes,
+		Warm:          warmOptions(countries),
 	})
 	if err != nil {
 		return err

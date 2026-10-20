@@ -23,9 +23,10 @@ func NewToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// AccountInfo describes an account's configured exit-country route.
+// AccountInfo describes an account's configured provider and exit-country route.
 type AccountInfo struct {
 	Login       string `json:"login"`
+	Provider    string `json:"provider"`
 	ExitCountry string `json:"exit_country"`
 }
 

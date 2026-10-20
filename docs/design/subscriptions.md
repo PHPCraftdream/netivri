@@ -66,6 +66,21 @@ Best effort: returns `""` when nothing matches; `node list` reports the
 source as `name` (see docs/cli.md) and `use --country` may therefore miss
 nodes whose names carry no signal.
 
+## Countries
+
+The exit country of a node is inferred from its provider-supplied name by
+`CountryFromName` (see "Country inference"); it is best effort and stored
+with the node. `CountryCounts` summarises a node list into
+`[]CountryCount{code, nodes}` sorted by code plus a count of nodes without
+a country.
+
+`netivri sub countries` reports these counts: for a NAME from the stored
+snapshot (no network), for every configured provider plus a summed union
+with no argument, and for `--url URL [--via PROXY]` by fetching through
+the same strict path as `sub add` (the `--via` proxy or `fetch.proxy`, no
+direct fallback) without storing anything. A provider without a stored
+snapshot is reported with null fields; the URL is never printed.
+
 ## On-disk layout
 
 `Store` persists one JSON file per subscription under

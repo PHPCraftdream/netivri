@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -14,21 +15,38 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
-func accountCountryPool(home string, cfg *config.Config) (map[string][]map[string]any, map[string]string, error) {
-	wanted := map[string]bool{}
-	routes := map[string]string{}
-	for _, a := range cfg.Accounts {
-		if a.ExitCountry != "" {
-			routes[a.Login] = a.ExitCountry
-			wanted[a.ExitCountry] = true
+// routeKey builds the opaque route key of a (provider, country) pair; both
+// parts are already normalised (upper-case country) and either may be empty.
+func routeKey(provider, country string) string {
+	return provider + "~" + country
+}
+
+// snapshotDemand tells which stored snapshots the routes read: all of them
+// when some route has a country but no provider, else only the named ones.
+func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool) {
+	named = make(map[string]bool)
+	for _, a := range accounts {
+		switch {
+		case a.Provider != "":
+			named[a.Provider] = true
+		case a.ExitCountry != "":
+			all = true
 		}
 	}
-	if len(wanted) == 0 {
-		return map[string][]map[string]any{}, routes, nil
-	}
+	return all, named
+}
+
+// accountRoutePool loads the stored snapshots the accounts' routes need and
+// builds the per-account route pool for `up`. Snapshots no route reads are
+// not touched, so a broken one cannot block unrelated accounts.
+func accountRoutePool(home string, cfg *config.Config) (map[string][]map[string]any, map[string]string, error) {
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
-	snapshots := make([]*subscription.Snapshot, 0, len(cfg.Subscriptions))
+	all, named := snapshotDemand(cfg.Accounts)
+	snapshots := make(map[string]*subscription.Snapshot, len(cfg.Subscriptions))
 	for _, sub := range cfg.Subscriptions {
+		if !all && !named[sub.Name] {
+			continue
+		}
 		snap, err := store.Load(sub.Name)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -36,64 +54,119 @@ func accountCountryPool(home string, cfg *config.Config) (map[string][]map[strin
 		if err != nil {
 			return nil, nil, snapshotError(sub.Name)
 		}
-		snapshots = append(snapshots, snap)
+		snapshots[sub.Name] = snap
 	}
-	countries, err := buildAccountCountryPool(cfg.Accounts, snapshots)
+	routes, err := buildAccountRoutePool(cfg.Accounts, snapshots)
 	if err != nil {
 		return nil, nil, err
 	}
-	return countries, routes, nil
+	return routes.nodes, routes.accountRoutes, nil
 }
 
-func buildAccountCountryPool(accounts []config.Account, snapshots []*subscription.Snapshot) (map[string][]map[string]any, error) {
-	wanted := map[string]bool{}
+// routePool is the outcome of buildAccountRoutePool: the nodes of every
+// route and each account's route key.
+type routePool struct {
+	nodes         map[string][]map[string]any
+	accountRoutes map[string]string
+}
+
+// buildAccountRoutePool is a pure function over the stored snapshots: for
+// every account with a provider and/or an exit country it collects the
+// route's nodes per docs/design/accounts.md, ordered by ascending node id
+// (ties broken by provider name). An account with neither has no route.
+// A route without nodes is a hard error: `up` fails closed.
+func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot) (routePool, error) {
+	pool := routePool{nodes: map[string][]map[string]any{}, accountRoutes: map[string]string{}}
+	type demand struct {
+		provider string
+		country  string
+	}
+	seen := make(map[demand]bool)
+	var wanted []demand // in account order, so the first failure is stable
 	for _, a := range accounts {
-		if a.ExitCountry != "" {
-			wanted[a.ExitCountry] = true
-		}
-	}
-	countries := map[string][]map[string]any{}
-	if len(wanted) == 0 {
-		return countries, nil
-	}
-	type poolNode struct {
-		id  string
-		raw map[string]any
-	}
-	ordered := make(map[string][]poolNode, len(wanted))
-	codes := make([]string, 0, len(wanted))
-	for c := range wanted {
-		codes = append(codes, c)
-		ordered[c] = nil
-	}
-	sort.Strings(codes)
-	for _, snap := range snapshots {
-		if snap == nil {
+		if a.Provider == "" && a.ExitCountry == "" {
 			continue
 		}
-		for _, n := range snap.Nodes {
-			if wanted[n.Country] {
-				ordered[n.Country] = append(ordered[n.Country], poolNode{id: n.ID, raw: n.Raw})
+		pool.accountRoutes[a.Login] = routeKey(a.Provider, a.ExitCountry)
+		d := demand{a.Provider, a.ExitCountry}
+		if !seen[d] {
+			seen[d] = true
+			wanted = append(wanted, d)
+		}
+	}
+	if len(wanted) == 0 {
+		return pool, nil
+	}
+	// Deterministic provider order: sorted provider names.
+	allProviders := make([]string, 0, len(snapshots))
+	for name := range snapshots {
+		allProviders = append(allProviders, name)
+	}
+	sort.Strings(allProviders)
+	for _, d := range wanted {
+		names := allProviders
+		if d.provider != "" {
+			names = []string{d.provider}
+		}
+		type poolNode struct {
+			provider string
+			id       string
+			raw      map[string]any
+		}
+		var nodes []poolNode
+		for _, name := range names {
+			snap := snapshots[name]
+			if snap == nil {
+				continue
+			}
+			for _, n := range snap.Nodes {
+				if d.country != "" && n.Country != d.country {
+					continue
+				}
+				nodes = append(nodes, poolNode{provider: name, id: n.ID, raw: n.Raw})
 			}
 		}
-	}
-	for _, c := range codes {
-		nodes := ordered[c]
-		sort.Slice(nodes, func(i, j int) bool { return nodes[i].id < nodes[j].id })
 		if len(nodes) == 0 {
-			return nil, &cli.Error{Code: "NO_NODES_FOR_COUNTRY", Message: fmt.Sprintf("no nodes available for country %s", c), Hint: "run netivri sub update before netivri up", Exit: cli.ExitNotFound}
+			return routePool{}, noNodesError(d.provider, d.country)
 		}
+		sort.Slice(nodes, func(i, j int) bool {
+			if nodes[i].id != nodes[j].id {
+				return nodes[i].id < nodes[j].id
+			}
+			return nodes[i].provider < nodes[j].provider
+		})
+		key := routeKey(d.provider, d.country)
 		for _, n := range nodes {
-			countries[c] = append(countries[c], n.raw)
+			pool.nodes[key] = append(pool.nodes[key], n.raw)
 		}
 	}
-	return countries, nil
+	return pool, nil
+}
+
+// noNodesError reports a route without nodes. The message names the
+// country code and/or the provider name, never a URL.
+func noNodesError(provider, country string) error {
+	var msg string
+	switch {
+	case provider != "" && country != "":
+		msg = fmt.Sprintf("no nodes available for country %s of provider %q", country, provider)
+	case provider != "":
+		msg = fmt.Sprintf("no nodes available for provider %q", provider)
+	default:
+		msg = fmt.Sprintf("no nodes available for country %s", country)
+	}
+	return &cli.Error{
+		Code:    "NO_NODES_FOR_COUNTRY",
+		Message: msg,
+		Hint:    "run netivri sub update before netivri up",
+		Exit:    cli.ExitNotFound,
+	}
 }
 
 // warmOptions turns background probing on, with the default interval and no
-// pool, whenever there are country nodes to keep warm.
-func warmOptions(countries map[string][]map[string]any) *core.WarmOptions {
-	if len(countries) == 0 {
+// pool, whenever there are route nodes to keep warm.
+func warmOptions(routes map[string][]map[string]any) *core.WarmOptions {
+	if len(routes) == 0 {
 		return nil
 	}
 	return &core.WarmOptions{}
@@ -128,14 +201,19 @@ func warmInfoOf(stats core.WarmStats) *daemon.WarmInfo {
 	return info
 }
 
+// accountStatus lists the configured accounts for the status answer,
+// sorted by login. The country comes from the live route key (the part
+// after "~"); a routed account always carries the route it was built for.
 func accountStatus(cfg *config.Config, routes map[string]string) []daemon.AccountInfo {
 	out := make([]daemon.AccountInfo, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
-		country, routed := routes[a.Login]
-		if !routed {
-			country = ""
+		country := ""
+		if key, routed := routes[a.Login]; routed {
+			if i := strings.Index(key, "~"); i >= 0 {
+				country = key[i+1:]
+			}
 		}
-		out = append(out, daemon.AccountInfo{Login: a.Login, ExitCountry: country})
+		out = append(out, daemon.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out

@@ -113,7 +113,7 @@ func TestAccountPersistUpdatesOnlyMatchingPassword(t *testing.T) {
 func TestAccountStatusJSONSortedAndRedacted(t *testing.T) {
 	old := daemonProbeLive
 	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{Accounts: []daemon.AccountInfo{{Login: "z", ExitCountry: "DE"}, {Login: "alice"}}}, nil
+		return daemon.State{}, daemon.Status{Accounts: []daemon.AccountInfo{{Login: "z", Provider: "main", ExitCountry: "DE"}, {Login: "alice"}}}, nil
 	}
 	t.Cleanup(func() { daemonProbeLive = old })
 	var out bytes.Buffer
@@ -123,15 +123,18 @@ func TestAccountStatusJSONSortedAndRedacted(t *testing.T) {
 	var result struct {
 		Data struct {
 			Accounts []struct {
-				Login   string `json:"login"`
-				Country string `json:"exit_country"`
+				Login    string `json:"login"`
+				Provider string `json:"provider"`
+				Country  string `json:"exit_country"`
 			} `json:"accounts"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Data.Accounts) != 2 || result.Data.Accounts[0].Login != "alice" || result.Data.Accounts[0].Country != "" || result.Data.Accounts[1].Login != "z" || result.Data.Accounts[1].Country != "DE" || strings.Contains(out.String(), "password") {
+	accts := result.Data.Accounts
+	if len(accts) != 2 || accts[0].Login != "alice" || accts[0].Provider != "" || accts[0].Country != "" ||
+		accts[1].Login != "z" || accts[1].Provider != "main" || accts[1].Country != "DE" || strings.Contains(out.String(), "password") {
 		t.Fatalf("unexpected status output: %s", out.String())
 	}
 }

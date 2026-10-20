@@ -98,6 +98,16 @@ func (a *subApp) rm(args []string) error {
 	if idx < 0 {
 		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
 	}
+	for _, ac := range cfg.Accounts {
+		if ac.Provider == name {
+			return &cli.Error{
+				Code:    "SUB_IN_USE",
+				Message: fmt.Sprintf("subscription %q is bound to an account", name),
+				Hint:    "netivri account set-provider LOGIN --none",
+				Exit:    cli.ExitConflict,
+			}
+		}
+	}
 	cfg.Subscriptions = append(cfg.Subscriptions[:idx], cfg.Subscriptions[idx+1:]...)
 	if err := cfg.Validate(); err != nil {
 		return err

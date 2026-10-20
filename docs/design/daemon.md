@@ -48,7 +48,7 @@ successor's replacement between checking and deleting. Matching pid/token
 protects normal stale cleanup and shutdown from deleting a successor.
 
 Status JSON may include additive `accounts`, an omitted-when-empty array of
-`{"login":"alice","exit_country":"DE"}` records. It contains neither
+`{"login":"alice","provider":"main","exit_country":"DE"}` records. It contains neither
 password hashes nor other credentials; live status sorts records by login.
 
 ## The handshake

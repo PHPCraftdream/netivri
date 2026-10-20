@@ -11,13 +11,14 @@ import (
 
 type accountInfo struct {
 	Login       string `json:"login"`
+	Provider    string `json:"provider"`
 	ExitCountry string `json:"exit_country"`
 	PasswordSet bool   `json:"password_set"`
 }
 
 func runAccount(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return cli.Usage("account: missing subcommand (add, list, set-country, rm)")
+		return cli.Usage("account: missing subcommand (add, list, set-country, set-provider, rm)")
 	}
 	home, rest, err := parseHomeArgs("account "+args[0], args[1:])
 	if err != nil {
@@ -45,7 +46,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		}
 		items := make([]accountInfo, 0, len(cfg.Accounts))
 		for _, a := range cfg.Accounts {
-			items = append(items, accountInfo{a.Login, a.ExitCountry, accountHasPassword(&a)})
+			items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(&a)})
 		}
 		cli.Success(stdout, map[string]any{"accounts": items})
 		return nil
@@ -53,6 +54,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		fs := flag.NewFlagSet("account add", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		country := fs.String("country", "", "exit country")
+		provider := fs.String("provider", "", "subscription (provider) the account exits through")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
 			return usage("invalid flags")
@@ -72,21 +74,27 @@ func runAccount(args []string, stdout io.Writer) error {
 				return &cli.Error{Code: "COUNTRY_INVALID", Message: "invalid country code", Exit: cli.ExitUsage}
 			}
 		}
+		prov := *provider
+		if prov != "" {
+			if err := checkProvider(cfg, prov); err != nil {
+				return err
+			}
+		}
 		if cfg.Auth.Login == login && cfg.Auth.Login != config.InitPlaceholder {
 			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
 		}
 		if a, _ := cfg.Account(login); a != nil {
-			if a.ExitCountry == cc {
-				cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.ExitCountry, accountHasPassword(a)}, "existing": true})
+			if a.ExitCountry == cc && a.Provider == prov {
+				cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(a)}, "existing": true})
 				return nil
 			}
-			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different country", Exit: cli.ExitConflict}
+			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider or country", Exit: cli.ExitConflict}
 		}
-		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, ExitCountry: cc})
+		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc})
 		if err := save(); err != nil {
 			return err
 		}
-		cli.Success(stdout, map[string]any{"account": accountInfo{login, cc, false}, "existing": false})
+		cli.Success(stdout, map[string]any{"account": accountInfo{login, prov, cc, false}, "existing": false})
 		return nil
 	case "set-country":
 		fs := flag.NewFlagSet("account set-country", flag.ContinueOnError)
@@ -116,7 +124,36 @@ func runAccount(args []string, stdout io.Writer) error {
 		if err := save(); err != nil {
 			return err
 		}
-		cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.ExitCountry, accountHasPassword(a)}})
+		cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(a)}})
+		return nil
+	case "set-provider":
+		fs := flag.NewFlagSet("account set-provider", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		none := fs.Bool("none", false, "clear provider")
+		pos, e := parseFlags(fs, rest)
+		if e != nil || (*none && len(pos) != 1) || (!*none && len(pos) != 2) {
+			return usage("requires LOGIN NAME (or LOGIN --none)")
+		}
+		login := pos[0]
+		if !config.ValidAccountLogin(login) {
+			return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
+		}
+		a, _ := cfg.Account(login)
+		if a == nil {
+			return accountNotFound()
+		}
+		prov := ""
+		if !*none {
+			prov = pos[1]
+			if err := checkProvider(cfg, prov); err != nil {
+				return err
+			}
+		}
+		a.Provider = prov
+		if err := save(); err != nil {
+			return err
+		}
+		cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(a)}})
 		return nil
 	case "rm":
 		if len(rest) != 1 {
@@ -139,6 +176,20 @@ func runAccount(args []string, stdout io.Writer) error {
 	default:
 		return cli.Usage("unknown account command %q", args[0])
 	}
+}
+
+// checkProvider validates a provider name and requires it to be a
+// configured subscription. The name is a label, never a URL.
+func checkProvider(cfg *config.Config, name string) error {
+	if !config.ValidProviderName(name) {
+		return cli.Usage("account: --provider must match [A-Za-z0-9._-]{1,64}")
+	}
+	for _, s := range cfg.Subscriptions {
+		if s.Name == name {
+			return nil
+		}
+	}
+	return &cli.Error{Code: "SUB_NOT_FOUND", Message: "no subscription with that name", Exit: cli.ExitNotFound}
 }
 
 func accountHasPassword(a *config.Account) bool {

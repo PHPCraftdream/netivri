@@ -67,7 +67,7 @@ func (a *subApp) load() (*config.Config, error) { return loadConfig(a.home) }
 // runSub dispatches the `sub` subcommands.
 func runSub(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return cli.Usage("sub: missing subcommand (add, list, update, rm)")
+		return cli.Usage("sub: missing subcommand (add, list, update, rm, countries)")
 	}
 	home, rest, err := parseHomeArgs("sub "+args[0], args[1:])
 	if err != nil {
@@ -81,6 +81,8 @@ func runSub(args []string, stdout io.Writer) error {
 		return app.list()
 	case "update":
 		return app.update(rest)
+	case "countries":
+		return app.countries(rest)
 	case "rm":
 		return app.rm(rest)
 	default:
