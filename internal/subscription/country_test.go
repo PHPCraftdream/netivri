@@ -2,6 +2,16 @@ package subscription
 
 import "testing"
 
+func TestIsCountryCode(t *testing.T) {
+	for cc, want := range map[string]bool{
+		"DE": true, "de": true, "US": true, "ZZ": false, "XX": false, "D": false, "GER": false, "": false, "D1": false,
+	} {
+		if got := IsCountryCode(cc); got != want {
+			t.Errorf("IsCountryCode(%q) = %v, want %v", cc, got, want)
+		}
+	}
+}
+
 func TestCountryFromName(t *testing.T) {
 	england := "🏴\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067" + " London"
 	scotland := "🏴\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074"

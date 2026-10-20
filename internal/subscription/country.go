@@ -20,6 +20,13 @@ var ambiguousISO = map[string]struct{}{
 // it explicit (brackets, pipes, dashes, digits-adjacent separators).
 const delimChars = "|[](){}/\\-_.:,;#+"
 
+// IsCountryCode reports whether cc (any case) is an assigned ISO 3166-1
+// alpha-2 code.
+func IsCountryCode(cc string) bool {
+	_, ok := isoAlpha2[strings.ToUpper(cc)]
+	return ok
+}
+
 // CountryFromName infers an ISO 3166-1 alpha-2 exit country from a node
 // name, without any network access. It returns "" when nothing matches.
 // Order: flag emoji, explicit ISO token, English names/cities, Russian
