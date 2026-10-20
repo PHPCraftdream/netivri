@@ -179,7 +179,7 @@ try {
   $expected = $null
   foreach ($line in (Get-Content -LiteralPath $sumsPath)) {
     $parts = $line -split '\s+'
-    if ($parts.Count -ge 2 -and $parts[0] -match '^[0-9a-fA-F]{64}$' -and $parts[1] -eq $Archive) {
+    if ($parts.Count -ge 2 -and $parts[0] -match '^[0-9a-fA-F]{64}$' -and $parts[1].TrimStart('*') -eq $Archive) {
       $expected = $parts[0]
       break
     }

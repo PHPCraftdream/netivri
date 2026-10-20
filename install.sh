@@ -246,7 +246,7 @@ fetch "$ARCHIVE_URL" "$TMP/$ARCHIVE"
 fetch "$SUMS_URL" "$TMP/SHA256SUMS"
 
 # Verify the checksum BEFORE anything is extracted or installed.
-expected="$(awk -v a="$ARCHIVE" '$1 ~ /^[0-9a-fA-F]{64}$/ && $2 == a {print $1; exit}' "$TMP/SHA256SUMS")"
+expected="$(awk -v a="$ARCHIVE" '$1 ~ /^[0-9a-fA-F]{64}$/ && ($2 == a || $2 == "*" a) {print $1; exit}' "$TMP/SHA256SUMS")"
 [ -n "$expected" ] || fail "SHA256SUMS has no entry for $ARCHIVE"
 actual="$(sha_of "$TMP/$ARCHIVE")"
 if [ "$actual" != "$expected" ]; then
