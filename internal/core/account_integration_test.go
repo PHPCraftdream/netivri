@@ -235,14 +235,65 @@ func assertAccountUpstreams(t *testing.T, selected *fakeUpstream, others []*fake
 	}
 }
 
-func TestAccountRouteDeadNodeFailsClosed(t *testing.T) {
-	deadDE, deadDEAddress := startFakeUpstream(t)
-	liveNL, liveNLAddress := startFakeUpstream(t)
-	liveDefault, liveDefaultAddress := startFakeUpstream(t)
-	backend, targetCount := countEchoServer(t)
+// Both route nodes dead: every connection fails closed and never falls back
+// to DIRECT or anything else.
+func TestAccountRouteAllDeadNodesFailClosed(t *testing.T) {
+	backend, backendConnections := countEchoServer(t)
+	// The dead addresses are reserved last so no live listener can hold them.
+	var deadAddresses []string
+	for i := 0; i < 2; i++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserve dead upstream address: %v", err)
+		}
+		deadAddresses = append(deadAddresses, listener.Addr().String())
+		if err := listener.Close(); err != nil {
+			t.Fatalf("close reserved upstream: %v", err)
+		}
+	}
 
-	// The dead address is reserved last: every live listener already holds its
-	// own port, so the closed one cannot be handed to any of them.
+	instance, err := Start(context.Background(), Options{
+		HomeDir: testutil.TempHome(t),
+		Authenticator: mihomoAuth.NewAuthenticator([]mihomoAuth.AuthUser{
+			{User: "alice", Pass: alicePassword},
+		}),
+		RouteNodes: map[string][]map[string]any{
+			"de": {deadNodeMap(deadAddresses[0]), deadNodeMap(deadAddresses[1])},
+		},
+		AccountRoute: map[string]string{"alice": "de"},
+	})
+	if err != nil {
+		t.Fatalf("Start fail-closed instance: %v", err)
+	}
+	t.Cleanup(func() { _ = instance.Close() })
+
+	// "localhost" with the backend's port is directly reachable: a fallback to
+	// DIRECT would reach the backend, which is checked below.
+	domain := "localhost"
+	for attempt := 0; attempt < 4; attempt++ {
+		err := tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword)
+		if err == nil {
+			t.Fatalf("attempt %d succeeded although every route node is dead", attempt)
+		}
+		if strings.Contains(err.Error(), "auth reply") {
+			t.Fatalf("attempt %d failed at authentication, not at the route: %v", attempt, err)
+		}
+	}
+	if got := backendConnections.Load(); got != 0 {
+		t.Fatalf("the backend saw %d connections: the route fell back to a direct dial", got)
+	}
+}
+
+// One dead and one live node: within a few sequential attempts to the same
+// site one connection succeeds through the live node (the first attempts may
+// fail until the dead node is marked down after 3 failed dials, at which
+// point the same dial is retried once on the live node), and afterwards every
+// further connection to the site succeeds through the live node.
+func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
+	live, liveAddress := startFakeUpstream(t)
+	backend, _ := countEchoServer(t)
+	// The dead address is reserved after every live listener exists, so none
+	// of them can hold it.
 	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve dead upstream address: %v", err)
@@ -256,84 +307,46 @@ func TestAccountRouteDeadNodeFailsClosed(t *testing.T) {
 		HomeDir: testutil.TempHome(t),
 		Authenticator: mihomoAuth.NewAuthenticator([]mihomoAuth.AuthUser{
 			{User: "alice", Pass: alicePassword},
-			{User: "bob", Pass: bobPassword},
 		}),
-		Node: nodeMap(liveDefaultAddress),
 		RouteNodes: map[string][]map[string]any{
-			"de": {deadNodeMap(deadAddress), nodeMap(deadDEAddress)},
-			"nl": {nodeMap(liveNLAddress)},
+			"de": {deadNodeMap(deadAddress), nodeMap(liveAddress)},
 		},
-		AccountRoute: map[string]string{"alice": "de", "bob": "nl"},
+		AccountRoute: map[string]string{"alice": "de"},
 	})
 	if err != nil {
-		t.Fatalf("Start fail-closed instance: %v", err)
+		t.Fatalf("Start failover instance: %v", err)
 	}
 	t.Cleanup(func() { _ = instance.Close() })
 
-	for _, protocol := range []string{"socks5", "http-connect"} {
-		t.Run(protocol, func(t *testing.T) {
-			connection := dialProxy(t, instance.Addr())
-			if err := connection.SetDeadline(time.Now().Add(testTimeout)); err != nil {
-				t.Fatalf("set connection deadline: %v", err)
-			}
-			if protocol == "socks5" {
-				if _, err := connection.Write([]byte{5, 1, 2}); err != nil {
-					t.Fatal(err)
-				}
-				if response := readFull(t, connection, 2); response[1] != 2 {
-					t.Fatalf("SOCKS greeting response = %v", response)
-				}
-				if response := socks5SendAuth(t, connection, "alice", alicePassword); response[1] != 0 {
-					t.Fatalf("SOCKS authentication response = %v", response)
-				}
-				if _, err := connection.Write(socks5ConnectRequestBytes(backend)); err != nil {
-					t.Fatalf("SOCKS CONNECT request: %v", err)
-				}
-				readFull(t, connection, 10)
-			} else {
-				credential := base64.StdEncoding.EncodeToString([]byte("alice:" + alicePassword))
-				target := net.JoinHostPort("127.0.0.1", mustPort(t, backend))
-				request := fmt.Sprintf(
-					"CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n",
-					target, target, credential,
-				)
-				if _, err := io.WriteString(connection, request); err != nil {
-					t.Fatalf("HTTP CONNECT request: %v", err)
-				}
-				reader := bufio.NewReader(connection)
-				status, err := reader.ReadString('\n')
-				if err != nil || status != "HTTP/1.1 200 Connection established\r\n" {
-					t.Fatalf("HTTP CONNECT response = %q, err = %v", status, err)
-				}
-				for {
-					line, err := reader.ReadString('\n')
-					if err != nil {
-						t.Fatalf("HTTP CONNECT headers: %v", err)
-					}
-					if line == "\r\n" {
-						break
-					}
-				}
-			}
+	domain := "failover.invalid"
+	live.mapDomain(domain, backend)
+	target := net.JoinHostPort(domain, mustPort(t, backend))
 
-			payload := []byte("must-not-fail-open")
-			_, _ = connection.Write(payload)
-			_ = connection.SetReadDeadline(time.Now().Add(testTimeout))
-			_, readErr := io.ReadFull(connection, make([]byte, len(payload)))
-			if readErr == nil {
-				t.Fatal("payload reached target despite dead selected node")
-			}
-			if timeoutErr, ok := readErr.(net.Error); ok && timeoutErr.Timeout() {
-				t.Fatalf("dead selected route neither failed nor closed: %v", readErr)
-			}
-			_ = connection.Close()
-			if got := targetCount.Load(); got != 0 {
-				t.Fatalf("target accepted %d connections, want 0", got)
-			}
-			for _, upstream := range []*fakeUpstream{liveNL, liveDefault, deadDE} {
-				assertUpstreamSaw(t, upstream, nil)
-			}
-		})
+	succeeded := 0
+	for attempt := 0; attempt < 6 && succeeded == 0; attempt++ {
+		if tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword) == nil {
+			succeeded++
+		}
+	}
+	if succeeded == 0 {
+		t.Fatal("no connection succeeded within 6 attempts")
+	}
+	if got := live.recorded(); len(got) == 0 || got[0] != target {
+		t.Fatalf("live upstream saw %v, want [%s]", got, target)
+	}
+	if got := len(live.recorded()); got != succeeded {
+		t.Fatalf("live upstream saw %d connections, want %d", got, succeeded)
+	}
+
+	// The binding now points at the live node: every further connection
+	// succeeds through it.
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword); err != nil {
+			t.Fatalf("attempt %d after failover failed: %v", attempt, err)
+		}
+	}
+	if got, want := len(live.recorded()), succeeded+3; got != want {
+		t.Fatalf("live upstream saw %d connections, want %d", got, want)
 	}
 }
 

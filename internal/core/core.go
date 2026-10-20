@@ -5,8 +5,10 @@
 // routes the default route through the selected upstream node (fixed internal
 // name "netivri-node"); domain destinations are passed to the node unresolved.
 // Account mappings add per-user route groups while keeping the default route
-// intact. There is no fallback when a routed node is unreachable. Routes are
-// chosen at Start time only; hot-switching is not supported yet.
+// intact. There is no fallback when a routed node is unreachable. Route
+// groups are sticky groups: connections of one account to one site leave
+// through the same member while it is healthy (see docs/design/node-stats.md).
+// Routes are chosen at Start time only; hot-switching is not supported yet.
 package core
 
 import (
@@ -17,6 +19,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	auth "github.com/metacubex/mihomo/component/auth"
@@ -29,6 +32,7 @@ import (
 	"github.com/metacubex/mihomo/listener/mixed"
 	mihomolog "github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
+	"github.com/metacubex/mihomo/tunnel/statistic"
 	logrus "github.com/sirupsen/logrus"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -55,6 +59,16 @@ type Options struct {
 	// with PoolSize > 0, a pre-dial pool for the default node (see warm.go).
 	// nil disables both.
 	Warm *WarmOptions
+	// NodeLabels optionally overrides the statistics label of every route
+	// node: route key -> one label per node, same order and length as
+	// RouteNodes[key]. nil labels a node "r<R>-<N>".
+	NodeLabels map[string][]string
+	// Observer optionally receives probe, dial and throughput measurements
+	// of the route nodes. nil disables reporting.
+	Observer Observer
+	// AffinityTTL is how long an idle site binding is kept before it is
+	// dropped. 0 means 24 hours; a negative value is invalid.
+	AffinityTTL time.Duration
 }
 
 // Instance is one running proxy listener.
@@ -67,6 +81,11 @@ type Instance struct {
 	route         string // "direct" or "node"; immutable after Start publishes the instance
 	accountRoutes map[string]string
 	warm          *warmer // nil without Options.Warm; immutable after Start publishes the instance
+	// Sticky-group state, nil without account routes; immutable after Start
+	// publishes the instance.
+	stickyTable  *affinityTable
+	stickyHealth *healthTable
+	poller       *throughputPoller
 }
 
 var (
@@ -103,6 +122,10 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	// constant.SetHomeDir expects an existing directory.
 	if err := os.MkdirAll(o.HomeDir, 0o700); err != nil {
 		return nil, err
+	}
+
+	if o.AffinityTTL < 0 {
+		return nil, nodeInvalid("affinity TTL is negative")
 	}
 
 	lifecycleMu.Lock()
@@ -148,6 +171,20 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The per-route sticky groups: built after prepareRoutes (the select
+	// groups stay in the raw config so the rules validate) and installed
+	// into the proxy map after ApplyConfig below.
+	plans, err := buildRoutePlans(o)
+	if err != nil {
+		return nil, err
+	}
+	var table *affinityTable
+	var health *healthTable
+	var poller *throughputPoller
+	if len(plans) > 0 {
+		table = newAffinityTable(nil, o.AffinityTTL)
+		health = newHealthTable()
+	}
 	if everApplied {
 		// A previous configuration left adapters whose finalizers read the
 		// logger level that ApplyConfig is about to rewrite.
@@ -155,6 +192,15 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	executor.ApplyConfig(cfg, true)
 	everApplied = true
+
+	if len(plans) > 0 {
+		// The replaced select groups become garbage; their finalizers are
+		// drained by the next Start through drainFinalizers.
+		if err := installStickyGroups(plans, table, health, o.Observer); err != nil {
+			executor.Shutdown()
+			return nil, err
+		}
+	}
 
 	bind := o.Bind
 	if bind == "" {
@@ -180,12 +226,23 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	// stopped before executor.Shutdown, see Close.
 	var warm *warmer
 	if o.Warm != nil {
-		warm, err = startWarm(*o.Warm, o.Node)
+		// Copy: never mutate the caller's WarmOptions.
+		wo := *o.Warm
+		if len(plans) > 0 {
+			// Feed the probe results to the sticky health table and the
+			// observer; the caller's own OnProbe, if any, still runs.
+			wo.OnProbe = probeHook(memberNameLabels(plans), health, o.Observer, o.Warm.OnProbe)
+		}
+		warm, err = startWarm(wo, o.Node)
 		if err != nil {
 			_ = ln.Close()
 			executor.Shutdown()
 			return nil, err
 		}
+	}
+	if len(plans) > 0 {
+		poller = newThroughputPoller(managerSource{statistic.DefaultManager}, health, o.Observer, memberNameLabels(plans), realStickyClock{})
+		poller.start()
 	}
 
 	inst := &Instance{
@@ -195,6 +252,9 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		tt:            tt,
 		accountRoutes: copyAccountRoutes(o.AccountRoute),
 		warm:          warm,
+		stickyTable:   table,
+		stickyHealth:  health,
+		poller:        poller,
 	}
 	current = inst
 
@@ -235,6 +295,18 @@ func (i *Instance) WarmStats() (WarmStats, bool) {
 	return i.warm.Stats(), true
 }
 
+// AffinityStats returns the live number of site bindings and the rebind
+// counter; it is safe to call while the instance runs.
+func (i *Instance) AffinityStats() AffinityStats {
+	if i.stickyTable == nil {
+		return AffinityStats{}
+	}
+	return AffinityStats{
+		Bindings: i.stickyTable.count(),
+		Rebinds:  i.stickyTable.rebindCount(),
+	}
+}
+
 // AccountRoutes returns a copy of the configured login-to-route-key routes.
 func (i *Instance) AccountRoutes() map[string]string {
 	return copyAccountRoutes(i.accountRoutes)
@@ -260,6 +332,9 @@ func (i *Instance) Close() error {
 	// No connection may outlive the instance: close the tracked ones and
 	// wait for their handlers before Mihomo's global state is torn down.
 	i.tt.closeAll(closeDrainTimeout)
+	// The throughput poller reads Mihomo's connection trackers: stop it
+	// before Mihomo's global state is torn down.
+	i.poller.stop()
 	// The probes and the pool dial through Mihomo's proxies: stop them first.
 	i.warm.Close()
 	executor.Shutdown()
