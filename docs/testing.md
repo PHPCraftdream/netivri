@@ -60,6 +60,8 @@ Manual runs use `workflow_dispatch` inputs:
 - `run` — `-run` regex to select individual tests (default: all).
 - `os` — `all`, `ubuntu`, `windows` or `macos` (default `all`).
 - `race` — enable the race detector (default true).
+- `benchtime` — `go test -benchtime` for the bench job, e.g. `1x`,
+  `2s`, `5x` (default `1x`).
 
 Push and pull_request events use the defaults (`./...`, all levels, all OS).
 
@@ -70,7 +72,31 @@ Each CI job selects its own tags:
 - **integration** — always adds the `integration` tag plus the user tags.
 - **e2e** — adds the `e2e` tag plus the user tags.
 - **bench** — runs with the user tags (the job only triggers when `tags`
-  contains `bench`).
+  contains `bench`). The job runs `go test -bench . -benchmem -benchtime
+  <benchtime> -run '^$'` and appends every `Benchmark...` line as a fenced
+  code block to the job summary (`-benchmem` allocations/bytes included).
+  Benchmarks (all hermetic, loopback port 0 only):
+
+  - `BenchmarkConnectDirect` — one TCP connection, SOCKS5 no-auth handshake,
+    CONNECT to a loopback echo backend, 1-byte round trip, close.
+  - `BenchmarkConnectRouted` — the same iteration through the sticky-group
+    path (authenticator, route of two fake SOCKS5 upstreams), serial.
+  - `BenchmarkConnectRoutedParallel` — the same, `b.RunParallel`.
+  - `BenchmarkThroughputRouted` — 32 MiB each way over one routed
+    connection in 64 KiB writes (`b.SetBytes`, MB/s).
+  - `BenchmarkParallelConnects1000` — 1000 concurrent routed
+    connect+echo+close per iteration, released together.
+  - `BenchmarkStickyChooseHit` / `BenchmarkStickyChooseHitParallel` — the
+    pre-bound hit path of the sticky group.
+  - `BenchmarkStickyChooseMiss` — selection on a new key, 2 and 20 members.
+  - `BenchmarkSiteKey` — the site-key reduction for a subdomain, a
+    multi-label suffix and an IP literal.
+  - `BenchmarkHealthRecordDial` — the health table dial recording.
+  - `BenchmarkRecord` / `BenchmarkRecordParallel` — enqueueing samples
+    into an open stats store.
+  - `BenchmarkNodesQuery` — `Nodes` over ~100000 pre-recorded samples of
+    50 nodes.
+  - `BenchmarkFlushBatch` — 256 samples recorded and flushed per iteration.
 
 Locally equivalent selection is done through env vars understood by
 `scripts/ci-test.sh` (not executed locally, only in CI):

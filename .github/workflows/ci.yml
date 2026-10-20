@@ -31,6 +31,10 @@ on:
         description: "Enable race detector"
         type: boolean
         default: true
+      benchtime:
+        description: "go test -benchtime for the bench job, e.g. 1x, 2s, 5x"
+        type: string
+        default: 1x
 
 permissions:
   contents: read
@@ -235,7 +239,18 @@ jobs:
 
       - name: Benchmarks
         shell: bash
-        run: go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchtime 1x -count=1 ${{ env.PACKAGES }}
+        run: |
+          set -o pipefail
+          bt="${{ inputs.benchtime }}"
+          if [ -z "${bt}" ]; then
+            bt="1x"
+          fi
+          go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchmem -benchtime "${bt}" -count=1 ${{ env.PACKAGES }} | tee "${RUNNER_TEMP}/bench-output.txt"
+          {
+            echo '```'
+            grep '^Benchmark' "${RUNNER_TEMP}/bench-output.txt" || true
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   npm:
     needs: setup
