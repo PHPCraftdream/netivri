@@ -133,6 +133,9 @@ func TestPersistClosure(t *testing.T) {
 	if cfg.Auth.Login != "alice" || cfg.Auth.Password != hash {
 		t.Errorf("in-memory config = %q/%q..., want updated login and hash", cfg.Auth.Login, cfg.Auth.Password[:16])
 	}
+	if got := liveAuth(cfg); got != "enabled" {
+		t.Errorf("liveAuth after persistence = %q, want enabled", got)
+	}
 
 	reloaded, err := config.Load(path)
 	if err != nil {

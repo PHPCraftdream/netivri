@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	mihauth "github.com/metacubex/mihomo/component/auth"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
+	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 type upOptions struct {
@@ -27,6 +29,7 @@ type upOptions struct {
 	PortSet    bool // --port given explicitly: overrides listen.port
 	BindSet    bool // --bind given explicitly: overrides listen.bind
 	Home       string
+	Handshake  string // internal: handshake file of the spawning parent (daemon child only)
 }
 
 // defaultHome resolves the state directory: NETIVRI_HOME, then
@@ -57,9 +60,11 @@ func parseUp(args []string, env func(string) string, userConfigDir func() (strin
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	opts := upOptions{Port: 7890, Bind: "127.0.0.1"}
-	fs.BoolVar(&opts.Foreground, "foreground", false, "run in the foreground (required in v1)")
+	fs.BoolVar(&opts.Foreground, "foreground", false, "run in the foreground instead of as a background daemon")
 	fs.IntVar(&opts.Port, "port", 7890, "mixed proxy port, 0 for a random free port")
 	fs.StringVar(&opts.Bind, "bind", "127.0.0.1", "bind address")
+	// Internal, not part of the CLI contract: set only by daemon.Spawn.
+	fs.StringVar(&opts.Handshake, "handshake", "", "internal: startup handshake file (requires --foreground)")
 	homeFlag := fs.String("home", "", "state directory (default NETIVRI_HOME or user config dir)")
 	// Global flags from docs/cli.md, accepted for compatibility: --json and
 	// --no-color are no-ops (output is always JSON without ANSI); --quiet
@@ -74,8 +79,8 @@ func parseUp(args []string, env func(string) string, userConfigDir func() (strin
 	if fs.NArg() > 0 {
 		return opts, cli.Usage("up: unexpected argument %q", fs.Arg(0))
 	}
-	if !opts.Foreground {
-		return opts, cli.Usage("daemon mode is not implemented yet; use --foreground")
+	if opts.Handshake != "" && !opts.Foreground {
+		return opts, cli.Usage("up: --handshake requires --foreground")
 	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -164,6 +169,14 @@ func newPersist(path string, cfg *config.Config) func(login, passwordHash string
 	}
 }
 
+// liveAuth is the current `auth` value. The persist callback rewrites
+// cfg.Auth from a connection goroutine, always under persistMu.
+func liveAuth(cfg *config.Config) string {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	return authStatus(cfg.Auth.Login, cfg.Auth.Password)
+}
+
 // loadConfig loads config.ktav under home; a missing file means the
 // default configuration and no file is created. *cli.Error values are
 // returned unchanged; anything else becomes INTERNAL.
@@ -211,19 +224,80 @@ func runUp(args []string, stdout io.Writer) error {
 	}
 	cfg, err := loadConfig(opts.Home)
 	if err != nil {
-		return err
+		return failStartup(opts.Handshake, err)
 	}
 	bind, port, err := mergeUp(opts, cfg)
 	if err != nil {
+		return failStartup(opts.Handshake, err)
+	}
+	if !opts.Foreground {
+		return runUpDaemon(opts, args, stdout)
+	}
+	return runUpForeground(opts, stdout, bind, port, cfg)
+}
+
+// runUpDaemon is plain `up`: a short-lived parent that answers idempotently
+// when a daemon already runs in this home and otherwise spawns the detached
+// child that does the real work. Config problems were already reported by
+// runUp, before anything is spawned.
+func runUpDaemon(opts upOptions, args []string, stdout io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), daemon.DefaultSpawnTimeout+daemon.ProbeTimeout)
+	defer cancel()
+	if _, live, err := daemonProbeLive(ctx, opts.Home); err == nil {
+		if conflictsWithRunning(opts, live.Listen) {
+			return &cli.Error{
+				Code:    "ALREADY_RUNNING",
+				Message: "a daemon is already running with different settings",
+				Hint:    "run netivri down first",
+				Exit:    cli.ExitConflict,
+			}
+		}
+		cli.Success(stdout, alreadyRunningData(live, true))
+		return nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return &cli.Error{Code: "INTERNAL", Message: "resolve executable: " + err.Error(), Exit: cli.ExitInternal}
+	}
+	st, err := daemonSpawn(ctx, daemon.SpawnOptions{Exe: exe, Args: filterUpArgs(args, opts.Home), Home: opts.Home})
+	if err != nil {
 		return err
+	}
+	cli.Success(stdout, alreadyRunningData(statusOf(st), false))
+	return nil
+}
+
+// runUpForeground runs the proxy in this process: the user's `--foreground`
+// run or the daemon child (opts.Handshake set). A failure of the daemon child
+// reaches the spawning parent through the handshake file.
+func runUpForeground(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
+	if err := runForegroundInner(opts, stdout, bind, port, cfg); err != nil {
+		return failStartup(opts.Handshake, err)
+	}
+	return nil
+}
+
+// runForegroundInner is a variable so tests can drive runUpForeground without
+// starting Mihomo.
+var runForegroundInner = serve
+
+func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
+	// Foreground cannot be idempotent: refuse a second instance in one home.
+	probeCtx, cancelProbe := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
+	_, err := daemonProbe(probeCtx, opts.Home)
+	cancelProbe()
+	if err == nil {
+		return &cli.Error{
+			Code:    "ALREADY_RUNNING",
+			Message: "a daemon is already running in this state directory",
+			Hint:    "run netivri down first",
+			Exit:    cli.ExitConflict,
+		}
 	}
 	authenticator, err := newAuthenticator(cfg, opts.Home)
 	if err != nil {
 		return err
 	}
-	// Taken before Start: once the listener is up, the persist callback may
-	// rewrite cfg.Auth from a connection goroutine.
-	status := authStatus(cfg.Auth.Login, cfg.Auth.Password)
 
 	// Installed before Start so a signal during startup is not lost.
 	sig := make(chan os.Signal, 1)
@@ -237,15 +311,70 @@ func runUp(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	cli.Success(stdout, map[string]any{
-		"daemon":    "running",
-		"pid":       os.Getpid(),
-		"listen":    inst.Addr(),
-		"protocols": []string{"socks5", "socks4", "http"},
-		"auth":      status,
-	})
+	token, err := daemon.NewToken()
+	if err != nil {
+		_ = inst.Close()
+		return &cli.Error{Code: "INTERNAL", Message: "generate control token: " + err.Error(), Exit: cli.ExitInternal}
+	}
+	stopRequested := make(chan struct{})
+	startedAt := time.Now().UTC().Format(time.RFC3339)
+	status := func() daemon.Status {
+		return daemon.Status{
+			Daemon:     "running",
+			Foreground: opts.Handshake == "",
+			PID:        os.Getpid(),
+			Listen:     inst.Addr(),
+			Protocols:  daemonProtocols,
+			Auth:       liveAuth(cfg),
+			Route:      inst.Route(),
+			StartedAt:  startedAt,
+			Version:    version,
+		}
+	}
+	ctrl, err := daemon.StartServer(token, status, func() { close(stopRequested) })
+	if err != nil {
+		_ = inst.Close()
+		return err
+	}
 
-	<-sig
-	_ = inst.Close()
+	st := stateOf(status(), ctrl.Addr(), token)
+	// Closing order matters for `down`: the core goes down first, the control
+	// server next, and the state file disappears last.
+	shutdown := func() {
+		_ = inst.Close()
+		_ = ctrl.Close()
+		daemon.RemoveStateIf(opts.Home, st.PID, st.Token)
+	}
+	if err := daemon.WriteState(opts.Home, st); err != nil {
+		shutdown()
+		return err
+	}
+	if opts.Handshake != "" {
+		if err := daemon.WriteHandshake(opts.Handshake, st); err != nil {
+			shutdown()
+			return err
+		}
+		daemonLog.Printf("start pid=%d listen=%s route=%s", st.PID, st.Listen, st.Route)
+	} else {
+		cli.Success(stdout, map[string]any{
+			"daemon":     "running",
+			"pid":        st.PID,
+			"listen":     st.Listen,
+			"protocols":  st.Protocols,
+			"auth":       st.Auth,
+			"foreground": true,
+		})
+	}
+
+	reason := "signal"
+	select {
+	case <-sig:
+	case <-stopRequested:
+		reason = "control"
+	}
+	shutdown()
+	if opts.Handshake != "" {
+		daemonLog.Printf("stop pid=%d reason=%s", st.PID, reason)
+	}
 	return nil
 }

@@ -55,22 +55,3 @@ func TestDispatchUnknownCommand(t *testing.T) {
 		t.Errorf("stdout must stay empty on failure, got %q", out.String())
 	}
 }
-
-func TestDispatchUpWithoutForeground(t *testing.T) {
-	var out bytes.Buffer
-	err := dispatch([]string{"up"}, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok {
-		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
-	}
-	if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {
-		t.Errorf("code/exit = %q/%d, want USAGE/%d", ce.Code, ce.Exit, cli.ExitUsage)
-	}
-	const wantPrefix = "daemon mode is not implemented yet"
-	if len(ce.Message) < len(wantPrefix) || ce.Message[:len(wantPrefix)] != wantPrefix {
-		t.Errorf("message = %q, want prefix %q", ce.Message, wantPrefix)
-	}
-	if out.Len() != 0 {
-		t.Errorf("stdout must stay empty on failure, got %q", out.String())
-	}
-}

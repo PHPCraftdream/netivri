@@ -18,6 +18,10 @@ func dispatch(args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "up":
 		return runUp(args[1:], stdout)
+	case "down":
+		return runDown(args[1:], stdout)
+	case "status":
+		return runStatus(args[1:], stdout)
 	case "sub":
 		return runSub(args[1:], stdout)
 	case "node":
@@ -26,7 +30,7 @@ func dispatch(args []string, stdout io.Writer) error {
 		cli.Success(stdout, map[string]string{"version": version})
 		return nil
 	default:
-		return cli.Usage("unknown or not yet implemented command %q", args[0])
+		return cli.Usage("unknown command %q", args[0])
 	}
 }
 

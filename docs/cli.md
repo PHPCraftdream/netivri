@@ -66,20 +66,45 @@ not on stderr, not in error messages. The same holds for `--via` proxies.
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
 
-### `up --foreground`
+### `up`
 
-Runs the proxy in the foreground: prints one JSON line on stdout, then blocks
-until SIGINT / SIGTERM, then exits 0. Until the daemon exists, `--foreground`
-is required; plain `up` is a usage error.
+Without `--foreground`, `up` starts the daemon: it validates the flags and
+the configuration, checks for an already running daemon, and otherwise
+spawns a detached background process and returns immediately. `up` is safe
+to repeat.
 
 ```json
 {"schema_version": 1, "ok": true,
  "data": {"daemon": "running", "pid": 12345, "listen": "127.0.0.1:7890",
-          "protocols": ["socks5", "socks4", "http"], "auth": "none"}}
+          "protocols": ["socks5", "socks4", "http"], "auth": "none",
+          "foreground": false, "already_running": false}}
 ```
 
+`foreground` is `true` for `up --foreground`, `false` for the daemon.
+`already_running` is `true` when the command found and reused a running
+daemon (idempotent success, exit 0); these keys are additive and do not
+bump `schema_version`. When a daemon is already running and the caller
+explicitly passed a `--port` / `--bind` that differs from the running
+listen address (an explicit `--port 0` means "don't care"), `up` fails with
+`ALREADY_RUNNING` (exit 6, hint: `run netivri down first`).
+
+### `up --foreground`
+
+Runs the proxy in the foreground: prints one JSON line on stdout (the same
+shape as above, without `already_running`), then blocks until SIGINT /
+SIGTERM or `netivri down`, then exits 0. It writes nothing to stderr. A
+foreground `up` is not idempotent: with a daemon already running in the same
+home it fails with `ALREADY_RUNNING` (exit 6).
+
+`up` also accepts the hidden flag `--handshake <path>` (only together with
+`--foreground`). It is internal machinery of the daemon spawn, not part of
+this contract; see [design/daemon.md](design/daemon.md).
+
 `listen` is the actual bound address: with `--port 0` it is the random free
-port that was picked. `auth` is one of:
+port that was picked. The daemon writes its state to `run/netivri.json` and
+its log to `run/netivri.log` inside the state directory. The state file
+holds the local control token: mode `0600` on Unix, profile-directory ACL on
+Windows; never print it. `auth` is one of:
 
 - `none` — no authentication configured (`auth.login` / `auth.password` empty);
 - `enabled` — login and password (an argon2id hash) are configured;
@@ -121,11 +146,32 @@ authentication is enabled in the configuration (`auth.login` and
 
 ### `status`
 
+Reports the live status of the running instance.
+
+```json
+{"schema_version": 1, "ok": true,
+ "data": {"daemon": "running", "foreground": false, "pid": 12345,
+          "listen": "127.0.0.1:7890",
+          "protocols": ["socks5", "socks4", "http"], "auth": "none",
+          "route": "direct", "started_at": "2026-10-20T10:00:00Z",
+          "uptime_seconds": 3721, "version": "0.1.0"}}
+```
+
+Exactly these fields exist today: `daemon` (always `running` on success),
+`foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
+`node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds) and
+`version` (the daemon binary's version). The selection fields of the
+planned shape below are not included yet; they arrive with `netivri use`.
+
+When no daemon is running: error `DAEMON_NOT_RUNNING` on stderr, exit 4
+(start it with `netivri up`). A stale state file (dead pid, no live control
+answer) counts as not running and is removed.
+
+Planned shape once node selection and subscriptions are wired in (additive
+to the fields above):
+
 ```json
 {
-  "daemon": "running",
-  "pid": 1234,
-  "listen": "127.0.0.1:7890",
   "node": {"id": "a1b2c3", "name": "🇩🇪 Germany 1", "protocol": "vless",
            "exit_country": "DE", "exit_ip": "203.0.113.7", "latency_ms": 48},
   "mode": "fastest",
@@ -137,6 +183,21 @@ authentication is enabled in the configuration (`auth.login` and
   ]
 }
 ```
+
+### `down`
+
+Stops the daemon through its control channel and waits until it is gone.
+Idempotent.
+
+```json
+{"schema_version": 1, "ok": true,
+ "data": {"daemon": "stopped", "was_running": true, "pid": 12345}}
+```
+
+With nothing running: `{"daemon": "stopped", "was_running": false}`, exit 0.
+`pid` is present only when something was running. If the daemon does not
+stop within 15 seconds: `DAEMON_STOP_TIMEOUT` (exit 1). `down` never kills
+by pid.
 
 ### `node list` (after daemon integration)
 
@@ -283,15 +344,24 @@ Raw proxy mappings (credentials) are never printed.
 | `NO_NODES_FOR_COUNTRY` | 5 | No alive node for the requested country |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
+| `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
+| `DAEMON_START_FAILED` | 1 | The daemon child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
+| `DAEMON_START_TIMEOUT` | 1 | The daemon did not report startup within 15 s |
+| `DAEMON_STOP_TIMEOUT` | 1 | The daemon did not stop within 15 s after `down` |
 | `PORT_IN_USE` | 6 | Listen port is taken |
 | `INTERNAL` | 1 | Bug; details in `netivri logs` |
 
 ## Idempotency
 
 - `sub add` with an existing URL returns the existing subscription, exit 0.
-- `up` when the daemon already runs with the same settings returns `status`, exit 0.
-  With different settings: `PORT_IN_USE` / exit 6, unless `--restart`.
+- `up` when the daemon already runs is idempotent: it reports the running
+  instance with `already_running: true`, exit 0. Explicit `--port` / `--bind`
+  flags that differ from the running listen address are `ALREADY_RUNNING`
+  (exit 6); `--port 0` explicitly means "don't care". `up --foreground` is
+  not idempotent and always fails with `ALREADY_RUNNING` (exit 6) when a
+  daemon runs.
 - `down` when not running: exit 0.
+- `status` when not running: `DAEMON_NOT_RUNNING`, exit 4.
 - `use` with the current selection: exit 0.
 
 ## Security
@@ -300,7 +370,12 @@ Raw proxy mappings (credentials) are never printed.
   configured proxy authentication (`auth.login` / `auth.password` in
   `config.ktav`; the password may be `init`), otherwise `up` exits with
   `AUTH_REQUIRED`.
-- The control channel is a named pipe / Unix socket restricted to the current
-  user. No TCP control API.
+- The control channel is a loopback HTTP server (`127.0.0.1` only, random
+  port) guarded by a bearer token that lives only in
+  `<home>/run/netivri.json` (mode `0600` on Unix). Every request must carry
+  the token; the Host header must match the listener. No remote control API.
+- The daemon log (`<home>/run/netivri.log`) records lifecycle lines only:
+  start and stop with pid, listen address and reason. No tokens, no
+  credentials, no subscription URLs.
 - Subscription URLs contain secrets: they are stored in the state directory
   only and are redacted in all output (`https://provider.example/sub/****`).

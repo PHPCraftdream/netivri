@@ -87,7 +87,7 @@ func TestParseUpUsageErrors(t *testing.T) {
 		{"invalid int", []string{"--foreground", "--port", "abc"}, "up: invalid value"},
 		{"unknown flag", []string{"--foreground", "--wat"}, "up: flag provided but not defined"},
 		{"positional argument", []string{"--foreground", "extra"}, "up: unexpected argument \"extra\""},
-		{"missing foreground", []string{}, "daemon mode is not implemented yet; use --foreground"},
+		{"handshake without foreground", []string{"--handshake", "hs"}, "up: --handshake requires"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
