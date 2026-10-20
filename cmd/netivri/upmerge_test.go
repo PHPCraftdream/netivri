@@ -109,7 +109,7 @@ func TestAuthStatus(t *testing.T) {
 		{config.InitPlaceholder, config.InitPlaceholder, "init-pending"},
 	}
 	for _, tc := range cases {
-		if got := authStatus(tc.login, tc.password); got != tc.want {
+		if got := authStatus(tc.login, tc.password, nil); got != tc.want {
 			t.Errorf("authStatus(%q, %q) = %q, want %q", tc.login, tc.password, got, tc.want)
 		}
 	}

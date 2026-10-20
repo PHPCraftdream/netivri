@@ -28,6 +28,11 @@ netivri sub rm N
 netivri node list [--sub N] [--country CC] [--alive]
 netivri node test [NODE | --all] [--exit] [--timeout 5s]
 
+netivri account add <login> [--country CC]
+netivri account list
+netivri account set-country <login> <CC> | <login> --none
+netivri account rm <login>
+
 netivri use NODE
 netivri use --country CC [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
@@ -65,6 +70,41 @@ not on stderr, not in error messages. The same holds for `--via` proxies.
 
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
+
+### `account`
+
+An account is a proxy login with an optional exit country (the design is in
+[design/accounts.md](design/accounts.md)).
+
+- `add` creates the account with the `init` password placeholder: the first
+  client that authenticates with that login sets the password. Repeating
+  `add` with the same login and country succeeds with `existing: true`; a
+  different country is `ACCOUNT_EXISTS` (exit 6).
+- `list` reports `login`, `exit_country` and `password_set` (`false` until
+  the placeholder is claimed); it never returns a password or a hash.
+- `set-country` takes an ISO 3166-1 alpha-2 code or `--none` to clear it.
+- `rm` of an unknown login is `ACCOUNT_NOT_FOUND` (exit 5); it is not
+  idempotent.
+- `ACCOUNT_INVALID` and `COUNTRY_INVALID` are usage errors (exit 2).
+
+```json
+{"account": {"login": "alice", "exit_country": "DE", "password_set": false}, "existing": false}
+{"accounts": [{"login": "alice", "exit_country": "DE", "password_set": false}]}
+{"account": {"login": "alice", "exit_country": "NL", "password_set": false}}
+{"removed": "alice"}
+```
+
+These are the `data` values, respectively, for add, list, set-country and rm.
+
+Routing is applied by `up`. An account with an exit country needs stored
+subscription snapshots that hold nodes of that country; `up` does not require
+those nodes to be alive. If no stored node matches, `up` fails with
+`NO_NODES_FOR_COUNTRY` (exit 5, hint `netivri sub update`) before binding
+anything. The nodes of a country are ordered by node id and used only for the
+accounts of that country: there is no fallback to a direct connection or to
+another country. Accounts without a country, and `auth`'s account, take the
+default route, which is direct until a node is selected. Changes take effect
+after the daemon restarts (`down`, then `up`).
 
 ### `up`
 
@@ -106,11 +146,14 @@ its log to `run/netivri.log` inside the state directory. The state file
 holds the local control token: mode `0600` on Unix, profile-directory ACL on
 Windows; never print it. `auth` is one of:
 
-- `none` — no authentication configured (`auth.login` / `auth.password` empty);
-- `enabled` — login and password (an argon2id hash) are configured;
-- `init-pending` — the placeholder `init` is still set for the login or the
-  password; the first client to authenticate claims the credential (see
-  [docs/config.md](config.md), "The `init` placeholder").
+- `none` — no authentication configured (`auth.login` / `auth.password` empty
+  and no `accounts`);
+- `enabled` — every configured credential is an argon2id hash (`auth` and
+  `accounts` alike);
+- `init-pending` — the placeholder `init` is still set for `auth.login`,
+  `auth.password` or the password of an account; the first client to
+  authenticate claims the credential (see [docs/config.md](config.md), "The
+  `init` placeholder").
 
 Credentials, hashes and the config file content are never printed or logged.
 
@@ -153,7 +196,7 @@ Reports the live status of the running instance.
  "data": {"daemon": "running", "foreground": false, "pid": 12345,
           "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
-          "route": "direct", "started_at": "2026-10-20T10:00:00Z",
+          "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
           "uptime_seconds": 3721, "version": "0.1.0"}}
 ```
 
@@ -337,11 +380,15 @@ Raw proxy mappings (credentials) are never printed.
 | `SUBSCRIPTION_TOO_LARGE` | 3 | Subscription body exceeds 16 MiB |
 | `SUBSCRIPTION_TOO_MANY` | 3 | Subscription has more than 5000 nodes |
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
+| `ACCOUNT_INVALID` | 2 | Invalid account login |
+| `COUNTRY_INVALID` | 2 | Invalid country code |
+| `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
+| `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
-| `NO_NODES_FOR_COUNTRY` | 5 | No alive node for the requested country |
+| `NO_NODES_FOR_COUNTRY` | 5 | No stored node exits in the country an account asks for (`up`); the nodes need not be alive |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
 | `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
@@ -363,6 +410,7 @@ Raw proxy mappings (credentials) are never printed.
 - `down` when not running: exit 0.
 - `status` when not running: `DAEMON_NOT_RUNNING`, exit 4.
 - `use` with the current selection: exit 0.
+- `account add` with the same login and country, and repeated `account set-country` with the same country: exit 0; `account rm` is not idempotent.
 
 ## Security
 

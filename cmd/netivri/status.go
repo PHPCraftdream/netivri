@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -34,6 +35,8 @@ func runStatus(args []string, stdout io.Writer) error {
 	if err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: err.Error(), Exit: cli.ExitInternal}
 	}
+	accounts := append([]daemon.AccountInfo{}, st.Accounts...)
+	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Login < accounts[j].Login })
 	cli.Success(stdout, map[string]any{
 		"daemon":         "running",
 		"foreground":     st.Foreground,
@@ -45,6 +48,7 @@ func runStatus(args []string, stdout io.Writer) error {
 		"started_at":     st.StartedAt,
 		"uptime_seconds": uptimeSeconds(st.StartedAt),
 		"version":        st.Version,
+		"accounts":       accounts,
 	})
 	return nil
 }

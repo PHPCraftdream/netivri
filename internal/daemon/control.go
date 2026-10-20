@@ -23,17 +23,24 @@ func NewToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// AccountInfo describes an account's configured exit-country route.
+type AccountInfo struct {
+	Login       string `json:"login"`
+	ExitCountry string `json:"exit_country"`
+}
+
 // Status is the live answer of GET /v1/status.
 type Status struct {
-	Daemon     string   `json:"daemon"`
-	Foreground bool     `json:"foreground"`
-	PID        int      `json:"pid"`
-	Listen     string   `json:"listen"`
-	Protocols  []string `json:"protocols"`
-	Auth       string   `json:"auth"`
-	Route      string   `json:"route"`
-	StartedAt  string   `json:"started_at"`
-	Version    string   `json:"version"`
+	Daemon     string        `json:"daemon"`
+	Foreground bool          `json:"foreground"`
+	PID        int           `json:"pid"`
+	Listen     string        `json:"listen"`
+	Protocols  []string      `json:"protocols"`
+	Auth       string        `json:"auth"`
+	Route      string        `json:"route"`
+	StartedAt  string        `json:"started_at"`
+	Version    string        `json:"version"`
+	Accounts   []AccountInfo `json:"accounts,omitempty"`
 }
 
 // Server is the loopback control HTTP server. It always binds 127.0.0.1:0,

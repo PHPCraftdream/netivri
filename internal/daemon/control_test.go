@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
@@ -66,13 +67,33 @@ func TestControlRouting(t *testing.T) {
 
 func TestControlStatusBody(t *testing.T) {
 	s, _ := newTestServer(t)
+	s.status = func() Status {
+		return Status{Daemon: "running", PID: 7, Listen: "127.0.0.1:7890", Accounts: []AccountInfo{{Login: "alice", ExitCountry: "DE"}}}
+	}
 	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
+	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","exit_country":"DE"}]`) || strings.Contains(rec.Body.String(), "password") {
+		t.Fatalf("unexpected status json: %s", rec.Body.String())
+	}
 	st, err := parseControlStatus(rec.Body.Bytes(), rec.Code)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Daemon != "running" || st.PID != 7 || st.Listen != "127.0.0.1:7890" {
 		t.Errorf("status=%+v", st)
+	}
+}
+
+func TestControlStatusOmissionAndEmptyCountry(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.status = func() Status { return Status{Accounts: []AccountInfo{{Login: "alice", ExitCountry: ""}}} }
+	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
+	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","exit_country":""}]`) {
+		t.Fatalf("empty country key omitted: %s", rec.Body.String())
+	}
+	s.status = func() Status { return Status{} }
+	rec = ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
+	if strings.Contains(rec.Body.String(), `"accounts"`) {
+		t.Fatalf("empty accounts should be omitted: %s", rec.Body.String())
 	}
 }
 

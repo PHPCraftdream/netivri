@@ -125,7 +125,7 @@ func mergeUp(opts upOptions, cfg *config.Config) (string, int, error) {
 	if port != 0 && (port < 1 || port > 65535) {
 		return "", 0, cli.Usage("up: --port must be 0 (random) or between 1 and 65535")
 	}
-	status := authStatus(cfg.Auth.Login, cfg.Auth.Password)
+	status := authStatus(cfg.Auth.Login, cfg.Auth.Password, cfg.Accounts)
 	authEnabled := status == "enabled" ||
 		(status == "init-pending" && cfg.Auth.AllowInitRemote)
 	if !isLoopbackHost(bind) && !authEnabled {
@@ -140,13 +140,19 @@ func mergeUp(opts upOptions, cfg *config.Config) (string, int, error) {
 }
 
 // authStatus derives the value of the `auth` field of the `up` success
-// output: none, enabled, or init-pending while a placeholder is set.
-func authStatus(login, password string) string {
-	if login == "" && password == "" {
-		return "none"
-	}
+// output: none when neither `auth` nor an account is configured,
+// init-pending while any placeholder is set, else enabled.
+func authStatus(login, password string, accounts []config.Account) string {
 	if login == config.InitPlaceholder || password == config.InitPlaceholder {
 		return "init-pending"
+	}
+	for _, a := range accounts {
+		if a.Password == config.InitPlaceholder {
+			return "init-pending"
+		}
+	}
+	if login == "" && password == "" && len(accounts) == 0 {
+		return "none"
 	}
 	return "enabled"
 }
@@ -169,12 +175,25 @@ func newPersist(path string, cfg *config.Config) func(login, passwordHash string
 	}
 }
 
-// liveAuth is the current `auth` value. The persist callback rewrites
-// cfg.Auth from a connection goroutine, always under persistMu.
+func newPersistAccount(path string, cfg *config.Config) func(login, passwordHash string) error {
+	return func(login, passwordHash string) error {
+		persistMu.Lock()
+		defer persistMu.Unlock()
+		a, _ := cfg.Account(login)
+		if a == nil {
+			return errors.New("account no longer exists")
+		}
+		a.Password = passwordHash
+		return config.Save(path, cfg)
+	}
+}
+
+// liveAuth is the current `auth` value. The persist callbacks rewrite the
+// credentials from a connection goroutine, always under persistMu.
 func liveAuth(cfg *config.Config) string {
 	persistMu.Lock()
 	defer persistMu.Unlock()
-	return authStatus(cfg.Auth.Login, cfg.Auth.Password)
+	return authStatus(cfg.Auth.Login, cfg.Auth.Password, cfg.Accounts)
 }
 
 // loadConfig loads config.ktav under home; a missing file means the
@@ -197,10 +216,24 @@ func loadConfig(home string) (*config.Config, error) {
 // produced it. auth.New errors that are not *cli.Error become
 // CONFIG_INVALID.
 func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, error) {
-	a, err := auth.New(auth.Options{
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	legacy := auth.Options{
 		Login:    cfg.Auth.Login,
 		Password: cfg.Auth.Password,
 		Persist:  newPersist(config.ConfigPath(home), cfg),
+	}
+	accounts := make([]auth.AccountSpec, 0, len(cfg.Accounts))
+	for _, a := range cfg.Accounts {
+		accounts = append(accounts, auth.AccountSpec{
+			Login:    a.Login,
+			Password: a.Password,
+		})
+	}
+	a, err := auth.NewMulti(auth.MultiOptions{
+		Legacy:         legacy,
+		Accounts:       accounts,
+		PersistAccount: newPersistAccount(config.ConfigPath(home), cfg),
 	})
 	if err != nil {
 		var ce *cli.Error
@@ -228,6 +261,9 @@ func runUp(args []string, stdout io.Writer) error {
 	}
 	bind, port, err := mergeUp(opts, cfg)
 	if err != nil {
+		return failStartup(opts.Handshake, err)
+	}
+	if _, _, err := accountCountryPool(opts.Home, cfg); err != nil {
 		return failStartup(opts.Handshake, err)
 	}
 	if !opts.Foreground {
@@ -277,14 +313,18 @@ func runUpForeground(opts upOptions, stdout io.Writer, bind string, port int, cf
 	return nil
 }
 
-// runForegroundInner is a variable so tests can drive runUpForeground without
-// starting Mihomo.
+// runForegroundInner remains replaceable by tests so runUpForeground can be
+// exercised without starting Mihomo.
 var runForegroundInner = serve
 
 func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
+	countries, accountRoutes, err := accountCountryPool(opts.Home, cfg)
+	if err != nil {
+		return err
+	}
 	// Foreground cannot be idempotent: refuse a second instance in one home.
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
-	_, err := daemonProbe(probeCtx, opts.Home)
+	_, err = daemonProbe(probeCtx, opts.Home)
 	cancelProbe()
 	if err == nil {
 		return &cli.Error{
@@ -306,7 +346,14 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	inst, err := core.Start(ctx, core.Options{HomeDir: opts.Home, Bind: bind, Port: port, Authenticator: authenticator})
+	inst, err := core.Start(ctx, core.Options{
+		HomeDir:        opts.Home,
+		Bind:           bind,
+		Port:           port,
+		Authenticator:  authenticator,
+		Countries:      countries,
+		AccountCountry: accountRoutes,
+	})
 	if err != nil {
 		return err
 	}
@@ -329,6 +376,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			Route:      inst.Route(),
 			StartedAt:  startedAt,
 			Version:    version,
+			Accounts:   accountStatus(cfg, inst.AccountRoutes()),
 		}
 	}
 	ctrl, err := daemon.StartServer(token, status, func() { close(stopRequested) })
