@@ -291,7 +291,9 @@ uses a sharded set. Second wave: a benchmark harness (build tag `bench`,
 loopback echo server and fake SOCKS5 upstream, no external traffic) reporting
 connect latency p50/p99, throughput and 1 000 parallel connects; then only
 measured changes are kept (`tcp-concurrent` for direct dials, GC and socket
-settings, the cost of recording statistics).
+settings, the cost of recording statistics). The further latency work (hedged
+dial, transport pool, lock-free paths) is specified in
+[latency.md](latency.md).
 
 ## Testing
 
