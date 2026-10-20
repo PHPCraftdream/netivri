@@ -1,3 +1,5 @@
+// Modified by the netivri authors: transport source and phase observer (see netivri_transport.go).
+
 package outbound
 
 import (
@@ -8,6 +10,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/common/convert"
@@ -53,6 +56,10 @@ type Vless struct {
 	restlsConfig    *restls.Config
 	jlsConfig       *jls.Config
 	realityConfig   *tlsC.RealityConfig
+
+	// netivri: transport seam (see netivri_transport.go)
+	transportSource atomic.Pointer[TransportSource]
+	phaseObserver   atomic.Pointer[PhaseObserver]
 }
 
 type VlessOption struct {
@@ -331,7 +338,10 @@ func (v *Vless) streamTLSConn(ctx context.Context, conn net.Conn, isH2 bool) (ne
 			tlsOpts.Host = v.option.ServerName
 		}
 
-		return vmess.StreamTLSConn(ctx, conn, &tlsOpts)
+		start := time.Now()
+		c, err := vmess.StreamTLSConn(ctx, conn, &tlsOpts)
+		v.observePhase(PhaseTLS, time.Since(start), err)
+		return c, err
 	}
 
 	return conn, nil
@@ -345,11 +355,30 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.xhttpClient.Dial(ctx)
 	default:
 	}
-	return v.dialer.DialContext(ctx, "tcp", v.addr)
+	start := time.Now()
+	c, err = v.dialer.DialContext(ctx, "tcp", v.addr)
+	v.observePhase(PhaseTCP, time.Since(start), err)
+	return c, err
 }
 
 // DialContext implements C.ProxyAdapter
 func (v *Vless) DialContext(ctx context.Context, metadata *C.Metadata) (_ C.Conn, err error) {
+	if v.transportSupported() {
+		if src := v.transportSource.Load(); src != nil && *src != nil {
+			if c, ok := (*src).Take(ctx); ok {
+				defer func(c net.Conn) {
+					safeConnClose(c, err)
+				}(c)
+
+				c, err = v.streamConnContext(ctx, c, metadata)
+				if err != nil {
+					return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
+				}
+				return NewConn(c, v), err
+			}
+		}
+	}
+
 	c, err := v.dialContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %s", v.addr, err.Error())
