@@ -32,6 +32,18 @@ still the `init` placeholder**.
 `Options.Persist` is nil: such a configuration could never persist a
 credential and would silently reject every attempt.
 
+## Several accounts
+
+`NewMulti` combines the optional legacy credential with restricted named
+accounts. Account logins are unique, 1–64 ASCII characters from
+`A-Za-z0-9._@-` except the reserved `init` placeholder; malformed
+configurations fail with a generic `CONFIG_INVALID` error. Account lookup
+takes precedence over legacy verification, including while the legacy login
+is pending a claim. Account passwords may be argon2id PHC hashes or `init`;
+for `init`, the first password is hashed and persisted before that account is
+accepted. `Users` reports configured and claimed logins in sorted order, with
+a non-nil empty slice when no login is known.
+
 ## Rejected claimed logins
 
 A user-supplied login can only become the stored login if it survives
@@ -62,16 +74,14 @@ hostile hash cannot force large intermediate allocations either.
 
 ## Concurrency and cost control
 
-All argon2 verification runs under a semaphore with
-`min(4, GOMAXPROCS)` slots, so parallel failed attempts cannot each
-allocate the full 19 MiB. Wrong users are rejected before hashing
-(cost asymmetry: guessing a username must not burn a full argon2
-computation per attempt). The init transition (hash + persist + state
-update) happens under the mutex, so exactly one goroutine consumes the
-init even when 32 race on it. That path does not use the semaphore:
-the mutex already serialises it to a single goroutine, and no path
-acquires the semaphore while holding the mutex, so no lock-order
-deadlock is possible.
+Argon2 verification in standalone `New` uses its existing semaphore; standalone
+init hashing remains serialized by its mutex. `NewMulti` uses one shared
+semaphore for legacy and named-account verification and init hashing. Each
+init transition (hash + persist + state update) is serialized under its
+per-authenticator or per-account mutex. Multi-account init hashing takes a
+semaphore slot while holding only that account's mutex. Legacy init uses its
+own mutex and the shared semaphore; verification releases the semaphore
+before attempting the claim mutex, so there is no lock-order cycle.
 
 ## Threat model and limits
 

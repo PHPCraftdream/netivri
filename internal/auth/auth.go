@@ -33,6 +33,7 @@ type authenticator struct {
 	cachedPass  string // plaintext after the first success; empty before
 	persist     func(login, passwordHash string) error
 	slots       chan struct{}
+	sharedSlots chan struct{}
 }
 
 // New returns a Mihomo Authenticator. When Login and Password are both
@@ -139,8 +140,12 @@ func (a *authenticator) Users() []string {
 // verifyWithSlot runs argon2 under the concurrency semaphore so that
 // parallel failed attempts cannot each allocate the full memory cost.
 func (a *authenticator) verifyWithSlot(hash, pass string) (bool, error) {
-	a.slots <- struct{}{}
-	defer func() { <-a.slots }()
+	slots := a.slots
+	if a.sharedSlots != nil {
+		slots = a.sharedSlots
+	}
+	slots <- struct{}{}
+	defer func() { <-slots }()
 	return VerifyHash(hash, pass)
 }
 
@@ -148,9 +153,8 @@ func (a *authenticator) verifyWithSlot(hash, pass string) (bool, error) {
 // The whole transition (hash + persist + state update) runs under the
 // mutex, so exactly one attempt consumes the init; a Persist failure
 // leaves the state "init" (fail closed) and the attempt is rejected.
-// The semaphore is deliberately not used here: mu already serialises
-// this path to a single goroutine, and taking a.slots while holding
-// mu would risk lock-order issues with nothing to gain.
+// The standalone New path keeps its historical serialization; NewMulti supplies
+// a shared semaphore so its legacy init hashing is bounded with account work.
 func (a *authenticator) consumeInit(user, pass string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -175,7 +179,13 @@ func (a *authenticator) consumeInit(user, pass string) bool {
 	if a.persist == nil {
 		return false
 	}
+	if a.sharedSlots != nil {
+		a.sharedSlots <- struct{}{}
+	}
 	h, err := Hash(pass)
+	if a.sharedSlots != nil {
+		<-a.sharedSlots
+	}
 	if err != nil {
 		return false
 	}
