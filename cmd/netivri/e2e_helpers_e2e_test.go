@@ -141,11 +141,17 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	}
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		t.Fatalf("stderr pipe: %v", err)
 	}
 	cmd.Stdout = stdoutW
 	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		t.Fatalf("start %s: %v", netivriBin, err)
 	}
 	p := &upProc{
@@ -193,15 +199,20 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	select {
 	case res := <-lineCh:
 		if res.err != nil {
+			// Stop first: kill the child and close the pipe read ends
+			// so no descriptor or drain goroutine outlives the failure.
+			p.Stop()
 			t.Fatalf("read first stdout line: %v (stderr: %s)", res.err, p.stderrBuf.String())
 		}
 		var st upStatus
 		if err := json.Unmarshal([]byte(res.line), &st); err != nil {
+			p.Stop()
 			t.Fatalf("decode status line %q: %v", res.line, err)
 		}
 		p.status = st
 		p.FirstLine = res.line
 	case <-time.After(e2eFirstLineTimeout):
+		p.Stop()
 		t.Fatalf("no first stdout line within %v (stderr so far: %s)", e2eFirstLineTimeout, p.stderrBuf.String())
 	}
 	return p
@@ -436,24 +447,58 @@ func (s *connSet) closeAll() {
 	}
 }
 
-// echoServer starts a TCP echo backend on 127.0.0.1:0.
+// echoServer starts a TCP echo backend on 127.0.0.1:0. Its cleanup
+// closes the listener and every live connection, then waits (bounded)
+// for the accept loop and all per-connection handlers, so no goroutine
+// outlives the test and -race stays clean.
 func echoServer(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("echo listen: %v", err)
 	}
-	t.Cleanup(func() { _ = l.Close() })
 	set := newConnSet()
-	t.Cleanup(set.closeAll)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	closed := false
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		mu.Lock()
+		closed = true
+		mu.Unlock()
+		_ = l.Close()
+		set.closeAll()
+		// The accept loop holds a count until it returns, so no Add can race
+		// this Wait: handlers are only added under mu while !closed.
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(e2eKillGrace):
+			t.Errorf("echo server goroutines did not stop within %v", e2eKillGrace)
+		}
+	})
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			c, err := l.Accept()
 			if err != nil {
 				return
 			}
+			mu.Lock()
+			if closed {
+				mu.Unlock()
+				_ = c.Close()
+				return
+			}
 			set.add(c)
+			wg.Add(1)
+			mu.Unlock()
 			go func(c net.Conn) {
+				defer wg.Done()
 				defer set.remove(c)
 				_ = c.SetDeadline(time.Now().Add(e2eIOTimeout))
 				_, _ = io.Copy(c, c)

@@ -247,6 +247,16 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 		echoRoundTrip(t, c, c)
 		_ = c.Close()
 	})
+	t.Run("live-claimed-login-wrong-password-rejected", func(t *testing.T) {
+		c := dialProxy(t, st.Data.Listen)
+		defer c.Close()
+		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
+			t.Fatalf("greeting method = %#x, want 0x02", m)
+		}
+		if code := socks5AuthReply(t, c, bobUser, carolPass); code != 1 {
+			t.Fatalf("auth status = %#x, want 1 (rejected)", code)
+		}
+	})
 
 	p.Stop()
 	assertOneLine(t, p.Stdout())
@@ -276,10 +286,30 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 		echoRoundTrip(t, c, c)
 		_ = c.Close()
 	})
+	t.Run("restart-different-user-rejected", func(t *testing.T) {
+		c := dialProxy(t, st2.Data.Listen)
+		defer c.Close()
+		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
+			t.Fatalf("greeting method = %#x, want 0x02", m)
+		}
+		if code := socks5AuthReply(t, c, "mallory", bobPass); code != 1 {
+			t.Fatalf("auth status = %#x, want 1 (rejected)", code)
+		}
+	})
+	t.Run("restart-different-password-rejected", func(t *testing.T) {
+		c := dialProxy(t, st2.Data.Listen)
+		defer c.Close()
+		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
+			t.Fatalf("greeting method = %#x, want 0x02", m)
+		}
+		if code := socks5AuthReply(t, c, bobUser, carolPass); code != 1 {
+			t.Fatalf("auth status = %#x, want 1 (rejected)", code)
+		}
+	})
 
 	p2.Stop()
 	assertOneLine(t, p2.Stdout())
-	assertNoSecrets(t, p2.Stdout(), p2.Stderr(), bobPass, storedHash)
+	assertNoSecrets(t, p2.Stdout(), p2.Stderr(), bobPass, carolPass, storedHash)
 }
 
 // Scenario 5: login placeholder with a real hash.
@@ -339,6 +369,18 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 		echoRoundTrip(t, c, c)
 		_ = c.Close()
 	})
+	t.Run("live-different-user-rejected", func(t *testing.T) {
+		// The correct password under a different user must not pass once
+		// carol claimed the login: the login is compared, not only the hash.
+		c := dialProxy(t, st.Data.Listen)
+		defer c.Close()
+		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
+			t.Fatalf("greeting method = %#x, want 0x02", m)
+		}
+		if code := socks5AuthReply(t, c, "mallory", carolPass); code != 1 {
+			t.Fatalf("auth status = %#x, want 1 (rejected)", code)
+		}
+	})
 
 	p.Stop()
 	assertOneLine(t, p.Stdout())
@@ -352,6 +394,36 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 		t.Fatal("persisted password hash differs from the configured hash")
 	}
 	assertNoSecrets(t, p.Stdout(), p.Stderr(), cfg.Auth.Password)
+
+	// Restart from the same home: the persisted login keeps working and
+	// a different user is still rejected.
+	p2 := startUp(t, home, "--port", "0")
+	st2 := p2.Status()
+	assertStatusSuccess(t, st2)
+	if st2.Data.Auth != "enabled" {
+		t.Fatalf("auth after restart = %q, want enabled", st2.Data.Auth)
+	}
+	backend2 := echoServer(t)
+
+	t.Run("restart-claimed-credential-works", func(t *testing.T) {
+		c := socks5AuthConnect(t, st2.Data.Listen, carolUser, carolPass, backend2)
+		echoRoundTrip(t, c, c)
+		_ = c.Close()
+	})
+	t.Run("restart-different-user-rejected", func(t *testing.T) {
+		c := dialProxy(t, st2.Data.Listen)
+		defer c.Close()
+		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
+			t.Fatalf("greeting method = %#x, want 0x02", m)
+		}
+		if code := socks5AuthReply(t, c, "mallory", carolPass); code != 1 {
+			t.Fatalf("auth status = %#x, want 1 (rejected)", code)
+		}
+	})
+
+	p2.Stop()
+	assertOneLine(t, p2.Stdout())
+	assertNoSecrets(t, p2.Stdout(), p2.Stderr(), carolPass, "nope", cfg.Auth.Password)
 }
 
 // Scenario 6: non-loopback bind without auth is refused; with auth it starts.
@@ -365,14 +437,16 @@ func TestE2EUpNonLoopbackBind(t *testing.T) {
 	if stdout != "" {
 		t.Fatalf("stdout = %q, want empty", stdout)
 	}
+	assertNoSecrets(t, stdout, stderr, literalPass)
 	env := decodeErrEnvelope(t, stderr)
 	if env.Error.Code != "AUTH_REQUIRED" {
 		t.Fatalf("error code = %q, want AUTH_REQUIRED", env.Error.Code)
 	}
 
 	// With authentication the same bind starts.
+	hash := mustHash(t, literalPass)
 	writeConfig(t, home, func(cfg *config.Config) {
-		cfg.Auth = config.Auth{Login: literalUser, Password: mustHash(t, literalPass)}
+		cfg.Auth = config.Auth{Login: literalUser, Password: hash}
 	})
 	p := startUp(t, home, "--port", "0", "--bind", "0.0.0.0")
 	st := p.Status()
@@ -394,7 +468,7 @@ func TestE2EUpNonLoopbackBind(t *testing.T) {
 	_ = c.Close()
 	p.Stop()
 	assertOneLine(t, p.Stdout())
-	assertNoSecrets(t, p.Stdout(), p.Stderr(), literalPass)
+	assertNoSecrets(t, p.Stdout(), p.Stderr(), literalPass, hash)
 }
 
 func mustHash(t *testing.T, password string) string {
