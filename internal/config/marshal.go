@@ -40,14 +40,20 @@ func Marshal(cfg *Config) (string, error) {
 	return doc, nil
 }
 
-// configEqual compares two configurations, treating a nil slice of
-// subscriptions and an empty non-nil slice as equal: omitempty renders
-// both the same way, so neither state can survive a rewrite.
+// configEqual compares two configurations, treating nil and empty
+// subscriptions and accounts slices as equal: omitempty renders both
+// states the same way, so neither state can survive a rewrite.
 func configEqual(a, b *Config) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
 	x, y := *a, *b
+	if len(x.Accounts) == 0 {
+		x.Accounts = nil
+	}
+	if len(y.Accounts) == 0 {
+		y.Accounts = nil
+	}
 	if len(x.Subscriptions) == 0 {
 		x.Subscriptions = nil
 	}

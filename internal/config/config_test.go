@@ -47,12 +47,13 @@ func TestDefaultIsValid(t *testing.T) {
 
 func TestValidateValid(t *testing.T) {
 	cases := map[string]*Config{
-		"baseline":       validBaseline(),
-		"bind localhost": func() *Config { c := validBaseline(); c.Listen.Bind = "localhost"; return c }(),
-		"bind ipv6":      func() *Config { c := validBaseline(); c.Listen.Bind = "::1"; return c }(),
-		"port 1":         func() *Config { c := validBaseline(); c.Listen.Port = 1; return c }(),
-		"port 65535":     func() *Config { c := validBaseline(); c.Listen.Port = 65535; return c }(),
-		"no auth":        func() *Config { c := validBaseline(); c.Auth = Auth{}; return c }(),
+		"baseline":               validBaseline(),
+		"bind localhost":         func() *Config { c := validBaseline(); c.Listen.Bind = "localhost"; return c }(),
+		"bind ipv6":              func() *Config { c := validBaseline(); c.Listen.Bind = "::1"; return c }(),
+		"port 1":                 func() *Config { c := validBaseline(); c.Listen.Port = 1; return c }(),
+		"port 65535":             func() *Config { c := validBaseline(); c.Listen.Port = 65535; return c }(),
+		"no auth":                func() *Config { c := validBaseline(); c.Auth = Auth{}; return c }(),
+		"legacy arbitrary login": func() *Config { c := validBaseline(); c.Auth.Login = "legacy user"; return c }(),
 		"init placeholder": func() *Config {
 			c := validBaseline()
 			c.Listen.Bind = "127.0.0.1"

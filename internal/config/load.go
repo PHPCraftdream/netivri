@@ -72,6 +72,9 @@ func Load(path string) (*Config, error) {
 	if err := ktavLoadsInto(string(src), cfg); err != nil {
 		return nil, configFromBindingError(err)
 	}
+	if err := cfg.normalizeCountries(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

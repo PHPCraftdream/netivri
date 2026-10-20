@@ -30,19 +30,25 @@ not preserved, so keep personal notes elsewhere.
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
+| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), and optional `exit_country` (two ASCII letters, normalized uppercase). |
 | `selection.node` | string | *(empty)* | Preferred exit node name (set by `netivri use <node>`). |
 | `selection.country` | string | *(empty)* | Preferred exit country code (set by `netivri use --country CC`). |
 | `selection.mode` | string | `manual` | How the exit is chosen: `manual` (explicit node), `fastest` (lowest latency), `auto` (re-check periodically). |
+
+`accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters, not whether that code represents a real country.
 
 ## The `init` placeholder
 
 Writing `auth.login: init` / `auth.password: init` means "the first
 local client that authenticates fills the field in": the daemon hashes
 the supplied password with argon2id and replaces the placeholder in the
-file (the file is rewritten as a whole — comments are not preserved). Defaults are
-safe: `init` is only accepted when `listen.bind` is a loopback address,
-unless `auth.allow_init_remote: true`. Once a real credential is stored,
-the placeholder is gone and later connections must match it.
+file (the file is rewritten as a whole — comments are not preserved). An
+account object's `password: init` similarly accepts a first password for
+that fixed login and stores its argon2id hash. Defaults are safe: `init`
+is only accepted when `listen.bind` is a loopback address, unless
+`auth.allow_init_remote: true`. Once a real credential is stored, later
+connections must match it. Any configured account enables authentication
+for a non-loopback bind.
 
 ## Example
 
@@ -65,6 +71,14 @@ subscriptions: [
     {
         name: main
         url:: https://provider.example/sub/SECRET
+    }
+]
+
+accounts: [
+    {
+        login: alice
+        password:: init
+        exit_country: DE
     }
 ]
 

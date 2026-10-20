@@ -37,7 +37,54 @@ type Config struct {
 	Auth          Auth           `json:"auth"`
 	Fetch         Fetch          `json:"fetch"`
 	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	Accounts      []Account      `json:"accounts,omitempty"`
 	Selection     Selection      `json:"selection"`
+}
+
+// Account is one proxy account and its optional exit country.
+type Account struct {
+	Login       string `json:"login"`
+	Password    string `json:"password"`
+	ExitCountry string `json:"exit_country,omitempty"`
+}
+
+// Account returns the account and its index, or (nil, -1) when absent.
+func (c *Config) Account(login string) (*Account, int) {
+	for i := range c.Accounts {
+		if c.Accounts[i].Login == login {
+			return &c.Accounts[i], i
+		}
+	}
+	return nil, -1
+}
+
+// ValidAccountLogin reports whether login uses the supported account alphabet.
+func ValidAccountLogin(login string) bool {
+	if len(login) < 1 || len(login) > 64 {
+		return false
+	}
+	for _, r := range login {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._@-", r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// NormalizeCountry upper-cases a two-letter ASCII country code.
+func NormalizeCountry(code string) (string, bool) {
+	if len(code) != 2 {
+		return "", false
+	}
+	b := []byte(code)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		} else if b[i] < 'A' || b[i] > 'Z' {
+			return "", false
+		}
+	}
+	return string(b), true
 }
 
 // Listen is the local mixed HTTP/SOCKS5 proxy endpoint.
@@ -154,14 +201,68 @@ func (c *Config) Validate() error {
 	if err := checkScalar("auth.password", c.Auth.Password); err != nil {
 		return err
 	}
+	firstLogin := make(map[string]int, len(c.Accounts))
+	for i := range c.Accounts {
+		a := &c.Accounts[i]
+		if !ValidAccountLogin(a.Login) {
+			return invalid("accounts[%d].login must be a valid account login", i)
+		}
+		if j, ok := firstLogin[a.Login]; ok {
+			return invalid("accounts[%d] duplicates accounts[%d]", i, j)
+		}
+		firstLogin[a.Login] = i
+		if a.Login == InitPlaceholder {
+			return invalid("accounts[%d].login must not be the reserved init login", i)
+		}
+		if c.Auth.Login != "" && c.Auth.Login != InitPlaceholder && c.Auth.Login == a.Login {
+			return invalid("accounts[%d].login duplicates auth.login", i)
+		}
+		if a.Password != InitPlaceholder && !strings.HasPrefix(a.Password, argon2Prefix) {
+			return invalid("accounts[%d].password must be init or an argon2id PHC hash", i)
+		}
+		if err := checkScalar(fmt.Sprintf("accounts[%d].password", i), a.Password); err != nil {
+			return err
+		}
+		if a.ExitCountry != "" {
+			_, ok := NormalizeCountry(a.ExitCountry)
+			if !ok {
+				return invalid("accounts[%d].exit_country must be empty or two ASCII letters", i)
+			}
+		}
+		if err := checkScalar(fmt.Sprintf("accounts[%d].exit_country", i), a.ExitCountry); err != nil {
+			return err
+		}
+	}
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
 	}
 	return nil
 }
 
+func (c *Config) normalizeCountries() error {
+	for i := range c.Accounts {
+		if c.Accounts[i].ExitCountry == "" {
+			continue
+		}
+		country, ok := NormalizeCountry(c.Accounts[i].ExitCountry)
+		if !ok {
+			return invalid("accounts[%d].exit_country must be empty or two ASCII letters", i)
+		}
+		c.Accounts[i].ExitCountry = country
+	}
+	return nil
+}
+
 func (c *Config) usesInitAuth() bool {
-	return c.Auth.Login == InitPlaceholder || c.Auth.Password == InitPlaceholder
+	if c.Auth.Login == InitPlaceholder || c.Auth.Password == InitPlaceholder {
+		return true
+	}
+	for _, a := range c.Accounts {
+		if a.Password == InitPlaceholder {
+			return true
+		}
+	}
+	return false
 }
 
 func validateBind(bind string) error {
