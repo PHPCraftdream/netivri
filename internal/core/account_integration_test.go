@@ -113,8 +113,10 @@ func TestAccountCountryIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read HTTP authentication response: %v", err)
 		}
-		if !strings.Contains(response, " 407 ") {
-			t.Fatalf("HTTP response = %q, want 407", response)
+		// Mihomo answers a present-but-wrong credential with 403; only a
+		// missing one yields 407 (listener/http/proxy.go).
+		if !strings.Contains(response, " 403 ") {
+			t.Fatalf("HTTP response = %q, want 403", response)
 		}
 		_ = connection.Close()
 		assertAccountUpstreams(t, nil, []*fakeUpstream{de, nl, defaultUpstream}, upstreamTarget)
