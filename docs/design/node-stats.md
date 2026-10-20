@@ -1,0 +1,297 @@
+# Node statistics, destination affinity and data-path tuning
+
+Status: contract for the implementation. Related: [accounts](accounts.md),
+[warm-up](warmup.md).
+
+## Goals
+
+1. **Statistics.** Record, per exit node: liveness and latency (probes),
+   dial time and success of real connections, and the throughput observed on
+   real traffic. Keep them in SQLite, query them with `netivri stats`.
+2. **Affinity.** For one account, all connections to one site leave through
+   one exit node, so a remote server does not see the address change. A site
+   is a registrable domain (the second-level domain, public-suffix aware:
+   `example.com`, `example.co.uk`) **and all its subdomains**; an IP literal
+   is its own site. The first binding of a site takes the **best** node of
+   the account's route. The binding is kept while the node is healthy.
+3. **Speed.** Remove avoidable waits and contention on the connection path;
+   measure every change.
+
+Non-goals: active bandwidth tests (no synthetic load, speed comes from real
+traffic only), checking that an exit address really is in the claimed
+country, node selection for the default route (`use`), hot reload.
+
+## Findings that motivate this (concurrency review)
+
+- The route group is a Mihomo `select`: it always uses its first member, the
+  node with the smallest id (a hash), so the exit node is arbitrary and a
+  dead one is never skipped.
+- Probes run one node after another (5 s timeout each) and their results
+  only feed `status`.
+- A burst of first connections after a start runs argon2 once per
+  connection (up to 4 at a time) until the password is cached.
+- The TCP pool holds its mutex across a 1 ms socket read per hit.
+- Mihomo defaults: `tcp-concurrent` off (serial dial over resolved
+  addresses, 5 s per dead address).
+
+## Node identity
+
+Every node of a route has a stable **label** `<provider>/<node id>`
+(subscription name and the stored node id). The core treats labels as opaque
+strings; they are the key of the statistics and of persisted bindings.
+
+## Statistics
+
+### Sources (all passive or cheap)
+
+| Kind | Source | Written as |
+|---|---|---|
+| probe | the warm-up probe of a node (`WarmOptions.OnProbe`) | ok, delay |
+| dial | the sticky group times `member.DialContext` of every real connection | ok, dial time |
+| throughput | every 5 s the sticky group reads Mihomo's active connection trackers (`statistic.DefaultManager`), attributes each tracker to the node in its chain and sums the bytes moved since the previous read per node | bytes, window |
+
+Throughput samples are written only for windows that moved at least 16 KiB.
+The data path itself gets no wrapper: Mihomo already counts bytes per
+connection, polling the counters costs nothing per packet.
+
+### Store (`internal/stats`)
+
+SQLite through `modernc.org/sqlite` (pure Go: release builds use
+`CGO_ENABLED=0`; BSD-3-Clause, covered by the third-party licence collection).
+File `<home>/stats.db`. Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`,
+`busy_timeout=5000`. One writer (the daemon) and any number of readers (the
+CLI, read-only).
+
+```sql
+CREATE TABLE node (
+  id INTEGER PRIMARY KEY, label TEXT NOT NULL UNIQUE,
+  provider TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
+  first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);       -- unix ms
+CREATE TABLE sample (
+  ts INTEGER NOT NULL, node INTEGER NOT NULL, kind INTEGER NOT NULL,
+  ok INTEGER NOT NULL, ms INTEGER NOT NULL DEFAULT 0,
+  bytes INTEGER NOT NULL DEFAULT 0);                              -- unix ms
+CREATE INDEX sample_node_ts ON sample(node, ts);
+CREATE INDEX sample_ts ON sample(ts);
+CREATE TABLE hourly (
+  hour INTEGER NOT NULL, node INTEGER NOT NULL, kind INTEGER NOT NULL,
+  n INTEGER NOT NULL, ok INTEGER NOT NULL, ms_sum INTEGER NOT NULL,
+  ms_max INTEGER NOT NULL, bytes INTEGER NOT NULL,
+  PRIMARY KEY (hour, node, kind)) WITHOUT ROWID;                  -- unix hour
+```
+
+`PRAGMA user_version` carries the schema version (1). Writes are batched: a
+bounded queue, flushed every second or at 256 samples in one transaction;
+`Record` never blocks (a full queue drops the sample and counts it).
+Retention: raw samples older than `retention` (default 7 days) are folded
+into `hourly` and deleted at open and then hourly; `hourly` rows older than
+90 days are deleted. A query window inside the raw retention is exact
+(percentiles from raw rows); a longer window uses `hourly` and reports no
+percentiles.
+
+### Go contract: package `internal/stats`
+
+```go
+type Kind uint8
+
+const (
+	KindProbe      Kind = 1 // ms = probe delay
+	KindDial       Kind = 2 // ms = dial time
+	KindThroughput Kind = 3 // bytes moved in a window of ms milliseconds
+)
+
+type Sample struct {
+	At    time.Time
+	Label string
+	Kind  Kind
+	OK    bool          // always true for KindThroughput
+	Delay time.Duration // probe delay, dial time or throughput window
+	Bytes int64         // KindThroughput only
+}
+
+type NodeInfo struct{ Label, Provider, Country string }
+
+type Options struct {
+	Path        string
+	Retention   time.Duration    // raw samples; 0 = 7 days
+	QueueSize   int              // 0 = 4096
+	Now         func() time.Time // nil = time.Now (tests)
+}
+
+type Store struct{ /* ... */ }
+
+func Open(o Options) (*Store, error)           // creates the directory, migrates
+func OpenReadOnly(path string) (*Store, error) // os.ErrNotExist when absent
+func (s *Store) Record(Sample)                 // non-blocking, concurrency-safe
+func (s *Store) Dropped() uint64
+func (s *Store) SetNodes(infos []NodeInfo) error // upsert provider/country
+func (s *Store) Flush(ctx context.Context) error // queued samples are on disk
+func (s *Store) Close() error                    // flush, stop the writer, close
+
+type Query struct {
+	Since    time.Duration // 0 = 24h
+	Provider string        // empty = any
+	Country  string
+	Label    string
+}
+
+type NodeStats struct {
+	Label, Provider, Country string
+	Probes, ProbesOK         int
+	DelayAvgMS, DelayP50MS, DelayP95MS int64
+	Dials, DialsOK           int
+	DialAvgMS                int64
+	ThroughputP50KBps, ThroughputMaxKBps int64 // per window, KiB/s
+	Bytes                    int64
+	LastSeen, LastOK         time.Time // zero when never
+}
+
+func (s *Store) Nodes(q Query) ([]NodeStats, error) // sorted by label
+```
+
+`Record` on a read-only store or after `Close` is a no-op.
+
+## Affinity
+
+### The sticky group (`internal/core`)
+
+Each route gets, instead of a `select` group, a custom Mihomo group adapter
+(`C.ProxyAdapter` wrapped with `adapter.NewProxy`) named like the old group
+(`netivri-group-<R>`). The `select` groups stay in the raw config so the
+rules validate; after `ApplyConfig` the sticky adapters replace them in the
+proxy map through `tunnel.UpdateProxies`, the way the pool replaces the
+default node. Members are the already built leaf proxies `netivri-r<R>-<N>`.
+
+### Site key and binding
+
+- key = `(metadata.InUser, site)`; `site` = lower-case host without trailing
+  dot reduced with `publicsuffix.EffectiveTLDPlusOne`; a host that is itself
+  a public suffix, or has no dot, is used as is; an IP literal, or an empty
+  host with `metadata.DstIP`, is the textual IP.
+- A binding holds the member index, `boundAt` and an atomic `lastUsed`.
+- Bindings are idle-expired after `AffinityTTL` (default 24 h) and bounded in
+  number (100 000, oldest `lastUsed` evicted first).
+
+### Choosing the best node
+
+Per node the core keeps: EWMA of probe delay (alpha 0.3), EWMA of dial time
+(alpha 0.2), a ring of the last 32 outcomes (probes and dials) for the
+failure rate, the EWMA of throughput windows of at least 64 KiB, and
+consecutive failure counters.
+
+```
+delay  = mean of the known EWMAs (probe, dial); unknown without samples
+down   = 2 consecutive probe failures or 3 consecutive dial failures;
+         any success clears it
+score  = delay * (1 + 4*failRate) / (1 + min(throughputMiBps, 20) / 20)   lower is better
+```
+
+Selection for a new binding: candidates are the members that are not down
+and have a delay; if there are none, the members that are not down; if there
+are none, all members (the route is never left, and nothing falls back to
+another country or provider). `best` is the lowest score. Candidates within
+`max(20 ms, 15 % of best)` of `best` are near-equal: among them the one with
+the highest `fnv64a(login | site | label)` wins, so equal nodes share the
+sites of an account deterministically instead of flapping or piling up.
+
+A binding created while more than half of the route's members still had no
+delay is **provisional**: it expires after 2 minutes and the next use selects
+again (a site may move once at startup, never later because of a better
+node).
+
+While the bound node is not down it is used for every connection of the site,
+even if another node became faster: stability beats optimality. When the
+bound node is down, the next connection rebinds to the best remaining node.
+A failed dial that makes the node down is retried once on the re-selected
+node; any other failure is returned to the client.
+
+UDP associations use the same choice (key: login and destination IP).
+
+### Go contract: `internal/core` additions
+
+```go
+// Options gains:
+NodeLabels  map[string][]string // route key -> label per node, same order and length as RouteNodes[key]; nil = "r<R>-<N>"
+Observer    Observer           // nil = none
+AffinityTTL time.Duration      // 0 = 24h; negative is invalid
+
+// Observer receives measurements; methods must not block and must be safe
+// for concurrent use.
+type Observer interface {
+	ObserveProbe(label string, alive bool, delay time.Duration)
+	ObserveDial(label string, ok bool, took time.Duration)
+	ObserveThroughput(label string, bytes int64, window time.Duration)
+}
+
+// Instance gains:
+func (i *Instance) AffinityStats() AffinityStats
+
+type AffinityStats struct {
+	Bindings int
+	Rebinds  uint64
+}
+
+// WarmOptions gains (warm.go):
+ProbeConcurrency int // 0 = 8; probes of one round run this many at a time
+OnProbe func(name string, alive bool, delay time.Duration) // after every probe, from probe goroutines; name is the internal proxy name netivri-r<R>-<N>
+```
+
+The core maps the internal name to its label and forwards probe results to
+both the sticky group's health table and `Observer.ObserveProbe`.
+
+## Wiring (`cmd/netivri`)
+
+- `routePool` also returns labels (`provider/<node id>`) in node order.
+- `up` opens `<home>/stats.db` (unless `stats.enabled` is false), calls
+  `SetNodes`, passes an adapter of the store as `core.Observer`, closes the
+  store after the core.
+- The status answer gains `stats` (`path`, `dropped`) and `affinity`
+  (`bindings`, `rebinds`).
+
+### Configuration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `stats.enabled` | `true` | Record node statistics. |
+| `stats.retention_days` | `7` | Raw sample retention, 1..365. |
+| `affinity.ttl_hours` | `24` | Idle time after which a site binding is dropped, 1..720. |
+
+### `netivri stats`
+
+```
+netivri stats [--sub N] [--country CC] [--node LABEL] [--since 24h] [--by node|country|provider]
+```
+
+Reads the database read-only, works while the daemon runs and when it is
+stopped (`STATS_UNAVAILABLE`, exit 5, when no database exists). `data`:
+`{"since": "24h", "by": "node", "items": [{"label", "provider", "country",
+"probes", "uptime_pct", "delay_ms": {"avg","p50","p95"}, "dials",
+"dial_ok_pct", "dial_ms_avg", "throughput_kbps": {"p50","max"}, "bytes",
+"last_seen", "last_ok"}]}`; grouped forms sum counters and average the rest
+weighted by counts.
+
+## Persisting bindings
+
+A later step: `bindings(login, site, label, bound_at, last_used)` in the same
+database, loaded at start, written in batches, so a restart keeps the node a
+site was bound to. Not part of the first contract.
+
+## Data-path tuning
+
+First wave (no behaviour change for callers): probes run with bounded
+parallelism (default 8) with jitter and exponential backoff for dead nodes;
+one argon2 verification per account for a burst of first connections; the
+pool no longer holds its mutex across socket reads; the connection tracker
+uses a sharded set. Second wave: a benchmark harness (build tag `bench`,
+loopback echo server and fake SOCKS5 upstream, no external traffic) reporting
+connect latency p50/p99, throughput and 1 000 parallel connects; then only
+measured changes are kept (`tcp-concurrent` for direct dials, GC and socket
+settings, the cost of recording statistics).
+
+## Testing
+
+Per [testing.md](../testing.md): unit tests are hermetic; the store is tested
+on a temporary directory with an injected clock; the sticky group is tested
+with fake members and a fake clock, covering the site key (subdomains,
+multi-label suffixes, IP literals), best selection, near-equal tie by hash,
+provisional bindings, down and rebind, TTL, and concurrent use under `-race`.
