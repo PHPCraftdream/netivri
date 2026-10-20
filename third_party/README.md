@@ -33,7 +33,8 @@
 
 1. **VLESS transport seam** (`adapter/outbound/netivri_transport.go` plus
    minimal edits to `adapter/outbound/vless.go`): adds `PrepareTransport`,
-   `SetTransportSource` and `SetPhaseObserver` to `*outbound.Vless` so netivri
+   `TransportSupported`, `SetTransportSource`, `SetPhaseObserver` and
+   `UnwrapVless` to the `outbound` package so netivri
    can pre-dial the TCP + TLS/Reality transport and measure the `tcp` and
    `tls` phases of a dial (`docs/design/latency.md`, "VLESS seam"). Without a
    source and an observer, behaviour is unchanged from upstream.

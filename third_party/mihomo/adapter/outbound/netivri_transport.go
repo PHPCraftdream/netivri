@@ -54,8 +54,12 @@ func UnwrapVless(a C.ProxyAdapter) (*Vless, bool) {
 	return nil, false
 }
 
-// transportSupported reports whether the node uses a plain TCP + TLS
+// TransportSupported reports whether the node uses a plain TCP + TLS
 // transport that PrepareTransport can pre-dial.
+func (v *Vless) TransportSupported() bool {
+	return v.transportSupported()
+}
+
 func (v *Vless) transportSupported() bool {
 	return (v.option.Network == "" || v.option.Network == "tcp") && v.option.TLS
 }

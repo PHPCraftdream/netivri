@@ -37,6 +37,8 @@ netivri account rm <login>
 
 netivri stats [--sub N] [--country CC] [--node LABEL] [--since 24h] [--by node|country|provider]
 
+netivri diag dial --account LOGIN | --node LABEL [--samples N] [--idle LIST|off] [--max-nodes N] [--url URL]
+
 netivri use NODE
 netivri use --country CC [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
@@ -149,6 +151,58 @@ only `max`. Items are sorted by label or group name.
 
 When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 `--by` or `--country`: usage error, exit 2.
+
+### `diag dial`
+
+```
+netivri diag dial --account LOGIN | --node LABEL [--samples N] [--idle LIST|off] [--max-nodes N] [--url URL]
+```
+
+Measures the dial phases of nodes (design: [design/latency.md](design/latency.md),
+"per node takes N samples of `dns`, `tcp`, `tls`, `first_byte`"). It runs in
+its own process without the daemon; a running instance is not touched. Per
+node it sends a handful of small HTTP requests (default 5 samples) through
+the node and reports per-phase timings and failures; then the idle survival
+test reuses the prepared transports after waiting 0.5 s, 1 s, 2 s, ... and
+reports the success ratio per idle time and a suggested pool TTL. The idle
+test waits up to the largest `--idle` value per node.
+
+Exactly one of `--account` (the route nodes `up` would use, in route order)
+or `--node LABEL` (`<provider>/<node id>`, like the label of `stats`) is
+required.
+
+| Flag | Meaning |
+|---|---|
+| `--account LOGIN` | Diagnose the route nodes of this account (at most `--max-nodes` of them). |
+| `--node LABEL` | Diagnose this single node. |
+| `--samples N` | Samples per node, 1..20 (default 5). |
+| `--idle LIST` | Comma-separated idle times for the survival test (at most 10 positive durations like `500ms,2s`, sorted ascending), or `off` to skip it. Default: the built-in ladder. |
+| `--max-nodes N` | Cap on the number of account route nodes, 1..50 (default 6). |
+| `--url URL` | Probe URL, `http` only (default: the warm-up URL, `www.gstatic.com`). |
+
+```json
+{"url_host": "www.gstatic.com", "samples": 5, "nodes": [
+  {"label": "main/a1b2c3", "transport_phases": true, "samples": 5,
+   "phases_ms": {"dns": {"n": 5, "p50": 12, "p90": 30, "max": 41},
+                 "tcp": {"n": 5, "p50": 20, "p90": 25, "max": 27},
+                 "first_byte": {"n": 5, "p50": 84, "p90": 140, "max": 150}},
+   "failures": {"dns": 0, "tcp": 0, "tls": 0, "first_byte": 1},
+   "idle_survival": [{"idle_ms": 500, "ok": 5, "fail": 0}],
+   "suggested_pool_ttl_ms": 250}]}
+```
+
+`phases_ms` carries only phases with samples (`tls` appears only for nodes
+with transport phases); `idle_survival` and `suggested_pool_ttl_ms` are
+omitted when there is no result. All durations are milliseconds with at
+most one decimal. The output contains no node addresses: only node labels
+and the probe URL host (`url_host`).
+
+Errors: bad flags `USAGE` (exit 2); unknown account `ACCOUNT_NOT_FOUND`;
+an account with neither provider nor exit country `NO_ROUTE`; unknown node
+`NODE_NOT_FOUND` (all exit 5); a route without stored nodes
+`NO_NODES_FOR_COUNTRY` (exit 5); `DIAG_FAILED` (exit 3) when the run itself
+cannot proceed (for example a stored node mapping the proxy library rejects).
+Failed requests are not errors: they are counted in `failures`.
 
 ### `account`
 
@@ -497,6 +551,8 @@ Raw proxy mappings (credentials) are never printed.
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
 | `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive |
+| `NO_ROUTE` | 5 | `diag dial`: the account has no route (neither provider nor exit country) |
+| `DIAG_FAILED` | 3 | `diag dial`: the run could not proceed (for example an unusable node mapping) |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
 | `STATS_UNAVAILABLE` | 5 | `stats`: no statistics database exists yet (nothing was recorded) |

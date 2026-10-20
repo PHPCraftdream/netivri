@@ -30,6 +30,8 @@ func dispatch(args []string, stdout io.Writer) error {
 		return runAccount(args[1:], stdout)
 	case "stats":
 		return runStats(args[1:], stdout)
+	case "diag":
+		return runDiag(args[1:], stdout)
 	case "version":
 		cli.Success(stdout, map[string]string{"version": version})
 		return nil
