@@ -233,3 +233,78 @@ accounts: [
 		t.Fatalf("saved/reloaded country = %q, want DE", reloaded.Accounts[0].ExitCountry)
 	}
 }
+
+func TestValidProviderName(t *testing.T) {
+	for _, name := range []string{"main", "A._-9", strings.Repeat("x", 64)} {
+		if !ValidProviderName(name) {
+			t.Errorf("expected valid provider name")
+		}
+	}
+	for _, name := range []string{"", strings.Repeat("x", 65), "a/b", "a b", "a:b", "é", "a+b"} {
+		if ValidProviderName(name) {
+			t.Errorf("accepted invalid provider name")
+		}
+	}
+}
+
+func TestValidateAccountProvider(t *testing.T) {
+	valid := func(provider string) *Config {
+		c := Default()
+		c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: provider}}
+		return c
+	}
+	for _, provider := range []string{"", "main", "Main.Sub-1_2"} {
+		if err := valid(provider).Validate(); err != nil {
+			t.Fatalf("provider %q: %v", provider, err)
+		}
+	}
+	for _, provider := range []string{"bad provider", "a/b", "é", strings.Repeat("x", 65)} {
+		err := valid(provider).Validate()
+		ce, ok := err.(*cli.Error)
+		if !ok || ce.Code != CodeConfigInvalid || ce.Exit != cli.ExitUsage {
+			t.Fatalf("provider %q: error = %#v", provider, err)
+		}
+		want := "accounts[0].provider must be empty or a valid provider name"
+		if ce.Message != want {
+			t.Fatalf("provider %q: message = %q", provider, ce.Message)
+		}
+		if strings.Contains(ce.Message, provider) {
+			t.Fatalf("provider %q: error leaked the value", provider)
+		}
+	}
+}
+
+func TestMarshalAndLoadAccountProvider(t *testing.T) {
+	requireKtavLib(t)
+	cfg := Default()
+	cfg.Accounts = []Account{
+		{Login: "alice", Password: "init", Provider: "main", ExitCountry: "DE"},
+		{Login: "123", Password: "init", Provider: "123"},
+		{Login: "true", Password: "init", Provider: "true", ExitCountry: "TR"},
+		{Login: "null", Password: "init", Provider: "null"},
+		{Login: "bob", Password: "init", ExitCountry: "NO"},
+		{Login: "carol", Password: "init", Provider: "fallback"},
+	}
+	doc, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{
+		"provider:: 123", "provider:: true", "provider:: null",
+	} {
+		if !strings.Contains(doc, line) {
+			t.Fatalf("missing raw marker %q", line)
+		}
+	}
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Fatalf("roundtrip mismatch: %#v", loaded)
+	}
+}

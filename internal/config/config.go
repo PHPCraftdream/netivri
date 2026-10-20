@@ -41,10 +41,12 @@ type Config struct {
 	Selection     Selection      `json:"selection"`
 }
 
-// Account is one proxy account and its optional exit country.
+// Account is one proxy account with its optional provider binding and
+// exit country.
 type Account struct {
 	Login       string `json:"login"`
 	Password    string `json:"password"`
+	Provider    string `json:"provider,omitempty"`
 	ExitCountry string `json:"exit_country,omitempty"`
 }
 
@@ -65,6 +67,20 @@ func ValidAccountLogin(login string) bool {
 	}
 	for _, r := range login {
 		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._@-", r)) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidProviderName reports whether name matches the subscription
+// name alphabet: 1..64 characters of A-Za-z0-9._-.
+func ValidProviderName(name string) bool {
+	if len(name) < 1 || len(name) > 64 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
 			return false
 		}
 	}
@@ -230,6 +246,12 @@ func (c *Config) Validate() error {
 			}
 		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].exit_country", i), a.ExitCountry); err != nil {
+			return err
+		}
+		if a.Provider != "" && !ValidProviderName(a.Provider) {
+			return invalid("accounts[%d].provider must be empty or a valid provider name", i)
+		}
+		if err := checkScalar(fmt.Sprintf("accounts[%d].provider", i), a.Provider); err != nil {
 			return err
 		}
 	}
