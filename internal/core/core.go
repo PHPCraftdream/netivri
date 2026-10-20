@@ -1,5 +1,12 @@
 // Package core embeds Mihomo as a library and exposes it as a local
 // dual-protocol (HTTP + SOCKS4/5) listener. See docs/design/mixed-port.md.
+//
+// With Options.Node set, Start builds a rule-mode config whose single
+// MATCH rule routes every connection through the selected upstream node
+// (fixed internal name "netivri-node"); domain destinations are passed to
+// the node unresolved. There is no direct fallback: if the node is
+// unreachable, connections fail. The node is chosen at Start time only;
+// switching it while the instance is running is out of scope for now.
 package core
 
 import (
@@ -13,6 +20,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter/inbound"
 	auth "github.com/metacubex/mihomo/component/auth"
+	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/config"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/hub/executor"
@@ -32,6 +40,11 @@ type Options struct {
 	Bind          string             // default "127.0.0.1"
 	Port          int                // 0 = random free port
 	Authenticator auth.Authenticator // nil = no authentication
+	// Node optionally routes every connection accepted by the mixed listener
+	// through this Mihomo proxy mapping (a Clash `proxies:` entry as produced
+	// by internal/subscription). nil keeps Direct mode. The node is fixed for
+	// the lifetime of the instance; hot-switching is not supported yet.
+	Node map[string]any
 }
 
 // Instance is one running proxy listener.
@@ -40,6 +53,7 @@ type Instance struct {
 	closed bool
 	ln     *mixed.Listener
 	done   chan struct{} // closed by Close; stops the ctx watcher
+	route  string        // "direct" or "node"; immutable after Start publishes the instance
 }
 
 var (
@@ -95,6 +109,22 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	raw.Profile.StoreSelected = false
 	raw.Profile.StoreFakeIP = false
 	raw.GeoAutoUpdate = false
+	route := routeDirect
+	if o.Node != nil {
+		proxies, rules, err := prepareNode(o.Node)
+		if err != nil {
+			return nil, err
+		}
+		// Rule mode with a single MATCH rule: every connection is routed to
+		// the node, and domain destinations are handed to it unresolved
+		// (MATCH never triggers the local resolver; DNS stays disabled).
+		raw.Mode = tunnel.Rule
+		raw.Proxy = proxies
+		raw.Rule = rules
+		// No rule needs the process name; never look processes up.
+		raw.FindProcessMode = process.FindProcessOff
+		route = routeNode
+	}
 
 	cfg, err := config.ParseRawConfig(raw)
 	if err != nil {
@@ -121,7 +151,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		return nil, err
 	}
 
-	inst := &Instance{ln: ln, done: make(chan struct{})}
+	inst := &Instance{ln: ln, done: make(chan struct{}), route: route}
 	current = inst
 
 	// Optional lifecycle: cancel ctx to stop the instance.
@@ -145,6 +175,11 @@ func (i *Instance) Addr() string {
 		return ""
 	}
 	return i.ln.Address()
+}
+
+// Route reports how traffic leaves this instance: "direct" or "node".
+func (i *Instance) Route() string {
+	return i.route
 }
 
 // Close stops the listener and the embedded core. Idempotent.
