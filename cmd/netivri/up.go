@@ -263,7 +263,7 @@ func runUp(args []string, stdout io.Writer) error {
 	if err != nil {
 		return failStartup(opts.Handshake, err)
 	}
-	if _, _, err := accountRoutePool(opts.Home, cfg); err != nil {
+	if _, err := accountRoutePool(opts.Home, cfg); err != nil {
 		return failStartup(opts.Handshake, err)
 	}
 	if !opts.Foreground {
@@ -318,7 +318,7 @@ func runUpForeground(opts upOptions, stdout io.Writer, bind string, port int, cf
 var runForegroundInner = serve
 
 func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
-	countries, accountRoutes, err := accountRoutePool(opts.Home, cfg)
+	pool, err := accountRoutePool(opts.Home, cfg)
 	if err != nil {
 		return err
 	}
@@ -346,14 +346,28 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Only the daemon child has a log; a foreground run stays silent on stderr.
+	logf := func(format string, args ...any) {
+		if opts.Handshake != "" {
+			daemonLog.Printf(format, args...)
+		}
+	}
+	store := openStats(opts.Home, pool.infos, logf)
+	defer closeStats(store)
+	var observer core.Observer
+	if store != nil {
+		observer = statsObserver{store: store}
+	}
 	inst, err := core.Start(ctx, core.Options{
 		HomeDir:       opts.Home,
 		Bind:          bind,
 		Port:          port,
 		Authenticator: authenticator,
-		RouteNodes:    countries,
-		AccountRoute:  accountRoutes,
-		Warm:          warmOptions(countries),
+		RouteNodes:    pool.nodes,
+		AccountRoute:  pool.accountRoutes,
+		NodeLabels:    pool.labels,
+		Observer:      observer,
+		Warm:          warmOptions(pool.nodes),
 	})
 	if err != nil {
 		return err
@@ -379,6 +393,8 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			Version:    version,
 			Accounts:   accountStatus(cfg, inst.AccountRoutes()),
 			Warm:       warmInfo(inst),
+			Stats:      statsInfo(store, opts.Home),
+			Affinity:   affinityInfo(inst, len(pool.accountRoutes) > 0),
 		}
 	}
 	ctrl, err := daemon.StartServer(token, status, func() { close(stopRequested) })
@@ -388,10 +404,12 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	}
 
 	st := stateOf(status(), ctrl.Addr(), token)
-	// Closing order matters for `down`: the core goes down first, the control
-	// server next, and the state file disappears last.
+	// Closing order matters for `down`: the core goes down first, the
+	// statistics are flushed next (a stats query after `down` sees them), the
+	// control server after that, and the state file disappears last.
 	shutdown := func() {
 		_ = inst.Close()
+		closeStats(store)
 		_ = ctrl.Close()
 		daemon.RemoveStateIf(opts.Home, st.PID, st.Token)
 	}

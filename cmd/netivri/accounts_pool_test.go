@@ -9,6 +9,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -149,9 +150,46 @@ func TestAccountRoutePoolLoadsStoredSnapshotsAndSkipsMissing(t *testing.T) {
 		Accounts:      []config.Account{{Login: "a", Provider: "matching", ExitCountry: "DE"}},
 		Subscriptions: []config.Subscription{{Name: "missing"}, {Name: "matching"}},
 	}
-	got, routes, err := accountRoutePool(home, cfg)
-	if err != nil || got["matching~DE"][0]["name"] != "fixture" || routes["a"] != "matching~DE" {
-		t.Fatalf("pool=%v routes=%v err=%v", got, routes, err)
+	got, err := accountRoutePool(home, cfg)
+	if err != nil || got.nodes["matching~DE"][0]["name"] != "fixture" || got.accountRoutes["a"] != "matching~DE" {
+		t.Fatalf("pool=%v routes=%v err=%v", got.nodes, got.accountRoutes, err)
+	}
+	if labels := got.labels["matching~DE"]; len(labels) != 1 || labels[0] != "matching/1" {
+		t.Fatalf("labels = %v, want [matching/1]", labels)
+	}
+	if len(got.infos) != 1 || got.infos[0] != (stats.NodeInfo{Label: "matching/1", Provider: "matching", Country: "DE"}) {
+		t.Fatalf("infos = %+v", got.infos)
+	}
+}
+
+// TestBuildAccountRoutePoolLabelsFollowNodeOrder: labels and infos line up
+// with the ordered nodes of each route, one info per distinct node.
+func TestBuildAccountRoutePoolLabelsFollowNodeOrder(t *testing.T) {
+	snapshots := map[string]*subscription.Snapshot{
+		"main": snap(node("z", "DE"), node("a", "DE")),
+		"alt":  snap(node("m", "DE")),
+	}
+	accounts := []config.Account{
+		{Login: "any", ExitCountry: "DE"},
+		{Login: "onlymain", Provider: "main", ExitCountry: "DE"},
+	}
+	got, err := buildAccountRoutePool(accounts, snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.labels["~DE"], ",") != "main/a,alt/m,main/z" {
+		t.Fatalf("~DE labels = %v", got.labels["~DE"])
+	}
+	if strings.Join(got.labels["main~DE"], ",") != "main/a,main/z" {
+		t.Fatalf("main~DE labels = %v", got.labels["main~DE"])
+	}
+	for key, labels := range got.labels {
+		if len(labels) != len(got.nodes[key]) {
+			t.Fatalf("route %q: %d labels for %d nodes", key, len(labels), len(got.nodes[key]))
+		}
+	}
+	if len(got.infos) != 3 {
+		t.Fatalf("infos = %+v, want 3 distinct nodes", got.infos)
 	}
 }
 
@@ -160,7 +198,7 @@ func TestAccountRoutePoolMissingAllSnapshots(t *testing.T) {
 		Accounts:      []config.Account{{Login: "a", ExitCountry: "DE"}},
 		Subscriptions: []config.Subscription{{Name: "missing"}},
 	}
-	_, _, err := accountRoutePool(t.TempDir(), cfg)
+	_, err := accountRoutePool(t.TempDir(), cfg)
 	var ce *cli.Error
 	if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" || ce.Exit != cli.ExitNotFound {
 		t.Fatalf("unexpected error: %#v", err)
@@ -186,9 +224,9 @@ func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
 		Accounts:      []config.Account{{Login: "plain"}},
 		Subscriptions: []config.Subscription{{Name: "unused"}},
 	}
-	nodes, routes, err := accountRoutePool(home, cfg)
-	if err != nil || len(nodes) != 0 || len(routes) != 0 {
-		t.Fatalf("no routed account: nodes=%v routes=%v err=%v", nodes, routes, err)
+	got, err := accountRoutePool(home, cfg)
+	if err != nil || len(got.nodes) != 0 || len(got.accountRoutes) != 0 || len(got.infos) != 0 {
+		t.Fatalf("no routed account: nodes=%v routes=%v err=%v", got.nodes, got.accountRoutes, err)
 	}
 
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
@@ -197,9 +235,9 @@ func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
 	}
 	cfg.Accounts = []config.Account{{Login: "a", Provider: "used"}}
 	cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: "used"})
-	nodes, routes, err = accountRoutePool(home, cfg)
-	if err != nil || len(nodes["used~"]) != 1 || routes["a"] != "used~" {
-		t.Fatalf("provider route must not read the other snapshot: nodes=%v routes=%v err=%v", nodes, routes, err)
+	got, err = accountRoutePool(home, cfg)
+	if err != nil || len(got.nodes["used~"]) != 1 || got.accountRoutes["a"] != "used~" {
+		t.Fatalf("provider route must not read the other snapshot: nodes=%v routes=%v err=%v", got.nodes, got.accountRoutes, err)
 	}
 }
 
@@ -210,7 +248,7 @@ func TestAccountRoutePoolBrokenSnapshotOfNeededProvider(t *testing.T) {
 		Accounts:      []config.Account{{Login: "a", Provider: "p"}},
 		Subscriptions: []config.Subscription{{Name: "p"}},
 	}
-	_, _, err := accountRoutePool(home, cfg)
+	_, err := accountRoutePool(home, cfg)
 	var ce *cli.Error
 	if !errors.As(err, &ce) || ce.Code != "SUB_SNAPSHOT_INVALID" {
 		t.Fatalf("unexpected error: %#v", err)

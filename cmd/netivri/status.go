@@ -53,6 +53,12 @@ func runStatus(args []string, stdout io.Writer) error {
 	if st.Warm != nil {
 		data["warm"] = st.Warm
 	}
+	if st.Stats != nil {
+		data["stats"] = st.Stats
+	}
+	if st.Affinity != nil {
+		data["affinity"] = st.Affinity
+	}
 	cli.Success(stdout, data)
 	return nil
 }

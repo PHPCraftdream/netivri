@@ -35,6 +35,8 @@ netivri account set-country <login> <CC> | <login> --none
 netivri account set-provider <login> <NAME> | <login> --none
 netivri account rm <login>
 
+netivri stats [--sub N] [--country CC] [--node LABEL] [--since 24h] [--by node|country|provider]
+
 netivri use NODE
 netivri use --country CC [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
@@ -101,6 +103,52 @@ fields (like `sub list`); a corrupt snapshot is `SUB_SNAPSHOT_INVALID`.
 
 These are the `data` values for the NAME form, the no-argument form and the
 `--url` form.
+
+### `stats`
+
+The recorded health, delay and throughput of the exit nodes
+(design: [design/node-stats.md](design/node-stats.md)). While `up` serves
+accounts that have a provider or an exit country, it records into
+`<home>/stats.db`: the background probes of the nodes, the dial time and
+outcome of every real connection, and the throughput of real traffic (bytes
+moved per 5-second window; there are no synthetic speed tests). `stats` reads
+that database read-only, so it works while the daemon runs and after it
+stopped.
+
+| Flag | Meaning |
+|---|---|
+| `--sub N` | Only the nodes of this subscription (provider). |
+| `--country CC` | Only the nodes of this country. |
+| `--node LABEL` | Only this node. A label is `<provider>/<node id>`, like the `sub` and `id` of `node list`. |
+| `--since D` | Window: `90m`, `24h`, `7d`, ... (default `24h`, at most `365d`). |
+| `--by G` | `node` (default), `country` or `provider`. |
+
+```json
+{"since": "24h0m0s", "by": "node", "items": [
+  {"label": "main/a1b2c3", "provider": "main", "country": "DE",
+   "probes": 120, "uptime_pct": 99.2,
+   "delay_ms": {"avg": 84, "p50": 80, "p95": 140},
+   "dials": 340, "dial_ok_pct": 99.1, "dial_ms_avg": 96,
+   "throughput_kbps": {"p50": 1200, "max": 8400},
+   "bytes": 123456789,
+   "last_seen": "2026-10-20T10:00:00Z", "last_ok": "2026-10-20T10:00:00Z"}]}
+```
+
+`uptime_pct` is the share of successful probes and `dial_ok_pct` the share of
+successful dials of real connections; both are `null` without samples.
+`delay_ms` covers successful probes, `dial_ms_avg` successful dials, and
+`throughput_kbps` the per-window rates in KiB/s. Windows longer than the raw
+retention (7 days) are answered from hourly summaries: percentiles and
+throughput are then `0`.
+
+With `--by country` or `--by provider` each item is one group (`country`,
+with `unknown` for nodes without one, or `provider`) with the number of
+`nodes`, summed counters and averages weighted by the number of successful
+samples; percentiles do not merge and are left out, `throughput_kbps` carries
+only `max`. Items are sorted by label or group name.
+
+When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
+`--by` or `--country`: usage error, exit 2.
 
 ### `account`
 
@@ -245,8 +293,14 @@ Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
 `version` (the daemon binary's version), `accounts` (see `account`; each record is
-`{"login", "provider", "exit_country"}`, sorted by login) and `warm`. The selection fields of the planned shape below are not included
+`{"login", "provider", "exit_country"}`, sorted by login), `warm`, `stats` and `affinity`. The selection fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+`stats` (`{"path", "dropped"}`) is present while the statistics store is open;
+`dropped` counts samples lost to a full write queue. `affinity`
+(`{"bindings", "rebinds"}`) is present while an account has a route: the
+number of site-to-node bindings held now and how many times a binding moved
+to another node because its node was down (see [design/node-stats.md](design/node-stats.md)).
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,
@@ -443,6 +497,7 @@ Raw proxy mappings (credentials) are never printed.
 | `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
+| `STATS_UNAVAILABLE` | 5 | `stats`: no statistics database exists yet (nothing was recorded) |
 | `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
 | `DAEMON_START_FAILED` | 1 | The daemon child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
 | `DAEMON_START_TIMEOUT` | 1 | The daemon did not report startup within 15 s |

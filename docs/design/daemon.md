@@ -50,6 +50,8 @@ protects normal stale cleanup and shutdown from deleting a successor.
 Status JSON may include additive `accounts`, an omitted-when-empty array of
 `{"login":"alice","provider":"main","exit_country":"DE"}` records. It contains neither
 password hashes nor other credentials; live status sorts records by login.
+It may also include `stats` (`path`, `dropped`) and `affinity` (`bindings`,
+`rebinds`), both omitted when not applicable (docs/design/node-stats.md).
 
 ## The handshake
 

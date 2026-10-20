@@ -12,6 +12,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
+	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -39,7 +40,7 @@ func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool)
 // accountRoutePool loads the stored snapshots the accounts' routes need and
 // builds the per-account route pool for `up`. Snapshots no route reads are
 // not touched, so a broken one cannot block unrelated accounts.
-func accountRoutePool(home string, cfg *config.Config) (map[string][]map[string]any, map[string]string, error) {
+func accountRoutePool(home string, cfg *config.Config) (routePool, error) {
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	all, named := snapshotDemand(cfg.Accounts)
 	snapshots := make(map[string]*subscription.Snapshot, len(cfg.Subscriptions))
@@ -52,22 +53,26 @@ func accountRoutePool(home string, cfg *config.Config) (map[string][]map[string]
 			continue
 		}
 		if err != nil {
-			return nil, nil, snapshotError(sub.Name)
+			return routePool{}, snapshotError(sub.Name)
 		}
 		snapshots[sub.Name] = snap
 	}
-	routes, err := buildAccountRoutePool(cfg.Accounts, snapshots)
-	if err != nil {
-		return nil, nil, err
-	}
-	return routes.nodes, routes.accountRoutes, nil
+	return buildAccountRoutePool(cfg.Accounts, snapshots)
 }
 
 // routePool is the outcome of buildAccountRoutePool: the nodes of every
-// route and each account's route key.
+// route, a stable label per node (same order) and each account's route key.
+// infos describes every distinct node for the statistics store.
 type routePool struct {
 	nodes         map[string][]map[string]any
+	labels        map[string][]string
+	infos         []stats.NodeInfo
 	accountRoutes map[string]string
+}
+
+// nodeLabel is the stable identity of a node in statistics and bindings.
+func nodeLabel(provider, id string) string {
+	return provider + "/" + id
 }
 
 // buildAccountRoutePool is a pure function over the stored snapshots: for
@@ -76,7 +81,12 @@ type routePool struct {
 // (ties broken by provider name). An account with neither has no route.
 // A route without nodes is a hard error: `up` fails closed.
 func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot) (routePool, error) {
-	pool := routePool{nodes: map[string][]map[string]any{}, accountRoutes: map[string]string{}}
+	pool := routePool{
+		nodes:         map[string][]map[string]any{},
+		labels:        map[string][]string{},
+		accountRoutes: map[string]string{},
+	}
+	infoSeen := make(map[string]bool)
 	type demand struct {
 		provider string
 		country  string
@@ -111,6 +121,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		type poolNode struct {
 			provider string
 			id       string
+			country  string
 			raw      map[string]any
 		}
 		var nodes []poolNode
@@ -123,7 +134,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 				if d.country != "" && n.Country != d.country {
 					continue
 				}
-				nodes = append(nodes, poolNode{provider: name, id: n.ID, raw: n.Raw})
+				nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, raw: n.Raw})
 			}
 		}
 		if len(nodes) == 0 {
@@ -137,7 +148,13 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		})
 		key := routeKey(d.provider, d.country)
 		for _, n := range nodes {
+			label := nodeLabel(n.provider, n.id)
 			pool.nodes[key] = append(pool.nodes[key], n.raw)
+			pool.labels[key] = append(pool.labels[key], label)
+			if !infoSeen[label] {
+				infoSeen[label] = true
+				pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country})
+			}
 		}
 	}
 	return pool, nil

@@ -47,6 +47,18 @@ type WarmInfo struct {
 	Nodes         []NodeHealth `json:"nodes"`
 }
 
+// StatsInfo describes the node statistics store of the running instance.
+type StatsInfo struct {
+	Path    string `json:"path"`
+	Dropped uint64 `json:"dropped"` // samples lost to a full write queue
+}
+
+// AffinityInfo counts the site-to-node bindings of the running instance.
+type AffinityInfo struct {
+	Bindings int    `json:"bindings"`
+	Rebinds  uint64 `json:"rebinds"`
+}
+
 // Status is the live answer of GET /v1/status.
 type Status struct {
 	Daemon     string        `json:"daemon"`
@@ -60,6 +72,8 @@ type Status struct {
 	Version    string        `json:"version"`
 	Accounts   []AccountInfo `json:"accounts,omitempty"`
 	Warm       *WarmInfo     `json:"warm,omitempty"`
+	Stats      *StatsInfo    `json:"stats,omitempty"`
+	Affinity   *AffinityInfo `json:"affinity,omitempty"`
 }
 
 // Server is the loopback control HTTP server. It always binds 127.0.0.1:0,
