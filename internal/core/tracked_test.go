@@ -97,3 +97,42 @@ func (b blockingTunnel) HandleTCPConn(net.Conn, *C.Metadata) {
 }
 func (b blockingTunnel) HandleUDPPacket(C.UDPPacket, *C.Metadata) {}
 func (b blockingTunnel) NatTable() C.NatTable                     { return nil }
+
+// Handlers spread over all shards must all be closed and waited for by
+// closeAll.
+func TestTrackedTunnelShardedConcurrentClose(t *testing.T) {
+	const n = 32
+	ft := &fakeTunnel{entered: make(chan struct{}, n)}
+	tt := newTrackedTunnel(ft)
+
+	clients := make([]net.Conn, n)
+	for i := 0; i < n; i++ {
+		server, client := net.Pipe()
+		clients[i] = client
+		go tt.HandleTCPConn(server, nil)
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case <-ft.entered:
+		case <-time.After(time.Second):
+			t.Fatalf("handler %d never registered", i)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		tt.closeAll(5 * time.Second)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("closeAll did not return after closing every shard")
+	}
+	for i, c := range clients {
+		if _, err := c.Write([]byte("x")); err == nil {
+			t.Fatalf("tracked connection %d was not closed", i)
+		}
+		_ = c.Close()
+	}
+}

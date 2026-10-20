@@ -174,37 +174,48 @@ func (p *poolDialer) start() {
 		go p.refill()
 	})
 }
+
+// DialContext serves the pooled address from the idle sockets. The mutex
+// is never held across the 1 ms socket-liveness read: a candidate is
+// popped under the lock and checked outside, so a slow check does not
+// block other dialers.
 func (p *poolDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	if network != "tcp" || address != p.addr {
 		return p.underlying.DialContext(ctx, network, address)
 	}
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return nil, net.ErrClosed
-	}
-	for len(p.idle) != 0 {
+	for {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return nil, net.ErrClosed
+		}
+		if len(p.idle) == 0 {
+			p.mu.Unlock()
+			p.owner.addPoolMetric("miss")
+			p.signal()
+			return p.underlying.DialContext(ctx, network, address)
+		}
 		last := len(p.idle) - 1
 		entry := p.idle[last]
 		p.idle = p.idle[:last]
+		p.mu.Unlock()
+
 		if p.ttl > 0 && time.Since(entry.at) >= p.ttl || !poolSocketAlive(entry.conn) {
 			_ = entry.conn.Close()
 			p.owner.addPoolMetric("discard")
 			continue
 		}
-		if p.closed {
-			p.mu.Unlock()
+		p.mu.Lock()
+		closed := p.closed
+		p.mu.Unlock()
+		if closed {
+			_ = entry.conn.Close()
 			return nil, net.ErrClosed
 		}
-		p.mu.Unlock()
 		p.owner.addPoolMetric("hit")
 		p.signal()
 		return entry.conn, nil
 	}
-	p.mu.Unlock()
-	p.owner.addPoolMetric("miss")
-	p.signal()
-	return p.underlying.DialContext(ctx, network, address)
 }
 
 // poolSocketAlive uses a short nonblocking read; EOF, unexpected data, and
@@ -285,20 +296,49 @@ func (p *poolDialer) refill() {
 	}
 }
 
+// expire drops dead or expired idle sockets. The liveness checks run
+// without the mutex: the slice is taken under the lock, checked outside
+// and the kept entries are merged back (entries added meanwhile stay,
+// the size cap holds, and a pool closed meanwhile has its kept
+// connections closed).
 func (p *poolDialer) expire() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	kept := p.idle[:0]
+	idle := p.idle
+	p.idle = nil
+	p.mu.Unlock()
+
 	now := time.Now()
-	for _, entry := range p.idle {
+	var kept []idleTCP
+	for _, entry := range idle {
 		if p.ttl > 0 && now.Sub(entry.at) >= p.ttl || !poolSocketAlive(entry.conn) {
 			_ = entry.conn.Close()
 			p.owner.addPoolMetric("discard")
-		} else {
-			kept = append(kept, entry)
+			continue
+		}
+		kept = append(kept, entry)
+	}
+
+	// Merge back under the lock; closed is read here, not before the checks,
+	// so a stop() that ran meanwhile is seen.
+	p.mu.Lock()
+	var drop []idleTCP
+	if p.closed {
+		drop = kept
+		kept = nil
+	} else {
+		kept = append(kept, p.idle...)
+		if extra := len(kept) - p.size; extra > 0 {
+			// Oldest first: they are the closest to their TTL.
+			drop = kept[:extra]
+			kept = kept[extra:]
 		}
 	}
 	p.idle = kept
+	p.mu.Unlock()
+	for _, entry := range drop {
+		_ = entry.conn.Close()
+		p.owner.addPoolMetric("discard")
+	}
 }
 
 func (p *poolDialer) stop() {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	mihauth "github.com/metacubex/mihomo/component/auth"
+	"golang.org/x/sync/singleflight"
 )
 
 // AccountSpec configures a named account. Password is an argon2id PHC hash
@@ -28,6 +29,7 @@ type multiAuthenticator struct {
 	accounts map[string]*accountState
 	legacy   mihauth.Authenticator
 	slots    chan struct{}
+	sf       singleflight.Group
 }
 
 type accountState struct {
@@ -143,16 +145,31 @@ func (m *multiAuthenticator) Verify(user, pass string) bool {
 		}
 		hash := a.hash
 		a.mu.Unlock()
-		m.slots <- struct{}{}
-		ok, err := VerifyHash(hash, pass)
-		<-m.slots
-		if err != nil || !ok {
-			return false
-		}
-		a.mu.Lock()
-		a.cached = pass
-		a.mu.Unlock()
-		return true
+		// A burst of first verifications of one credential runs
+		// argon2 once: the key contains login and password, so
+		// different passwords never share a result.
+		v, err, _ := m.sf.Do(user+"\x00"+pass, func() (any, error) {
+			// A flight that starts after another one finished finds the cache.
+			a.mu.Lock()
+			if a.cached != "" {
+				ok := subtle.ConstantTimeCompare([]byte(a.cached), []byte(pass)) == 1
+				a.mu.Unlock()
+				return ok, nil
+			}
+			a.mu.Unlock()
+			m.slots <- struct{}{}
+			ok, err := verifyHash(hash, pass)
+			<-m.slots
+			if err != nil || !ok {
+				return false, err
+			}
+			a.mu.Lock()
+			a.cached = pass
+			a.mu.Unlock()
+			return true, nil
+		})
+		ok, _ := v.(bool)
+		return err == nil && ok
 	}
 	if m.legacy == nil {
 		return false

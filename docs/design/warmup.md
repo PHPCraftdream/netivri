@@ -447,6 +447,14 @@ a failed listen leaves nothing behind) and `Instance.Close` stops it before
 `Options.Warm` (probes only, no pool) whenever accounts route through country
 nodes, and `status` prints the counters as `warm`.
 
+A round probes its nodes concurrently, at most `ProbeConcurrency` at a time
+(default 8). A node that failed twice in a row is skipped in the following
+rounds, one more round after each further failure up to three, and is probed
+every round again after one success. `WarmOptions.OnProbe` receives every
+result (internal proxy name, success, delay); a probe cut short by shutdown is
+neither counted nor reported. The results feed the sticky route groups and the
+statistics store (docs/design/node-stats.md).
+
 With `PoolSize > 0` and a node, the optional pool installs a proxy adapter for
 `netivri-node`, preserving other proxies and providers. It parks raw TCP
 sockets to the configured upstream address only; supported dial options are
@@ -454,7 +462,9 @@ applied and unsupported transports/options are rejected. Reuse saves only TCP
 setup: proxy protocol, authentication, TLS and destination negotiation still
 occur for each dial. Idle sockets are checked for closure, expired, and closed
 on shutdown. This is not a pool of completed tunnels and does not guarantee a
-peer has not closed a socket between checking and use.
+peer has not closed a socket between checking and use. The liveness read of an
+idle socket (up to 1 ms) runs outside the pool mutex, so one slow check does
+not hold up other dialers.
 
 Unit tests cover option normalization, leaf filtering, health snapshots and
 run-loop shutdown. Integration tests exercise actual `Start`/Mihomo probes

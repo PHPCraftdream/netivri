@@ -19,6 +19,9 @@ const (
 	defaultProbeTimeout  = 5 * time.Second
 	defaultProbeURL      = "http://www.gstatic.com/generate_204"
 	defaultPoolTTL       = 30 * time.Second
+
+	// defaultProbeConcurrency bounds the probes of one round.
+	defaultProbeConcurrency = 8
 )
 
 // WarmOptions configures periodic node probes and the optional raw TCP pool.
@@ -28,6 +31,15 @@ type WarmOptions struct {
 	ProbeURL      string
 	PoolSize      int
 	PoolTTL       time.Duration
+
+	// ProbeConcurrency bounds how many probes of one round run at a
+	// time; 0 means defaultProbeConcurrency, negative is invalid.
+	ProbeConcurrency int
+	// OnProbe, when set, is called after every probe from the probing
+	// goroutine, outside any warmer lock: name is the internal proxy
+	// name, alive reports probe success and delay is the measured
+	// delay (0 on failure).
+	OnProbe func(name string, alive bool, delay time.Duration)
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -66,6 +78,14 @@ func (realWarmClock) NewTicker(d time.Duration) warmTicker { return realWarmTick
 func (t realWarmTicker) Chan() <-chan time.Time            { return t.ticker.C }
 func (t realWarmTicker) Stop()                             { t.ticker.Stop() }
 
+// probeBackoff tracks consecutive probe failures of one node so dead
+// nodes are skipped in some rounds (no randomness, recovered nodes
+// reset).
+type probeBackoff struct {
+	failures int
+	skipped  int
+}
+
 type warmer struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
@@ -73,6 +93,7 @@ type warmer struct {
 	mu            sync.RWMutex
 	stats         WarmStats
 	proxies       []C.Proxy
+	backoff       []probeBackoff
 	options       WarmOptions
 	clock         warmClock
 	probe         warmProbe
@@ -97,7 +118,10 @@ func normalizeWarmOptions(o WarmOptions) (WarmOptions, error) {
 	if o.PoolTTL == 0 {
 		o.PoolTTL = defaultPoolTTL
 	}
-	if o.ProbeInterval < 0 || o.ProbeTimeout <= 0 || o.PoolTTL < 0 || o.PoolSize < 0 {
+	if o.ProbeConcurrency == 0 {
+		o.ProbeConcurrency = defaultProbeConcurrency
+	}
+	if o.ProbeInterval < 0 || o.ProbeTimeout <= 0 || o.PoolTTL < 0 || o.PoolSize < 0 || o.ProbeConcurrency < 0 {
 		return o, errors.New("core: invalid warm options")
 	}
 	u, err := url.Parse(o.ProbeURL)
@@ -181,32 +205,99 @@ func (w *warmer) run(ctx context.Context) {
 	}
 }
 
+// probeAll runs one probe round: every node that is due (dead nodes are
+// skipped in some rounds, see probeBackoff) is probed concurrently with
+// at most ProbeConcurrency probes in flight. The round returns when all
+// probes are done or the context ends (each probe inherits its
+// cancellation through its timeout context).
 func (w *warmer) probeAll(parent context.Context) {
-	for _, p := range w.proxies {
-		if parent.Err() != nil {
-			return
+	if parent.Err() != nil {
+		return
+	}
+	concurrency := w.options.ProbeConcurrency
+	if concurrency <= 0 {
+		concurrency = defaultProbeConcurrency
+	}
+	type scheduled struct {
+		proxy C.Proxy
+		index int
+	}
+	w.mu.Lock()
+	if len(w.backoff) != len(w.proxies) {
+		w.backoff = make([]probeBackoff, len(w.proxies))
+	}
+	var due []scheduled
+	for i, p := range w.proxies {
+		st := &w.backoff[i]
+		if st.failures >= 2 && st.skipped < min(st.failures-1, 3) {
+			st.skipped++
+			continue
 		}
-		ctx, cancel := context.WithTimeout(parent, w.options.ProbeTimeout)
-		delay, err := w.probe(ctx, p, w.options.ProbeURL)
-		cancel()
-		now := w.clock.Now()
-		w.probeCount.Add(1)
-		if err != nil {
-			w.probeFailures.Add(1)
+		st.skipped = 0
+		due = append(due, scheduled{proxy: p, index: i})
+	}
+	w.mu.Unlock()
+
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+schedule:
+	for _, item := range due {
+		select {
+		case sem <- struct{}{}:
+		case <-parent.Done():
+			break schedule
 		}
-		w.mu.Lock()
-		w.stats.LastProbe = now
-		i := sort.Search(len(w.stats.Nodes), func(i int) bool { return w.stats.Nodes[i].Name >= p.Name() })
-		if i == len(w.stats.Nodes) || w.stats.Nodes[i].Name != p.Name() {
-			w.stats.Nodes = append(w.stats.Nodes, NodeHealth{})
-			copy(w.stats.Nodes[i+1:], w.stats.Nodes[i:])
-		}
-		h := &w.stats.Nodes[i]
-		h.Name, h.Alive, h.CheckedAt = p.Name(), err == nil, now
+		wg.Add(1)
+		go func(p C.Proxy, index int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			w.probeOne(parent, p, index)
+		}(item.proxy, item.index)
+	}
+	wg.Wait()
+}
+
+// probeOne runs a single probe and records its result. OnProbe runs
+// outside w.mu, from the probing goroutine.
+func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
+	ctx, cancel := context.WithTimeout(parent, w.options.ProbeTimeout)
+	delay, err := w.probe(ctx, p, w.options.ProbeURL)
+	cancel()
+	if parent.Err() != nil {
+		// Shutdown interrupted the probe: that says nothing about the node.
+		return
+	}
+	now := w.clock.Now()
+	w.probeCount.Add(1)
+	var measured time.Duration
+	if err == nil {
+		measured = time.Duration(delay) * time.Millisecond
+	} else {
+		w.probeFailures.Add(1)
+	}
+	w.mu.Lock()
+	w.stats.LastProbe = now
+	i := sort.Search(len(w.stats.Nodes), func(i int) bool { return w.stats.Nodes[i].Name >= p.Name() })
+	if i == len(w.stats.Nodes) || w.stats.Nodes[i].Name != p.Name() {
+		w.stats.Nodes = append(w.stats.Nodes, NodeHealth{})
+		copy(w.stats.Nodes[i+1:], w.stats.Nodes[i:])
+	}
+	h := &w.stats.Nodes[i]
+	h.Name, h.Alive, h.CheckedAt = p.Name(), err == nil, now
+	if err == nil {
+		h.Delay = measured
+	}
+	if index >= 0 && index < len(w.backoff) {
 		if err == nil {
-			h.Delay = time.Duration(delay) * time.Millisecond
+			w.backoff[index] = probeBackoff{}
+		} else {
+			w.backoff[index].failures++
+			w.backoff[index].skipped = 0
 		}
-		w.mu.Unlock()
+	}
+	w.mu.Unlock()
+	if w.options.OnProbe != nil {
+		w.options.OnProbe(p.Name(), err == nil, measured)
 	}
 }
 

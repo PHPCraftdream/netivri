@@ -8,10 +8,15 @@ import (
 	"unicode"
 
 	mihauth "github.com/metacubex/mihomo/component/auth"
+	"golang.org/x/sync/singleflight"
 )
 
 // maxPasswordLen bounds argon2 input cost from hostile clients.
 const maxPasswordLen = 1024
+
+// verifyHash is the package verification seam; tests replace it to
+// observe and gate argon2 work.
+var verifyHash = VerifyHash
 
 // Options configures the proxy authenticator. Persist must be set
 // whenever a placeholder is configured; it is called exactly once when
@@ -34,6 +39,7 @@ type authenticator struct {
 	persist     func(login, passwordHash string) error
 	slots       chan struct{}
 	sharedSlots chan struct{}
+	sf          singleflight.Group
 }
 
 // New returns a Mihomo Authenticator. When Login and Password are both
@@ -115,14 +121,29 @@ func (a *authenticator) Verify(user, pass string) bool {
 	if cached != "" {
 		return ctEqual(cached, pass)
 	}
-	ok, err := a.verifyWithSlot(a.hash, pass)
-	if err != nil || !ok {
-		return false
-	}
-	a.mu.Lock()
-	a.cachedPass = pass
-	a.mu.Unlock()
-	return true
+	// A burst of first verifications of the same credential shares one
+	// argon2 run; the key contains the password, so different
+	// passwords never share a result.
+	v, err, _ := a.sf.Do(login+"\x00"+pass, func() (any, error) {
+		// A flight that starts after another one finished finds the cache.
+		a.mu.Lock()
+		if a.cachedPass != "" {
+			ok := ctEqual(a.cachedPass, pass)
+			a.mu.Unlock()
+			return ok, nil
+		}
+		a.mu.Unlock()
+		ok, err := a.verifyWithSlot(a.hash, pass)
+		if err != nil || !ok {
+			return false, err
+		}
+		a.mu.Lock()
+		a.cachedPass = pass
+		a.mu.Unlock()
+		return true, nil
+	})
+	ok, _ := v.(bool)
+	return err == nil && ok
 }
 
 // Users implements mihauth.Authenticator: the login once known (it is
@@ -146,7 +167,7 @@ func (a *authenticator) verifyWithSlot(hash, pass string) (bool, error) {
 	}
 	slots <- struct{}{}
 	defer func() { <-slots }()
-	return VerifyHash(hash, pass)
+	return verifyHash(hash, pass)
 }
 
 // consumeInit handles password == "init" (login literal or "init").
