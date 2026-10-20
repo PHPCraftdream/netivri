@@ -10,15 +10,16 @@
 # value seen on ubuntu, windows and macos; raise them when a package grows
 # tests, never lower them to make a run pass.
 default 60
-cmd/netivri 70
-internal/cli 85
-internal/auth 85
-internal/config 75
-internal/testutil 80
+cmd/netivri 75
+internal/cli 88
+internal/auth 90
+internal/config 77
+internal/testutil 90
+internal/subscription 80
 # The core logic runs under the integration level (embedded Mihomo, loopback
 # sockets), which this unit-level report does not measure.
 internal/core 0
 # The control server, client and the detached spawn run under the integration
 # and e2e levels (loopback sockets, a real child process); the unit level
-# measures the pure parts only. Ratchet after the first green run.
-internal/daemon 50
+# measures the pure parts only. Ratcheted after the first green run.
+internal/daemon 52
