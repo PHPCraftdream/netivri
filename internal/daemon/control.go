@@ -53,10 +53,13 @@ type StatsInfo struct {
 	Dropped uint64 `json:"dropped"` // samples lost to a full write queue
 }
 
-// AffinityInfo counts the site-to-node bindings of the running instance.
+// AffinityInfo counts the site-to-node bindings of the running instance and
+// its hedged dials.
 type AffinityInfo struct {
-	Bindings int    `json:"bindings"`
-	Rebinds  uint64 `json:"rebinds"`
+	Bindings  int    `json:"bindings"`
+	Rebinds   uint64 `json:"rebinds"`
+	Hedges    uint64 `json:"hedges"`     // hedge attempts started
+	HedgeWins uint64 `json:"hedge_wins"` // dials won by the hedge attempt
 }
 
 // Status is the live answer of GET /v1/status.

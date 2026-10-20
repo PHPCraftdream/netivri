@@ -298,9 +298,11 @@ yet; they arrive with `netivri use`.
 
 `stats` (`{"path", "dropped"}`) is present while the statistics store is open;
 `dropped` counts samples lost to a full write queue. `affinity`
-(`{"bindings", "rebinds"}`) is present while an account has a route: the
-number of site-to-node bindings held now and how many times a binding moved
-to another node because its node was down (see [design/node-stats.md](design/node-stats.md)).
+(`{"bindings", "rebinds", "hedges", "hedge_wins"}`) is present while an account has a route: the
+number of site-to-node bindings held now, how many times a binding moved
+to another node because its node was down, how many second dial attempts
+(to the same node) were started for a slow handshake and how many dials such
+an attempt won (see [design/node-stats.md](design/node-stats.md)).
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,

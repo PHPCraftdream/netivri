@@ -95,5 +95,10 @@ func affinityInfo(inst *core.Instance, routed bool) *daemon.AffinityInfo {
 		return nil
 	}
 	s := inst.AffinityStats()
-	return &daemon.AffinityInfo{Bindings: s.Bindings, Rebinds: s.Rebinds}
+	return &daemon.AffinityInfo{
+		Bindings:  s.Bindings,
+		Rebinds:   s.Rebinds,
+		Hedges:    s.Hedges,
+		HedgeWins: s.HedgeWins,
+	}
 }

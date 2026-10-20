@@ -213,6 +213,25 @@ load and allocates nothing; selection runs only for a new site or a down
 node. Look-up, selection and installation of a binding are one atomic step per
 key, so concurrent first connections to a site agree on one node.
 
+### Hedged dial
+
+A TCP dial on a hedgeable member that has not returned within
+`clamp(2 x dial EWMA, 250 ms, 2 s)` (1 s without a dial EWMA) is raced
+against one more attempt to the **same** member, so a stalled transport
+handshake does not cost the whole tunnel timeout. The first success wins;
+the loser attempt is cancelled through its own context and its connection,
+if one still arrives, is closed. One logical dial produces one health and
+observer record: a success with the elapsed time of the logical dial, or one
+failure when every started attempt failed; a cancelled attempt records
+nothing. Only member types verified in the module sources to send nothing to
+the target before the first payload are hedged (VLESS; eager types such as
+vmess, shadowsocks, trojan, socks5 and http are not). Each member has a
+budget of 4 hedge tokens, refilled by one token per 10 dials; without a
+token no hedge is started. `Hedges` and `HedgeWins` count started attempts
+and logical dials won by the hedge; a feature with no wins is removed.
+UDP associations are not hedged. See [latency.md](latency.md) for the
+contract and the gate.
+
 ### Go contract: `internal/core` additions
 
 ```go
@@ -233,8 +252,10 @@ type Observer interface {
 func (i *Instance) AffinityStats() AffinityStats
 
 type AffinityStats struct {
-	Bindings int
-	Rebinds  uint64
+	Bindings  int
+	Rebinds   uint64
+	Hedges    uint64
+	HedgeWins uint64
 }
 
 // WarmOptions gains (warm.go):

@@ -302,8 +302,10 @@ func (i *Instance) AffinityStats() AffinityStats {
 		return AffinityStats{}
 	}
 	return AffinityStats{
-		Bindings: i.stickyTable.count(),
-		Rebinds:  i.stickyTable.rebindCount(),
+		Bindings:  i.stickyTable.count(),
+		Rebinds:   i.stickyTable.rebindCount(),
+		Hedges:    i.stickyTable.hedgeCount(),
+		HedgeWins: i.stickyTable.hedgeWinCount(),
 	}
 }
 

@@ -45,6 +45,9 @@ type nodeHealth struct {
 	mu       sync.Mutex
 	downFlag atomic.Bool
 
+	// hedgeUnits is the hedge budget in 1/10-token units; see hedge.go.
+	hedgeUnits atomic.Int64
+
 	probeEWMS     float64 // ms
 	dialEWMS      float64 // ms
 	throughput    float64 // MiB/s, EWMA over windows of >= 64 KiB
@@ -210,7 +213,9 @@ func newHealthTable() *healthTable {
 func (t *healthTable) register(labels []string) {
 	for _, label := range labels {
 		if _, ok := t.entries[label]; !ok {
-			t.entries[label] = &nodeHealth{}
+			h := &nodeHealth{}
+			h.initHedgeBudget()
+			t.entries[label] = h
 		}
 	}
 }

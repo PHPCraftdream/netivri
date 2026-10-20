@@ -27,8 +27,10 @@ type Observer interface {
 
 // AffinityStats is a snapshot of the binding table.
 type AffinityStats struct {
-	Bindings int
-	Rebinds  uint64
+	Bindings  int
+	Rebinds   uint64
+	Hedges    uint64
+	HedgeWins uint64
 }
 
 // member is the part of C.Proxy the sticky group uses; a small interface so
@@ -59,6 +61,7 @@ type stickyGroup struct {
 	healths  []*nodeHealth // per member, same order; Down() is one atomic load
 	isDownFn func(member int) bool
 	observer Observer
+	hedgeAll bool // test seam: fake members are hedgeable when set
 }
 
 // newStickyGroup builds the group over real Mihomo member proxies.
@@ -137,19 +140,23 @@ func (g *stickyGroup) observeDial(label string, ok bool, took time.Duration) {
 	}
 }
 
-// DialContext implements C.ProxyAdapter. It times the member dial, feeds the
-// health table and the observer, and retries once on the re-selected member
-// when the failure makes the node down.
+// DialContext implements C.ProxyAdapter. It times the logical dial (hedged
+// when the member is hedgeable, see hedge.go), feeds the health table and
+// the observer once per logical dial, and retries once on the re-selected
+// member when the failure makes the node down.
 func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	login, site := metadata.InUser, siteKey(metadata.Host, metadata.DstIP)
 	index, _ := g.choose(login, site)
 	label := g.labels[index]
 
-	start := time.Now()
-	conn, err := g.members[index].DialContext(ctx, metadata)
-	took := time.Since(start)
-	g.health.recordDial(label, err == nil, took)
-	g.observeDial(label, err == nil, took)
+	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
+	if recorded {
+		g.health.recordDial(label, err == nil, took)
+		g.observeDial(label, err == nil, took)
+		if h := g.healths[index]; h != nil {
+			h.hedgeRefillDial()
+		}
+	}
 	if err == nil {
 		conn.AppendToChains(g)
 		return conn, nil
@@ -164,11 +171,11 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		return nil, err
 	}
 	retryLabel := g.labels[retry]
-	start = time.Now()
-	retryConn, retryErr := g.members[retry].DialContext(ctx, metadata)
-	retryTook := time.Since(start)
-	g.health.recordDial(retryLabel, retryErr == nil, retryTook)
-	g.observeDial(retryLabel, retryErr == nil, retryTook)
+	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
+	if retryRecorded {
+		g.health.recordDial(retryLabel, retryErr == nil, retryTook)
+		g.observeDial(retryLabel, retryErr == nil, retryTook)
+	}
 	if retryErr != nil {
 		return nil, retryErr
 	}

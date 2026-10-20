@@ -66,10 +66,12 @@ type affinityShard struct {
 // Keys are idle-expired after the TTL (a provisional binding after its
 // shorter lifetime) and bounded per shard, evicting the oldest lastUsed.
 type affinityTable struct {
-	shards  [affinityShards]*affinityShard
-	now     func() time.Time
-	ttl     time.Duration
-	rebinds atomic.Uint64
+	shards    [affinityShards]*affinityShard
+	now       func() time.Time
+	ttl       time.Duration
+	rebinds   atomic.Uint64
+	hedges    atomic.Uint64 // hedge attempts started (all groups share the table)
+	hedgeWins atomic.Uint64 // logical dials won by the hedge attempt
 }
 
 // newAffinityTable builds the binding table; now is injectable for tests and
