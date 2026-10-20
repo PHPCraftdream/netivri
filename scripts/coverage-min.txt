@@ -16,9 +16,14 @@ internal/auth 90
 internal/config 77
 internal/testutil 90
 internal/subscription 80
-# The core logic runs under the integration level (embedded Mihomo, loopback
-# sockets), which this unit-level report does not measure.
-internal/core 0
+# Most of the core runs under the integration level (embedded Mihomo, loopback
+# sockets), which this unit-level report does not measure; the floor covers the
+# pure parts (sticky group, health, hedging, binding table). Measured 65.7 %
+# on ubuntu and windows.
+internal/core 60
+# The statistics store is unit-tested on a temporary database. Measured 81.9 %
+# on ubuntu and windows.
+internal/stats 78
 # The control server, client and the detached spawn run under the integration
 # and e2e levels (loopback sockets, a real child process); the unit level
 # measures the pure parts only. Ratcheted after the first green run.
