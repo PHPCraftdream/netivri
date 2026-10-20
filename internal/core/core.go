@@ -4,7 +4,7 @@
 // With Options.Node set, Start builds a rule-mode config whose MATCH rule
 // routes the default route through the selected upstream node (fixed internal
 // name "netivri-node"); domain destinations are passed to the node unresolved.
-// Account mappings add per-user country routes while keeping the default route
+// Account mappings add per-user route groups while keeping the default route
 // intact. There is no fallback when a routed node is unreachable. Routes are
 // chosen at Start time only; hot-switching is not supported yet.
 package core
@@ -45,10 +45,12 @@ type Options struct {
 	// by internal/subscription). nil keeps Direct mode. The node is fixed for
 	// the lifetime of the instance; hot-switching is not supported yet.
 	Node map[string]any
-	// Countries maps upper-case country codes to candidate node mappings.
-	Countries map[string][]map[string]any
-	// AccountCountry maps authenticated logins to their exit country.
-	AccountCountry map[string]string
+	// RouteNodes holds, per opaque route key, the Mihomo proxy mappings of the
+	// nodes of that route, in preference order. A route key is 1..128 printable
+	// ASCII characters chosen by the caller; it never reaches a rule.
+	RouteNodes map[string][]map[string]any
+	// AccountRoute maps an authenticated login to the route key it uses.
+	AccountRoute map[string]string
 	// Warm optionally enables the background probes of the node proxies and,
 	// with PoolSize > 0, a pre-dial pool for the default node (see warm.go).
 	// nil disables both.
@@ -128,13 +130,13 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	if o.Node != nil || len(o.AccountCountry) != 0 {
+	if o.Node != nil || len(o.AccountRoute) != 0 {
 		raw.Mode = tunnel.Rule
 		raw.Proxy = proxies
 		raw.ProxyGroup = groups
 		raw.Rule = rules
-		// Rule mode uses MATCH for the default route; country-specific user
-		// rules take precedence and domain destinations remain unresolved.
+		// Rule mode uses MATCH for the default route; per-user route rules
+		// take precedence and domain destinations remain unresolved.
 		// No rule needs process lookup, so keep it disabled.
 		raw.FindProcessMode = process.FindProcessOff
 		if o.Node != nil {
@@ -191,7 +193,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		done:          make(chan struct{}),
 		route:         route,
 		tt:            tt,
-		accountRoutes: copyAccountRoutes(o.AccountCountry),
+		accountRoutes: copyAccountRoutes(o.AccountRoute),
 		warm:          warm,
 	}
 	current = inst
@@ -233,7 +235,7 @@ func (i *Instance) WarmStats() (WarmStats, bool) {
 	return i.warm.Stats(), true
 }
 
-// AccountRoutes returns a copy of the configured login-to-country routes.
+// AccountRoutes returns a copy of the configured login-to-route-key routes.
 func (i *Instance) AccountRoutes() map[string]string {
 	return copyAccountRoutes(i.accountRoutes)
 }

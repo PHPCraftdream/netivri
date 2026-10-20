@@ -26,7 +26,7 @@ const (
 	thirdPassword = "third-test-password"
 )
 
-func TestAccountCountryIsolation(t *testing.T) {
+func TestAccountRouteIsolation(t *testing.T) {
 	de, deAddress := startFakeUpstream(t)
 	nl, nlAddress := startFakeUpstream(t)
 	defaultUpstream, defaultAddress := startFakeUpstream(t)
@@ -38,11 +38,11 @@ func TestAccountCountryIsolation(t *testing.T) {
 			{User: "third", Pass: thirdPassword},
 		}),
 		Node: nodeMap(defaultAddress),
-		Countries: map[string][]map[string]any{
-			"DE": {nodeMap(deAddress)},
-			"NL": {nodeMap(nlAddress)},
+		RouteNodes: map[string][]map[string]any{
+			"de": {nodeMap(deAddress)},
+			"nl": {nodeMap(nlAddress)},
 		},
-		AccountCountry: map[string]string{"alice": "DE", "bob": "NL"},
+		AccountRoute: map[string]string{"alice": "de", "bob": "nl"},
 	})
 	if err != nil {
 		t.Fatalf("Start account instance: %v", err)
@@ -51,7 +51,7 @@ func TestAccountCountryIsolation(t *testing.T) {
 	if instance.Route() != "node" {
 		t.Fatalf("Route() = %q, want node", instance.Route())
 	}
-	if got := instance.AccountRoutes(); got["alice"] != "DE" || got["bob"] != "NL" {
+	if got := instance.AccountRoutes(); got["alice"] != "de" || got["bob"] != "nl" {
 		t.Fatalf("AccountRoutes() = %v", got)
 	}
 
@@ -235,7 +235,7 @@ func assertAccountUpstreams(t *testing.T, selected *fakeUpstream, others []*fake
 	}
 }
 
-func TestAccountCountryDeadNodeFailsClosed(t *testing.T) {
+func TestAccountRouteDeadNodeFailsClosed(t *testing.T) {
 	deadDE, deadDEAddress := startFakeUpstream(t)
 	liveNL, liveNLAddress := startFakeUpstream(t)
 	liveDefault, liveDefaultAddress := startFakeUpstream(t)
@@ -259,11 +259,11 @@ func TestAccountCountryDeadNodeFailsClosed(t *testing.T) {
 			{User: "bob", Pass: bobPassword},
 		}),
 		Node: nodeMap(liveDefaultAddress),
-		Countries: map[string][]map[string]any{
-			"DE": {deadNodeMap(deadAddress), nodeMap(deadDEAddress)},
-			"NL": {nodeMap(liveNLAddress)},
+		RouteNodes: map[string][]map[string]any{
+			"de": {deadNodeMap(deadAddress), nodeMap(deadDEAddress)},
+			"nl": {nodeMap(liveNLAddress)},
 		},
-		AccountCountry: map[string]string{"alice": "DE", "bob": "NL"},
+		AccountRoute: map[string]string{"alice": "de", "bob": "nl"},
 	})
 	if err != nil {
 		t.Fatalf("Start fail-closed instance: %v", err)

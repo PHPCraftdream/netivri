@@ -5,8 +5,8 @@ func copyAccountRoutes(routes map[string]string) map[string]string {
 		return map[string]string{}
 	}
 	out := make(map[string]string, len(routes))
-	for login, country := range routes {
-		out[login] = country
+	for login, routeKey := range routes {
+		out[login] = routeKey
 	}
 	return out
 }
