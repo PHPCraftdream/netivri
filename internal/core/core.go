@@ -53,7 +53,8 @@ type Instance struct {
 	closed bool
 	ln     *mixed.Listener
 	done   chan struct{} // closed by Close; stops the ctx watcher
-	route  string        // "direct" or "node"; immutable after Start publishes the instance
+	tt     *trackedTunnel
+	route  string // "direct" or "node"; immutable after Start publishes the instance
 }
 
 var (
@@ -137,10 +138,11 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		bind = "127.0.0.1"
 	}
 	addr := net.JoinHostPort(bind, strconv.Itoa(o.Port))
+	tt := newTrackedTunnel(tunnel.Tunnel)
 	ln, err := mixed.NewWithConfig(
 		LC.AuthServer{Enable: true, Listen: addr, AuthStore: authStore.NewAuthStore(o.Authenticator)},
 		inbound.NewListenConfig(),
-		tunnel.Tunnel,
+		tt,
 		inbound.WithInName("NETIVRI-MIXED"), inbound.WithSpecialRules(""),
 	)
 	if err != nil {
@@ -151,7 +153,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		return nil, err
 	}
 
-	inst := &Instance{ln: ln, done: make(chan struct{}), route: route}
+	inst := &Instance{ln: ln, done: make(chan struct{}), route: route, tt: tt}
 	current = inst
 
 	// Optional lifecycle: cancel ctx to stop the instance.
@@ -199,6 +201,9 @@ func (i *Instance) Close() error {
 	if ln != nil {
 		_ = ln.Close()
 	}
+	// No connection may outlive the instance: close the tracked ones and
+	// wait for their handlers before Mihomo's global state is torn down.
+	i.tt.closeAll(closeDrainTimeout)
 	executor.Shutdown()
 	if current == i {
 		current = nil // claim released only after the core is fully down
