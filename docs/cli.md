@@ -19,7 +19,8 @@ instead (`--yes`).
 ## Commands
 
 ```
-netivri sub add <url> [--name N]          add a subscription (idempotent by URL)
+netivri sub add <url> [--name N] [--via PROXY]
+                                          add a subscription (idempotent by URL)
 netivri sub list
 netivri sub update [N | --all]            re-fetch
 netivri sub rm N
@@ -56,8 +57,11 @@ Failure: one JSON object on stderr, non-zero exit code.
 
 ```json
 {"schema_version": 1, "ok": false,
- "error": {"code": "SUB_FETCH_FAILED", "message": "GET https://...: 403", "hint": "the subscription token may have expired"}}
+ "error": {"code": "FETCH_HTTP_STATUS", "message": "unexpected HTTP status 403", "hint": "the subscription server rejected the request"}}
 ```
+
+Subscription URLs are credentials and are never printed: not on stdout,
+not on stderr, not in error messages. The same holds for `--via` proxies.
 
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
@@ -134,7 +138,7 @@ authentication is enabled in the configuration (`auth.login` and
 }
 ```
 
-### `node list`
+### `node list` (after daemon integration)
 
 ```json
 {"nodes": [
@@ -144,9 +148,107 @@ authentication is enabled in the configuration (`auth.login` and
 ]}
 ```
 
+Until the daemon serves health checks, `node list` prints the stored-node
+shape documented below.
+
 `country_source` is one of `exit` (checked through the node), `geoip` (GeoIP
 of the server address, i.e. the entry point) or `name` (parsed from the node
 name). Prefer `exit`.
+
+### `sub add`
+
+```
+netivri sub add <url> [--name N] [--via PROXY]
+```
+
+Fetches the subscription through `--via` if given, otherwise through
+`fetch.proxy` from `config.ktav`; strict: with no proxy the fetch is
+direct and environment proxies are never consulted. The body is parsed
+and stored; only then is the subscription appended to the config. A
+missing config file is created by the first successful add. If anything
+fails, nothing is added and the config file is not touched.
+
+Idempotent by URL: an already configured URL is re-fetched and re-stored
+under its existing name (a given `--name` is ignored) and reported with
+`"existing": true`. A different URL with an already used explicit
+`--name` is `SUB_EXISTS_NAME`. Without `--name` the name is derived from
+the URL host (lower-case, characters outside `A-Za-z0-9._-` become `-`,
+at most 64 characters, made unique with a numeric suffix).
+
+```json
+{"name": "provider.example", "added": true, "existing": false,
+ "nodes": 24, "skipped": 2, "countries": {"DE": 12, "NL": 8, "unknown": 4}}
+```
+
+`skipped` counts banner and invalid entries dropped by the parser; nodes
+without an inferable country are counted under `"unknown"`.
+
+### `sub list`
+
+```json
+{"subscriptions": [
+  {"name": "main", "host": "provider.example", "via_set": true,
+   "nodes": 24, "fetched_at": "2026-10-19T10:00:00Z"},
+  {"name": "backup", "host": "other.example", "via_set": false,
+   "nodes": null, "fetched_at": null}
+]}
+```
+
+The URL and the via proxy are never printed: only the host of the
+subscription URL and a `via_set` boolean. `nodes` / `fetched_at` are
+`null` when no snapshot is stored for the subscription.
+
+### `sub update`
+
+```
+netivri sub update [N | --all]
+```
+
+Re-fetches and re-stores; with a name only that subscription, with
+`--all` or no argument all subscriptions in config order. A failed
+subscription keeps its old stored snapshot.
+
+```json
+{"results": [
+  {"name": "main", "ok": true, "nodes": 24, "skipped": 1, "error": null},
+  {"name": "backup", "ok": false, "nodes": null, "skipped": null,
+   "error": {"code": "FETCH_HTTP_STATUS", "message": "unexpected HTTP status 403"}}
+]}
+```
+
+Exit 0 when all succeeded. When any subscription fails, the results
+object is still printed on stdout and the command ends with
+`SUB_UPDATE_FAILED` (exit 3) on stderr.
+
+### `sub rm`
+
+```json
+{"removed": "backup"}
+```
+
+Removes the subscription from the config and deletes its stored
+snapshot. `SUB_NOT_FOUND` when the name is not configured.
+
+### `node list`
+
+```
+netivri node list [--sub N] [--country CC] [--alive]
+```
+
+Prints the stored nodes of all configured subscriptions (or only
+`--sub N`), in a stable order: subscription order, then provider order.
+`--country` filters case-insensitively by ISO 3166-1 alpha-2 code parsed
+from the node names. `--alive` is reserved for future health checks and
+is rejected as a usage error for now.
+
+```json
+{"nodes": [
+  {"id": "a1b2c3d4e5f6", "name": "🇩🇪 Frankfurt 1", "type": "ss",
+   "server": "provider.example", "port": 8388, "country": "DE", "sub": "main"}
+], "count": 24}
+```
+
+Raw proxy mappings (credentials) are never printed.
 
 ## Exit codes
 
@@ -166,9 +268,17 @@ name). Prefer `exit`.
 |---|---|---|
 | `USAGE` | 2 | Bad flags or arguments |
 | `AUTH_REQUIRED` | 2 | Non-loopback `--bind` rejected because no proxy authentication is configured |
-| `SUB_FETCH_FAILED` | 3 | Subscription URL did not return a valid list |
-| `SUB_PARSE_FAILED` | 3 | Response is not YAML or share links |
+| `FETCH_URL_INVALID` | 2 | Subscription or proxy URL is not a valid http(s)/socks5(h) URL |
+| `FETCH_PROXY_FAILED` | 3 | The configured proxy could not be reached or negotiated with |
+| `FETCH_FAILED` | 3 | Request to the subscription server failed |
+| `FETCH_HTTP_STATUS` | 3 | Subscription URL returned a non-2xx status |
+| `SUBSCRIPTION_EMPTY` | 3 | No valid nodes in the subscription body |
+| `SUBSCRIPTION_TOO_LARGE` | 3 | Subscription body exceeds 16 MiB |
+| `SUBSCRIPTION_TOO_MANY` | 3 | Subscription has more than 5000 nodes |
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
+| `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
+| `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
+| `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
 | `NO_NODES_FOR_COUNTRY` | 5 | No alive node for the requested country |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |

@@ -18,6 +18,10 @@ func dispatch(args []string, stdout io.Writer) error {
 	switch args[0] {
 	case "up":
 		return runUp(args[1:], stdout)
+	case "sub":
+		return runSub(args[1:], stdout)
+	case "node":
+		return runNode(args[1:], stdout)
 	case "version":
 		cli.Success(stdout, map[string]string{"version": version})
 		return nil
