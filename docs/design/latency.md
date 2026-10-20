@@ -106,11 +106,11 @@ The user allowed vendoring libraries that need changes.
   empty). Every patch is a separate commit. New code goes into new files
   named `netivri_*.go` in the same package; edits to upstream files are
   minimal.
-- `third_party/mihomo/NETIVRI.md` states the upstream URL and version, lists
-  every patch with its reason, and describes the update procedure: import
-  the new pristine tag, re-apply the patch commits, resolve conflicts, rerun
-  CI. Each modified upstream file carries a short modification notice
-  (GPL-3.0 section 5(a)).
+- `third_party/README.md` states the upstream URL and version, lists every
+  patch with its reason, and describes the update procedure: import the new
+  pristine tag, re-apply the patch commits, resolve conflicts, rerun CI.
+  Each modified upstream file carries a short modification notice (GPL-3.0
+  section 5(a)). The vendored directory itself stays free of our files.
 - CI: `gofmt -l` skips `third_party`; Mihomo's own tests are not run; the
   license check and `scripts/collect-licenses.sh` keep shipping Mihomo's
   `LICENSE`. `.gitattributes` marks `third_party/**` as vendored and keeps

@@ -29,6 +29,14 @@ Mihomo itself bundles `go-lzo` under `GPL-3.0`, so netivri inherits the same
 position. If the author of `go-lzo` ever confirms `GPL-2.0-only`, drop the
 dependency path (or the feature that pulls it) instead of widening the list.
 
+## Vendored Mihomo
+
+Mihomo `v1.19.32` is vendored in `third_party/mihomo` (GPL-3.0, its
+`LICENSE` is part of the tree) so that netivri can patch its adapters; see
+`third_party/README.md` for the rules and the list of patches. Modified files
+carry a notice. The license check, the notices in the release archives and
+the audited exceptions above are computed from the vendored module as before.
+
 ## Notices in release archives
 
 MIT, BSD and Apache-2.0 require the license text to travel with binaries.

@@ -13,7 +13,7 @@ scripts, any end-to-end run of the binary.
 
 Allowed locally (linters and syntax only):
 
-- `gofmt -l .` / `gofmt -w .`
+- `gofmt -l` / `gofmt -w` on our own files (never on `third_party/`)
 - `go vet ./...`
 - `golangci-lint run` (if installed)
 - syntax checks of scripts and configs (`shellcheck`, PowerShell parser,
@@ -40,7 +40,9 @@ To verify a change, push it and read the CI result.
 ## Developing netivri
 
 - Go, single module, single binary `cmd/netivri`.
-- Mihomo is used as a library; do not shell out to a mihomo binary.
+- Mihomo is used as a library; do not shell out to a mihomo binary. Its
+  sources are vendored in `third_party/mihomo` (see `third_party/README.md`):
+  change them only through documented patch commits.
 - Every user-facing behavior change must update `docs/cli.md` in the same change.
 - Changing the JSON shape or exit/error codes is breaking: bump `schema_version`.
 - Builds and tests run only in CI — see the main rule at the top.

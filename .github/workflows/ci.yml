@@ -79,7 +79,8 @@ jobs:
       - name: gofmt
         shell: bash
         run: |
-          out="$(gofmt -l .)"
+          # third_party holds vendored upstream sources: not ours to format.
+          out="$(git ls-files -z '*.go' ':(exclude)third_party' | xargs -0 gofmt -l)"
           if [ -n "${out}" ]; then
             echo "gofmt needed on:"
             echo "${out}"

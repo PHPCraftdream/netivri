@@ -153,8 +153,6 @@ github.com/metacubex/kcp-go v0.0.0-20260105040817-550693377604 h1:hJwCVlE3ojViC3
 github.com/metacubex/kcp-go v0.0.0-20260105040817-550693377604/go.mod h1:lpmN3m269b3V5jFCWtffqBLS4U3QQoIid9ugtO+OhVc=
 github.com/metacubex/mhurl v0.1.0 h1:ZdW4Zxe3j3uJ89gNytOazHu6kbHn5owutN/VfXOI8GE=
 github.com/metacubex/mhurl v0.1.0/go.mod h1:2qpQImCbXoUs6GwJrjuEXKelPyoimsIXr07eNKZdS00=
-github.com/metacubex/mihomo v1.19.32 h1:uD7ZC3P77isWD554NNvtee65L+99+/C5hyc+Lk8rVEk=
-github.com/metacubex/mihomo v1.19.32/go.mod h1:d7xWi5iEktkC9PqXkD/Vo4AEcb0Q92XikfLoySUDWls=
 github.com/metacubex/mipstack v0.0.0-20260930071539-961d4b1c1983 h1:BGb9PDJrrZSsDnJyeFWFY9v6uTr6/LxokQgwuHVAsDI=
 github.com/metacubex/mipstack v0.0.0-20260930071539-961d4b1c1983/go.mod h1:+bbwALZI0pbi2auSG5A3ptdpV2DZ2eLObziXo+P7oj0=
 github.com/metacubex/mlkem v0.1.0 h1:wFClitonSFcmipzzQvax75beLQU+D7JuC+VK1RzSL8I=
