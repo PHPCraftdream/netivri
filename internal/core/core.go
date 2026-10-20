@@ -64,6 +64,9 @@ var (
 	lifecycleMu sync.Mutex
 	current     *Instance
 	logOnce     sync.Once
+	// everApplied is set after the first configuration was applied in this
+	// process; guarded by lifecycleMu.
+	everApplied bool
 )
 
 // silenceMihomoLog keeps Mihomo's logger off stdout: stdout carries only the
@@ -131,7 +134,13 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
+	if everApplied {
+		// A previous configuration left adapters whose finalizers read the
+		// logger level that ApplyConfig is about to rewrite.
+		drainFinalizers()
+	}
 	executor.ApplyConfig(cfg, true)
+	everApplied = true
 
 	bind := o.Bind
 	if bind == "" {
