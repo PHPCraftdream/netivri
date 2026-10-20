@@ -1,0 +1,47 @@
+{
+  "name": "netivri",
+  "version": "0.0.0",
+  "description": "Local HTTP/SOCKS5 proxy service with a JSON-first CLI (placeholder version; rewritten at release build time)",
+  "license": "GPL-3.0-only",
+  "bin": {
+    "netivri": "bin/netivri.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_LICENSES/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PHPCraftdream/netivri.git"
+  },
+  "keywords": [
+    "proxy",
+    "socks5",
+    "http-proxy",
+    "vpn",
+    "cli"
+  ],
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "dependencies": {},
+  "optionalDependencies": {
+    "netivri-linux-x64": "0.0.0",
+    "netivri-linux-arm64": "0.0.0",
+    "netivri-darwin-x64": "0.0.0",
+    "netivri-darwin-arm64": "0.0.0",
+    "netivri-win32-x64": "0.0.0",
+    "netivri-win32-arm64": "0.0.0"
+  }
+}
