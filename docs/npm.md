@@ -61,6 +61,25 @@ secret, never echoed). The main package is published last so the
 git tag without the leading `v`; publishing is skipped on dry runs.
 The workflow itself is not implemented in this change.
 
+## Planned: stable system copy
+
+Not implemented yet. The future npm installer will call the standalone
+installer in local-source mode, e.g.:
+
+```sh
+sh install.sh --from-dir <platform package dir> --dir <stable dir> --quiet
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1 -FromDir <platform package dir> -InstallDir <stable dir> -Quiet
+```
+
+That copies the binary out of the npm tree into a stable directory
+(`--from-dir` verifies no checksum, because npm's own registry integrity
+check already covered the download). The launcher would run the stable
+copy, so replacing it is a rename that a running daemon never blocks —
+`npm update` stays safe even while netivri is up (see
+[install.md](install.md), "Upgrading while netivri is running").
 
 ## Update
 

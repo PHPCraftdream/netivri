@@ -10,10 +10,12 @@ set -eu
 REPO="PHPCraftdream/netivri"
 PROG="install.sh"
 UNINSTALL=0
+QUIET=0
 
 VERSION="${NETIVRI_VERSION:-}"
 INSTALL_DIR="${NETIVRI_INSTALL_DIR:-${HOME:-.}/.netivri/bin}"
 BASE_URL="${NETIVRI_BASE_URL:-}"
+FROM_DIR="${NETIVRI_FROM_DIR:-}"
 
 usage() {
   cat <<USAGE_EOF
@@ -29,6 +31,11 @@ Options:
   --base-url URL   Download base URL: https://, http://, file:// or a
                    plain local directory that contains the archives and
                    SHA256SUMS. Env: NETIVRI_BASE_URL
+  --from-dir DIR   Install from a local directory (archive layout or npm
+                   platform package layout) instead of downloading.
+                   No checksum is verified. Env: NETIVRI_FROM_DIR
+  --quiet          Print nothing informational (progress, results, notes,
+                   PATH hints); errors still go to stderr.
   --uninstall      Remove the installed files.
   --help           Show this help.
 
@@ -39,6 +46,18 @@ USAGE_EOF
 fail() {
   printf '%s: error: %s\n' "$PROG" "$*" >&2
   exit 1
+}
+
+# info MSG: progress on stderr; say MSG: result on stdout. Both are
+# suppressed by --quiet, errors never are.
+info() {
+  [ "$QUIET" -eq 0 ] && printf '%s\n' "$*" >&2
+  return 0
+}
+
+say() {
+  [ "$QUIET" -eq 0 ] && printf '%s\n' "$*"
+  return 0
 }
 
 while [ $# -gt 0 ]; do
@@ -58,6 +77,15 @@ while [ $# -gt 0 ]; do
       BASE_URL="$2"
       shift 2
       ;;
+    --from-dir)
+      [ $# -ge 2 ] || { usage >&2; exit 2; }
+      FROM_DIR="$2"
+      shift 2
+      ;;
+    --quiet)
+      QUIET=1
+      shift
+      ;;
     --uninstall)
       UNINSTALL=1
       shift
@@ -72,6 +100,13 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+if [ -n "$FROM_DIR" ]; then
+  if [ -n "$VERSION" ] || [ -n "$BASE_URL" ]; then
+    printf '%s: error: --from-dir cannot be combined with --version or --base-url (or their env variables)\n' "$PROG" >&2
+    exit 2
+  fi
+fi
 
 # The version ends up in URLs and file names: allow only version characters.
 case "$VERSION" in
@@ -140,7 +175,13 @@ fetch() {
     http://*|https://*)
       ensure_fetch
       if [ "$FETCH" = "curl" ]; then
-        curl -fSL --retry 3 -o "$2" "$1"
+        if [ "$QUIET" -eq 1 ]; then
+          curl -fsSL --retry 3 -o "$2" "$1"
+        else
+          curl -fSL --retry 3 -o "$2" "$1"
+        fi
+      elif [ "$QUIET" -eq 1 ]; then
+        wget -q -O "$2" "$1"
       else
         wget -O "$2" "$1"
       fi
@@ -182,36 +223,139 @@ sha_of() {
   fi
 }
 
-# install_file SRC DST MODE: copy via a temp name, then rename.
+# What this run created and must remove on exit: the private temp dir and
+# the temp copy that install_file is moving into place (one at a time).
+TMP=""
+CURRENT_TMP=""
+
+cleanup() {
+  [ -z "$CURRENT_TMP" ] || rm -f "$CURRENT_TMP"
+  [ -z "$TMP" ] || rm -rf "$TMP"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# install_file SRC DST MODE: copy via a temp name in the destination
+# directory, then rename. The rename is atomic: it works while netivri
+# is running (a mapped binary or a loaded library keeps its old inode)
+# and a failed mv leaves the destination untouched.
 install_file() {
   tmpdst="$2.tmp.$$"
+  CURRENT_TMP="$tmpdst"
   cp "$1" "$tmpdst"
   chmod "$3" "$tmpdst"
-  mv -f "$tmpdst" "$2"
+  if ! mv -f "$tmpdst" "$2"; then
+    fail "cannot install $2: the rename into place failed"
+  fi
+  CURRENT_TMP=""
 }
 
-do_uninstall() {
+# note_running: best-effort notice that a netivri process keeps using the
+# previous binary until it is restarted. Never fails the install.
+note_running() {
+  [ "$QUIET" -eq 0 ] || return 0
+  pids=""
+  if command -v pgrep >/dev/null 2>&1; then
+    pids="$(pgrep -x netivri 2>/dev/null || true)"
+  fi
+  [ -n "$pids" ] || return 0
+  if [ "$GOOS" = "linux" ]; then
+    matched=""
+    target="$INSTALL_DIR/netivri"
+    for p in $pids; do
+      exe="$(readlink "/proc/$p/exe" 2>/dev/null)" || :
+      case "$exe" in
+        "$target"|"$target (deleted)") matched="$matched $p" ;;
+      esac
+    done
+    if [ -n "$matched" ]; then
+      printf 'note: netivri is running (pid%s); it keeps using the previous version until restarted: netivri down && netivri up\n' "$matched" >&2
+    fi
+  else
+    # macOS has no /proc: accept every pgrep hit, but the pid(s) may not
+    # belong to this install dir, so do not name one.
+    printf 'note: a netivri process is running; it keeps using the previous version until restarted: netivri down && netivri up\n' >&2
+  fi
+}
+
+# print_path_hint: PATH hint when the install dir is not on PATH.
+print_path_hint() {
+  [ "$QUIET" -eq 0 ] || return 0
+  case ":${PATH:-}:" in
+    *":$INSTALL_DIR:"*) ;;
+    *)
+      printf '%s is not on your PATH. Add it with:\n  export PATH="%s:$PATH"\n' "$INSTALL_DIR" "$INSTALL_DIR"
+      ;;
+  esac
+}
+
+# do_install_from SRC VER LICROOT: shared install steps for both source
+# modes. SRC holds the binary and library; VER is the version string, empty
+# when unknown (--from-dir); LICROOT holds LICENSE and THIRD_PARTY_LICENSES
+# (it is not SRC for an npm package, where SRC is DIR/bin).
+do_install_from() {
+  src="$1"
+  ver="$2"
+  licroot="$3"
+  SHARE="$INSTALL_DIR/../share/netivri"
+  mkdir -p "$INSTALL_DIR" "$SHARE/THIRD_PARTY_LICENSES"
+
+  install_file "$src/netivri" "$INSTALL_DIR/netivri" 755
+  install_file "$src/$LIB" "$INSTALL_DIR/$LIB" 755
+  if [ -f "$licroot/LICENSE" ]; then
+    cp "$licroot/LICENSE" "$SHARE/LICENSE"
+  elif [ -z "$FROM_DIR" ]; then
+    fail "the archive does not contain LICENSE"
+  fi
+  if [ -d "$licroot/THIRD_PARTY_LICENSES" ]; then
+    cp -R "$licroot/THIRD_PARTY_LICENSES/." "$SHARE/THIRD_PARTY_LICENSES/"
+  elif [ -z "$FROM_DIR" ]; then
+    fail "the archive does not contain THIRD_PARTY_LICENSES"
+  fi
+
+  note_running
+  if [ -n "$ver" ]; then
+    say "installed netivri $ver to $INSTALL_DIR"
+  else
+    say "installed netivri to $INSTALL_DIR"
+  fi
+  print_path_hint
+}
+
+if [ "$UNINSTALL" -eq 1 ]; then
   share="$INSTALL_DIR/../share/netivri"
   removed=0
   for f in "$INSTALL_DIR/netivri" "$INSTALL_DIR/$LIB"; do
     if [ -f "$f" ]; then
       rm -f "$f"
-      printf 'removed %s\n' "$f"
+      say "removed $f"
       removed=1
     fi
   done
   if [ -d "$share" ]; then
     rm -rf "$share"
-    printf 'removed %s\n' "$share"
+    say "removed $share"
     removed=1
   fi
   if [ "$removed" -eq 0 ]; then
-    printf 'nothing to uninstall in %s\n' "$INSTALL_DIR"
+    say "nothing to uninstall in $INSTALL_DIR"
   fi
-}
+  exit 0
+fi
 
-if [ "$UNINSTALL" -eq 1 ]; then
-  do_uninstall
+if [ -n "$FROM_DIR" ]; then
+  # Local source mode: no network, no checksum (npm's own integrity
+  # check covers the npm path).
+  if [ -f "$FROM_DIR/netivri" ]; then
+    SRC="$FROM_DIR"
+  elif [ -f "$FROM_DIR/bin/netivri" ]; then
+    SRC="$FROM_DIR/bin"
+  else
+    fail "no netivri binary in $FROM_DIR (looked for $FROM_DIR/netivri and $FROM_DIR/bin/netivri)"
+  fi
+  [ -f "$SRC/$LIB" ] || fail "$FROM_DIR does not contain $LIB (looked in $SRC)"
+  do_install_from "$SRC" "" "$FROM_DIR"
   exit 0
 fi
 
@@ -220,7 +364,7 @@ if [ -z "$VERSION" ]; then
     fail "when --base-url is used, --version (or NETIVRI_VERSION) must also be given"
   fi
   VERSION="$(resolve_latest)"
-  printf 'latest release: %s\n' "$VERSION" >&2
+  info "latest release: $VERSION"
 fi
 
 ARCHIVE="netivri_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
@@ -239,9 +383,8 @@ else
 fi
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/netivri-install.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
 
-printf 'downloading %s\n' "$ARCHIVE_URL" >&2
+info "downloading $ARCHIVE_URL"
 fetch "$ARCHIVE_URL" "$TMP/$ARCHIVE"
 fetch "$SUMS_URL" "$TMP/SHA256SUMS"
 
@@ -267,18 +410,4 @@ fi
 [ -f "$SRC/netivri" ] || fail "the archive does not contain the netivri binary"
 [ -f "$SRC/$LIB" ] || fail "the archive does not contain $LIB"
 
-SHARE="$INSTALL_DIR/../share/netivri"
-mkdir -p "$INSTALL_DIR" "$SHARE/THIRD_PARTY_LICENSES"
-
-install_file "$SRC/netivri" "$INSTALL_DIR/netivri" 755
-install_file "$SRC/$LIB" "$INSTALL_DIR/$LIB" 755
-cp "$SRC/LICENSE" "$SHARE/LICENSE"
-cp -R "$SRC/THIRD_PARTY_LICENSES/." "$SHARE/THIRD_PARTY_LICENSES/"
-
-printf 'installed netivri %s to %s\n' "$VERSION" "$INSTALL_DIR"
-case ":${PATH:-}:" in
-  *":$INSTALL_DIR:"*) ;;
-  *)
-    printf '%s is not on your PATH. Add it with:\n  export PATH="%s:$PATH"\n' "$INSTALL_DIR" "$INSTALL_DIR"
-    ;;
-esac
+do_install_from "$SRC" "$VERSION" "$SRC"

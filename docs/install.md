@@ -62,8 +62,10 @@ Both installers take the same options (POSIX names / PowerShell parameters):
 | `--version X.Y.Z` | `-Version X.Y.Z` | `NETIVRI_VERSION` | latest release | Version to install (no leading `v`). |
 | `--dir DIR` | `-InstallDir DIR` | `NETIVRI_INSTALL_DIR` | `~/.netivri/bin` / `%LOCALAPPDATA%\netivri\bin` | Install directory. |
 | `--base-url URL` | `-BaseUrl URL` | `NETIVRI_BASE_URL` | GitHub releases | Download base URL (see below). |
+| `--from-dir DIR` | `-FromDir DIR` | `NETIVRI_FROM_DIR` | — | Install from a local directory instead of downloading (see below). |
 | — | `-Proxy URL` | — | system proxy | HTTP(S) proxy for `Invoke-WebRequest`. |
 | — | `-AddToPath` | — | off | Add the install dir to the **user** `PATH`. |
+| `--quiet` | `-Quiet` | — | off | Print nothing informational (progress, results, notes, PATH hints); errors still go to stderr. |
 | `--uninstall` | `-Uninstall` | — | — | Remove the installed files. |
 | `--help` | `-Help` | — | — | Show help. |
 
@@ -82,6 +84,64 @@ given too, because the archive filename contains the version. The default
 version is resolved from the `releases/latest` redirect (an HTTPS HEAD
 request, no API call, no rate limit).
 
+## Upgrading while netivri is running
+
+The installer never stops a running daemon. Instead of overwriting files
+in place, it replaces them by renaming, which is safe while netivri runs:
+
+- **Linux / macOS:** the new file is copied to a temp name in the install
+  directory and `mv -f`'d over the target. The rename is atomic; the
+  running process keeps executing the old file (it holds the old inode,
+  even for the mapped binary and the loaded Ktav library). If a netivri
+  process runs from the install directory, one note is printed
+  (unless `--quiet`):
+  `note: netivri is running (pid N); it keeps using the previous version
+  until restarted: netivri down && netivri up`. The detection is
+  best effort (`pgrep` plus `/proc/<pid>/exe` on Linux) and never fails
+  the install.
+- **Windows:** a running executable or a mapped DLL cannot be overwritten
+  or deleted, but it can be renamed. The installer copies the new file
+  next to the target, renames the old file aside to
+  `<name>.old-<timestamp>`, moves the new copy into place, and then tries
+  to delete the renamed-aside file — a file still held open by the running
+  daemon simply stays. If the install directory would ever be left without
+  a working binary, the old file is renamed back and the install fails.
+  Leftover `netivri.exe.old-*` and `ktav_cabi.dll.old-*` files are cleaned
+  up by the next install or uninstall; when some are still locked the
+  installer prints once:
+  `note: N old file(s) are still in use and will be removed by the next
+  install or uninstall`.
+
+`--uninstall` / `-Uninstall` on Windows renames locked files aside too,
+so the uninstall never fails just because the daemon is running; the
+renamed-aside files disappear on a later install or uninstall.
+
+## Installing from a local directory
+
+`--from-dir DIR` (env `NETIVRI_FROM_DIR`) installs from a local directory
+instead of downloading. There is no network access and no checksum
+verification — the source is an ordinary local file, and when the npm
+installer uses this mode npm's own registry integrity check already
+covers the download. Two layouts are accepted:
+
+- **Archive layout** — the extracted release archive: the binary
+  (`netivri` / `netivri.exe`), the Ktav library, `LICENSE` and
+  `THIRD_PARTY_LICENSES/` sit directly in `DIR`.
+- **npm platform package layout** — `DIR/bin/` holds the binary and the
+  library; `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `DIR`.
+
+The binary and the library must exist (the install fails otherwise);
+`LICENSE` and `THIRD_PARTY_LICENSES/` are copied when present and silently
+skipped otherwise. `--from-dir` cannot be combined with `--version` or
+`--base-url` (or their env variables) — that is a usage error. In this
+mode the final line is `installed netivri to <dir>` (the version is
+unknown). Everything else — the running-daemon handling above, the share
+files, the PATH hints — is identical to download mode.
+
+Use `--quiet` / `-Quiet` when calling the installer from another tool
+(e.g. the npm installer): it suppresses all informational output and only
+errors reach stderr, with unchanged exit codes.
+
 ## How verification works
 
 1. The archive (`netivri_<version>_<os>_<arch>.tar.gz` or `.zip`) and the
@@ -94,7 +154,8 @@ request, no API call, no rate limit).
    (removed on exit), and the files are copied into place via temp names
    and renamed, so a crash cannot leave a half-written binary.
 
-Checksum verification is mandatory and cannot be skipped by any flag.
+Checksum verification is mandatory and cannot be skipped by any flag
+(`--from-dir` bypasses the network entirely, and with it the checksum).
 
 ## What gets installed
 
