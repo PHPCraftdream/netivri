@@ -186,9 +186,153 @@ jobs:
           done
           npm publish "npm-dist/netivri-${VER}.tgz" --access public
 
+  install-test:
+    name: install test (${{ matrix.os }})
+    needs: [build, npm-packages]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-*
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-dist
+          path: npm-dist
+
+      - name: Compute version and checksums
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+          # Same SHA256SUMS the publish job generates (macOS has no sha256sum).
+          cd artifacts
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum netivri_*.zip netivri_*.tar.gz > SHA256SUMS
+          else
+            shasum -a 256 netivri_*.zip netivri_*.tar.gz > SHA256SUMS
+          fi
+
+      # A config file makes the binary load the Ktav native library, which
+      # proves the library was installed next to the binary.
+      - name: Standalone installer (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          dir="${RUNNER_TEMP}/netivri-inst/bin"
+          home="${RUNNER_TEMP}/netivri-home"
+          mkdir -p "${home}"
+          printf 'listen.port: 7890\n' > "${home}/config.ktav"
+
+          sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}"
+          "${dir}/netivri" version
+          "${dir}/netivri" sub list --home "${home}"
+          test -f "${dir}/../share/netivri/LICENSE"
+
+          # Upgrade in place works.
+          sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}"
+
+          # A corrupted archive must be refused and install nothing.
+          bad="${RUNNER_TEMP}/netivri-bad"
+          rm -rf "${bad}" "${RUNNER_TEMP}/netivri-bad-inst"
+          cp -R artifacts "${bad}"
+          for f in "${bad}"/netivri_*.tar.gz; do printf 'x' >> "${f}"; done
+          if sh install.sh --version "${VER}" --base-url "file://${bad}" --dir "${RUNNER_TEMP}/netivri-bad-inst/bin"; then
+            echo "installer accepted a corrupted archive" >&2
+            exit 1
+          fi
+          test ! -e "${RUNNER_TEMP}/netivri-bad-inst/bin/netivri"
+
+          sh install.sh --uninstall --dir "${dir}"
+          test ! -e "${dir}/netivri"
+
+      - name: Standalone installer (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.version.outputs.version }}'
+          $dir = Join-Path $env:RUNNER_TEMP 'netivri-inst\bin'
+          $home_ = Join-Path $env:RUNNER_TEMP 'netivri-home'
+          New-Item -ItemType Directory -Force -Path $home_ | Out-Null
+          [System.IO.File]::WriteAllText((Join-Path $home_ 'config.ktav'), "listen.port: 7890`n")
+          $artifacts = Join-Path $env:GITHUB_WORKSPACE 'artifacts'
+
+          & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw "install.ps1 failed" }
+          & (Join-Path $dir 'netivri.exe') version
+          if ($LASTEXITCODE -ne 0) { throw "netivri version failed" }
+          & (Join-Path $dir 'netivri.exe') sub list --home $home_
+          if ($LASTEXITCODE -ne 0) { throw "netivri sub list failed (Ktav library missing?)" }
+
+          # A corrupted archive must be refused and install nothing.
+          $bad = Join-Path $env:RUNNER_TEMP 'netivri-bad'
+          if (Test-Path $bad) { Remove-Item -Recurse -Force $bad }
+          Copy-Item -Recurse $artifacts $bad
+          Get-ChildItem $bad -Filter 'netivri_*.zip' | ForEach-Object { Add-Content -Path $_.FullName -Value 'x' }
+          $badDir = Join-Path $env:RUNNER_TEMP 'netivri-bad-inst\bin'
+          $failed = $false
+          try {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Version $ver -BaseUrl $bad -InstallDir $badDir
+            if ($LASTEXITCODE -ne 0) { $failed = $true }
+          } catch { $failed = $true }
+          if (-not $failed) { throw 'installer accepted a corrupted archive' }
+          if (Test-Path (Join-Path $badDir 'netivri.exe')) { throw 'a corrupted archive was installed' }
+
+          & .\install.ps1 -Uninstall -InstallDir $dir
+          if (Test-Path (Join-Path $dir 'netivri.exe')) { throw 'uninstall left the binary behind' }
+
+      - name: Standalone installer (PowerShell 7)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = '${{ steps.version.outputs.version }}'
+          $dir = Join-Path $env:RUNNER_TEMP 'netivri-inst7\bin'
+          $home_ = Join-Path $env:RUNNER_TEMP 'netivri-home'
+          & ./install.ps1 -Version $ver -BaseUrl (Join-Path $env:GITHUB_WORKSPACE 'artifacts') -InstallDir $dir
+          & (Join-Path $dir 'netivri.exe') sub list --home $home_
+          if ($LASTEXITCODE -ne 0) { throw 'netivri sub list failed' }
+
+      # Install the packed tarballs into a private prefix (the registry has
+      # no such version) and run the launcher from there.
+      - name: npm global install from the packed tarballs
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          plat="$(node -p "process.platform + '-' + process.arch")"
+          prefix="${RUNNER_TEMP}/npm-global"
+          home="${RUNNER_TEMP}/netivri-home"
+          npm install -g --prefix "${prefix}" \
+            "${GITHUB_WORKSPACE}/npm-dist/netivri-${plat}-${VER}.tgz" \
+            "${GITHUB_WORKSPACE}/npm-dist/netivri-${VER}.tgz"
+          root="$(npm root -g --prefix "${prefix}")"
+          node "${root}/netivri/bin/netivri.js" version
+          node "${root}/netivri/bin/netivri.js" sub list --home "${home}"
+
   publish:
     name: checksums and release
-    needs: build
+    needs: [build, install-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
