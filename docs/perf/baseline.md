@@ -52,6 +52,24 @@ throughput.
 | `FlushBatch` | 2 614 954 | one batch of 256 samples to SQLite, nothing dropped |
 | `NodesQuery` | 277 619 686 | one `Nodes` query over 100 000 recorded samples |
 
+## Cost per account (second run, commit `41335fa`)
+
+`ConnectRoutedAccounts`: a routed connect as the login that is matched last,
+with 1, 100 and 2000 accounts (every account has its own `IN-USER` rule, so
+the rule scan is linear). The same run measured a slower runner (direct
+connect 413 us against 211 us in the first run), so compare the three rows
+with each other only.
+
+| Accounts | ns/op | vs 1 account |
+|---|---|---|
+| 1 | 709 862 | |
+| 100 | 714 740 | +0.7 % |
+| 2000 | 847 870 | +19 % (about 70 ns per rule) |
+
+Up to some hundreds of accounts the scan is not measurable; a single
+dispatcher target would only start to matter in the thousands of accounts,
+which a local CLI proxy does not have. Not built.
+
 ## What the baseline says
 
 - The cost of netivri's own decisions per connection (site key, binding
