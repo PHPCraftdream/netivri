@@ -103,6 +103,11 @@ jobs:
         shell: bash
         run: go build -tags integration,e2e,bench ./...
 
+      # The release workflow cuts the GitHub Release notes with this script.
+      - name: Release notes script
+        shell: bash
+        run: bash scripts/test-release-notes.sh
+
   unit:
     needs: setup
     strategy:

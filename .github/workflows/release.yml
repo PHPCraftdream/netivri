@@ -33,6 +33,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Fail fast: a tag without a changelog entry is not released.
+      - name: Check the changelog entry
+        if: github.event_name == 'push'
+        shell: bash
+        run: bash scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > /dev/null
+
       - name: Compute version
         id: version
         run: |
@@ -152,39 +158,84 @@ jobs:
           path: npm-dist/*.tgz
           if-no-files-found: error
 
+  # Publishes with the NPM_TOKEN secret when it exists and through npm Trusted
+  # Publishing (GitHub OIDC, no secret) when it does not; the repository
+  # variable NPM_PUBLISH=off skips the npm step. A dry run only executes
+  # `npm publish --dry-run`. Details in docs/release.md.
   npm-publish:
     name: publish to npm
-    if: github.event_name == 'push'
     needs: [publish, npm-packages]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
+      - uses: actions/checkout@v4
+
+      # Trusted Publishing needs npm 11.5.1 or newer on node 22.14 or newer.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
+          node-version: 24
+
+      - name: Make sure npm is new enough
+        shell: bash
+        run: |
+          set -euo pipefail
+          need=11.5.1
+          have="$(npm --version)"
+          if [ "$(printf '%s\n%s\n' "${need}" "${have}" | sort -V | head -n 1)" != "${need}" ]; then
+            npm install -g "npm@^${need}"
+          fi
+          npm --version
 
       - uses: actions/download-artifact@v4
         with:
           name: npm-dist
           path: npm-dist
 
-      # Publishes only when the repository secret NPM_TOKEN exists; the six
-      # platform packages go first, the main package last, so a half-failed
-      # run never leaves a main package pointing at missing binaries.
-      - name: Publish
+      - name: Choose the publish mode
+        id: mode
+        shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_PUBLISH: ${{ vars.NPM_PUBLISH }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is not set: skipping the npm publish"
-            exit 0
+          if [ "${GITHUB_EVENT_NAME}" != "push" ]; then
+            mode=dry-run
+            version=0.0.0-dryrun
+          else
+            version="${GITHUB_REF_NAME#v}"
+            if [ "${NPM_PUBLISH:-}" = "off" ]; then
+              mode=off
+            elif [ -n "${NPM_TOKEN:-}" ]; then
+              mode=token
+            else
+              mode=oidc
+            fi
           fi
-          VER="${GITHUB_REF_NAME#v}"
-          for p in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
-            npm publish "npm-dist/netivri-${p}-${VER}.tgz" --access public
-          done
-          npm publish "npm-dist/netivri-${VER}.tgz" --access public
+          echo "mode=${mode}" >> "${GITHUB_OUTPUT}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "npm publish: version ${version}, mode ${mode}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      # The token goes through an npmrc that reads it from the environment, so
+      # it is never written to disk or echoed.
+      - name: Configure token authentication
+        if: steps.mode.outputs.mode == 'token'
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' '//registry.npmjs.org/:_authToken=${NPM_TOKEN}' > "${RUNNER_TEMP}/npmrc"
+          echo "NPM_CONFIG_USERCONFIG=${RUNNER_TEMP}/npmrc" >> "${GITHUB_ENV}"
+
+      - name: Publish
+        if: steps.mode.outputs.mode != 'off'
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.mode.outputs.version }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: bash scripts/npm-publish.sh "${VERSION}" npm-dist "${MODE}"
 
   install-test:
     name: install test (${{ matrix.os }})
@@ -532,6 +583,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -554,13 +607,34 @@ jobs:
           path: artifacts/SHA256SUMS
           if-no-files-found: error
 
+      - name: Release notes from the changelog
+        if: github.event_name == 'push'
+        run: bash scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > release-notes.md
+
+      # Anyone can check an archive against this workflow run with
+      # `gh attestation verify <file> --repo PHPCraftdream/netivri`.
+      - name: Attest build provenance
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            artifacts/netivri_*.zip
+            artifacts/netivri_*.tar.gz
+            artifacts/SHA256SUMS
+
       - name: Publish GitHub Release
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
+          flags=()
+          case "${GITHUB_REF_NAME}" in
+            *-*) flags+=(--prerelease) ;;
+          esac
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            "${flags[@]}" \
             artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz

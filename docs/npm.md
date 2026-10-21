@@ -50,16 +50,16 @@ Ktav library, substitutes the version into every `package.json`, copies
 `LICENSE` and `THIRD_PARTY_LICENSES/` into each package, preserves the
 executable bit, writes only under `--out`, and prints a JSON summary.
 
-## Publishing (planned CI job)
+## Publishing
 
-A later release-workflow job will: download the six release artifacts,
-extract them, run the build script above, then run `npm publish` for each
-generated package with an npm automation token held in a CI secret
-(`NPM_TOKEN`; `npm config set //registry.npmjs.org/:_authToken` from the
-secret, never echoed). The main package is published last so the
-`optionalDependencies` versions always resolve. Package versions are the
-git tag without the leading `v`; publishing is skipped on dry runs.
-The workflow itself is not implemented in this change.
+The `npm-publish` job of the release workflow downloads the packed tarballs
+built from the release archives and runs `scripts/npm-publish.sh`: the six
+platform packages first, the main package last, so the
+`optionalDependencies` versions always resolve. Package versions are the git
+tag without the leading `v`. Authentication is an `NPM_TOKEN` secret or, with
+no secret, npm Trusted Publishing (OIDC); both attach provenance. How to
+switch from the token to Trusted Publishing is in
+[`release.md`](release.md#publishing-to-npm-token-or-trusted-publishing).
 
 ## Planned: stable system copy
 
