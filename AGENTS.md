@@ -31,7 +31,10 @@ To verify a change, push it and read the CI result.
 - Typical flow:
   1. `netivri status --json` — exit 4 means the daemon is not running.
   2. `netivri up --json` — safe to repeat.
-  3. `netivri use --country DE --fastest --json`.
+  3. Route by account: `netivri account add LOGIN --provider NAME --country DE --json`
+     (the first client that authenticates as LOGIN sets its password); the
+     change takes effect after `netivri down` and `netivri up`. `netivri use`
+     is described in `docs/cli.md` but not implemented yet.
   4. Use the proxy at `data.listen` from `status`.
 - Never print or log subscription URLs; they are credentials.
 - Do not bind the proxy to anything other than `127.0.0.1` unless the user
