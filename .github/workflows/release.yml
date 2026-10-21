@@ -511,9 +511,24 @@ jobs:
           node "${root}/netivri/bin/netivri.js" version
           node "${root}/netivri/bin/netivri.js" sub list --home "${home}"
 
+  # Nothing is published unless every dependency license is still allowed.
+  licenses:
+    name: license check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check licenses
+        shell: bash
+        run: bash scripts/check-licenses.sh
+
   publish:
     name: checksums and release
-    needs: [build, install-test]
+    needs: [build, install-test, licenses]
     runs-on: ubuntu-latest
     permissions:
       contents: write
