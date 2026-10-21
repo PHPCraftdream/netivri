@@ -56,6 +56,10 @@ First public release.
   attestation.
 - **Machine-readable CLI.** `--json` output, documented exit and error codes,
   and [`AGENTS.md`](AGENTS.md) for AI agents.
+- **Built-in help.** `netivri`, `netivri help`, `--help` and
+  `netivri <command> --help` print a readable overview or the usage, flags,
+  detailed examples and possible errors of one command; `--json` gives the
+  same as one JSON object for scripts and agents.
 
 ### Security
 
@@ -68,6 +72,8 @@ First public release.
 
 - `use`, `node test`, `logs`, `doctor` and `schema` are described in
   [`docs/cli.md`](docs/cli.md) but not implemented yet.
+- Command results are printed as JSON only; there is no table view for people
+  yet. Help (`netivri help`) is the one text output.
 - No TUN mode and no change of the system proxy settings; these are non-goals
   for the 0.x line.
 - Alpine and other musl-based Linux systems are not supported (the Ktav

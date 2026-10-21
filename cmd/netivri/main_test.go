@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -26,18 +27,15 @@ func TestDispatchVersion(t *testing.T) {
 	}
 }
 
+// No command is a request for help: the overview goes to stdout and the
+// exit code is 0.
 func TestDispatchNoCommand(t *testing.T) {
 	var out bytes.Buffer
-	err := dispatch(nil, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok {
-		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
+	if err := dispatch(nil, &out); err != nil {
+		t.Fatalf("dispatch(nil) = %v, want nil", err)
 	}
-	if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {
-		t.Errorf("code/exit = %q/%d, want USAGE/%d", ce.Code, ce.Exit, cli.ExitUsage)
-	}
-	if out.Len() != 0 {
-		t.Errorf("stdout must stay empty on failure, got %q", out.String())
+	if !strings.Contains(out.String(), "COMMANDS") {
+		t.Errorf("stdout is not the help overview: %q", out.String())
 	}
 }
 
@@ -50,6 +48,9 @@ func TestDispatchUnknownCommand(t *testing.T) {
 	}
 	if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {
 		t.Errorf("code/exit = %q/%d, want USAGE/%d", ce.Code, ce.Exit, cli.ExitUsage)
+	}
+	if !strings.Contains(ce.Hint, "netivri help") {
+		t.Errorf("hint = %q, want it to point to netivri help", ce.Hint)
 	}
 	if out.Len() != 0 {
 		t.Errorf("stdout must stay empty on failure, got %q", out.String())

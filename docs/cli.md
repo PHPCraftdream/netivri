@@ -12,6 +12,7 @@ scripts, AI agents). Changing anything here is a breaking change and bumps
 | `--home <dir>` | State directory. Default: `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. Env: `NETIVRI_HOME`. |
 | `--quiet` | No human-oriented output on stderr. |
 | `--no-color` | No ANSI. Implied when not a TTY or `NO_COLOR` is set. |
+| `-h`, `--help` | Help for the command; see [`help`](#help). |
 
 Commands never prompt. Anything that would need confirmation takes a flag
 instead (`--yes`).
@@ -51,6 +52,7 @@ netivri logs [--follow] [--level debug|info|warn|error] [--since 10m]
 netivri doctor
 netivri schema                            this contract as JSON
 netivri version
+netivri help [COMMAND [SUBCOMMAND]]       also: netivri, netivri COMMAND --help
 ```
 
 `NODE` is a node id (stable hash) or an exact node name. `CC` is an ISO
@@ -76,6 +78,52 @@ not on stderr, not in error messages. The same holds for `--via` proxies.
 
 `netivri logs --follow --json` is the only streaming command: one JSON object
 per line (NDJSON).
+
+### `help`
+
+```
+netivri help [COMMAND [SUBCOMMAND]] [--json]
+netivri [COMMAND [SUBCOMMAND]] --help [--json]
+```
+
+Every way to ask for help prints it to stdout and exits 0, and no command is
+run: no arguments at all, `help`, `-h`, `--help` or `-help` in the first
+position, and a help flag anywhere after a command (`netivri sub add --help`).
+After a bare `--` a help flag is an ordinary argument. `netivri help` shows
+the overview: the quick start, the commands by group, the global flags, the
+output contract, the exit codes and the commands that are described here but
+not implemented yet. `netivri help sub add` (or `netivri sub add --help`)
+shows one command: usage, description, flags, examples with comments, the
+errors it can return with their exit codes, and related commands. A command
+with subcommands (`sub`, `node`, `account`, `diag`) lists them.
+
+Help is the one exception to "JSON when stdout is not a TTY": it is text for
+people unless `--json` is given, so `netivri help | less` works. The text is
+ASCII only and not part of the contract; the JSON is.
+
+```json
+{"kind": "overview", "summary": "...", "description": "...", "usage": ["..."],
+ "quick_start": ["..."], "planned": ["use", "node test", "logs", "doctor", "schema"],
+ "commands": [{"name": "up", "group": "Proxy service", "summary": "...", "usage": ["..."]}],
+ "global_flags": [{"name": "--home DIR", "meaning": "..."}],
+ "exit_codes": [{"code": 0, "meaning": "success"}]}
+{"kind": "topic", "name": "sub add", "group": "Subscriptions and nodes", "summary": "...",
+ "usage": ["..."], "description": "...",
+ "flags": [{"name": "--name NAME", "meaning": "..."}],
+ "examples": [{"comment": "...", "command": "..."}],
+ "errors": [{"code": "SUB_EXISTS_NAME", "exit": 6, "meaning": "..."}],
+ "notes": ["..."], "see_also": ["sub countries"],
+ "subcommands": [{"name": "sub add", "summary": "...", "usage": ["..."]}]}
+```
+
+These are the `data.help` values for the overview and for a topic;
+`subcommands` appears only for a command that has some, and `group`, `flags`,
+`notes` and `see_also` only when set.
+
+An unknown topic (`netivri help nope`) and an unknown flag after `help` are
+`USAGE` errors (exit 2) with the hint `run: netivri help`; so is an unknown
+command (`netivri frobnicate`). A command that is described in this document
+but not implemented yet (`use`, `logs`, ...) is an unknown command.
 
 ### `sub countries`
 

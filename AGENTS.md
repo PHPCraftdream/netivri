@@ -26,8 +26,9 @@ To verify a change, push it and read the CI result.
 - Always pass `--json` (or rely on non-TTY detection) and parse stdout as one
   JSON object. Errors arrive on stderr as JSON with a `code` field; branch on
   `code`, not on `message`.
-- The full contract is in [`docs/cli.md`](docs/cli.md); `netivri schema` prints
-  it as JSON.
+- The full contract is in [`docs/cli.md`](docs/cli.md). `netivri help --json`
+  lists the commands and `netivri help <command> --json` gives the usage,
+  flags, examples and error codes of one as a JSON object.
 - Typical flow:
   1. `netivri status --json` — exit 4 means the daemon is not running.
   2. `netivri up --json` — safe to repeat.

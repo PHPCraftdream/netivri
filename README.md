@@ -91,6 +91,10 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 `netivri down` stops the daemon. Changes to accounts take effect after
 `down` and `up`.
 
+`netivri help` lists every command; `netivri help sub add` (or
+`netivri sub add --help`) shows the flags, examples and possible errors of one
+command.
+
 ## How it works
 
 - **Core:** Mihomo (Clash.Meta) is embedded as a Go library and vendored in
@@ -124,7 +128,8 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 ## Status
 
 Version 0.x: the CLI contract may still change between minor versions, and
-every change is listed in the [changelog](CHANGELOG.md). Described in
+every change is listed in the [changelog](CHANGELOG.md). Command results are
+JSON only for now (`netivri help` is the one text output). Described in
 [`docs/cli.md`](docs/cli.md) but not implemented yet: `use`, `node test`,
 `logs`, `doctor` and `schema`.
 
