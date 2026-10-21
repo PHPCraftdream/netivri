@@ -17,6 +17,10 @@ version="${1:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 dist="${2:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 mode="${3:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 
+# npm reads a relative `dir/name.tgz` as a GitHub `user/repo` shorthand; an
+# absolute path is always a file.
+dist="$(cd "${dist}" && pwd)"
+
 platforms=(linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64)
 
 args=(--access public)
