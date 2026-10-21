@@ -1,0 +1,59 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste subscription URLs, proxy passwords or tokens. They are
+        credentials. Replace them with `<redacted>`.
+        A vulnerability is not an issue: use the private report from the
+        Security tab.
+  - type: input
+    id: version
+    attributes:
+      label: netivri version
+      description: Output of `netivri version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - npm
+        - install.sh / install.ps1
+        - release archive
+        - other
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected and what you got. The JSON error on stderr includes a `code`; quote it.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `netivri status --json`
+      description: Optional, redact anything private first.
+      render: json

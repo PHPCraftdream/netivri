@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and what stops you. Start from the problem, not from a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you would like
+      description: How you picture it working, including the command line if it is a CLI change.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+  - type: markdown
+    attributes:
+      value: |
+        Out of scope for the 0.x line: TUN mode, changing the system proxy
+        settings and a GUI. See the README.
