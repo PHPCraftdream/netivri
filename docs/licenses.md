@@ -3,13 +3,48 @@
 netivri is `GPL-3.0-only`, inherited from Mihomo and `sing`, which are linked
 into the binary (see `README.md`).
 
+## Why GPL-3.0-only and not MIT or Apache-2.0
+
+The netivri binary is one program that contains Mihomo, the `sing*` modules
+and `go-lzo`. Mihomo and `sing*` are GPL-3.0 and `go-lzo` is
+GPL-2.0-or-later. A program built from GPL code may be distributed only under
+the GPL, so the binary, the release archives and the npm packages are
+`GPL-3.0-only`. Nothing the author of netivri decides can change that while
+the program links this code.
+
+The compatibility only works in one direction. MIT, BSD, ISC and Apache-2.0
+code may be included in a GPL-3.0 program (that is why the dependencies below
+are allowed), but a GPL-3.0 program cannot be handed out as MIT or Apache-2.0.
+Apache-2.0 is compatible with GPL-3.0 (not with GPL-2.0-only).
+
+Splitting the repository (our own files under MIT, `third_party/` under GPL)
+is not done. Our code is written against Mihomo's API and is useless without
+it, so the split would only suggest that the binary is permissive when it is
+not.
+
+The way to a permissive license is to stop linking GPL code: run Mihomo as a
+separate process (or replace the core) and talk to it over a protocol. That is
+a different architecture from the one in `AGENTS.md` (Mihomo as a library, one
+binary), so it is not planned. If it ever happens, every module in the table
+below and the whole dependency list must be audited again first.
+
 ## CI check
 
-The `licenses` job runs `go-licenses check` on every push with an allow-list:
-`GPL-3.0`, `LGPL-3.0`, `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`,
-`ISC`, `MPL-2.0`, `Unlicense`, `CC0-1.0`, `BlueOak-1.0.0`. All of them can be
-combined into a `GPL-3.0` work. A new failure needs human review; never
-extend the list or the ignores just to make the job green.
+`scripts/check-licenses.sh` holds the whole policy. The `licenses` job of
+`ci.yml` runs it on every push and pull request, and `release.yml` runs it
+before anything is published.
+
+1. `go-licenses check` with an allow-list: `GPL-3.0`, `LGPL-3.0`, `MIT`,
+   `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `MPL-2.0`,
+   `Unlicense`, `CC0-1.0`, `BlueOak-1.0.0`. All of them can be combined into a
+   `GPL-3.0` work. A new failure needs human review; never extend the list or
+   the ignores just to make the job green.
+2. The places that declare netivri's own license must agree: `LICENSE` and
+   `third_party/mihomo/LICENSE` are the GPL v3 text, the npm `package.json`
+   and the package build script say `GPL-3.0-only`, and the README states it.
+
+Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Go
+modules and GitHub Actions; the license check runs on them like on any change.
 
 ## Audited exceptions
 
