@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -162,4 +163,76 @@ func TestExitCodeConstants(t *testing.T) {
 			t.Errorf("%s = %d, want %d (docs/cli.md)", name, c.got, c.want)
 		}
 	}
+}
+
+// fakeDumps renders a map as "key: value" lines, enough to see what the
+// envelope hands to the Ktav renderer.
+func fakeDumps(v any) (string, error) {
+	m := v.(map[string]any)
+	var out string
+	for _, k := range []string{"data", "error"} {
+		if x, ok := m[k]; ok {
+			out += fmt.Sprintf("%s: %v\n", k, x)
+		}
+	}
+	return out, nil
+}
+
+func TestKtavSuccessStartsWithTheFixedKeys(t *testing.T) {
+	UseKtav(fakeDumps)
+	t.Cleanup(UseJSON)
+	var buf bytes.Buffer
+	Success(&buf, map[string]string{"version": "1"})
+	want := "schema_version: 1\nok: true\ndata: map[version:1]\n"
+	if buf.String() != want {
+		t.Errorf("Ktav success = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestKtavErrorCarriesCodeMessageAndHint(t *testing.T) {
+	UseKtav(fakeDumps)
+	t.Cleanup(UseJSON)
+	var buf bytes.Buffer
+	code := Render(&buf, &Error{Code: "SUB_NOT_FOUND", Message: "no subscription with that name", Hint: "run: netivri sub list", Exit: ExitNotFound})
+	if code != ExitNotFound {
+		t.Errorf("exit = %d, want %d", code, ExitNotFound)
+	}
+	got := buf.String()
+	if !strings.HasPrefix(got, "schema_version: 1\nok: false\nerror: ") || strings.Contains(got, "data:") {
+		t.Errorf("Ktav error = %q", got)
+	}
+	for _, want := range []string{"code:SUB_NOT_FOUND", "message:no subscription with that name", "hint:run: netivri sub list"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Ktav error %q lacks %q", got, want)
+		}
+	}
+	buf.Reset()
+	Render(&buf, &Error{Code: "X", Message: "m", Exit: ExitInternal})
+	if strings.Contains(buf.String(), "hint") {
+		t.Errorf("an empty hint is printed: %q", buf.String())
+	}
+}
+
+func TestKtavFallsBackToJSONWhenTheRendererFails(t *testing.T) {
+	UseKtav(func(any) (string, error) { return "", errors.New("native library missing") })
+	t.Cleanup(UseJSON)
+	var buf bytes.Buffer
+	Render(&buf, &Error{Code: "KTAV_LIB_MISSING", Message: "Ktav native library not found", Exit: ExitInternal})
+	m := decodeEnvelope(t, &buf)
+	if m["ok"] != false {
+		t.Errorf("fallback output = %v, want the JSON error envelope", m)
+	}
+	buf.Reset()
+	Success(&buf, map[string]string{"version": "1"})
+	if m := decodeEnvelope(t, &buf); m["ok"] != true {
+		t.Errorf("fallback success = %v", m)
+	}
+}
+
+func TestUseJSONRestoresTheDefault(t *testing.T) {
+	UseKtav(fakeDumps)
+	UseJSON()
+	var buf bytes.Buffer
+	Success(&buf, map[string]string{"version": "1"})
+	decodeEnvelope(t, &buf)
 }

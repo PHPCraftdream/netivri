@@ -21,16 +21,17 @@ const helpSummary = "local proxy service for provider subscriptions"
 
 const helpIntro = "netivri keeps a local proxy running on one port (SOCKS5, SOCKS4 and HTTP) and " +
 	"routes each login through the provider and exit country you choose. Every command prints " +
-	"one JSON object, so it works the same in a terminal, in scripts and for AI agents."
+	"one document in Ktav, or in JSON with --json, so it works the same in a terminal, in scripts " +
+	"and for AI agents."
 
 var helpOverviewUsage = []string{
-	"netivri <command> [arguments] [flags]",
-	"netivri help [command]",
+	"netivri {COMMAND} [{ARGUMENTS}] [flags]",
+	"netivri help [{COMMAND}]",
 }
 
 var helpQuickStart = []string{
 	"# 1. add a subscription (the URL is a credential, keep it private)",
-	"netivri sub add https://provider.example/sub/<token> --name main",
+	"netivri sub add https://provider.example/sub/{TOKEN} --name main",
 	"# 2. create a login that exits through Germany",
 	"netivri account add alice --provider main --country DE",
 	"# 3. start the proxy in the background and check it",
@@ -41,19 +42,20 @@ var helpQuickStart = []string{
 }
 
 var helpGlobalFlags = []helpFlag{
-	{"--home DIR", `State directory with config.ktav, subscriptions/, run/ and stats.db. ` +
+	{"--home {DIR}", `State directory with config.ktav, subscriptions/, run/ and stats.db. ` +
 		`Default: $NETIVRI_HOME, else the user config directory plus /netivri ` +
 		`(%APPDATA%\netivri on Windows, ~/.config/netivri on Linux, ` +
 		`~/Library/Application Support/netivri on macOS).`},
-	{"--json", "Accepted by every command. Results are always one JSON object today; for help it selects the machine-readable form."},
+	{"--json", "Print results and errors as JSON instead of Ktav (the default). Setting NETIVRI_OUTPUT=json does the same for every run. For help it selects the machine-readable form."},
 	{"--quiet", "Accepted for compatibility; changes nothing today."},
 	{"--no-color", "Accepted for compatibility; there is no color output."},
 	{"-h, --help", "Show help for a command, for example: netivri up --help"},
 }
 
-const helpOutput = `Every command prints one JSON object on stdout: ` +
-	`{"schema_version":1,"ok":true,"data":{...}}. A failure prints one JSON object on stderr ` +
-	`with a stable "code" and ends with a non-zero exit code; branch on the code, not on the ` +
+const helpOutput = `Every command prints one document on stdout, in Ktav by default: ` +
+	`schema_version, ok and data. With --json it is one JSON object ` +
+	`{"schema_version":1,"ok":true,"data":{...}}. A failure prints the same kind of document on ` +
+	`stderr with a stable "code" and ends with a non-zero exit code; branch on the code, not on the ` +
 	`message. Subscription URLs, passwords and hashes are never printed.`
 
 var helpExitCodes = []helpExit{
@@ -78,7 +80,7 @@ var helpTopics = []helpTopic{
 		Name:    "up",
 		Group:   groupService,
 		Summary: "Start the proxy (a background daemon by default)",
-		Usage:   []string{"netivri up [--port N] [--bind ADDR] [--foreground] [--home DIR]"},
+		Usage:   []string{"netivri up [--port {N}] [--bind {ADDR}] [--foreground] [--home {DIR}]"},
 		Description: "Starts the local proxy: SOCKS5, SOCKS4/4a and HTTP (plain requests and CONNECT) on one TCP port, " +
 			"told apart by the first byte of each connection. Without --foreground it starts a detached background " +
 			"daemon and returns at once; running it again is safe and reports the running instance.\n\n" +
@@ -86,10 +88,10 @@ var helpTopics = []helpTopic{
 			"listen.bind. An account with a provider or an exit country is routed only through matching nodes, " +
 			"never directly. UDP is not relayed.",
 		Flags: []helpFlag{
-			{"--port N", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
-			{"--bind ADDR", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication in config.ktav, otherwise up fails with AUTH_REQUIRED."},
-			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one JSON line when ready. Fails with ALREADY_RUNNING when a daemon is running."},
-			{"--home DIR", "State directory (see the global flags in 'netivri help')."},
+			{"--port {N}", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
+			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication in config.ktav, otherwise up fails with AUTH_REQUIRED."},
+			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when a daemon is running."},
+			{"--home {DIR}", "State directory (see the global flags in 'netivri help')."},
 		},
 		Examples: []helpExample{
 			{"Start in the background on 127.0.0.1:7890", "netivri up"},
@@ -112,7 +114,7 @@ var helpTopics = []helpTopic{
 		Name:    "down",
 		Group:   groupService,
 		Summary: "Stop the daemon",
-		Usage:   []string{"netivri down [--home DIR]"},
+		Usage:   []string{"netivri down [--home {DIR}]"},
 		Description: "Stops the daemon through its control channel and waits until it is gone, up to 15 seconds. " +
 			"It is safe to repeat: with nothing running it succeeds and reports was_running false. It never kills a " +
 			"process by pid.",
@@ -127,7 +129,7 @@ var helpTopics = []helpTopic{
 		Name:    "status",
 		Group:   groupService,
 		Summary: "Show the running daemon",
-		Usage:   []string{"netivri status [--home DIR]"},
+		Usage:   []string{"netivri status [--home {DIR}]"},
 		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
 			"probes, the statistics store and the sticky-routing counters.\n\n" +
@@ -143,12 +145,12 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub",
 		Summary: "Manage provider subscriptions",
-		Usage:   []string{"netivri sub <add|list|update|rm|countries> [arguments]"},
+		Usage:   []string{"netivri sub {add|list|update|rm|countries} [arguments]"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
 			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
 		Examples: []helpExample{
-			{"Add a subscription, look at it and refresh it later", "netivri sub add https://provider.example/sub/<token> --name main\nnetivri sub list\nnetivri sub update --all"},
+			{"Add a subscription, look at it and refresh it later", "netivri sub add https://provider.example/sub/{TOKEN} --name main\nnetivri sub list\nnetivri sub update --all"},
 		},
 		SeeAlso: []string{"account", "node list"},
 	},
@@ -156,20 +158,20 @@ var helpTopics = []helpTopic{
 		Name:    "sub add",
 		Group:   groupSubs,
 		Summary: "Add a subscription",
-		Usage:   []string{"netivri sub add <url> [--name NAME] [--via PROXY]"},
+		Usage:   []string{"netivri sub add {URL} [--name {NAME}] [--via {PROXY}]"},
 		Description: "Fetches the subscription, parses it, stores its nodes and only then adds it to the config. If " +
 			"anything fails nothing is added. The fetch goes through --via when given, otherwise through fetch.proxy " +
 			"from config.ktav, otherwise directly; environment proxies are never used.\n\n" +
 			"It is idempotent by URL: adding a known URL again re-fetches it under its existing name and reports " +
 			"existing true. The URL is never printed.",
 		Flags: []helpFlag{
-			{"--name NAME", "Name of the subscription (letters, digits, . _ -; at most 64). Default: derived from the host of the URL. A name used by a different URL is SUB_EXISTS_NAME."},
-			{"--via PROXY", "Fetch through this proxy: an http(s):// or socks5(h):// URL."},
+			{"--name {NAME}", "Name of the subscription (letters, digits, . _ -; at most 64). Default: derived from the host of the URL. A name used by a different URL is SUB_EXISTS_NAME."},
+			{"--via {PROXY}", "Fetch through this proxy: an http(s):// or socks5(h):// URL."},
 		},
 		Examples: []helpExample{
-			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/<token>"},
-			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/<token> --name main"},
-			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/<token> --name main --via socks5h://127.0.0.1:1080"},
+			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/{TOKEN}"},
+			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/{TOKEN} --name main"},
+			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
 		},
 		Errors: []helpError{
 			herr("FETCH_URL_INVALID", cli.ExitUsage, "the subscription or proxy URL is not valid"),
@@ -185,7 +187,7 @@ var helpTopics = []helpTopic{
 		Name:    "sub list",
 		Group:   groupSubs,
 		Summary: "List subscriptions",
-		Usage:   []string{"netivri sub list [--home DIR]"},
+		Usage:   []string{"netivri sub list [--home {DIR}]"},
 		Description: "Shows each subscription: its name, the host of its URL, whether a --via proxy is set, how many " +
 			"nodes are stored and when they were fetched (null until the first fetch). The URL and the proxy are never " +
 			"printed.",
@@ -196,14 +198,14 @@ var helpTopics = []helpTopic{
 		Name:    "sub update",
 		Group:   groupSubs,
 		Summary: "Re-fetch subscriptions",
-		Usage:   []string{"netivri sub update [NAME | --all]"},
-		Description: "Fetches subscriptions again and replaces their stored nodes. With a NAME only that subscription, " +
+		Usage:   []string{"netivri sub update [{SUBSCRIPTION} | --all]"},
+		Description: "Fetches subscriptions again and replaces their stored nodes. With a {SUBSCRIPTION} only that subscription, " +
 			"with --all or no argument every one, in config order. A subscription that fails keeps its old nodes. When " +
 			"any fails, the results are still printed and the command ends with SUB_UPDATE_FAILED.\n\n" +
 			"A running daemon applies the new nodes to its accounts within a few seconds, and re-fetches every " +
 			"subscription by itself once an hour (fetch.update_interval in config.ktav), so this command is for " +
 			"refreshing on demand.",
-		Flags: []helpFlag{{"--all", "Update every subscription (the default without a NAME)."}},
+		Flags: []helpFlag{{"--all", "Update every subscription (the default without a {SUBSCRIPTION})."}},
 		Examples: []helpExample{
 			{"Refresh every subscription", "netivri sub update"},
 			{"Refresh one subscription", "netivri sub update main"},
@@ -218,10 +220,10 @@ var helpTopics = []helpTopic{
 		Name:    "sub rm",
 		Group:   groupSubs,
 		Summary: "Remove a subscription",
-		Usage:   []string{"netivri sub rm NAME"},
+		Usage:   []string{"netivri sub rm {SUBSCRIPTION}"},
 		Description: "Removes the subscription from the config and deletes its stored nodes. It is not idempotent. " +
 			"It refuses while an account uses the subscription as its provider; free the account first with " +
-			"'netivri account set-provider LOGIN --none'.",
+			"'netivri account set-provider {ACCOUNT} --none'.",
 		Examples: []helpExample{{"Remove a subscription", "netivri sub rm backup"}},
 		Errors: []helpError{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
@@ -234,22 +236,22 @@ var helpTopics = []helpTopic{
 		Group:   groupSubs,
 		Summary: "Show the exit countries of a provider",
 		Usage: []string{
-			"netivri sub countries [NAME]",
-			"netivri sub countries --url URL [--via PROXY]",
+			"netivri sub countries [{SUBSCRIPTION}]",
+			"netivri sub countries --url {URL} [--via {PROXY}]",
 		},
-		Description: "Shows which exit countries a provider offers, so you know what to give --country. With a NAME " +
+		Description: "Shows which exit countries a provider offers, so you know what to give --country. With a {SUBSCRIPTION} " +
 			"it reads that provider's stored nodes without any network. With no argument it lists every provider and " +
 			"the union of their countries. With --url it fetches a subscription through the same strict path as " +
 			"'sub add' and prints its countries without storing anything.\n\n" +
 			"A node's country is read from its name; nodes where that is not possible are counted as unknown.",
 		Flags: []helpFlag{
-			{"--url URL", "Count the countries of this subscription URL without storing it. Cannot be combined with a NAME."},
-			{"--via PROXY", "Fetch --url through this proxy. Needs --url."},
+			{"--url {URL}", "Count the countries of this subscription URL without storing it. Cannot be combined with a {SUBSCRIPTION}."},
+			{"--via {PROXY}", "Fetch --url through this proxy. Needs --url."},
 		},
 		Examples: []helpExample{
 			{"Every provider and all countries", "netivri sub countries"},
 			{"One provider", "netivri sub countries main"},
-			{"Look before you add", "netivri sub countries --url https://provider.example/sub/<token>"},
+			{"Look before you add", "netivri sub countries --url https://provider.example/sub/{TOKEN}"},
 		},
 		Errors: []helpError{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
@@ -260,7 +262,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:        "node",
 		Summary:     "Inspect the stored nodes",
-		Usage:       []string{"netivri node list [--sub NAME] [--country CC]"},
+		Usage:       []string{"netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}]"},
 		Description: "Nodes are the proxy servers listed by your subscriptions.",
 		Examples:    []helpExample{{"List every stored node", "netivri node list"}},
 		SeeAlso:     []string{"sub add"},
@@ -269,13 +271,13 @@ var helpTopics = []helpTopic{
 		Name:    "node list",
 		Group:   groupSubs,
 		Summary: "List the stored nodes",
-		Usage:   []string{"netivri node list [--sub NAME] [--country CC]"},
+		Usage:   []string{"netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}]"},
 		Description: "Prints the stored nodes of every subscription, or of one, in subscription order, with their id, " +
 			"name, type, server, port and country. The country is read from the node name, so treat it as a hint " +
 			"about the exit, not as proof. Credentials are never printed.",
 		Flags: []helpFlag{
-			{"--sub NAME", "Only the nodes of this subscription."},
-			{"--country CC", "Only nodes of this country: an ISO 3166-1 alpha-2 code, any case."},
+			{"--sub {SUBSCRIPTION}", "Only the nodes of this subscription."},
+			{"--country {COUNTRY}", "Only nodes of this country: an ISO 3166-1 alpha-2 code, any case."},
 		},
 		Examples: []helpExample{
 			{"Every stored node", "netivri node list"},
@@ -289,7 +291,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account <add|list|set-country|set-provider|rm> [arguments]"},
+		Usage:   []string{"netivri account {add|list|set-country|set-provider|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to another country. An account with neither uses the default route, which is " +
@@ -307,15 +309,15 @@ var helpTopics = []helpTopic{
 		Name:    "account add",
 		Group:   groupAccount,
 		Summary: "Create an account",
-		Usage:   []string{"netivri account add LOGIN [--provider NAME] [--country CC]"},
+		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}] [--country {COUNTRY}]"},
 		Description: "Creates a proxy login with the password placeholder 'init': the first client that connects with " +
 			"this login sets the password. A login uses the characters A-Z a-z 0-9 . _ @ - (and is not 'init').\n\n" +
 			"Repeating the command with the same provider and country succeeds and reports existing true; any " +
 			"difference for an existing login is ACCOUNT_EXISTS (use set-country or set-provider to change it). " +
 			"A running daemon applies the new account within a few seconds.",
 		Flags: []helpFlag{
-			{"--provider NAME", "Route only through the nodes of this subscription. It must be a configured subscription."},
-			{"--country CC", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case."},
+			{"--provider {SUBSCRIPTION}", "Route only through the nodes of this subscription. It must be a configured subscription."},
+			{"--country {COUNTRY}", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
@@ -335,7 +337,7 @@ var helpTopics = []helpTopic{
 		Name:    "account list",
 		Group:   groupAccount,
 		Summary: "List accounts",
-		Usage:   []string{"netivri account list [--home DIR]"},
+		Usage:   []string{"netivri account list [--home {DIR}]"},
 		Description: "Shows each account: login, provider, exit_country and password_set, which is false until the " +
 			"first client claims the 'init' placeholder. Passwords and hashes are never shown.",
 		Examples: []helpExample{{"List the accounts", "netivri account list"}},
@@ -346,19 +348,34 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Change or clear the exit country of an account",
 		Usage: []string{
-			"netivri account set-country LOGIN CC",
-			"netivri account set-country LOGIN --none",
+			"netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}",
+			"netivri account set-country --all {COUNTRY}",
+			"netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none",
 		},
-		Description: "Sets the exit country of an existing account, or clears it with --none. Repeating the same value " +
-			"succeeds. A running daemon applies the change within a few seconds.",
-		Flags: []helpFlag{{"--none", "Clear the country instead of setting one."}},
+		Description: "Sets the exit country of existing accounts, or clears it with --none. {ACCOUNT} is the login of an " +
+			"account, for example alice; several logins are separated by commas, with no spaces, and --all means every " +
+			"account.\n\n" +
+			"Before anything is written, every account is checked against the stored nodes of its own subscription (of " +
+			"all subscriptions when it has none): when it would be left without a node in the new country, nothing is " +
+			"changed for any account and the command ends with NO_NODES_FOR_COUNTRY, naming the account. See what a " +
+			"subscription offers with 'netivri sub countries'. An account whose value does not change is not checked. " +
+			"A running daemon applies the change within a few seconds.\n\n" +
+			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
+		Flags: []helpFlag{
+			{"--all", "Change every account instead of naming them."},
+			{"--none", "Clear the country instead of setting one."},
+		},
 		Examples: []helpExample{
 			{"Move alice to the Netherlands", "netivri account set-country alice NL"},
+			{"Move alice and bob together", "netivri account set-country alice,bob DE"},
+			{"Move every account to Finland", "netivri account set-country --all FI"},
 			{"Let alice use every country of her provider", "netivri account set-country alice --none"},
 		},
 		Errors: []helpError{
-			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login"),
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account in the list does not exist, or --all with no accounts"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login in the list is not valid"),
 			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
+			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account would have no stored node in that country; nothing was changed"),
 		},
 		SeeAlso: []string{"account set-provider", "sub countries"},
 	},
@@ -367,19 +384,35 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Change or clear the provider of an account",
 		Usage: []string{
-			"netivri account set-provider LOGIN NAME",
-			"netivri account set-provider LOGIN --none",
+			"netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}",
+			"netivri account set-provider --all {SUBSCRIPTION}",
+			"netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none",
 		},
-		Description: "Binds an existing account to a configured subscription, or clears the binding with --none. " +
-			"Repeating the same value succeeds. A running daemon applies the change within a few seconds.",
-		Flags: []helpFlag{{"--none", "Clear the provider instead of setting one."}},
+		Description: "Binds existing accounts to a configured subscription, or clears the binding with --none. " +
+			"{ACCOUNT} is the login of an account, for example alice; {SUBSCRIPTION} is the name of a subscription, for " +
+			"example main (see 'netivri sub list'). Several logins are separated by commas, with no spaces, and --all " +
+			"means every account.\n\n" +
+			"Before anything is written, every account is checked against the stored nodes of the new subscription and " +
+			"its own exit country: when it would be left without a node, nothing is changed for any account and the " +
+			"command ends with NO_NODES_FOR_COUNTRY, naming the account. Refresh the lists with 'netivri sub update'. " +
+			"An account whose value does not change is not checked. A running daemon applies the change within a few " +
+			"seconds.\n\n" +
+			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
+		Flags: []helpFlag{
+			{"--all", "Change every account instead of naming them."},
+			{"--none", "Clear the provider instead of setting one."},
+		},
 		Examples: []helpExample{
 			{"Route alice through the subscription main", "netivri account set-provider alice main"},
+			{"Switch alice and bob to the subscription own", "netivri account set-provider alice,bob own"},
+			{"Switch every account to the subscription own", "netivri account set-provider --all own"},
 			{"Free alice from her provider, for example before 'sub rm'", "netivri account set-provider alice --none"},
 		},
 		Errors: []helpError{
-			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login"),
-			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account in the list does not exist, or --all with no accounts"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login in the list is not valid"),
+			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the subscription is not configured"),
+			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account would have no stored node on that subscription; nothing was changed"),
 		},
 		SeeAlso: []string{"account set-country", "sub rm"},
 	},
@@ -387,7 +420,7 @@ var helpTopics = []helpTopic{
 		Name:    "account rm",
 		Group:   groupAccount,
 		Summary: "Remove an account",
-		Usage:   []string{"netivri account rm LOGIN"},
+		Usage:   []string{"netivri account rm {ACCOUNT}"},
 		Description: "Removes the account. It is not idempotent. A running daemon applies the removal within a few " +
 			"seconds and ends the account's open connections.",
 		Examples: []helpExample{{"Remove alice", "netivri account rm alice"}},
@@ -400,18 +433,18 @@ var helpTopics = []helpTopic{
 		Group:   groupDiag,
 		Summary: "Show recorded node health, delay and throughput",
 		Usage: []string{
-			"netivri stats [--sub NAME] [--country CC] [--node LABEL] [--since DURATION] [--by node|country|provider]",
+			"netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider}]",
 		},
 		Description: "Shows what the daemon recorded about the exit nodes: the health and delay from the background " +
 			"probes, the dial time and outcome of real connections, and the throughput of real traffic. It reads " +
-			"<home>/stats.db read-only, so it works while the daemon runs and after it stopped. Statistics exist " +
+			"{DIR}/stats.db read-only, so it works while the daemon runs and after it stopped. Statistics exist " +
 			"only for accounts that have a provider or an exit country.",
 		Flags: []helpFlag{
-			{"--sub NAME", "Only the nodes of this subscription (provider)."},
-			{"--country CC", "Only the nodes of this country."},
-			{"--node LABEL", "Only this node. A label is <provider>/<node id>, as in 'netivri node list' (sub and id)."},
-			{"--since DURATION", "Window: 90m, 24h, 7d and so on. Default 24h, at most 365d."},
-			{"--by GROUP", "node (default), country or provider. Grouped output sums counters and leaves percentiles out."},
+			{"--sub {SUBSCRIPTION}", "Only the nodes of this subscription (provider)."},
+			{"--country {COUNTRY}", "Only the nodes of this country."},
+			{"--node {NODE}", "Only this node. A label is {PROVIDER}/{NODE_ID}, as in 'netivri node list' (sub and id)."},
+			{"--since {DURATION}", "Window: 90m, 24h, 7d and so on. Default 24h, at most 365d."},
+			{"--by {GROUP}", "node (default), country or provider. Grouped output sums counters and leaves percentiles out."},
 		},
 		Examples: []helpExample{
 			{"Every node over the last day", "netivri stats"},
@@ -429,7 +462,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:        "diag",
 		Summary:     "Measure the real connection path",
-		Usage:       []string{"netivri diag dial --account LOGIN | --node LABEL [flags]"},
+		Usage:       []string{"netivri diag dial --account {ACCOUNT} | --node {NODE} [flags]"},
 		Description: "Diagnostics that measure instead of guess. Only 'dial' exists today.",
 		Examples:    []helpExample{{"Where does a new connection spend its time?", "netivri diag dial --account alice"}},
 		SeeAlso:     []string{"stats"},
@@ -438,7 +471,7 @@ var helpTopics = []helpTopic{
 		Name:    "diag dial",
 		Group:   groupDiag,
 		Summary: "Measure where a new connection spends its time",
-		Usage:   []string{"netivri diag dial --account LOGIN | --node LABEL [--samples N] [--idle LIST|off] [--max-nodes N] [--url URL]"},
+		Usage:   []string{"netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]"},
 		Description: "Takes a few samples of a new connection through a node and reports, per phase, how long it took " +
 			"(dns, tcp, tls for nodes that expose it, and first_byte; p50, p90 and max) and how many attempts failed. " +
 			"Then it tests whether a prepared connection survives sitting idle for 0.5 s, 1 s, 2 s and so on, and " +
@@ -447,12 +480,12 @@ var helpTopics = []helpTopic{
 			"few small HTTP requests through each node to the probe URL. The output contains node labels only, " +
 			"never addresses.",
 		Flags: []helpFlag{
-			{"--account LOGIN", "Diagnose the route nodes of this account, in route order (at most --max-nodes)."},
-			{"--node LABEL", "Diagnose this one node: <provider>/<node id>, as in 'netivri stats'."},
-			{"--samples N", "Samples per node, 1 to 20 (default 5)."},
-			{"--idle LIST", "Idle times for the survival test: up to 10 durations such as 500ms,2s, ascending; or 'off' to skip the test. Default: a built-in ladder."},
-			{"--max-nodes N", "At most this many route nodes of an account, 1 to 50 (default 6)."},
-			{"--url URL", "Probe URL, http only. Default: the warm-up URL (www.gstatic.com)."},
+			{"--account {ACCOUNT}", "Diagnose the route nodes of this account, in route order (at most --max-nodes)."},
+			{"--node {NODE}", "Diagnose this one node: {PROVIDER}/{NODE_ID}, as in 'netivri stats'."},
+			{"--samples {N}", "Samples per node, 1 to 20 (default 5)."},
+			{"--idle {LIST}", "Idle times for the survival test: up to 10 durations such as 500ms,2s, ascending; or 'off' to skip the test. Default: a built-in ladder."},
+			{"--max-nodes {N}", "At most this many route nodes of an account, 1 to 50 (default 6)."},
+			{"--url {URL}", "Probe URL, http only. Default: the warm-up URL (www.gstatic.com)."},
 		},
 		Examples: []helpExample{
 			{"The nodes that account alice would use", "netivri diag dial --account alice"},
@@ -476,7 +509,7 @@ var helpTopics = []helpTopic{
 		Group:       groupOther,
 		Summary:     "Print the version",
 		Usage:       []string{"netivri version"},
-		Description: "Prints the version of this binary as JSON. A build that is not a release reports a dev version.",
+		Description: "Prints the version of this binary. A build that is not a release reports a dev version.",
 		Examples:    []helpExample{{"Show the version", "netivri version"}},
 	},
 	{
@@ -484,8 +517,8 @@ var helpTopics = []helpTopic{
 		Group:   groupOther,
 		Summary: "Show this help",
 		Usage: []string{
-			"netivri help [COMMAND [SUBCOMMAND]]",
-			"netivri COMMAND [SUBCOMMAND] --help",
+			"netivri help [{COMMAND} [{SUBCOMMAND}]]",
+			"netivri {COMMAND} [{SUBCOMMAND}] --help",
 		},
 		Description: "Without a command prints the overview. With one prints its usage, flags, examples and the " +
 			"errors it can return. Running 'netivri' with no arguments does the same as 'netivri help'.\n\n" +

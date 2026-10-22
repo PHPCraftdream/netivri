@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/subscription"
 	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
@@ -30,6 +31,8 @@ func loadAccounts(t *testing.T, home string) []config.Account {
 func TestAccountSetCountryPersists(t *testing.T) {
 	testutil.RequireKtavLib(t)
 	home := t.TempDir()
+	// A country can only be set when some stored node has it.
+	seedProviders(t, home, map[string][]subscription.Node{"s": {node("nl-1", "NL")}})
 	accountCommand(t, home, "add", "alice")
 	accountCommand(t, home, "set-country", "alice", "nl")
 	got := loadAccounts(t, home)

@@ -60,10 +60,10 @@ Both installers take the same options (POSIX names / PowerShell parameters):
 | install.sh | install.ps1 | Env variable | Default | Meaning |
 |---|---|---|---|---|
 | `--version X.Y.Z` | `-Version X.Y.Z` | `NETIVRI_VERSION` | latest release | Version to install (no leading `v`). |
-| `--dir DIR` | `-InstallDir DIR` | `NETIVRI_INSTALL_DIR` | `~/.netivri/bin` / `%LOCALAPPDATA%\netivri\bin` | Install directory. |
-| `--base-url URL` | `-BaseUrl URL` | `NETIVRI_BASE_URL` | GitHub releases | Download base URL (see below). |
-| `--from-dir DIR` | `-FromDir DIR` | `NETIVRI_FROM_DIR` | — | Install from a local directory instead of downloading (see below). |
-| — | `-Proxy URL` | — | system proxy | HTTP(S) proxy for `Invoke-WebRequest`. |
+| `--dir {DIR}` | `-InstallDir {DIR}` | `NETIVRI_INSTALL_DIR` | `~/.netivri/bin` / `%LOCALAPPDATA%\netivri\bin` | Install directory. |
+| `--base-url {URL}` | `-BaseUrl {URL}` | `NETIVRI_BASE_URL` | GitHub releases | Download base URL (see below). |
+| `--from-dir {DIR}` | `-FromDir {DIR}` | `NETIVRI_FROM_DIR` | — | Install from a local directory instead of downloading (see below). |
+| — | `-Proxy {URL}` | — | system proxy | HTTP(S) proxy for `Invoke-WebRequest`. |
 | — | `-AddToPath` | — | off | Add the install dir to the **user** `PATH`. |
 | `--quiet` | `-Quiet` | — | off | Print nothing informational (progress, results, notes, PATH hints); errors still go to stderr. |
 | `--uninstall` | `-Uninstall` | — | — | Remove the installed files. |
@@ -74,10 +74,10 @@ Exit codes: `0` success, `1` failure, `2` usage error.
 `--base-url` / `-BaseUrl` accepts:
 
 - `https://…` / `http://…` — the archive and `SHA256SUMS` are fetched from
-  `<base>/<file>` directly, without the release-tag path (useful for
+  `{BASE}/{FILE}` directly, without the release-tag path (useful for
   mirrors and CI);
 - `file://…` or a plain local directory path — the files are copied from
-  `<base>/<file>`.
+  `{BASE}/{FILE}`.
 
 When `--base-url` / `-BaseUrl` is used, `--version` / `-Version` must be
 given too, because the archive filename contains the version. The default
@@ -97,12 +97,12 @@ in place, it replaces them by renaming, which is safe while netivri runs:
   (unless `--quiet`):
   `note: netivri is running (pid N); it keeps using the previous version
   until restarted: netivri down && netivri up`. The detection is
-  best effort (`pgrep` plus `/proc/<pid>/exe` on Linux) and never fails
+  best effort (`pgrep` plus `/proc/{PID}/exe` on Linux) and never fails
   the install.
 - **Windows:** a running executable or a mapped DLL cannot be overwritten
   or deleted, but it can be renamed. The installer copies the new file
   next to the target, renames the old file aside to
-  `<name>.old-<timestamp>`, moves the new copy into place, and then tries
+  `{NAME}.old-{TIMESTAMP}`, moves the new copy into place, and then tries
   to delete the renamed-aside file — a file still held open by the running
   daemon simply stays. If the install directory would ever be left without
   a working binary, the old file is renamed back and the install fails.
@@ -118,7 +118,7 @@ renamed-aside files disappear on a later install or uninstall.
 
 ## Installing from a local directory
 
-`--from-dir DIR` (env `NETIVRI_FROM_DIR`) installs from a local directory
+`--from-dir {DIR}` (env `NETIVRI_FROM_DIR`) installs from a local directory
 instead of downloading. There is no network access and no checksum
 verification — the source is an ordinary local file, and when the npm
 installer uses this mode npm's own registry integrity check already
@@ -126,15 +126,15 @@ covers the download. Two layouts are accepted:
 
 - **Archive layout** — the extracted release archive: the binary
   (`netivri` / `netivri.exe`), the Ktav library, `LICENSE` and
-  `THIRD_PARTY_LICENSES/` sit directly in `DIR`.
-- **npm platform package layout** — `DIR/bin/` holds the binary and the
-  library; `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `DIR`.
+  `THIRD_PARTY_LICENSES/` sit directly in `{DIR}`.
+- **npm platform package layout** — `{DIR}/bin/` holds the binary and the
+  library; `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `{DIR}`.
 
 The binary and the library must exist (the install fails otherwise);
 `LICENSE` and `THIRD_PARTY_LICENSES/` are copied when present and silently
 skipped otherwise. `--from-dir` cannot be combined with `--version` or
 `--base-url` (or their env variables) — that is a usage error. In this
-mode the final line is `installed netivri to <dir>` (the version is
+mode the final line is `installed netivri to {DIR}` (the version is
 unknown). Everything else — the running-daemon handling above, the share
 files, the PATH hints — is identical to download mode.
 
@@ -144,7 +144,7 @@ errors reach stderr, with unchanged exit codes.
 
 ## How verification works
 
-1. The archive (`netivri_<version>_<os>_<arch>.tar.gz` or `.zip`) and the
+1. The archive (`netivri_{VERSION}_{OS}_{ARCH}.tar.gz` or `.zip`) and the
    release's `SHA256SUMS` file are downloaded.
 2. The SHA256 of the archive is computed locally and compared with the
    entry for that exact filename in `SHA256SUMS`.
@@ -160,10 +160,10 @@ Checksum verification is mandatory and cannot be skipped by any flag
 ## What gets installed
 
 ```
-<dir>/netivri            (or netivri.exe)   mode 0755, real file, no symlink
-<dir>/libktav_cabi.so | libktav_cabi.dylib | ktav_cabi.dll
-<dir>/../share/netivri/LICENSE
-<dir>/../share/netivri/THIRD_PARTY_LICENSES/
+{DIR}/netivri            (or netivri.exe)   mode 0755, real file, no symlink
+{DIR}/libktav_cabi.so | libktav_cabi.dylib | ktav_cabi.dll
+{DIR}/../share/netivri/LICENSE
+{DIR}/../share/netivri/THIRD_PARTY_LICENSES/
 ```
 
 The library must sit next to the binary under its canonical name — netivri

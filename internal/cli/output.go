@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
+	"sync"
 )
 
 const SchemaVersion = 1
@@ -43,9 +45,33 @@ type envelope struct {
 	Error         *Error `json:"error,omitempty"`
 }
 
-// Success writes {"ok":true,"data":...} to stdout.
+// dumpsFunc renders a value as a Ktav document.
+type dumpsFunc func(v any) (string, error)
+
+var (
+	formatMu  sync.RWMutex
+	ktavDumps dumpsFunc // nil: JSON
+)
+
+// UseKtav makes Success and Render write Ktav, rendered by dumps, instead of
+// JSON. The package cannot call the Ktav binding itself: the binding needs the
+// native library that internal/config locates, and config imports this
+// package. If dumps fails (the library is missing, a value cannot be
+// represented) the JSON form is written, so that a result and above all an
+// error is never lost.
+func UseKtav(dumps func(v any) (string, error)) {
+	formatMu.Lock()
+	ktavDumps = dumps
+	formatMu.Unlock()
+}
+
+// UseJSON makes Success and Render write JSON, the default.
+func UseJSON() { UseKtav(nil) }
+
+// Success writes the success envelope to w: {"ok":true,"data":...} as JSON, or
+// the same keys as Ktav.
 func Success(w io.Writer, data any) {
-	writeJSON(w, envelope{SchemaVersion: SchemaVersion, OK: true, Data: data})
+	write(w, envelope{SchemaVersion: SchemaVersion, OK: true, Data: data})
 }
 
 // Render writes the error envelope to w and returns the process exit code.
@@ -55,8 +81,50 @@ func Render(w io.Writer, err error) int {
 	if !errors.As(err, &e) {
 		e = &Error{Code: "INTERNAL", Message: err.Error(), Exit: ExitInternal}
 	}
-	writeJSON(w, envelope{SchemaVersion: SchemaVersion, OK: false, Error: e})
+	write(w, envelope{SchemaVersion: SchemaVersion, OK: false, Error: e})
 	return e.Exit
+}
+
+func write(w io.Writer, e envelope) {
+	formatMu.RLock()
+	dumps := ktavDumps
+	formatMu.RUnlock()
+	if dumps != nil {
+		if text, err := ktavText(dumps, e); err == nil {
+			_, _ = io.WriteString(w, text)
+			return
+		}
+	}
+	writeJSON(w, e)
+}
+
+// ktavText renders an envelope as Ktav. The two fixed keys come first, then
+// the data or the error, so that every document starts the same way.
+func ktavText(dumps dumpsFunc, e envelope) (string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "schema_version: %d\nok: %t\n", e.SchemaVersion, e.OK)
+	var body map[string]any
+	switch {
+	case e.Error != nil:
+		fields := map[string]any{"code": e.Error.Code, "message": e.Error.Message}
+		if e.Error.Hint != "" {
+			fields["hint"] = e.Error.Hint
+		}
+		body = map[string]any{"error": fields}
+	case e.Data != nil:
+		body = map[string]any{"data": e.Data}
+	}
+	if body != nil {
+		text, err := dumps(body)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(text)
+		if !strings.HasSuffix(text, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
 }
 
 // Fail writes the error envelope to stderr and exits with its code.

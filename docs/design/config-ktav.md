@@ -17,7 +17,7 @@ The binding is `purego` over the reference Rust library (`ktav_cabi`). It loads
 the native library at the first call, resolving it in this order:
 
 1. `$KTAV_LIB_PATH`
-2. user cache `<UserCacheDir>/ktav-go/v<version>/`
+2. user cache `{USER_CACHE_DIR}/ktav-go/v{VERSION}/`
 3. download from GitHub Releases (needs network on first call)
 
 Consequences:

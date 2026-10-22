@@ -23,8 +23,29 @@ versions; every such change is listed here.
   invalid file or an empty route leaves the running configuration in place and
   is reported in `status` under `reload`. See `docs/design/live-reload.md`.
 
+- **Several accounts at once.** `account set-provider` and `account
+  set-country` take a comma-separated list of logins (`alice,bob`) or `--all`
+  in place of a single login; `--none` works with both. A single login prints
+  `{"account": ...}` as before, several print `{"accounts": [...]}`.
+
 ### Changed
 
+- **Node check before a switch.** `account set-provider` and `account
+  set-country` now check, before writing anything, that every account they
+  change still has a stored node on its route (its subscription, or all of
+  them when it has none, and its country). If one does not, nothing is
+  changed for any account and the command ends with `NO_NODES_FOR_COUNTRY`
+  (exit 5), naming the account. A value that does not change is not checked.
+- **Placeholders in braces.** The help of the program, the README and the
+  documents write every placeholder in curly braces (`{ACCOUNT}`,
+  `{SUBSCRIPTION}`, `{COUNTRY}`, `{URL}`), and `{ACCOUNT}` (the login of an
+  account) replaces the confusing `LOGIN NAME` of `set-provider`.
+- **Ktav is the default output format.** Results and errors are written as
+  Ktav, the format of the configuration file, with the same keys as before
+  (`schema_version`, `ok`, `data` or `error`). `--json`, or `NETIVRI_OUTPUT=json`
+  in the environment, writes JSON as before; scripts and agents should ask for
+  it. If the Ktav library cannot be loaded the output falls back to JSON. Help
+  is still text, and JSON with `--json`.
 - A password claimed by the first client is written into the configuration
   file as it is on disk, not from the daemon's copy loaded at start, so an
   `account add` made meanwhile is no longer overwritten. A claim against a file
@@ -79,7 +100,7 @@ First public release.
 - **Machine-readable CLI.** `--json` output, documented exit and error codes,
   and [`AGENTS.md`](AGENTS.md) for AI agents.
 - **Built-in help.** `netivri`, `netivri help`, `--help` and
-  `netivri <command> --help` print a readable overview or the usage, flags,
+  `netivri {COMMAND} --help` print a readable overview or the usage, flags,
   detailed examples and possible errors of one command; `--json` gives the
   same as one JSON object for scripts and agents.
 
@@ -94,8 +115,8 @@ First public release.
 
 - `use`, `node test`, `logs`, `doctor` and `schema` are described in
   [`docs/cli.md`](docs/cli.md) but not implemented yet.
-- Command results are printed as JSON only; there is no table view for people
-  yet. Help (`netivri help`) is the one text output.
+- Command results are documents only (Ktav by default, JSON with `--json`);
+  there is no table view for people yet. Help (`netivri help`) is the one text output.
 - No TUN mode and no change of the system proxy settings; these are non-goals
   for the 0.x line.
 - Alpine and other musl-based Linux systems are not supported (the Ktav

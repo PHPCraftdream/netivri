@@ -8,6 +8,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/subscription"
 	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
@@ -16,11 +17,11 @@ func accountProviderHome(t *testing.T) string {
 	t.Helper()
 	testutil.RequireKtavLib(t)
 	home := t.TempDir()
-	cfg := config.Default()
-	cfg.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://x.invalid/1"}, {Name: "p2", URL: "https://x.invalid/2"}}
-	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
-		t.Fatal(err)
-	}
+	// Both providers have stored nodes: switching an account to one needs them.
+	seedProviders(t, home, map[string][]subscription.Node{
+		"p1": {node("p1-de", "DE"), node("p1-nl", "NL")},
+		"p2": {node("p2-de", "DE")},
+	})
 	return home
 }
 

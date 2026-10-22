@@ -13,9 +13,9 @@ loopback.
 
 Guard rails:
 
-- Every request must carry `Authorization: Bearer <token>`; the comparison
+- Every request must carry `Authorization: Bearer {TOKEN}`; the comparison
   runs through `crypto/subtle.ConstantTimeCompare`.
-- The `Host` header must equal the listener's own `127.0.0.1:<port>`; a
+- The `Host` header must equal the listener's own `127.0.0.1:{PORT}`; a
   mismatching host (DNS-rebinding style) gets 403.
 - Wrong method: 405. Unknown path: 404. Missing/wrong token: 401, with no
   information about why.
@@ -59,7 +59,7 @@ It may also include `stats` (`path`, `dropped`) and `affinity` (`bindings`,
 The daemon parent spawns the same executable
 (`os.Executable()`) with the user's `up` arguments (verbatim, minus the
 compatibility flags, with `--home` normalized) plus
-`--foreground --handshake <path>`. The child:
+`--foreground --handshake {PATH}`. The child:
 
 1. starts the proxy and the control server,
 2. writes the state file,
@@ -68,7 +68,7 @@ compatibility flags, with `--home` normalized) plus
    failure (a `PORT_IN_USE` keeps exit 6, and so on),
 4. removes nothing that is not its own.
 
-The parent polls the unique file `run/start-<random-hex>.json` (50 ms tick,
+The parent polls the unique file `run/start-{RANDOM_HEX}.json` (50 ms tick,
 15 s timeout). The child writes the success or failure JSON atomically. On
 child exit, the parent makes one final read to catch a last-moment handshake.
 The child is started detached (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,

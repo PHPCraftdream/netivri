@@ -23,17 +23,17 @@ To verify a change, push it and read the CI result.
 
 ## Using netivri
 
-- Always pass `--json` (or rely on non-TTY detection) and parse stdout as one
-  JSON object. Errors arrive on stderr as JSON with a `code` field; branch on
-  `code`, not on `message`.
+- The output is Ktav by default. Always pass `--json` (or set `NETIVRI_OUTPUT=json`
+  once) and parse stdout as one JSON object. Errors arrive on stderr in the same
+  format with a `code` field; branch on `code`, not on `message`.
 - The full contract is in [`docs/cli.md`](docs/cli.md). `netivri help --json`
-  lists the commands and `netivri help <command> --json` gives the usage,
+  lists the commands and `netivri help {COMMAND} --json` gives the usage,
   flags, examples and error codes of one as a JSON object.
 - Typical flow:
   1. `netivri status --json` — exit 4 means the daemon is not running.
   2. `netivri up --json` — safe to repeat.
-  3. Route by account: `netivri account add LOGIN --provider NAME --country DE --json`
-     (the first client that authenticates as LOGIN sets its password); a
+  3. Route by account: `netivri account add {ACCOUNT} --provider {SUBSCRIPTION} --country DE --json`
+     (the first client that authenticates as {ACCOUNT} sets its password); a
      running daemon applies the change within a few seconds (its listener
      restarts, open connections end) and `netivri status` reports it under
      `reload`. The daemon also re-fetches the subscriptions once an hour.
@@ -50,6 +50,10 @@ To verify a change, push it and read the CI result.
   sources are vendored in `third_party/mihomo` (see `third_party/README.md`):
   change them only through documented patch commits.
 - Every user-facing behavior change must update `docs/cli.md` in the same change.
+- In the help of the program and in every document, a placeholder is written in
+  curly braces with a name that says what goes there: `{ACCOUNT}` (the login of
+  an account), `{SUBSCRIPTION}`, `{COUNTRY}`, `{NODE}`, `{URL}`, `{DIR}`. Not
+  `<name>`, not a bare upper-case word. A test guards the help.
 - Changing the JSON shape or exit/error codes is breaking: bump `schema_version`.
 - Builds and tests run only in CI — see the main rule at the top.
 - No TUN, no system proxy changes in v1.

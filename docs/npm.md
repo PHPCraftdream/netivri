@@ -13,7 +13,7 @@ npm) is the only network path.
   glibc/musl check on Linux via `process.report`) to a platform package,
   resolves the binary with `require.resolve`, and spawns it with
   `stdio: 'inherit'`, forwarding SIGINT/SIGTERM/SIGHUP and the exit code.
-- `netivri-<os>-<cpu>` — six platform packages (`linux-x64`,
+- `netivri-{OS}-{CPU}` — six platform packages (`linux-x64`,
   `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`,
   `win32-arm64`) installed as `optionalDependencies` of the main package.
   Each declares `os`, `cpu` and (on Linux) `libc: ["glibc"]`, so npm
@@ -37,12 +37,12 @@ distribution or a glibc container.
 ## Relation to the release archives
 
 The platform packages are built from the same archives attached to each
-GitHub Release (`netivri_<version>_<goos>_<goarch>.tar.gz|.zip`, see
+GitHub Release (`netivri_{VERSION}_{GOOS}_{GOARCH}.tar.gz|.zip`, see
 [`release.md`](release.md)). The build step extracts the archives and runs:
 
 ```sh
 node npm/scripts/build-packages.js \
-  --version X.Y.Z --archive-dir <dir-with-extracted-archives> --out <out-dir>
+  --version X.Y.Z --archive-dir {DIR_WITH_EXTRACTED_ARCHIVES} --out {OUT_DIR}
 ```
 
 The script validates that each archive contains the expected binary and
@@ -67,11 +67,11 @@ Not implemented yet. The future npm installer will call the standalone
 installer in local-source mode, e.g.:
 
 ```sh
-sh install.sh --from-dir <platform package dir> --dir <stable dir> --quiet
+sh install.sh --from-dir {PLATFORM_PACKAGE_DIR} --dir {STABLE_DIR} --quiet
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -FromDir <platform package dir> -InstallDir <stable dir> -Quiet
+powershell -ExecutionPolicy Bypass -File install.ps1 -FromDir {PLATFORM_PACKAGE_DIR} -InstallDir {STABLE_DIR} -Quiet
 ```
 
 That copies the binary out of the npm tree into a stable directory

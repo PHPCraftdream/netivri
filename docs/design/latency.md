@@ -62,7 +62,7 @@ Verified in the module sources:
   (with its own cache) is used.
 - gRPC nodes use one HTTP/2 transport per node: new connections are new
   streams, no new handshake. Mihomo already does this.
-- netivri emits one `IN-USER,<login>,<group>` rule per account
+- netivri emits one `IN-USER,{LOGIN},{GROUP}` rule per account
   (`internal/core/accounts.go`): rule matching is O(accounts) per connection.
 
 ## Where the time goes and what each change can save
@@ -92,7 +92,7 @@ counters, see Gates.
 2. **Phase timings**: a patched vendored VLESS adapter reports the TCP and
    TLS durations of every dial; `netivri diag dial` reports them per node.
 3. **Field**: the user runs `netivri diag dial` and `netivri stats` from a CI
-   build. Aggregates go to `docs/perf/field-<date>.md` without node names or
+   build. Aggregates go to `docs/perf/field-{DATE}.md` without node names or
    addresses.
 
 ## Vendoring Mihomo

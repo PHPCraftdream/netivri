@@ -57,7 +57,7 @@ message echoes the rejected value.
 
 ## Hash format
 
-`Hash` produces `$argon2id$v=19$m=19456,t=2,p=1$<salt>$<key>` with a
+`Hash` produces `$argon2id$v=19$m=19456,t=2,p=1${SALT}${KEY}` with a
 fresh 16-byte `crypto/rand` salt and a 32-byte key, unpadded standard
 base64 per the PHC string format. Default cost: 19 MiB memory, 2
 passes, 1 lane. `VerifyHash` is a strict parser: only argon2id, only

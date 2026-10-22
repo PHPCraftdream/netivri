@@ -36,7 +36,7 @@ country, node selection for the default route (`use`), hot reload.
 
 ## Node identity
 
-Every node of a route has a stable **label** `<provider>/<node id>`
+Every node of a route has a stable **label** `{PROVIDER}/{NODE_ID}`
 (subscription name and the stored node id). The core treats labels as opaque
 strings; they are the key of the statistics and of persisted bindings.
 
@@ -58,7 +58,7 @@ connection, polling the counters costs nothing per packet.
 
 SQLite through `modernc.org/sqlite` (pure Go: release builds use
 `CGO_ENABLED=0`; BSD-3-Clause, covered by the third-party licence collection).
-File `<home>/stats.db`. Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`,
+File `{HOME}/stats.db`. Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`,
 `busy_timeout=5000`. One writer (the daemon) and any number of readers (the
 CLI, read-only).
 
@@ -157,10 +157,10 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) // sorted by label
 
 Each route gets, instead of a `select` group, a custom Mihomo group adapter
 (`C.ProxyAdapter` wrapped with `adapter.NewProxy`) named like the old group
-(`netivri-group-<R>`). The `select` groups stay in the raw config so the
+(`netivri-group-{R}`). The `select` groups stay in the raw config so the
 rules validate; after `ApplyConfig` the sticky adapters replace them in the
 proxy map through `tunnel.UpdateProxies`, the way the pool replaces the
-default node. Members are the already built leaf proxies `netivri-r<R>-<N>`.
+default node. Members are the already built leaf proxies `netivri-r{R}-{N}`.
 
 ### Site key and binding
 
@@ -236,7 +236,7 @@ contract and the gate.
 
 ```go
 // Options gains:
-NodeLabels  map[string][]string // route key -> label per node, same order and length as RouteNodes[key]; nil = "r<R>-<N>"
+NodeLabels  map[string][]string // route key -> label per node, same order and length as RouteNodes[key]; nil = "r{R}-{N}"
 Observer    Observer           // nil = none
 AffinityTTL time.Duration      // 0 = 24h; negative is invalid
 
@@ -260,7 +260,7 @@ type AffinityStats struct {
 
 // WarmOptions gains (warm.go):
 ProbeConcurrency int // 0 = 8; probes of one round run this many at a time
-OnProbe func(name string, alive bool, delay time.Duration) // after every probe, from probe goroutines; name is the internal proxy name netivri-r<R>-<N>
+OnProbe func(name string, alive bool, delay time.Duration) // after every probe, from probe goroutines; name is the internal proxy name netivri-r{R}-{N}
 ```
 
 The core maps the internal name to its label and forwards probe results to
@@ -268,8 +268,8 @@ both the sticky group's health table and `Observer.ObserveProbe`.
 
 ## Wiring (`cmd/netivri`)
 
-- `routePool` also returns labels (`provider/<node id>`) in node order.
-- `up` opens `<home>/stats.db`, calls `SetNodes`, passes an adapter of the
+- `routePool` also returns labels (`provider/{NODE_ID}`) in node order.
+- `up` opens `{HOME}/stats.db`, calls `SetNodes`, passes an adapter of the
   store as `core.Observer`, closes the store after the core. A store that
   cannot be opened is logged and the daemon runs without statistics: the
   proxy never fails because of its bookkeeping.
@@ -285,7 +285,7 @@ None in the first version: retention (7 days raw) and the binding lifetime
 ### `netivri stats`
 
 ```
-netivri stats [--sub N] [--country CC] [--node LABEL] [--since 24h] [--by node|country|provider]
+netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since 24h] [--by {node|country|provider}]
 ```
 
 Reads the database read-only, works while the daemon runs and when it is

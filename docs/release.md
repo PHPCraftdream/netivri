@@ -80,7 +80,7 @@ npm audit signatures
 
 ## What each archive contains
 
-`netivri_<version>_<goos>_<goarch>.zip` (windows) or `.tar.gz` (others):
+`netivri_{VERSION}_{GOOS}_{GOARCH}.zip` (windows) or `.tar.gz` (others):
 
 - `netivri` / `netivri.exe` — the Go binary, built with `CGO_ENABLED=0`.
 - The Ktav native library (`ktav_cabi.dll`, `libktav_cabi.so` or

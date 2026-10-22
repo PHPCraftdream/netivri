@@ -3,8 +3,11 @@ package main
 import (
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
 var version = "0.0.0-dev"
@@ -45,7 +48,34 @@ func dispatch(args []string, stdout io.Writer) error {
 	return run(args[1:], stdout)
 }
 
+// wantsJSON reports whether results and errors are written as JSON instead of
+// Ktav: with --json among the arguments (before a bare --), or with
+// NETIVRI_OUTPUT=json in the environment, which scripts can set once.
+func wantsJSON(args []string, getenv func(string) string) bool {
+	if getenv("NETIVRI_OUTPUT") == "json" {
+		return true
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		name, value, hasValue := strings.Cut(a, "=")
+		if name != "--json" && name != "-json" {
+			continue
+		}
+		if !hasValue {
+			return true
+		}
+		on, err := strconv.ParseBool(value)
+		return err != nil || on
+	}
+	return false
+}
+
 func main() {
+	if !wantsJSON(os.Args[1:], os.Getenv) {
+		cli.UseKtav(config.KtavDumps)
+	}
 	if err := dispatch(os.Args[1:], os.Stdout); err != nil {
 		cli.Fail(err)
 	}

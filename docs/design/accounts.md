@@ -8,11 +8,11 @@ while none is selected).
 
 ## Providers
 
-A provider is a subscription record. `netivri sub add <url>` authorises by the
+A provider is a subscription record. `netivri sub add {URL}` authorises by the
 link (the URL carries the token), fetches it and stores the record and the
 node snapshot: that is "creating a provider". The list of countries a provider
-offers comes from its stored snapshot: `netivri sub countries [NAME]`, or, for
-a link that is not stored yet, `netivri sub countries --url URL [--via PROXY]`
+offers comes from its stored snapshot: `netivri sub countries [{SUBSCRIPTION}]`, or, for
+a link that is not stored yet, `netivri sub countries --url {URL} [--via {PROXY}]`
 (fetch and parse only; nothing is stored). The URL is never printed.
 
 An account can be bound to a provider and to an exit country, together or
@@ -54,7 +54,7 @@ docs/config.md.)
 
 | Field | Meaning |
 | --- | --- |
-| `login` | Required, unique, 1..64 characters of `A-Za-z0-9._@-`. The restricted alphabet keeps the login safe inside a Mihomo rule (`IN-USER,<login>,<group>`: no commas, slashes or spaces). |
+| `login` | Required, unique, 1..64 characters of `A-Za-z0-9._@-`. The restricted alphabet keeps the login safe inside a Mihomo rule (`IN-USER,{LOGIN},{GROUP}`: no commas, slashes or spaces). |
 | `password` | Required: an argon2id PHC hash, or the placeholder `init`. |
 | `provider` | Optional: the name of a subscription (`subscriptions[].name`, 1..64 characters of `A-Za-z0-9._-`). Empty or missing = every provider. Config validation checks the shape only; `up` and the `account` commands check that the provider exists. |
 | `exit_country` | Optional ISO 3166-1 alpha-2 code, stored upper case (`de` is normalised to `DE`). Empty or missing = default route. |
@@ -90,14 +90,14 @@ hence the login alphabet). The core therefore builds, in rule mode:
   caller names a route with an opaque key and hands the core the nodes of each
   route, in preference order (the core knows nothing about providers or
   countries),
-- one proxy per node of every route (internal names `netivri-r<R>-<N>` with
+- one proxy per node of every route (internal names `netivri-r{R}-{N}` with
   the route's and the node's index, so a provider-supplied name never reaches
   a rule),
-- one group per route: `netivri-group-<R>`, type `select`, members = the nodes
+- one group per route: `netivri-group-{R}`, type `select`, members = the nodes
   of the route in the given order. `select` makes the first member the default
   and does no network I/O of its own, so the core stays hermetic; failover
   over alive nodes comes with the health checks.
-- rules `IN-USER,<login>,netivri-group-<R>` for every account with a route,
+- rules `IN-USER,{LOGIN},netivri-group-{R}` for every account with a route,
   then the final `MATCH` to the default route: `netivri-node` when a default
   node is selected, `DIRECT` when none is (today's direct mode).
 
@@ -109,19 +109,24 @@ Consequences:
   later makes the connections of that account fail. There is never a fallback to direct and
   never to another country.
 - Accounts without a country, and `auth`'s account, take the default route.
-- Applying changes needs a restart of the daemon (`down`, then `up`); there
-  is no hot reload.
+- A running daemon applies changes by itself (see [live-reload.md](live-reload.md));
+  the listener restarts, so open connections end.
+- `set-country` and `set-provider` ask the question `up` asks before they
+  write: would every account addressed still have a stored node on its route?
+  If not, nothing is written for any account (`NO_NODES_FOR_COUNTRY`). Whether
+  a node is alive is not part of the question; that changes by the minute and
+  is what the probes and the sticky group are for.
 
 ## CLI
 
 ```
-netivri account add <login> [--provider NAME] [--country CC]
+netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}] [--country {COUNTRY}]
 netivri account list
-netivri account set-country <login> <CC>      (or --none to clear)
-netivri account set-provider <login> <NAME>   (or --none to clear)
-netivri account rm <login>
+netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}      (or --all, or --none to clear)
+netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}   (or --all, or --none to clear)
+netivri account rm {ACCOUNT}
 
-netivri sub countries [NAME | --url URL [--via PROXY]]
+netivri sub countries [{SUBSCRIPTION} | --url {URL} [--via {PROXY}]]
 ```
 
 All JSON, idempotent (`add` of an existing login with the same country is a
@@ -164,7 +169,7 @@ type Options struct {
 	// RouteNodes holds, per route key, the Mihomo proxy mappings of the nodes
 	// of that route, in preference order. A route key is an opaque string of
 	// 1..128 printable ASCII characters chosen by the caller (the CLI uses
-	// "<provider>~<CC>", either part may be empty); it never reaches a rule.
+	// "{PROVIDER}~{COUNTRY}", either part may be empty); it never reaches a rule.
 	RouteNodes map[string][]map[string]any
 	// AccountRoute maps an authenticated login to the route key it uses.
 	AccountRoute map[string]string

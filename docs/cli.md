@@ -8,8 +8,8 @@ scripts, AI agents). Changing anything here is a breaking change and bumps
 
 | Flag | Meaning |
 |---|---|
-| `--json` | Machine output. Implied when stdout is not a TTY. |
-| `--home <dir>` | State directory. Default: `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. Env: `NETIVRI_HOME`. |
+| `--json` | Write results and errors as JSON instead of Ktav, the default (see [Output](#output)). Env: `NETIVRI_OUTPUT=json`. |
+| `--home {DIR}` | State directory. Default: `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. Env: `NETIVRI_HOME`. |
 | `--quiet` | No human-oriented output on stderr. |
 | `--no-color` | No ANSI. Implied when not a TTY or `NO_COLOR` is set. |
 | `-h`, `--help` | Help for the command; see [`help`](#help). |
@@ -20,58 +20,99 @@ instead (`--yes`).
 ## Commands
 
 ```
-netivri sub add <url> [--name N] [--via PROXY]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}]
                                           add a subscription (idempotent by URL)
 netivri sub list
-netivri sub update [N | --all]            re-fetch
-netivri sub rm N
-netivri sub countries [NAME | --url URL [--via PROXY]]
+netivri sub update [{SUBSCRIPTION} | --all]   re-fetch
+netivri sub rm {SUBSCRIPTION}
+netivri sub countries [{SUBSCRIPTION} | --url {URL} [--via {PROXY}]]
 
-netivri node list [--sub N] [--country CC] [--alive]
-netivri node test [NODE | --all] [--exit] [--timeout 5s]
+netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
+netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]
 
-netivri account add <login> [--provider NAME] [--country CC]
+netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}] [--country {COUNTRY}]
 netivri account list
-netivri account set-country <login> <CC> | <login> --none
-netivri account set-provider <login> <NAME> | <login> --none
-netivri account rm <login>
+netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY} | --all {COUNTRY}
+netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
+netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION} | --all {SUBSCRIPTION}
+netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
+netivri account rm {ACCOUNT}
 
-netivri stats [--sub N] [--country CC] [--node LABEL] [--since 24h] [--by node|country|provider]
+netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider}]
 
-netivri diag dial --account LOGIN | --node LABEL [--samples N] [--idle LIST|off] [--max-nodes N] [--url URL]
+netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
-netivri use NODE
-netivri use --country CC [--fastest | --auto]
+netivri use {NODE}
+netivri use --country {COUNTRY} [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
-netivri up [--foreground] [--port 7890] [--bind 127.0.0.1] [--home DIR]
+netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR}]
 netivri down
 netivri status
 
-netivri logs [--follow] [--level debug|info|warn|error] [--since 10m]
+netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}]
 netivri doctor
 netivri schema                            this contract as JSON
 netivri version
-netivri help [COMMAND [SUBCOMMAND]]       also: netivri, netivri COMMAND --help
+netivri help [{COMMAND} [{SUBCOMMAND}]]   also: netivri, netivri {COMMAND} --help
 ```
 
-`NODE` is a node id (stable hash) or an exact node name. `CC` is an ISO
-3166-1 alpha-2 country code (`DE`, `NL`, `FI`).
+Placeholders are written in curly braces, here and in the help of the
+program. `{ACCOUNT}` is the login of an account (`alice`) and `{SUBSCRIPTION}`
+the name of a subscription (`main`). `{NODE}` is a node id (stable hash) or an
+exact node name. `{COUNTRY}` is an ISO 3166-1 alpha-2 country code (`DE`, `NL`,
+`FI`). `{URL}`, `{PROXY}`, `{DIR}`, `{ADDR}`, `{PORT}`, `{N}`, `{DURATION}` and
+`{LIST}` stand for a value of the kind they name. Brackets mean optional, a
+bar means one of, and `{a|b}` is a choice written out.
 
 ## Output
 
-Success: one JSON object on stdout.
+Every result and every error is one document with the same keys, in one of two
+formats. The default is [Ktav](https://github.com/ktav-lang), the format of the
+configuration file; `--json` (anywhere among the arguments, before a bare `--`)
+or the environment variable `NETIVRI_OUTPUT=json` selects JSON instead. The
+format changes how the document is written, never what is in it, and the
+examples in this document are written in JSON.
+
+Success: one document on stdout.
+
+```ktav
+schema_version: 1
+ok: true
+data: {
+    version: 0.1.0
+}
+```
 
 ```json
 {"schema_version": 1, "ok": true, "data": { ... }}
 ```
 
-Failure: one JSON object on stderr, non-zero exit code.
+Failure: one document on stderr, non-zero exit code.
+
+```ktav
+schema_version: 1
+ok: false
+error: {
+    code: FETCH_HTTP_STATUS
+    hint: the subscription server rejected the request
+    message: unexpected HTTP status 403
+}
+```
 
 ```json
 {"schema_version": 1, "ok": false,
  "error": {"code": "FETCH_HTTP_STATUS", "message": "unexpected HTTP status 403", "hint": "the subscription server rejected the request"}}
 ```
+
+A Ktav document starts with `schema_version` and `ok`, then holds `data` or
+`error`; the keys inside are sorted. Values keep their types (numbers,
+booleans, `null`, lists) and a text that looks like a number, such as a login
+`123456`, is written with the raw marker (`login:: 123456`), so a Ktav reader
+gets the same values a JSON reader would. Scripts and agents that parse the
+output should ask for JSON, with `--json` or with `NETIVRI_OUTPUT=json` set
+once. If the Ktav native library cannot be loaded (`KTAV_LIB_MISSING`), the
+document is written as JSON instead, so that an error is never lost.
 
 Subscription URLs are credentials and are never printed: not on stdout,
 not on stderr, not in error messages. The same holds for `--via` proxies.
@@ -82,8 +123,8 @@ per line (NDJSON).
 ### `help`
 
 ```
-netivri help [COMMAND [SUBCOMMAND]] [--json]
-netivri [COMMAND [SUBCOMMAND]] --help [--json]
+netivri help [{COMMAND} [{SUBCOMMAND}]] [--json]
+netivri [{COMMAND} [{SUBCOMMAND}]] --help [--json]
 ```
 
 Every way to ask for help prints it to stdout and exits 0, and no command is
@@ -97,19 +138,19 @@ shows one command: usage, description, flags, examples with comments, the
 errors it can return with their exit codes, and related commands. A command
 with subcommands (`sub`, `node`, `account`, `diag`) lists them.
 
-Help is the one exception to "JSON when stdout is not a TTY": it is text for
-people unless `--json` is given, so `netivri help | less` works. The text is
-ASCII only and not part of the contract; the JSON is.
+Help is text for people unless `--json` is given, whatever `NETIVRI_OUTPUT`
+says, so `netivri help | less` works. The text is ASCII only and not part of
+the contract; the JSON is.
 
 ```json
 {"kind": "overview", "summary": "...", "description": "...", "usage": ["..."],
  "quick_start": ["..."], "planned": ["use", "node test", "logs", "doctor", "schema"],
  "commands": [{"name": "up", "group": "Proxy service", "summary": "...", "usage": ["..."]}],
- "global_flags": [{"name": "--home DIR", "meaning": "..."}],
+ "global_flags": [{"name": "--home {DIR}", "meaning": "..."}],
  "exit_codes": [{"code": 0, "meaning": "success"}]}
 {"kind": "topic", "name": "sub add", "group": "Subscriptions and nodes", "summary": "...",
  "usage": ["..."], "description": "...",
- "flags": [{"name": "--name NAME", "meaning": "..."}],
+ "flags": [{"name": "--name {NAME}", "meaning": "..."}],
  "examples": [{"comment": "...", "command": "..."}],
  "errors": [{"code": "SUB_EXISTS_NAME", "exit": 6, "meaning": "..."}],
  "notes": ["..."], "see_also": ["sub countries"],
@@ -130,14 +171,14 @@ but not implemented yet (`use`, `logs`, ...) is an unknown command.
 Lists the exit countries of a provider or of a subscription URL. Three
 forms; the URL is never printed.
 
-- `sub countries NAME`: the stored snapshot, no network.
+- `sub countries {SUBSCRIPTION}`: the stored snapshot, no network.
 - `sub countries`: every configured provider (config order) plus `countries`,
   the summed union of their stored snapshots.
-- `sub countries --url URL [--via PROXY]`: fetches through the same strict
+- `sub countries --url {URL} [--via {PROXY}]`: fetches through the same strict
   path as `sub add` (`--via` wins over `fetch.proxy`, no direct fallback),
   parses and prints, but stores nothing and touches no config. Fetch and
   parse failures use the `FETCH_*` / `SUBSCRIPTION_*` codes of `sub add`.
-  `--url` together with a NAME, `--via` without `--url` and an empty
+  `--url` together with a {SUBSCRIPTION}, `--via` without `--url` and an empty
   `--url` are usage errors.
 
 A configured provider without a stored snapshot is reported with null
@@ -151,7 +192,7 @@ fields (like `sub list`); a corrupt snapshot is `SUB_SNAPSHOT_INVALID`.
 {"nodes": 3, "countries": [{"code": "DE", "nodes": 2}, {"code": "NL", "nodes": 1}], "unknown": 0}
 ```
 
-These are the `data` values for the NAME form, the no-argument form and the
+These are the `data` values for the {SUBSCRIPTION} form, the no-argument form and the
 `--url` form.
 
 ### `stats`
@@ -159,7 +200,7 @@ These are the `data` values for the NAME form, the no-argument form and the
 The recorded health, delay and throughput of the exit nodes
 (design: [design/node-stats.md](design/node-stats.md)). While `up` serves
 accounts that have a provider or an exit country, it records into
-`<home>/stats.db`: the background probes of the nodes, the dial time and
+`{HOME}/stats.db`: the background probes of the nodes, the dial time and
 outcome of every real connection, and the throughput of real traffic (bytes
 moved per 5-second window; there are no synthetic speed tests). `stats` reads
 that database read-only, so it works while the daemon runs and after it
@@ -167,9 +208,9 @@ stopped.
 
 | Flag | Meaning |
 |---|---|
-| `--sub N` | Only the nodes of this subscription (provider). |
-| `--country CC` | Only the nodes of this country. |
-| `--node LABEL` | Only this node. A label is `<provider>/<node id>`, like the `sub` and `id` of `node list`. |
+| `--sub {SUBSCRIPTION}` | Only the nodes of this subscription (provider). |
+| `--country {COUNTRY}` | Only the nodes of this country. |
+| `--node {NODE}` | Only this node. A label is `{PROVIDER}/{NODE_ID}`, like the `sub` and `id` of `node list`. |
 | `--since D` | Window: `90m`, `24h`, `7d`, ... (default `24h`, at most `365d`). |
 | `--by G` | `node` (default), `country` or `provider`. |
 
@@ -203,7 +244,7 @@ When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 ### `diag dial`
 
 ```
-netivri diag dial --account LOGIN | --node LABEL [--samples N] [--idle LIST|off] [--max-nodes N] [--url URL]
+netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 ```
 
 Measures the dial phases of nodes (design: [design/latency.md](design/latency.md),
@@ -216,17 +257,17 @@ reports the success ratio per idle time and a suggested pool TTL. The idle
 test waits up to the largest `--idle` value per node.
 
 Exactly one of `--account` (the route nodes `up` would use, in route order)
-or `--node LABEL` (`<provider>/<node id>`, like the label of `stats`) is
+or `--node {NODE}` (`{PROVIDER}/{NODE_ID}`, like the label of `stats`) is
 required.
 
 | Flag | Meaning |
 |---|---|
-| `--account LOGIN` | Diagnose the route nodes of this account (at most `--max-nodes` of them). |
-| `--node LABEL` | Diagnose this single node. |
-| `--samples N` | Samples per node, 1..20 (default 5). |
-| `--idle LIST` | Comma-separated idle times for the survival test (at most 10 positive durations like `500ms,2s`, sorted ascending), or `off` to skip it. Default: the built-in ladder. |
-| `--max-nodes N` | Cap on the number of account route nodes, 1..50 (default 6). |
-| `--url URL` | Probe URL, `http` only (default: the warm-up URL, `www.gstatic.com`). |
+| `--account {ACCOUNT}` | Diagnose the route nodes of this account (at most `--max-nodes` of them). |
+| `--node {NODE}` | Diagnose this single node. |
+| `--samples {N}` | Samples per node, 1..20 (default 5). |
+| `--idle {LIST}` | Comma-separated idle times for the survival test (at most 10 positive durations like `500ms,2s`, sorted ascending), or `off` to skip it. Default: the built-in ladder. |
+| `--max-nodes {N}` | Cap on the number of account route nodes, 1..50 (default 6). |
+| `--url {URL}` | Probe URL, `http` only (default: the warm-up URL, `www.gstatic.com`). |
 
 ```json
 {"url_host": "www.gstatic.com", "samples": 5, "nodes": [
@@ -259,16 +300,31 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 
 - `add` creates the account with the `init` password placeholder: the first
   client that authenticates with that login sets the password. `--provider
-  NAME` binds it to a provider (subscription). Repeating `add` with the same
-  provider and country succeeds with `existing: true`; any difference is
-  `ACCOUNT_EXISTS` (exit 6).
+  {SUBSCRIPTION}` binds it to a provider (subscription). Repeating `add` with
+  the same provider and country succeeds with `existing: true`; any
+  difference is `ACCOUNT_EXISTS` (exit 6).
 - `list` reports `login`, `provider`, `exit_country` and `password_set`
   (`false` until the placeholder is claimed); it never returns a password or
   a hash.
 - `set-country` takes an ISO 3166-1 alpha-2 code or `--none` to clear it.
-- `set-provider` binds the account to a provider, or `--none` clears it. A
+- `set-provider` binds the accounts to a provider, or `--none` clears it. A
   provider must match `[A-Za-z0-9._-]{1,64}` (usage error otherwise) and be
   a configured subscription (`SUB_NOT_FOUND`, exit 5).
+- `set-country` and `set-provider` change several accounts at once: the first
+  argument is one login or several separated by commas with no spaces
+  (`alice,bob`), or `--all` stands for every account (`ACCOUNT_NOT_FOUND`,
+  exit 5, when a named login does not exist or there are no accounts;
+  `ACCOUNT_INVALID`, exit 2, for a malformed login). A login repeated in the
+  list counts once.
+- **Check before the change.** Before anything is written, every account
+  whose provider or country would change is checked as `up` would check it:
+  its route (the new provider, or its own provider, or every subscription when
+  it has none, together with the new or its own country) must have a stored
+  node. If one account fails, nothing is changed for any account and the
+  command ends with `NO_NODES_FOR_COUNTRY` (exit 5; the message names the
+  account, the hint points to `netivri sub countries` and `netivri sub
+  update`). An account whose value stays the same is not checked, so repeating
+  a command always succeeds. The nodes need not be alive.
 - `rm` of an unknown login is `ACCOUNT_NOT_FOUND` (exit 5); it is not
   idempotent.
 - `ACCOUNT_INVALID` and `COUNTRY_INVALID` are usage errors (exit 2).
@@ -281,7 +337,9 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 ```
 
 These are the `data` values, respectively, for add, list, set-country/
-set-provider and rm.
+set-provider with one login, and rm. `set-country` and `set-provider` with
+several logins or `--all` print the `{"accounts": [...]}` form of `list` with
+the accounts that were addressed, in the order given (`--all`: config order).
 
 Routing is applied by `up`. An account with a provider and/or an exit country
 needs stored subscription snapshots that hold matching nodes (provider set:
@@ -325,13 +383,13 @@ listen address (an explicit `--port 0` means "don't care"), `up` fails with
 
 ### `up --foreground`
 
-Runs the proxy in the foreground: prints one JSON line on stdout (the same
-shape as above, without `already_running`), then blocks until SIGINT /
+Runs the proxy in the foreground: prints one document on stdout (the same
+shape as above, without `already_running`; one line with `--json`), then blocks until SIGINT /
 SIGTERM or `netivri down`, then exits 0. It writes nothing to stderr. A
 foreground `up` is not idempotent: with a daemon already running in the same
 home it fails with `ALREADY_RUNNING` (exit 6).
 
-`up` also accepts the hidden flag `--handshake <path>` (only together with
+`up` also accepts the hidden flag `--handshake {PATH}` (only together with
 `--foreground`). It is internal machinery of the daemon spawn, not part of
 this contract; see [design/daemon.md](design/daemon.md).
 
@@ -430,7 +488,7 @@ exit country): background probes of every node proxy through the node itself,
 every 45 seconds, with the counters
 `{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
 "nodes": [{"name", "alive", "delay_ms"}]}`. `nodes[].name` is an internal proxy
-name (`netivri-r<R>-<N>`, the route and the node index), never a provider name; `delay_ms` is `0` until a
+name (`netivri-r{R}-{N}`, the route and the node index), never a provider name; `delay_ms` is `0` until a
 probe succeeded. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
 The probes request `http://www.gstatic.com/generate_204` through each node.
 
@@ -490,7 +548,7 @@ name). Prefer `exit`.
 ### `sub add`
 
 ```
-netivri sub add <url> [--name N] [--via PROXY]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}]
 ```
 
 Fetches the subscription through `--via` if given, otherwise through
@@ -533,7 +591,7 @@ subscription URL and a `via_set` boolean. `nodes` / `fetched_at` are
 ### `sub update`
 
 ```
-netivri sub update [N | --all]
+netivri sub update [{SUBSCRIPTION} | --all]
 ```
 
 Re-fetches and re-stores; with a name only that subscription, with
@@ -566,11 +624,11 @@ snapshot. `SUB_NOT_FOUND` when the name is not configured.
 ### `node list`
 
 ```
-netivri node list [--sub N] [--country CC] [--alive]
+netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
 ```
 
 Prints the stored nodes of all configured subscriptions (or only
-`--sub N`), in a stable order: subscription order, then provider order.
+`--sub {SUBSCRIPTION}`), in a stable order: subscription order, then provider order.
 `--country` filters case-insensitively by ISO 3166-1 alpha-2 code parsed
 from the node names. `--alive` is reserved for future health checks and
 is rejected as a usage error for now.
@@ -615,11 +673,11 @@ Raw proxy mappings (credentials) are never printed.
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
-| `SUB_IN_USE` | 6 | `sub rm` of a subscription an account is bound to as its provider (nothing is removed; hint: `netivri account set-provider LOGIN --none`) |
+| `SUB_IN_USE` | 6 | `sub rm` of a subscription an account is bound to as its provider (nothing is removed; hint: `netivri account set-provider {ACCOUNT} --none`) |
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
-| `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive |
+| `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive. `account set-country` and `account set-provider` return it, before writing anything, when an account would be left in that state |
 | `NO_ROUTE` | 5 | `diag dial`: the account has no route (neither provider nor exit country) |
 | `DIAG_FAILED` | 3 | `diag dial`: the run could not proceed (for example an unusable node mapping) |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
@@ -656,9 +714,9 @@ Raw proxy mappings (credentials) are never printed.
   `AUTH_REQUIRED`.
 - The control channel is a loopback HTTP server (`127.0.0.1` only, random
   port) guarded by a bearer token that lives only in
-  `<home>/run/netivri.json` (mode `0600` on Unix). Every request must carry
+  `{HOME}/run/netivri.json` (mode `0600` on Unix). Every request must carry
   the token; the Host header must match the listener. No remote control API.
-- The daemon log (`<home>/run/netivri.log`) records lifecycle lines only:
+- The daemon log (`{HOME}/run/netivri.log`) records lifecycle lines only:
   start and stop with pid, listen address and reason. No tokens, no
   credentials, no subscription URLs.
 - Subscription URLs contain secrets: they are stored in the state directory

@@ -77,7 +77,7 @@ the audited exceptions above are computed from the vendored module as before.
 MIT, BSD and Apache-2.0 require the license text to travel with binaries.
 `scripts/collect-licenses.sh` copies the `LICENSE`/`NOTICE`/`COPYING` files of
 every third-party Go module linked into `./cmd/netivri` (per target
-GOOS/GOARCH) into `THIRD_PARTY_LICENSES/<module path>/`; a module without a
+GOOS/GOARCH) into `THIRD_PARTY_LICENSES/{MODULE_PATH}/`; a module without a
 root license file contributes the license files found in its subdirectories. The release workflow
 puts that directory into every archive. The script fails when a module has no
 license file, and the `licenses` CI job runs it on linux/amd64 on every push.

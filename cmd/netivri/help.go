@@ -260,7 +260,7 @@ func renderOverview() string {
 		}
 		writeRows(&b, rows, 4, helpWidth)
 	}
-	b.WriteString("\n  Run `netivri help <command>` for the flags and examples of one command,\n")
+	b.WriteString("\n  Run `netivri help {COMMAND}` for the flags and examples of one command,\n")
 	b.WriteString("  for example `netivri help sub add` or `netivri help up`.\n")
 	section(&b, "GLOBAL FLAGS")
 	rows := make([][2]string, len(helpGlobalFlags))
@@ -310,7 +310,7 @@ func renderTopic(t *helpTopic) string {
 			rows[i] = [2]string{s.Name, s.Summary}
 		}
 		writeRows(&b, rows, 2, helpWidth)
-		b.WriteString("\n  Run `netivri help " + t.Name + " <command>` for the details of one command.\n")
+		b.WriteString("\n  Run `netivri help " + t.Name + " {COMMAND}` for the details of one command.\n")
 	}
 	if len(t.Flags) > 0 {
 		section(&b, "FLAGS")

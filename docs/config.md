@@ -12,8 +12,8 @@ not preserved, so keep personal notes elsewhere.
 ## Location
 
 - `netivri config path` prints it; it is always
-  `<home>/config.ktav`.
-- `<home>` is `$NETIVRI_HOME` if set, otherwise
+  `{HOME}/config.ktav`.
+- `{HOME}` is `$NETIVRI_HOME` if set, otherwise
   `%APPDATA%\netivri` (Windows) or `$XDG_CONFIG_HOME/netivri`
   (`os.UserConfigDir()`).
 - A missing file is not an error: safe defaults apply
@@ -32,8 +32,8 @@ not preserved, so keep personal notes elsewhere.
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running daemon re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (1–64 characters of `A-Za-z0-9._-`, the name of a subscription), and optional `exit_country` (two ASCII letters, normalized uppercase). |
-| `selection.node` | string | *(empty)* | Preferred exit node name (set by `netivri use <node>`). |
-| `selection.country` | string | *(empty)* | Preferred exit country code (set by `netivri use --country CC`). |
+| `selection.node` | string | *(empty)* | Preferred exit node name (set by `netivri use {NODE}`). |
+| `selection.country` | string | *(empty)* | Preferred exit country code (set by `netivri use --country {COUNTRY}`). |
 | `selection.mode` | string | `manual` | How the exit is chosen: `manual` (explicit node), `fastest` (lowest latency), `auto` (re-check periodically). |
 
 `accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters, not whether that code represents a real country. Config validation checks the provider's shape only; `up` and the `account` commands check that the named subscription exists.

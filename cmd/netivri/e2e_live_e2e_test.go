@@ -96,11 +96,15 @@ func startLive(t *testing.T, more ...string) *liveFixture {
 			for _, login := range more {
 				cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: f.hash, Provider: "p1", ExitCountry: "DE"})
 			}
-			cfg.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://p1.invalid/sub"}}
+			cfg.Subscriptions = []config.Subscription{
+				{Name: "p1", URL: "https://p1.invalid/sub"},
+				{Name: "p2", URL: "https://p2.invalid/sub"},
+			}
 		})
 	}
 	f.writeCfg()
 	accountsSaveSnapshot(t, f.home, "p1", []subscription.Node{accountsSocksNode("de-old", "DE", f.p1)})
+	accountsSaveSnapshot(t, f.home, "p2", []subscription.Node{accountsSocksNode("de-p2", "DE", f.p2)})
 	p := startUp(t, f.home, "--port", "0")
 	assertStatusSuccess(t, p.Status())
 	f.listen = p.Status().Data.Listen
@@ -170,6 +174,44 @@ func TestE2ELiveAccountRemoved(t *testing.T) {
 		t.Fatal("a removed account was accepted")
 	}
 	accountsClient(t, f.listen, "alice", f.pass, f.backend)
+}
+
+// `account set-provider` moves an account to another subscription in a
+// running daemon, and a change that would leave the account without nodes is
+// refused before anything is written.
+func TestE2ELiveSwitchSubscription(t *testing.T) {
+	f := startLive(t)
+	accountsClient(t, f.listen, "alice", f.pass, f.backend)
+	if f.p1.count.Load() != 1 || f.p2.count.Load() != 0 {
+		t.Fatalf("upstream counts p1=%d p2=%d", f.p1.count.Load(), f.p2.count.Load())
+	}
+
+	// No subscription has a Finnish node: refused, nothing changes.
+	code, out, stderr := accountsCommand(t, f.home, "set-country", "alice", "FI")
+	if code != 5 {
+		t.Fatalf("set-country FI exit = %d, want 5 (%s%s)", code, out, stderr)
+	}
+	if got := decodeErrEnvelope(t, stderr).Error.Code; got != "NO_NODES_FOR_COUNTRY" {
+		t.Fatalf("error code = %q, want NO_NODES_FOR_COUNTRY", got)
+	}
+	if a, _ := loadConfigFile(t, f.home).Account("alice"); a == nil || a.ExitCountry != "DE" || a.Provider != "p1" {
+		t.Fatalf("a refused command changed alice: %+v", a)
+	}
+	time.Sleep(liveSettle)
+	if got := liveStatusOf(t, f.home).Data.Reload.Count; got != 0 {
+		t.Errorf("reloads after a refused command = %d, want 0", got)
+	}
+
+	// p2 has a German node: accepted and applied to the running daemon.
+	code, out, stderr = accountsCommand(t, f.home, "set-provider", "alice", "p2")
+	if code != 0 {
+		t.Fatalf("set-provider: %s%s", out, stderr)
+	}
+	waitLive(t, f.home, "alice is routed through p2", func(s liveStatus) bool { return s.Data.Reload.Count >= 1 })
+	accountsClient(t, f.listen, "alice", f.pass, f.backend)
+	if f.p1.count.Load() != 1 || f.p2.count.Load() != 1 {
+		t.Fatalf("after the switch upstream counts p1=%d p2=%d, want 1/1", f.p1.count.Load(), f.p2.count.Load())
+	}
 }
 
 func TestE2ELiveSnapshotReplaced(t *testing.T) {

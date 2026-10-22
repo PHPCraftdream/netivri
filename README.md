@@ -14,8 +14,8 @@ link, keeps a local proxy running on one port (SOCKS5, SOCKS4 and HTTP), and
 routes each login through the provider and exit country you choose.
 
 It is built to be driven equally well by a person in a terminal and by an AI
-agent: every command has a stable JSON output, documented exit codes and
-machine-readable errors. See [`AGENTS.md`](AGENTS.md) and
+agent: every command has a stable output (Ktav by default, JSON with `--json`),
+documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) and
 [`docs/cli.md`](docs/cli.md).
 
 ## Features
@@ -70,7 +70,7 @@ directive.
 
 ```sh
 # 1. Add a subscription (the URL is a credential; keep it private)
-netivri sub add https://provider.example/sub/<token> --name main
+netivri sub add https://provider.example/sub/{TOKEN} --name main
 
 # 2. Create a login that exits through Germany
 netivri account add alice --provider main --country DE
@@ -130,7 +130,7 @@ command.
 
 Version 0.x: the CLI contract may still change between minor versions, and
 every change is listed in the [changelog](CHANGELOG.md). Command results are
-JSON only for now (`netivri help` is the one text output). Described in
+documents only, in Ktav or with `--json` in JSON (`netivri help` is the one text output). Described in
 [`docs/cli.md`](docs/cli.md) but not implemented yet: `use`, `node test`,
 `logs`, `doctor` and `schema`.
 

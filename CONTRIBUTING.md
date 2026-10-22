@@ -36,6 +36,9 @@ golangci-lint run        # if installed
 - **Docs in the same change.** A user-facing behaviour change updates
   [`docs/cli.md`](docs/cli.md). Changing the JSON shape or an exit or error
   code is breaking and bumps `schema_version`.
+- **Placeholders in braces.** In the help and in the documents a placeholder
+  is `{ACCOUNT}`, `{SUBSCRIPTION}`, `{URL}`, never `<name>` or a bare upper-case
+  word.
 - **A changelog line** under `## [Unreleased]` in
   [`CHANGELOG.md`](CHANGELOG.md) for anything a user would notice.
 - **No private data** in the repository: no local paths, user names, hosts or

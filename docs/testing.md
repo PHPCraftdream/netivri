@@ -73,7 +73,7 @@ Each CI job selects its own tags:
 - **e2e** — adds the `e2e` tag plus the user tags.
 - **bench** — runs with the user tags (the job only triggers when `tags`
   contains `bench`). The job runs `go test -bench . -benchmem -benchtime
-  <benchtime> -run '^$'` and appends every `Benchmark...` line as a fenced
+  {BENCHTIME} -run '^$'` and appends every `Benchmark...` line as a fenced
   code block to the job summary (`-benchmem` allocations/bytes included).
   Benchmarks (all hermetic, loopback port 0 only):
 
@@ -108,7 +108,7 @@ CI_PACKAGES=./internal/config/... CI_TAGS=integration CI_RUN=TestParse CI_RACE=1
 ## Coverage policy
 
 - Every package has a coverage floor in `scripts/coverage-min.txt`
-  (`<package-import-path-suffix> <min-percent>`, or `default <pct>`).
+  (`{PACKAGE_IMPORT_PATH_SUFFIX} {MIN_PERCENT}`, or `default {PCT}`).
 - `scripts/check-coverage.sh` parses the Go coverage profile and fails when
   any package is below its floor.
 - New code ships with tests in the right scope **in the same change**;

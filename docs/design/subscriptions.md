@@ -74,9 +74,9 @@ with the node. `CountryCounts` summarises a node list into
 `[]CountryCount{code, nodes}` sorted by code plus a count of nodes without
 a country.
 
-`netivri sub countries` reports these counts: for a NAME from the stored
+`netivri sub countries` reports these counts: for a {SUBSCRIPTION} from the stored
 snapshot (no network), for every configured provider plus a summed union
-with no argument, and for `--url URL [--via PROXY]` by fetching through
+with no argument, and for `--url {URL} [--via {PROXY}]` by fetching through
 the same strict path as `sub add` (the `--via` proxy or `fetch.proxy`, no
 direct fallback) without storing anything. A provider without a stored
 snapshot is reported with null fields; the URL is never printed.
@@ -84,9 +84,9 @@ snapshot is reported with null fields; the URL is never printed.
 ## On-disk layout
 
 `Store` persists one JSON file per subscription under
-`<home>/subscriptions/`:
+`{HOME}/subscriptions/`:
 
-- `<name>.json` — `Snapshot{fetched_at, nodes[], skipped}` including each
+- `{NAME}.json` — `Snapshot{fetched_at, nodes[], skipped}` including each
   node's **raw proxy mapping** (needed to build the outbound later).
 - Names must match `^[A-Za-z0-9._-]{1,64}$` and are not `.`/`..`
   (path traversal); every Store method validates.
@@ -111,7 +111,7 @@ is the caller's job, see docs/config.md).
   `FetchedAt` and the total skip count.
 - `node list`: reads snapshots via `Store.Load`/`Store.List`; filterable
   by `--sub` and `--country`.
-- `use --country CC`: selects among nodes whose `Country` matches.
+- `use --country {COUNTRY}`: selects among nodes whose `Country` matches.
 
 ## Behavior notes and limits
 

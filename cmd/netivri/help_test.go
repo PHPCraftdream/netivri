@@ -57,7 +57,7 @@ func decodeHelp(t *testing.T, out string) map[string]any {
 func TestHelpEntryPoints(t *testing.T) {
 	for _, args := range [][]string{nil, {"help"}, {"-h"}, {"--help"}, {"-help"}} {
 		out := mustDispatch(t, args...)
-		for _, want := range []string{"USAGE", "QUICK START", "COMMANDS", "GLOBAL FLAGS", "EXIT CODES", "netivri help <command>"} {
+		for _, want := range []string{"USAGE", "QUICK START", "COMMANDS", "GLOBAL FLAGS", "EXIT CODES", "netivri help {COMMAND}"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("dispatch(%q) lacks %q:\n%s", args, want, out)
 			}
@@ -141,7 +141,7 @@ func TestHelpSubcommandForms(t *testing.T) {
 		}
 	}
 	group := mustDispatch(t, "help", "sub")
-	for _, want := range []string{"COMMANDS", "sub add", "sub countries", "netivri help sub <command>"} {
+	for _, want := range []string{"COMMANDS", "sub add", "sub countries", "netivri help sub {COMMAND}"} {
 		if !strings.Contains(group, want) {
 			t.Errorf("group help lacks %q:\n%s", want, group)
 		}
@@ -406,8 +406,8 @@ func documentedFlags(t *helpTopic) map[string]bool {
 // command is documentation drift; this is the cheap guard against it.
 func TestHelpUsageAndExamplesUseDocumentedFlags(t *testing.T) {
 	check := func(where, line string) {
-		// COMMAND is a placeholder in the help topic's own second usage line.
-		if !strings.HasPrefix(line, "netivri ") || strings.HasPrefix(line, "netivri COMMAND") {
+		// {COMMAND} is a placeholder in the help topic's own second usage line.
+		if !strings.HasPrefix(line, "netivri ") || strings.HasPrefix(line, "netivri {COMMAND}") {
 			return
 		}
 		tp := topicFor(line)
@@ -514,4 +514,48 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+var (
+	helpBraced      = regexp.MustCompile(`\{[^}]*\}`)
+	helpBareUpper   = regexp.MustCompile(`[A-Z]{2,}`)
+	helpAngleHolder = regexp.MustCompile(`<[A-Za-z]`)
+)
+
+// A placeholder in a usage line, a flag or an example is written in curly
+// braces ({ACCOUNT}), never as <name> or as a bare upper-case word.
+func TestHelpPlaceholdersAreBraced(t *testing.T) {
+	angle := func(where, text string) {
+		if helpAngleHolder.MatchString(text) {
+			t.Errorf("%s: %q uses <angle brackets>; write the placeholder as {NAME}", where, text)
+		}
+	}
+	// Examples and the quick start hold real values (DE, NL), so only usage lines
+	// and flag names are checked for bare upper-case words.
+	check := func(where, text string) {
+		angle(where, text)
+		if bare := helpBareUpper.FindString(helpBraced.ReplaceAllString(text, "")); bare != "" {
+			t.Errorf("%s: %q has a placeholder %q outside curly braces", where, text, bare)
+		}
+	}
+	for _, tp := range helpTopics {
+		for _, u := range tp.Usage {
+			check(tp.Name+" usage", u)
+		}
+		for _, f := range tp.Flags {
+			check(tp.Name+" flag", f.Name)
+		}
+		for _, e := range tp.Examples {
+			angle(tp.Name+" example", e.Command)
+		}
+	}
+	for _, u := range helpOverviewUsage {
+		check("overview usage", u)
+	}
+	for _, f := range helpGlobalFlags {
+		check("global flag", f.Name)
+	}
+	for _, q := range helpQuickStart {
+		angle("quick start", q)
+	}
 }

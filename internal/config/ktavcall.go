@@ -24,6 +24,10 @@ func ktavLoadsInto(src string, target any) error {
 	return ktav.LoadsInto(src, target)
 }
 
+// KtavDumps renders a value as a Ktav document, pinning the native library
+// first. The command output (internal/cli) is written through it.
+func KtavDumps(v any) (string, error) { return ktavDumps(v) }
+
 func ktavDumps(v any) (string, error) {
 	if err := EnsureKtavLib(); err != nil {
 		return "", err

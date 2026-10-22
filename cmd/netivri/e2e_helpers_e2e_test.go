@@ -64,6 +64,9 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(tmp)
 		os.Exit(1)
 	}
+	// The output is Ktav by default; these tests parse JSON. e2e_output_e2e_test.go
+	// runs the binary without this variable.
+	_ = os.Setenv("NETIVRI_OUTPUT", "json")
 	code := m.Run()
 	_ = os.RemoveAll(tmp)
 	os.Exit(code)
