@@ -8,66 +8,7 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
-### Added
-
-- **Automatic subscription refresh.** A running daemon re-fetches every
-  subscription once an hour; `fetch.update_interval` changes the period
-  (`5m` to `168h`) or turns it off (`off`). A fetched list that would leave an
-  account without nodes is rejected and the old one stays. The result is in
-  `status` under `refresh`.
-- **Live apply of changes.** The daemon watches `config.ktav` and the stored
-  subscriptions and applies a change to accounts, passwords, nodes or the port
-  within a few seconds, with no `down` and `up`. The listener restarts on the
-  same port, so open connections end; nothing restarts when the nodes are the
-  same, only renamed, or when the daemon itself stores a claimed password. An
-  invalid file or an empty route leaves the running configuration in place and
-  is reported in `status` under `reload`. See `docs/design/live-reload.md`.
-
-- **Several accounts at once.** `account set-provider` and `account
-  set-country` take a comma-separated list of logins (`alice,bob`) or `--all`
-  in place of a single login; `--none` works with both. A single login prints
-  `{"account": ...}` as before, several print `{"accounts": [...]}`.
-
-### Changed
-
-- **No native Ktav library.** The Ktav binding is `ktav-lang/golang` v0.8.1
-  run in its pure-Go backend, so `ktav_cabi` is gone: it is no longer loaded,
-  fetched, packed into the archives and the npm packages, or copied by the
-  installers (an earlier copy next to the binary is removed on the next
-  install). A release is one static binary; `KTAV_LIB_PATH` and the error
-  code `KTAV_LIB_MISSING` no longer exist. The results are the same: the pure
-  backend passes the whole conformance corpus and gave the same values and
-  the same text as the native library on a real configuration and real
-  subscription snapshots. Linux musl (Alpine) stays unsupported: it is not
-  built or tested.
-- **Node check before a switch.** `account set-provider` and `account
-  set-country` now check, before writing anything, that every account they
-  change still has a stored node on its route (its subscription, or all of
-  them when it has none, and its country). If one does not, nothing is
-  changed for any account and the command ends with `NO_NODES_FOR_COUNTRY`
-  (exit 5), naming the account. A value that does not change is not checked.
-- **Placeholders in braces.** The help of the program, the README and the
-  documents write every placeholder in curly braces (`{ACCOUNT}`,
-  `{SUBSCRIPTION}`, `{COUNTRY}`, `{URL}`), and `{ACCOUNT}` (the login of an
-  account) replaces the confusing `LOGIN NAME` of `set-provider`.
-- **Ktav is the default output format.** Results and errors are written as
-  Ktav, the format of the configuration file, with the same keys as before
-  (`schema_version`, `ok`, `data` or `error`). `--json`, or `NETIVRI_OUTPUT=json`
-  in the environment, writes JSON as before; scripts and agents should ask for
-  it. If the Ktav library cannot be loaded the output falls back to JSON. Help
-  is still text, and JSON with `--json`.
-- **Subscription snapshots are stored as Ktav.** The nodes of a subscription
-  are kept in `subscriptions/{NAME}.ktav`, in the format of the configuration
-  file, instead of `{NAME}.json`. A file of an earlier version is still read and
-  is replaced by a `.ktav` file the next time the subscription is updated (by
-  `sub update`, `sub add`, or the daemon's hourly refresh). A snapshot that
-  Ktav could not hold without changing a value stays in the JSON form.
-- A password claimed by the first client is written into the configuration
-  file as it is on disk, not from the daemon's copy loaded at start, so an
-  `account add` made meanwhile is no longer overwritten. A claim against a file
-  that no longer holds the placeholder is refused and can be repeated.
-
-## [0.1.0] - 2026-10-21
+## [0.1.0] - 2026-10-22
 
 First public release.
 
@@ -75,23 +16,44 @@ First public release.
 
 - **Local proxy.** One port serves SOCKS5, SOCKS4 and HTTP; the protocol is
   detected from the first byte. It listens on loopback by default.
-- **Mihomo core as a library.** [Mihomo](https://github.com/MetaCubeX/mihomo)
-  v1.19.32 is embedded and vendored in `third_party/mihomo`, so the program
-  is one binary with no external core process.
+- **One self-contained binary.** [Mihomo](https://github.com/MetaCubeX/mihomo)
+  v1.19.32 is embedded as a library and vendored in `third_party/mihomo`, and
+  the Ktav configuration format is read and written by the pure-Go backend of
+  `ktav-lang/golang` v0.8.1: no external core process and no native library
+  next to the binary.
 - **Subscriptions.** `sub add`, `sub list`, `sub update`, `sub rm` and
   `sub countries`. Clash/Mihomo YAML and base64 lists of share links are
   accepted; quota and expiry come from the `subscription-userinfo` header.
   A subscription is always fetched through a strict proxy and never silently
-  directly. Nodes get stable ids.
+  directly. Nodes get stable ids. The nodes of a subscription are stored in
+  `subscriptions/{NAME}.ktav`.
+- **Automatic subscription refresh.** A running daemon re-fetches every
+  subscription once an hour; `fetch.update_interval` changes the period
+  (`5m` to `168h`) or turns it off (`off`). A fetched list that would leave an
+  account without nodes is rejected and the old one stays. The result is in
+  `status` under `refresh`.
 - **Nodes.** `node list`, with filters by subscription and country.
 - **Accounts.** `account add`, `account list`, `account set-country`,
   `account set-provider` and `account rm`: several named logins on one port,
   each with its own provider and exit country, routed independently.
+  `set-country` and `set-provider` take one login, a comma-separated list
+  (`alice,bob`) or `--all`, and `--none` clears the value. Before writing
+  anything they check that every account they change still has a stored node
+  on its route; if one does not, nothing is changed and the command ends with
+  `NO_NODES_FOR_COUNTRY` (exit 5), naming the account.
 - **Proxy authentication.** Passwords are stored as argon2id hashes in the
   Ktav configuration file. A password written as `init` is claimed on first
-  use: the first password a client presents is hashed and stored.
+  use: the first password a client presents is hashed and written into the
+  file as it is on disk, so an `account add` made meanwhile is kept.
 - **Daemon.** `up`, `down` and `status`, and `up --foreground`. The control
   channel is a named pipe on Windows and a Unix socket elsewhere, never TCP.
+- **Live apply of changes.** The daemon watches `config.ktav` and the stored
+  subscriptions and applies a change to accounts, passwords, nodes or the port
+  within a few seconds, with no `down` and `up`. The listener restarts on the
+  same port, so open connections end; nothing restarts when the nodes are the
+  same, only renamed, or when the daemon itself stores a claimed password. An
+  invalid file or an empty route leaves the running configuration in place and
+  is reported in `status` under `reload`. See `docs/design/live-reload.md`.
 - **Warm-up.** Background probes of every node and a pool of pre-dialled
   connections; the state is part of `status`.
 - **Statistics.** Probe, connection and throughput samples are kept in a
@@ -113,12 +75,16 @@ First public release.
 - **Release archives** for Linux, macOS and Windows (amd64 and arm64) with
   `SHA256SUMS`, third-party license notices and a build provenance
   attestation.
-- **Machine-readable CLI.** `--json` output, documented exit and error codes,
-  and [`AGENTS.md`](AGENTS.md) for AI agents.
+- **Machine-readable CLI.** Results and errors are documents with the keys
+  `schema_version`, `ok` and `data` or `error`, written as Ktav by default;
+  `--json` after the command, or `NETIVRI_OUTPUT=json`, writes JSON. Exit and
+  error codes are documented, and [`AGENTS.md`](AGENTS.md) explains the
+  contract to AI agents.
 - **Built-in help.** `netivri`, `netivri help`, `--help` and
   `netivri {COMMAND} --help` print a readable overview or the usage, flags,
-  detailed examples and possible errors of one command; `--json` gives the
-  same as one JSON object for scripts and agents.
+  detailed examples and possible errors of one command, with every placeholder
+  in braces (`{ACCOUNT}`, `{SUBSCRIPTION}`); `--json` gives the same as one
+  JSON object for scripts and agents.
 
 ### Security
 
@@ -132,10 +98,11 @@ First public release.
 - `use`, `node test`, `logs`, `doctor` and `schema` are described in
   [`docs/cli.md`](docs/cli.md) but not implemented yet.
 - Command results are documents only (Ktav by default, JSON with `--json`);
-  there is no table view for people yet. Help (`netivri help`) is the one text output.
+  there is no table view for people yet. Help (`netivri help`) is the one text
+  output.
 - No TUN mode and no change of the system proxy settings; these are non-goals
   for the 0.x line.
-- Alpine and other musl-based Linux systems are not supported (the Ktav
-  native library needs glibc 2.17 or newer).
+- Alpine and other musl-based Linux systems are not supported: the Linux
+  release is built and tested for glibc only.
 - `go install` does not work, because `go.mod` uses a `replace` directive for
   the vendored Mihomo. Use a release archive, the installers or npm.

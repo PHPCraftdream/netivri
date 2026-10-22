@@ -37,8 +37,8 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   database (`netivri stats`), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
 - **Small and self-contained.** One binary with [Mihomo](https://github.com/MetaCubeX/mihomo)
-  embedded as a library; no external core process. No postinstall scripts, no
-  downloads at install time.
+  embedded as a library; no external core process and no native libraries
+  next to it. No postinstall scripts, no downloads at install time.
 
 ## Install
 

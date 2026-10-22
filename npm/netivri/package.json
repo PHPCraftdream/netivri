@@ -1,7 +1,7 @@
 {
   "name": "netivri",
   "version": "0.0.0",
-  "description": "Local HTTP/SOCKS5 proxy service with a JSON-first CLI (placeholder version; rewritten at release build time)",
+  "description": "Local SOCKS5/SOCKS4/HTTP proxy service with provider subscriptions and a per-account exit country, built on Mihomo (placeholder version; rewritten at release build time)",
   "license": "GPL-3.0-only",
   "bin": {
     "netivri": "bin/netivri.js"
@@ -23,7 +23,9 @@
     "proxy",
     "socks5",
     "http-proxy",
-    "vpn",
+    "socks4",
+    "mihomo",
+    "subscription",
     "cli"
   ],
   "os": [

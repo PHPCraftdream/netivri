@@ -29,6 +29,10 @@ const PLATFORMS = [
 ];
 
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/PHPCraftdream/netivri.git' };
+const HOMEPAGE = 'https://github.com/PHPCraftdream/netivri#readme';
+const BUGS = { url: 'https://github.com/PHPCraftdream/netivri/issues' };
+const DESCRIPTION = 'Local SOCKS5/SOCKS4/HTTP proxy service with provider subscriptions and a per-account exit country, built on Mihomo';
+const KEYWORDS = ['proxy', 'socks5', 'socks4', 'http-proxy', 'mihomo', 'clash', 'subscription', 'vless', 'cli'];
 
 function fail(message) {
   throw new Error(message);
@@ -140,13 +144,15 @@ function buildPackages(options) {
   writeJson(path.join(mainDir, 'package.json'), {
     name: 'netivri',
     version,
-    description: 'Local HTTP/SOCKS5 proxy service with a JSON-first CLI',
+    description: DESCRIPTION,
     license: 'GPL-3.0-only',
     bin: { netivri: 'bin/netivri.js' },
     engines: { node: '>=18' },
     files: ['bin/', 'README.md', 'LICENSE', 'THIRD_PARTY_LICENSES/'],
     repository: REPOSITORY,
-    keywords: ['proxy', 'socks5', 'http-proxy', 'vpn', 'cli'],
+    homepage: HOMEPAGE,
+    bugs: BUGS,
+    keywords: KEYWORDS,
     os: ['linux', 'darwin', 'win32'],
     cpu: ['x64', 'arm64'],
     dependencies: {},
@@ -180,6 +186,8 @@ function buildPackages(options) {
       files: ['bin/', 'LICENSE', 'THIRD_PARTY_LICENSES/'],
       engines: { node: '>=18' },
       repository: REPOSITORY,
+      homepage: HOMEPAGE,
+      bugs: BUGS,
     };
     if (platform.libc) {
       manifest.libc = platform.libc;
