@@ -583,7 +583,7 @@ jobs:
         run: |
           set -euo pipefail
           VER="${{ steps.version.outputs.version }}"
-          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.45.0
           mkdir -p linux-pkgs extracted
           for arch in amd64 arm64; do
             tar -xzf "artifacts/netivri_${VER}_linux_${arch}.tar.gz" -C extracted
