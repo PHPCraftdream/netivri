@@ -15,7 +15,7 @@ import (
 func fullConfig() *Config {
 	cfg := Default()
 	cfg.Auth = Auth{Login: "123456", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash"}
-	cfg.Fetch = Fetch{Proxy: "socks5://alice:pw@proxy.example:1080"}
+	cfg.Fetch = Fetch{Proxy: "socks5://alice:pw@proxy.example:1080", UpdateInterval: "30m"}
 	cfg.Subscriptions = []Subscription{
 		{Name: "main", URL: "https://provider.example/sub", Via: "http://via.example:3128"},
 	}

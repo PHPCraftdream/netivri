@@ -62,6 +62,22 @@ type AffinityInfo struct {
 	HedgeWins uint64 `json:"hedge_wins"` // dials won by the hedge attempt
 }
 
+// RefreshInfo reports the automatic subscription refresh of the daemon.
+type RefreshInfo struct {
+	IntervalSeconds int64  `json:"interval_seconds"` // 0 when the refresh is off
+	OK              uint64 `json:"ok"`               // refreshes that stored a new snapshot
+	Failed          uint64 `json:"failed"`           // refreshes that failed or were rejected
+	LastAt          string `json:"last_at,omitempty"`
+	LastError       string `json:"last_error,omitempty"` // code and message, never a URL
+}
+
+// ReloadInfo reports how the daemon applied changed files to the running core.
+type ReloadInfo struct {
+	Count     uint64 `json:"count"` // restarts of the core caused by a changed configuration
+	LastAt    string `json:"last_at,omitempty"`
+	LastError string `json:"last_error,omitempty"` // why the newest files are not applied
+}
+
 // Status is the live answer of GET /v1/status.
 type Status struct {
 	Daemon     string        `json:"daemon"`
@@ -77,6 +93,8 @@ type Status struct {
 	Warm       *WarmInfo     `json:"warm,omitempty"`
 	Stats      *StatsInfo    `json:"stats,omitempty"`
 	Affinity   *AffinityInfo `json:"affinity,omitempty"`
+	Refresh    *RefreshInfo  `json:"refresh,omitempty"`
+	Reload     *ReloadInfo   `json:"reload,omitempty"`
 }
 
 // Server is the loopback control HTTP server. It always binds 127.0.0.1:0,

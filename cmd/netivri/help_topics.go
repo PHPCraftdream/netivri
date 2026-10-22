@@ -97,7 +97,7 @@ var helpTopics = []helpTopic{
 			{"Run in the foreground, for example under a service manager", "netivri up --foreground"},
 			{"Keep a separate profile with its own config, subscriptions and statistics", "netivri up --home ./work-profile"},
 			{"Listen on every interface (needs auth.login and auth.password in config.ktav)", "netivri up --bind 0.0.0.0"},
-			{"Apply new accounts or a changed config: restart", "netivri down\nnetivri up"},
+			{"Check that the daemon applied your latest account and subscription changes (see reload)", "netivri status"},
 		},
 		Errors: []helpError{
 			herr("ALREADY_RUNNING", cli.ExitConflict, "a daemon is running and --port or --bind differ, or --foreground was given"),
@@ -200,7 +200,9 @@ var helpTopics = []helpTopic{
 		Description: "Fetches subscriptions again and replaces their stored nodes. With a NAME only that subscription, " +
 			"with --all or no argument every one, in config order. A subscription that fails keeps its old nodes. When " +
 			"any fails, the results are still printed and the command ends with SUB_UPDATE_FAILED.\n\n" +
-			"Running accounts keep their nodes until 'netivri down' and 'netivri up'.",
+			"A running daemon applies the new nodes to its accounts within a few seconds, and re-fetches every " +
+			"subscription by itself once an hour (fetch.update_interval in config.ktav), so this command is for " +
+			"refreshing on demand.",
 		Flags: []helpFlag{{"--all", "Update every subscription (the default without a NAME)."}},
 		Examples: []helpExample{
 			{"Refresh every subscription", "netivri sub update"},
@@ -294,9 +296,10 @@ var helpTopics = []helpTopic{
 			"direct.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
-			"Account changes take effect after 'netivri down' and 'netivri up'.",
+			"A running daemon applies account changes by itself within a few seconds. Its listener restarts on the " +
+			"same port, so open connections end; 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
-			{"Create a login, list the logins, restart to apply", "netivri account add alice --provider main --country DE\nnetivri account list\nnetivri down\nnetivri up"},
+			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
 		},
 		SeeAlso: []string{"up", "sub countries"},
 	},
@@ -309,7 +312,7 @@ var helpTopics = []helpTopic{
 			"this login sets the password. A login uses the characters A-Z a-z 0-9 . _ @ - (and is not 'init').\n\n" +
 			"Repeating the command with the same provider and country succeeds and reports existing true; any " +
 			"difference for an existing login is ACCOUNT_EXISTS (use set-country or set-provider to change it). " +
-			"Takes effect after 'netivri down' and 'netivri up'.",
+			"A running daemon applies the new account within a few seconds.",
 		Flags: []helpFlag{
 			{"--provider NAME", "Route only through the nodes of this subscription. It must be a configured subscription."},
 			{"--country CC", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case."},
@@ -347,7 +350,7 @@ var helpTopics = []helpTopic{
 			"netivri account set-country LOGIN --none",
 		},
 		Description: "Sets the exit country of an existing account, or clears it with --none. Repeating the same value " +
-			"succeeds. Takes effect after 'netivri down' and 'netivri up'.",
+			"succeeds. A running daemon applies the change within a few seconds.",
 		Flags: []helpFlag{{"--none", "Clear the country instead of setting one."}},
 		Examples: []helpExample{
 			{"Move alice to the Netherlands", "netivri account set-country alice NL"},
@@ -368,7 +371,7 @@ var helpTopics = []helpTopic{
 			"netivri account set-provider LOGIN --none",
 		},
 		Description: "Binds an existing account to a configured subscription, or clears the binding with --none. " +
-			"Repeating the same value succeeds. Takes effect after 'netivri down' and 'netivri up'.",
+			"Repeating the same value succeeds. A running daemon applies the change within a few seconds.",
 		Flags: []helpFlag{{"--none", "Clear the provider instead of setting one."}},
 		Examples: []helpExample{
 			{"Route alice through the subscription main", "netivri account set-provider alice main"},
@@ -381,14 +384,15 @@ var helpTopics = []helpTopic{
 		SeeAlso: []string{"account set-country", "sub rm"},
 	},
 	{
-		Name:        "account rm",
-		Group:       groupAccount,
-		Summary:     "Remove an account",
-		Usage:       []string{"netivri account rm LOGIN"},
-		Description: "Removes the account. It is not idempotent. Takes effect after 'netivri down' and 'netivri up'.",
-		Examples:    []helpExample{{"Remove alice", "netivri account rm alice"}},
-		Errors:      []helpError{herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login")},
-		SeeAlso:     []string{"account list"},
+		Name:    "account rm",
+		Group:   groupAccount,
+		Summary: "Remove an account",
+		Usage:   []string{"netivri account rm LOGIN"},
+		Description: "Removes the account. It is not idempotent. A running daemon applies the removal within a few " +
+			"seconds and ends the account's open connections.",
+		Examples: []helpExample{{"Remove alice", "netivri account rm alice"}},
+		Errors:   []helpError{herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login")},
+		SeeAlso:  []string{"account list"},
 	},
 
 	{

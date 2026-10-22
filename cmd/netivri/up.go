@@ -18,7 +18,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
@@ -162,6 +161,28 @@ func authStatus(login, password string, accounts []config.Account) string {
 // race with any other config writer in this process.
 var persistMu sync.Mutex
 
+// saveClaim writes a claimed credential into the file. Other commands may
+// have changed the file since this process loaded its configuration, so the
+// claim is applied to the copy on disk and nothing else is rewritten. A file
+// that does not exist yet is created from the in-memory configuration. When
+// the file no longer holds the placeholder that was claimed, the claim is
+// refused: the daemon applies the new file and the client tries again.
+func saveClaim(path string, mem *config.Config, apply func(*config.Config) error) error {
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return config.Save(path, mem)
+	}
+	disk, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	if err := apply(disk); err != nil {
+		return err
+	}
+	return config.Save(path, disk)
+}
+
+var errClaimStale = errors.New("the configuration changed on disk; try again")
+
 // newPersist returns the callback that stores the claimed credential
 // in the in-memory config and rewrites the config file. It never
 // returns or logs the credential.
@@ -169,9 +190,20 @@ func newPersist(path string, cfg *config.Config) func(login, passwordHash string
 	return func(login, passwordHash string) error {
 		persistMu.Lock()
 		defer persistMu.Unlock()
-		cfg.Auth.Login = login
-		cfg.Auth.Password = passwordHash
-		return config.Save(path, cfg)
+		mem := *cfg
+		mem.Auth.Login, mem.Auth.Password = login, passwordHash
+		err := saveClaim(path, &mem, func(disk *config.Config) error {
+			if disk.Auth.Login != config.InitPlaceholder && disk.Auth.Password != config.InitPlaceholder {
+				return errClaimStale
+			}
+			disk.Auth.Login, disk.Auth.Password = login, passwordHash
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		cfg.Auth.Login, cfg.Auth.Password = login, passwordHash
+		return nil
 	}
 }
 
@@ -183,8 +215,23 @@ func newPersistAccount(path string, cfg *config.Config) func(login, passwordHash
 		if a == nil {
 			return errors.New("account no longer exists")
 		}
+		mem := *cfg
+		mem.Accounts = append([]config.Account(nil), cfg.Accounts...)
+		m, _ := mem.Account(login)
+		m.Password = passwordHash
+		err := saveClaim(path, &mem, func(disk *config.Config) error {
+			d, _ := disk.Account(login)
+			if d == nil || d.Password != config.InitPlaceholder {
+				return errClaimStale
+			}
+			d.Password = passwordHash
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 		a.Password = passwordHash
-		return config.Save(path, cfg)
+		return nil
 	}
 }
 
@@ -353,63 +400,36 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 		}
 	}
 	store := openStats(opts.Home, pool.infos, logf)
-	defer closeStats(store)
-	var observer core.Observer
-	if store != nil {
-		observer = statsObserver{store: store}
-	}
-	inst, err := core.Start(ctx, core.Options{
-		HomeDir:       opts.Home,
-		Bind:          bind,
-		Port:          port,
-		Authenticator: authenticator,
-		RouteNodes:    pool.nodes,
-		AccountRoute:  pool.accountRoutes,
-		NodeLabels:    pool.labels,
-		Observer:      observer,
-		Warm:          warmOptions(pool.nodes),
-	})
-	if err != nil {
+	stopRequested := make(chan struct{})
+	requestStop := sync.OnceFunc(func() { close(stopRequested) })
+	live := newLiveDaemon(opts, logf, requestStop)
+	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, authenticator, store); err != nil {
+		closeStats(store)
 		return err
 	}
+	// The store may be opened later by a reload, so ask the daemon for it.
+	defer func() { closeStats(live.currentStore()) }()
 
 	token, err := daemon.NewToken()
 	if err != nil {
-		_ = inst.Close()
+		live.close()
 		return &cli.Error{Code: "INTERNAL", Message: "generate control token: " + err.Error(), Exit: cli.ExitInternal}
 	}
-	stopRequested := make(chan struct{})
 	startedAt := time.Now().UTC().Format(time.RFC3339)
-	status := func() daemon.Status {
-		return daemon.Status{
-			Daemon:     "running",
-			Foreground: opts.Handshake == "",
-			PID:        os.Getpid(),
-			Listen:     inst.Addr(),
-			Protocols:  daemonProtocols,
-			Auth:       liveAuth(cfg),
-			Route:      inst.Route(),
-			StartedAt:  startedAt,
-			Version:    version,
-			Accounts:   accountStatus(cfg, inst.AccountRoutes()),
-			Warm:       warmInfo(inst),
-			Stats:      statsInfo(store, opts.Home),
-			Affinity:   affinityInfo(inst, len(pool.accountRoutes) > 0),
-		}
-	}
-	ctrl, err := daemon.StartServer(token, status, func() { close(stopRequested) })
+	status := func() daemon.Status { return live.status(startedAt) }
+	ctrl, err := daemon.StartServer(token, status, requestStop)
 	if err != nil {
-		_ = inst.Close()
+		live.close()
 		return err
 	}
 
 	st := stateOf(status(), ctrl.Addr(), token)
-	// Closing order matters for `down`: the core goes down first, the
-	// statistics are flushed next (a stats query after `down` sees them), the
-	// control server after that, and the state file disappears last.
+	// Closing order matters for `down`: the watcher and the refresh stop first,
+	// then the core goes down, the statistics are flushed (a stats query after
+	// `down` sees them), the control server follows, and the state file
+	// disappears last.
 	shutdown := func() {
-		_ = inst.Close()
-		closeStats(store)
+		live.close()
 		_ = ctrl.Close()
 		daemon.RemoveStateIf(opts.Home, st.PID, st.Token)
 	}
@@ -434,6 +454,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 		})
 	}
 
+	live.startLoops()
 	reason := "signal"
 	select {
 	case <-sig:

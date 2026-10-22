@@ -41,11 +41,22 @@ func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool)
 // builds the per-account route pool for `up`. Snapshots no route reads are
 // not touched, so a broken one cannot block unrelated accounts.
 func accountRoutePool(home string, cfg *config.Config) (routePool, error) {
+	return accountRoutePoolWith(home, cfg, nil)
+}
+
+// accountRoutePoolWith is accountRoutePool with some snapshots taken from
+// override instead of the store: the way to ask whether a fetched snapshot
+// would still leave every route with nodes before it is stored.
+func accountRoutePoolWith(home string, cfg *config.Config, override map[string]*subscription.Snapshot) (routePool, error) {
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	all, named := snapshotDemand(cfg.Accounts)
 	snapshots := make(map[string]*subscription.Snapshot, len(cfg.Subscriptions))
 	for _, sub := range cfg.Subscriptions {
 		if !all && !named[sub.Name] {
+			continue
+		}
+		if snap, ok := override[sub.Name]; ok {
+			snapshots[sub.Name] = snap
 			continue
 		}
 		snap, err := store.Load(sub.Name)
@@ -191,7 +202,7 @@ func warmOptions(routes map[string][]map[string]any) *core.WarmOptions {
 
 // warmInfo converts the warm-up counters of the instance for the status
 // answer; nil when the instance runs without warm-up.
-func warmInfo(inst *core.Instance) *daemon.WarmInfo {
+func warmInfo(inst coreInstance) *daemon.WarmInfo {
 	stats, ok := inst.WarmStats()
 	if !ok {
 		return nil

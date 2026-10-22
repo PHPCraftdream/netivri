@@ -59,6 +59,12 @@ func runStatus(args []string, stdout io.Writer) error {
 	if st.Affinity != nil {
 		data["affinity"] = st.Affinity
 	}
+	if st.Refresh != nil {
+		data["refresh"] = st.Refresh
+	}
+	if st.Reload != nil {
+		data["reload"] = st.Reload
+	}
 	cli.Success(stdout, data)
 	return nil
 }

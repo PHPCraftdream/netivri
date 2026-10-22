@@ -295,7 +295,11 @@ providers by provider name) and used only for the accounts of that
 route: there is no fallback to a direct connection or to another
 country or provider. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.
-Changes take effect after the daemon restarts (`down`, then `up`).
+A running daemon applies a change to accounts by itself, within a few seconds
+(no `down` and `up` needed): it restarts its listener on the same port, which
+ends the open connections. A change it cannot apply, such as a route without
+nodes, leaves the running configuration in place and is reported as
+`reload.last_error` by `status`. See [design/live-reload.md](design/live-reload.md).
 
 ### `up`
 
@@ -395,8 +399,23 @@ Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
 `version` (the daemon binary's version), `accounts` (see `account`; each record is
-`{"login", "provider", "exit_country"}`, sorted by login), `warm`, `stats` and `affinity`. The selection fields of the planned shape below are not included
+`{"login", "provider", "exit_country"}`, sorted by login), `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+`refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
+`reload` (`{"count", "last_at", "last_error"}`) describe how the daemon keeps
+itself up to date. The daemon re-fetches every subscription once per
+`fetch.update_interval` (one hour by default, `interval_seconds` is `0` when
+it is `off`; see [config.md](config.md)); `ok` and `failed` count those
+refreshes, `last_at` is the time of the latest one (RFC3339 UTC) and
+`last_error` its failure (`CODE: message`, never a URL), empty after a success.
+A fetched list that would leave an account without nodes is rejected and the
+old list stays. `reload.count` is how many times the daemon applied changed
+files by restarting its listener (accounts, passwords, nodes, port), `last_at`
+the latest such restart, and `last_error` why the newest files are not applied
+(an invalid `config.ktav`, a route without nodes); it is empty when the files
+on disk are what runs. A refresh that brings the same nodes, or only different
+node names, changes nothing and does not count.
 
 `stats` (`{"path", "dropped"}`) is present while the statistics store is open;
 `dropped` counts samples lost to a full write queue. `affinity`
@@ -519,7 +538,9 @@ netivri sub update [N | --all]
 
 Re-fetches and re-stores; with a name only that subscription, with
 `--all` or no argument all subscriptions in config order. A failed
-subscription keeps its old stored snapshot.
+subscription keeps its old stored snapshot. A running daemon does the same by
+itself once per `fetch.update_interval` and applies the stored result to its
+routes within a few seconds, so this command is for refreshing on demand.
 
 ```json
 {"results": [

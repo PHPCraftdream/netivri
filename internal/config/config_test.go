@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
@@ -45,6 +46,26 @@ func TestDefaultIsValid(t *testing.T) {
 	}
 }
 
+func TestFetchInterval(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		enabled bool
+	}{
+		{"", time.Hour, true},
+		{"1h", time.Hour, true},
+		{"30m", 30 * time.Minute, true},
+		{"90m", 90 * time.Minute, true},
+		{UpdateOff, 0, false},
+	}
+	for _, tc := range cases {
+		got, enabled := Fetch{UpdateInterval: tc.raw}.Interval()
+		if got != tc.want || enabled != tc.enabled {
+			t.Errorf("Interval(%q) = %v, %v; want %v, %v", tc.raw, got, enabled, tc.want, tc.enabled)
+		}
+	}
+}
+
 func TestValidateValid(t *testing.T) {
 	cases := map[string]*Config{
 		"baseline":               validBaseline(),
@@ -62,6 +83,10 @@ func TestValidateValid(t *testing.T) {
 		}(),
 		"no subscriptions":  func() *Config { c := validBaseline(); c.Subscriptions = nil; return c }(),
 		"remote init valid": remoteInitBaseline(),
+		"interval 1h":       func() *Config { c := validBaseline(); c.Fetch.UpdateInterval = "1h"; return c }(),
+		"interval 5m":       func() *Config { c := validBaseline(); c.Fetch.UpdateInterval = "5m"; return c }(),
+		"interval 168h":     func() *Config { c := validBaseline(); c.Fetch.UpdateInterval = "168h"; return c }(),
+		"interval off":      func() *Config { c := validBaseline(); c.Fetch.UpdateInterval = UpdateOff; return c }(),
 	}
 	for name, cfg := range cases {
 		if err := cfg.Validate(); err != nil {
@@ -101,6 +126,13 @@ func TestValidateInvalid(t *testing.T) {
 		{"country line break", validBaseline, func(c *Config) { c.Selection.Country = "D\ne" }, "selection.country"},
 		{"node trailing space", validBaseline, func(c *Config) { c.Selection.Node = "node-1 " }, "selection.node"},
 		{"remote init not allowed", remoteInitBaseline, func(c *Config) { c.Auth.AllowInitRemote = false }, "allow_init_remote"},
+		{"interval not a duration", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "hourly" }, "fetch.update_interval"},
+		{"interval without unit", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "60" }, "fetch.update_interval"},
+		{"interval too short", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "4m59s" }, "fetch.update_interval"},
+		{"interval too long", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "169h" }, "fetch.update_interval"},
+		{"interval negative", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "-1h" }, "fetch.update_interval"},
+		{"interval upper-case off", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "OFF" }, "fetch.update_interval"},
+		{"interval trailing space", validBaseline, func(c *Config) { c.Fetch.UpdateInterval = "1h " }, "fetch.update_interval"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

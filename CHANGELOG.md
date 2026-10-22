@@ -8,6 +8,28 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- **Automatic subscription refresh.** A running daemon re-fetches every
+  subscription once an hour; `fetch.update_interval` changes the period
+  (`5m` to `168h`) or turns it off (`off`). A fetched list that would leave an
+  account without nodes is rejected and the old one stays. The result is in
+  `status` under `refresh`.
+- **Live apply of changes.** The daemon watches `config.ktav` and the stored
+  subscriptions and applies a change to accounts, passwords, nodes or the port
+  within a few seconds, with no `down` and `up`. The listener restarts on the
+  same port, so open connections end; nothing restarts when the nodes are the
+  same, only renamed, or when the daemon itself stores a claimed password. An
+  invalid file or an empty route leaves the running configuration in place and
+  is reported in `status` under `reload`. See `docs/design/live-reload.md`.
+
+### Changed
+
+- A password claimed by the first client is written into the configuration
+  file as it is on disk, not from the daemon's copy loaded at start, so an
+  `account add` made meanwhile is no longer overwritten. A claim against a file
+  that no longer holds the placeholder is refused and can be repeated.
+
 ## [0.1.0] - 2026-10-21
 
 First public release.

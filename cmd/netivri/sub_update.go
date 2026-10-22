@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -78,23 +79,42 @@ func (a *subApp) update(args []string) error {
 // per-subscription result. On failure the stored snapshot is untouched.
 func (a *subApp) updateOne(store *subscription.Store, cfg *config.Config, s config.Subscription) map[string]any {
 	res := map[string]any{"name": s.Name, "ok": false, "nodes": nil, "skipped": nil, "error": nil}
-	fetchRes, err := a.fetch(context.Background(), s.URL, fetch.Options{Proxy: proxyFor(s.Via, cfg.Fetch.Proxy)})
+	snap, err := fetchSnapshot(context.Background(), a.fetch, a.now, cfg, s)
 	if err != nil {
 		return withFetchError(res, err)
 	}
-	parsed, err := subscription.ParseDetailed(fetchRes.Body)
-	if err != nil {
-		return withFetchError(res, err)
-	}
-	skipped := parsed.Skipped.Banner + parsed.Skipped.Invalid
-	if err := store.Save(s.Name, subscription.Snapshot{FetchedAt: a.now().UTC(), Nodes: parsed.Nodes, Skipped: skipped}); err != nil {
+	if err := store.Save(s.Name, snap); err != nil {
 		res["error"] = map[string]string{"code": "INTERNAL", "message": "store subscription: " + err.Error()}
 		return res
 	}
 	res["ok"] = true
-	res["nodes"] = len(parsed.Nodes)
-	res["skipped"] = skipped
+	res["nodes"] = len(snap.Nodes)
+	res["skipped"] = snap.Skipped
 	return res
+}
+
+// fetchSnapshot fetches and parses one subscription through its proxy. It
+// stores nothing; `sub update` and the daemon's refresh share it.
+func fetchSnapshot(
+	ctx context.Context,
+	get func(ctx context.Context, rawURL string, o fetch.Options) (*fetch.Result, error),
+	now func() time.Time,
+	cfg *config.Config,
+	s config.Subscription,
+) (subscription.Snapshot, error) {
+	res, err := get(ctx, s.URL, fetch.Options{Proxy: proxyFor(s.Via, cfg.Fetch.Proxy)})
+	if err != nil {
+		return subscription.Snapshot{}, err
+	}
+	parsed, err := subscription.ParseDetailed(res.Body)
+	if err != nil {
+		return subscription.Snapshot{}, err
+	}
+	return subscription.Snapshot{
+		FetchedAt: now().UTC(),
+		Nodes:     parsed.Nodes,
+		Skipped:   parsed.Skipped.Banner + parsed.Skipped.Invalid,
+	}, nil
 }
 
 func withFetchError(res map[string]any, err error) map[string]any {

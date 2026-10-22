@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -117,9 +118,49 @@ type Auth struct {
 	AllowInitRemote bool   `json:"allow_init_remote,omitempty"`
 }
 
-// Fetch carries the proxy used for all outgoing subscription fetches.
+// Automatic subscription refresh by the daemon (fetch.update_interval).
+const (
+	DefaultUpdateInterval = time.Hour
+	MinUpdateInterval     = 5 * time.Minute
+	MaxUpdateInterval     = 7 * 24 * time.Hour
+	// UpdateOff is the fetch.update_interval value that disables the refresh.
+	UpdateOff = "off"
+)
+
+// Fetch carries the proxy used for all outgoing subscription fetches and how
+// often the daemon refreshes the subscriptions.
 type Fetch struct {
 	Proxy string `json:"proxy,omitempty"`
+	// UpdateInterval is a Go duration ("30m", "1h"), "off", or empty for the
+	// default of one hour.
+	UpdateInterval string `json:"update_interval,omitempty"`
+}
+
+// Interval returns the refresh period and false when the refresh is off. It
+// expects a validated value; an unparsable one reads as the default.
+func (f Fetch) Interval() (time.Duration, bool) {
+	switch f.UpdateInterval {
+	case "":
+		return DefaultUpdateInterval, true
+	case UpdateOff:
+		return 0, false
+	}
+	d, err := time.ParseDuration(f.UpdateInterval)
+	if err != nil {
+		return DefaultUpdateInterval, true
+	}
+	return d, true
+}
+
+func validateUpdateInterval(raw string) error {
+	if raw == "" || raw == UpdateOff {
+		return nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < MinUpdateInterval || d > MaxUpdateInterval {
+		return invalid(`fetch.update_interval must be "off" or a duration between 5m and 168h, such as "1h"`)
+	}
+	return nil
 }
 
 // Subscription is one provider subscription. URL is a secret.
@@ -158,6 +199,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := validateProxy("fetch.proxy", c.Fetch.Proxy); err != nil {
+		return err
+	}
+	if err := checkScalar("fetch.update_interval", c.Fetch.UpdateInterval); err != nil {
+		return err
+	}
+	if err := validateUpdateInterval(c.Fetch.UpdateInterval); err != nil {
 		return err
 	}
 	first := make(map[string]int, len(c.Subscriptions))

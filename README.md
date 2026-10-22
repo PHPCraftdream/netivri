@@ -88,8 +88,9 @@ a tool at `127.0.0.1:7890`; HTTP and SOCKS5 share the port:
 curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 ```
 
-`netivri down` stops the daemon. Changes to accounts take effect after
-`down` and `up`.
+`netivri down` stops the daemon. A running daemon picks up changes to
+accounts and subscriptions by itself within a few seconds, and re-fetches
+every subscription once an hour (`fetch.update_interval`).
 
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one

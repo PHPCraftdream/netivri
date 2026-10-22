@@ -90,7 +90,7 @@ func statsInfo(store *stats.Store, home string) *daemon.StatsInfo {
 
 // affinityInfo is the `affinity` part of the status answer; nil when no
 // account has a route.
-func affinityInfo(inst *core.Instance, routed bool) *daemon.AffinityInfo {
+func affinityInfo(inst coreInstance, routed bool) *daemon.AffinityInfo {
 	if !routed {
 		return nil
 	}
