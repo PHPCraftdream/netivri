@@ -607,7 +607,7 @@ jobs:
           test -f /usr/share/doc/netivri/LICENSE
           test -d /usr/share/doc/netivri/THIRD_PARTY_LICENSES
           sudo dpkg -r netivri
-          if command -v netivri; then echo 'netivri is still installed' >&2; exit 1; fi
+          if [ -e /usr/bin/netivri ]; then echo "netivri is still installed" >&2; exit 1; fi
           dpkg-deb -I "linux-pkgs/netivri_${VER}_linux_arm64.deb" | grep -E 'Architecture: arm64'
 
       - name: Install and remove the .rpm (Fedora)
@@ -620,7 +620,7 @@ jobs:
             rpm -qi netivri
             test -f /usr/share/doc/netivri/LICENSE
             rpm -e netivri
-            if command -v netivri; then echo 'netivri is still installed' >&2; exit 1; fi
+            if [ -e /usr/bin/netivri ]; then echo 'netivri is still installed' >&2; exit 1; fi
             rpm -qp --queryformat '%{ARCH}\n' /pkgs/netivri_${VER}_linux_arm64.rpm | grep -x aarch64
           "
 
