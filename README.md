@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/PHPCraftdream/netivri/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/netivri/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/PHPCraftdream/netivri?include_prereleases&sort=semver)](https://github.com/PHPCraftdream/netivri/releases)
-[![npm](https://img.shields.io/npm/v/netivri)](https://www.npmjs.com/package/netivri)
 [![License: GPL-3.0-only](https://img.shields.io/github/license/PHPCraftdream/netivri)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/goversion/PHPCraftdream/netivri)](go.mod)
 ![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-informational)
@@ -38,15 +37,12 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   spends its time: DNS, TCP, TLS and first byte.
 - **Small and self-contained.** One binary with [Mihomo](https://github.com/MetaCubeX/mihomo)
   embedded as a library; no external core process and no native libraries
-  next to it. No postinstall scripts, no downloads at install time.
+  next to it.
 
 ## Install
 
-```sh
-npm i -g netivri
-```
-
-or the standalone installers, which verify the SHA256 checksum:
+The installers download the release archive of your platform, verify its
+SHA256 checksum and put one binary into a user directory (no `sudo`):
 
 ```sh
 # macOS / Linux
@@ -58,12 +54,10 @@ curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.
 iwr -useb https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.ps1 | iex
 ```
 
-or download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
-and check it against `SHA256SUMS`. Releases after 0.1.0 also carry `.deb` and
-`.rpm` packages, a Scoop manifest, a Homebrew formula, the installers of the
-tag and the npm tarballs (see [`docs/install.md`](docs/install.md)). Details, options, upgrading while netivri
-runs and the supported platforms (Linux needs glibc; Alpine is not supported):
-[`docs/install.md`](docs/install.md) and [`docs/npm.md`](docs/npm.md).
+You can also download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
+and check it against `SHA256SUMS`. Options, upgrading while netivri runs and
+the supported platforms (Linux needs glibc; Alpine is not supported) are in
+[`docs/install.md`](docs/install.md).
 
 `go install` does not work: the module vendors Mihomo through a `replace`
 directive.
@@ -119,7 +113,7 @@ command.
 |---|---|
 | CLI contract, JSON, exit and error codes | [`docs/cli.md`](docs/cli.md) |
 | Configuration file | [`docs/config.md`](docs/config.md) |
-| Installation | [`docs/install.md`](docs/install.md), [`docs/npm.md`](docs/npm.md) |
+| Installation | [`docs/install.md`](docs/install.md) |
 | Releasing | [`docs/release.md`](docs/release.md) |
 | Dependency licenses | [`docs/licenses.md`](docs/licenses.md) |
 | Testing | [`docs/testing.md`](docs/testing.md) |
