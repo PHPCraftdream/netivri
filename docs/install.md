@@ -39,6 +39,38 @@ channels (e.g. `curl` and `git clone` of the tagged release) and `diff`
 them, or audit it by hand — it is short and has no dependencies beyond
 curl/wget, tar, sha256sum/shasum (POSIX) and built-in PowerShell cmdlets.
 
+## From the release page
+
+Every release also carries, next to the archives and `SHA256SUMS` (all of
+them listed there and covered by the build provenance):
+
+- `install.sh` and `install.ps1` — the installers of that tag. They are the
+  safest way to run the script that matches the version:
+  `curl -fsSL https://github.com/PHPCraftdream/netivri/releases/download/v{VERSION}/install.sh | sh`
+  and `iwr -useb https://github.com/PHPCraftdream/netivri/releases/download/v{VERSION}/install.ps1 | iex`.
+  (`releases/latest/download/install.sh` always points at the newest one.)
+- `netivri_{VERSION}_linux_{ARCH}.deb` and `.rpm` (amd64 and arm64): the binary
+  in `/usr/bin` and the licenses under `/usr/share/doc/netivri`. Install with
+  `sudo dpkg -i` or `sudo rpm -i`; remove with `dpkg -r netivri` or
+  `rpm -e netivri`. The amd64 packages are installed and removed again by the
+  release workflow before anything is published.
+- `netivri.json` — a Scoop manifest: `scoop install https://github.com/PHPCraftdream/netivri/releases/download/v{VERSION}/netivri.json`.
+- `netivri.rb` — a Homebrew formula for macOS and Linux. Put it into a tap of
+  your own (`brew tap-new {USER}/netivri`, copy the file to its `Formula`
+  directory, `brew install {USER}/netivri/netivri`); Homebrew no longer
+  installs a formula straight from a file.
+- `netivri-{VERSION}.tgz` and `netivri-{PLATFORM}-{VERSION}.tgz` — the npm
+  packages, for an install without the registry:
+  `npm i -g netivri-{PLATFORM}-{VERSION}.tgz netivri-{VERSION}.tgz` (the first
+  file is the package of your platform, for example `netivri-linux-x64`).
+
+The Scoop manifest and the Homebrew formula are written from the archives of
+the release and checked for syntax; they are not installed by the workflow.
+The `.deb`, `.rpm` and npm tarball installs are.
+
+These files first appear in the release that follows 0.1.0; the page of 0.1.0
+has the archives and `SHA256SUMS` only.
+
 ## Supported platforms
 
 | OS | Architectures | Notes |

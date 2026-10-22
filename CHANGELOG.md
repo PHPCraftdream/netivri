@@ -8,6 +8,22 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- **More on the release page.** Every release also carries `install.sh` and
+  `install.ps1` of the tag, Linux packages (`.deb` and `.rpm`, amd64 and
+  arm64), a Scoop manifest (`netivri.json`), a Homebrew formula
+  (`netivri.rb`) and the seven npm tarballs, all listed in `SHA256SUMS` and
+  covered by the build provenance. The amd64 `.deb` and `.rpm` are installed
+  and removed again by the release workflow before it publishes anything.
+
+### Changed
+
+- `scripts/npm-publish.sh` treats the answer "cannot publish over a previously
+  staged version" (npm's registry view can lag a minute) as a version that is
+  already published, so a re-run of a failed release goes on to the packages
+  that are still missing.
+
 ## [0.1.0] - 2026-10-22
 
 First public release.

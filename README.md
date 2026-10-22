@@ -59,7 +59,9 @@ iwr -useb https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.p
 ```
 
 or download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
-and check it against `SHA256SUMS`. Details, options, upgrading while netivri
+and check it against `SHA256SUMS`. Releases after 0.1.0 also carry `.deb` and
+`.rpm` packages, a Scoop manifest, a Homebrew formula, the installers of the
+tag and the npm tarballs (see [`docs/install.md`](docs/install.md)). Details, options, upgrading while netivri
 runs and the supported platforms (Linux needs glibc; Alpine is not supported):
 [`docs/install.md`](docs/install.md) and [`docs/npm.md`](docs/npm.md).
 

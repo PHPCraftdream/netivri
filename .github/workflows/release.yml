@@ -549,6 +549,86 @@ jobs:
           node "${root}/netivri/bin/netivri.js" version
           node "${root}/netivri/bin/netivri.js" sub list --home "${home}"
 
+  # .deb and .rpm of the Linux archives. The amd64 packages are installed and
+  # removed again, the .deb on the runner and the .rpm in a Fedora container;
+  # the arm64 ones are only built (no arm64 runner here).
+  linux-packages:
+    name: linux packages
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-linux-*
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the packages
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.48.0
+          mkdir -p linux-pkgs extracted
+          for arch in amd64 arm64; do
+            tar -xzf "artifacts/netivri_${VER}_linux_${arch}.tar.gz" -C extracted
+            dir="extracted/netivri_${VER}_linux_${arch}"
+            for fmt in deb rpm; do
+              VERSION="${VER}" ARCH="${arch}" BIN="${dir}/netivri" DOCS="${dir}" \
+                "$(go env GOPATH)/bin/nfpm" package --config packaging/nfpm.yaml \
+                --packager "${fmt}" --target "linux-pkgs/netivri_${VER}_linux_${arch}.${fmt}"
+            done
+          done
+          ls -l linux-pkgs
+
+      - name: Install and remove the .deb
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          sudo dpkg -i "linux-pkgs/netivri_${VER}_linux_amd64.deb"
+          netivri version
+          dpkg -s netivri | grep -E '^(Package|Version|Architecture):'
+          test -f /usr/share/doc/netivri/LICENSE
+          test -d /usr/share/doc/netivri/THIRD_PARTY_LICENSES
+          sudo dpkg -r netivri
+          if command -v netivri; then echo 'netivri is still installed' >&2; exit 1; fi
+          dpkg-deb -I "linux-pkgs/netivri_${VER}_linux_arm64.deb" | grep -E 'Architecture: arm64'
+
+      - name: Install and remove the .rpm (Fedora)
+        run: |
+          set -euo pipefail
+          VER="${{ steps.version.outputs.version }}"
+          docker run --rm -v "${PWD}/linux-pkgs:/pkgs:ro" fedora:latest sh -euc "
+            rpm -i /pkgs/netivri_${VER}_linux_amd64.rpm
+            netivri version
+            rpm -qi netivri
+            test -f /usr/share/doc/netivri/LICENSE
+            rpm -e netivri
+            if command -v netivri; then echo 'netivri is still installed' >&2; exit 1; fi
+            rpm -qp --queryformat '%{ARCH}\n' /pkgs/netivri_${VER}_linux_arm64.rpm | grep -x aarch64
+          "
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pkg-linux
+          path: linux-pkgs/*
+          if-no-files-found: error
+
   # Nothing is published unless every dependency license is still allowed.
   licenses:
     name: license check
@@ -566,7 +646,7 @@ jobs:
 
   publish:
     name: checksums and release
-    needs: [build, install-test, licenses]
+    needs: [build, linux-packages, npm-packages, install-test, licenses]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -581,11 +661,43 @@ jobs:
           merge-multiple: true
           pattern: dist-*
 
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          name: pkg-linux
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          name: npm-dist
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The installers of the tag, the Scoop manifest and the Homebrew formula
+      # sit next to the archives, so a release page is enough to install from.
+      - name: Installers and package manifests
+        run: |
+          set -euo pipefail
+          cp install.sh install.ps1 artifacts/
+          bash scripts/package-manifests.sh "${{ steps.version.outputs.version }}" artifacts
+          node -e 'JSON.parse(require("fs").readFileSync("artifacts/netivri.json", "utf8"))'
+          ruby -c artifacts/netivri.rb
+          sh -n artifacts/install.sh
+
       - name: Generate SHA256SUMS
         run: |
           set -euo pipefail
           cd artifacts
-          sha256sum netivri_*.zip netivri_*.tar.gz > SHA256SUMS
+          sha256sum netivri_*.zip netivri_*.tar.gz netivri_*.deb netivri_*.rpm \
+            install.sh install.ps1 netivri.json netivri.rb netivri-*.tgz > SHA256SUMS
 
       - name: Upload checksums
         uses: actions/upload-artifact@v7
@@ -607,6 +719,13 @@ jobs:
           subject-path: |
             artifacts/netivri_*.zip
             artifacts/netivri_*.tar.gz
+            artifacts/netivri_*.deb
+            artifacts/netivri_*.rpm
+            artifacts/netivri-*.tgz
+            artifacts/install.sh
+            artifacts/install.ps1
+            artifacts/netivri.json
+            artifacts/netivri.rb
             artifacts/SHA256SUMS
 
       - name: Publish GitHub Release
@@ -624,4 +743,6 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-file release-notes.md \
             "${flags[@]}" \
-            artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz
+            artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz \
+            artifacts/netivri_*.deb artifacts/netivri_*.rpm artifacts/netivri-*.tgz \
+            artifacts/install.sh artifacts/install.ps1 artifacts/netivri.json artifacts/netivri.rb

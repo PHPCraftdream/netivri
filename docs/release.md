@@ -97,6 +97,15 @@ The archive holds no native library: the Ktav Go binding runs its pure-Go
 backend inside the binary (see `docs/design/config-ktav.md`), so nothing is
 loaded, downloaded or fetched at run time.
 
+Beside the archives the release carries `SHA256SUMS`, the installers
+(`install.sh`, `install.ps1`), the Linux packages (`.deb`, `.rpm`, built by
+nfpm from `packaging/nfpm.yaml` in the job `linux packages`, which installs
+and removes the amd64 ones before anything is published), the Scoop manifest
+`netivri.json` and the Homebrew formula `netivri.rb` (written by
+`scripts/package-manifests.sh` from the archives) and the seven npm tarballs.
+All of them are listed in `SHA256SUMS` and covered by the build provenance. See
+`docs/install.md` for how a user installs each of them.
+
 ## Verifying checksums
 
 ```sh
