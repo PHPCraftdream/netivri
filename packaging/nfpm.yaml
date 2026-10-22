@@ -1,7 +1,7 @@
 # .deb and .rpm of the Linux release, built by nfpm in the release workflow
-# (job "linux packages"). VERSION, ARCH (amd64 or arm64), BIN (the binary) and
-# DOCS (the directory with LICENSE, README.md and THIRD_PARTY_LICENSES) come
-# from the environment.
+# (job "linux packages"). VERSION and ARCH (amd64 or arm64) come from the
+# environment; the extracted archive of that architecture is copied to
+# pkgroot/ first, because nfpm does not expand variables in file paths.
 name: netivri
 arch: ${ARCH}
 platform: linux
@@ -16,14 +16,14 @@ description: |
 homepage: https://github.com/PHPCraftdream/netivri
 license: GPL-3.0-only
 contents:
-  - src: ${BIN}
+  - src: pkgroot/netivri
     dst: /usr/bin/netivri
     file_info:
       mode: 0755
-  - src: ${DOCS}/LICENSE
+  - src: pkgroot/LICENSE
     dst: /usr/share/doc/netivri/LICENSE
-  - src: ${DOCS}/README.md
+  - src: pkgroot/README.md
     dst: /usr/share/doc/netivri/README.md
-  - src: ${DOCS}/THIRD_PARTY_LICENSES
+  - src: pkgroot/THIRD_PARTY_LICENSES
     dst: /usr/share/doc/netivri/THIRD_PARTY_LICENSES
     type: tree

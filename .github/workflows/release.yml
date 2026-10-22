@@ -587,9 +587,10 @@ jobs:
           mkdir -p linux-pkgs extracted
           for arch in amd64 arm64; do
             tar -xzf "artifacts/netivri_${VER}_linux_${arch}.tar.gz" -C extracted
-            dir="extracted/netivri_${VER}_linux_${arch}"
+            rm -rf pkgroot
+            cp -R "extracted/netivri_${VER}_linux_${arch}" pkgroot
             for fmt in deb rpm; do
-              VERSION="${VER}" ARCH="${arch}" BIN="${dir}/netivri" DOCS="${dir}" \
+              VERSION="${VER}" ARCH="${arch}" \
                 "$(go env GOPATH)/bin/nfpm" package --config packaging/nfpm.yaml \
                 --packager "${fmt}" --target "linux-pkgs/netivri_${VER}_linux_${arch}.${fmt}"
             done
