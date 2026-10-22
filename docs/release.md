@@ -43,6 +43,12 @@ Both ways attach a provenance statement to every package. The six platform
 packages go first and the main package last; a version that is already on the
 registry is skipped, so re-running a failed release finishes it.
 
+Creating several new packages within a minute can make npm refuse one with
+`E403 Package name triggered spam detection` (it happened on the first
+release). Wait a while and re-run the failed `publish to npm` job (`gh run
+rerun {RUN_ID} --failed`); if npm keeps refusing, ask npm support to release
+the name. A re-run uses the scripts of the tagged commit.
+
 **First release: token.** Trusted Publishing can only be configured for a
 package that already exists on npm, so the first publish of the seven packages
 needs a token. Create an npm access token that may publish and store it as the

@@ -53,5 +53,19 @@ for name in "${names[@]}"; do
     continue
   fi
   echo "publishing ${name}@${version} (${mode})"
-  npm publish "${tgz}" "${args[@]}"
+  # `npm view` reads a cached view of the registry and can miss a version
+  # published a minute ago; npm then refuses the publish with E409. That
+  # version is on the registry, so it counts as skipped, not as a failure.
+  log="$(mktemp)"
+  if npm publish "${tgz}" "${args[@]}" 2>&1 | tee "${log}"; then
+    rm -f "${log}"
+    continue
+  fi
+  if grep -qE 'E409|previously (staged|published) version|cannot publish over' "${log}"; then
+    rm -f "${log}"
+    echo "${name}@${version} is already on the registry: skipped"
+    continue
+  fi
+  rm -f "${log}"
+  exit 1
 done
