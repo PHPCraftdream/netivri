@@ -111,8 +111,8 @@ booleans, `null`, lists) and a text that looks like a number, such as a login
 `123456`, is written with the raw marker (`login:: 123456`), so a Ktav reader
 gets the same values a JSON reader would. Scripts and agents that parse the
 output should ask for JSON, with `--json` or with `NETIVRI_OUTPUT=json` set
-once. If the Ktav native library cannot be loaded (`KTAV_LIB_MISSING`), the
-document is written as JSON instead, so that an error is never lost.
+once. If the Ktav renderer ever fails, the document is written as JSON instead,
+so that an error is never lost.
 
 Subscription URLs are credentials and are never printed: not on stdout,
 not on stderr, not in error messages. The same holds for `--via` proxies.

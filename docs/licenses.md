@@ -81,7 +81,3 @@ GOOS/GOARCH) into `THIRD_PARTY_LICENSES/{MODULE_PATH}/`; a module without a
 root license file contributes the license files found in its subdirectories. The release workflow
 puts that directory into every archive. The script fails when a module has no
 license file, and the `licenses` CI job runs it on linux/amd64 on every push.
-
-The Ktav native library (`ktav_cabi`) is `MIT OR Apache-2.0`. It statically
-links Rust crates (`ktav`, `serde`, `serde_json`, `indexmap`, all permissive);
-their notices are not enumerated by the Go tooling and are not shipped yet.

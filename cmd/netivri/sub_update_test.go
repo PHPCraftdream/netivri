@@ -11,7 +11,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // fetchMap dispatches per-URL canned results; errors must be *cli.Error.
@@ -34,7 +33,6 @@ func fetchMap(t *testing.T, results map[string]any, got *[]fetch.Options) func(c
 }
 
 func TestSubUpdateOne(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fetchMap(t, map[string]any{"https://a.example/sub": testBodyFI}, nil))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	if err := app.update([]string{"--home", app.home, "a"}); err != nil {
@@ -59,7 +57,6 @@ func TestSubUpdateOne(t *testing.T) {
 }
 
 func TestSubUpdateAll(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fetchMap(t, map[string]any{
 		"https://a.example/sub": testBody,
 		"https://b.example/sub": testBodyFI,
@@ -82,7 +79,6 @@ func TestSubUpdateAll(t *testing.T) {
 }
 
 func TestSubUpdateAllWithoutFlag(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fetchMap(t, map[string]any{"https://a.example/sub": testBodyFI}, nil))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	if err := app.update([]string{"--home", app.home}); err != nil {
@@ -96,7 +92,6 @@ func TestSubUpdateAllWithoutFlag(t *testing.T) {
 }
 
 func TestSubUpdatePartialFailure(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fetchMap(t, map[string]any{
 		"https://a.example/sub": testBodyFI,
 		"https://b.example/sub": &cli.Error{Code: "FETCH_HTTP_STATUS", Message: "unexpected HTTP status 403", Exit: cli.ExitNetwork},
@@ -149,7 +144,6 @@ func TestSubUpdatePartialFailure(t *testing.T) {
 }
 
 func TestSubUpdateUnknownName(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBodyFI))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	err := app.update([]string{"--home", app.home, "nosuch"})
@@ -164,7 +158,6 @@ func TestSubUpdateNameAndAllConflict(t *testing.T) {
 
 // Proxy selection on update: the subscription's via beats fetch.proxy.
 func TestSubUpdateProxySelection(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	var got []fetch.Options
 	app, _ := testApp(t, fetchMap(t, map[string]any{
 		"https://a.example/sub": testBodyFI,
@@ -198,7 +191,6 @@ func TestSubUpdateProxySelection(t *testing.T) {
 
 // Update results must never carry the subscription URL.
 func TestSubUpdateOutputHasNoURL(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	secret := "token=topsecret123"
 	app, out := testApp(t, fetchMap(t, map[string]any{"https://a.example/sub?" + secret: testBodyFI}, nil))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub?" + secret})

@@ -20,12 +20,12 @@ const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\
 // goos/goarch are the Go names used in the archive directory names;
 // os/cpu are the npm field values.
 const PLATFORMS = [
-  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', lib: 'libktav_cabi.so', libc: ['glibc'], pkg: 'netivri-linux-x64' },
-  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', lib: 'libktav_cabi.so', libc: ['glibc'], pkg: 'netivri-linux-arm64' },
-  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', bin: 'netivri', lib: 'libktav_cabi.dylib', libc: null, pkg: 'netivri-darwin-x64' },
-  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', bin: 'netivri', lib: 'libktav_cabi.dylib', libc: null, pkg: 'netivri-darwin-arm64' },
-  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', lib: 'ktav_cabi.dll', libc: null, pkg: 'netivri-win32-x64' },
-  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', lib: 'ktav_cabi.dll', libc: null, pkg: 'netivri-win32-arm64' },
+  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-x64' },
+  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-arm64' },
+  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-x64' },
+  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-arm64' },
+  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', libc: null, pkg: 'netivri-win32-x64' },
+  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', libc: null, pkg: 'netivri-win32-arm64' },
 ];
 
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/PHPCraftdream/netivri.git' };
@@ -157,7 +157,6 @@ function buildPackages(options) {
   // One platform package per archive found.
   for (const { platform, dir } of archives) {
     const binSrc = requireFile(dir, platform.bin, `binary for ${platform.goos}/${platform.goarch}`);
-    const libSrc = requireFile(dir, platform.lib, `Ktav library for ${platform.goos}/${platform.goarch}`);
     const pkgLicenseSrc = requireFile(dir, 'LICENSE', `LICENSE for ${platform.goos}/${platform.goarch}`);
     const tplDir = path.join(dir, 'THIRD_PARTY_LICENSES');
     if (!fs.existsSync(tplDir) || !fs.statSync(tplDir).isDirectory()) {
@@ -168,7 +167,6 @@ function buildPackages(options) {
     const pkgBin = path.join(pkgDir, 'bin');
     fs.mkdirSync(pkgBin, { recursive: true });
     copyFile(binSrc, path.join(pkgBin, platform.bin), 0o755);
-    copyFile(libSrc, path.join(pkgBin, platform.lib));
     copyFile(pkgLicenseSrc, path.join(pkgDir, 'LICENSE'));
     copyDir(tplDir, path.join(pkgDir, 'THIRD_PARTY_LICENSES'));
 

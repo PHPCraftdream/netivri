@@ -503,7 +503,6 @@ func TestRunUpDaemonLiveStatusConflictUsesLiveListen(t *testing.T) {
 }
 
 func TestLiveAuthPersistence(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	temp := t.TempDir()
 	cfg := config.Default()
 	cfg.Auth = config.Auth{Login: config.InitPlaceholder, Password: config.InitPlaceholder}

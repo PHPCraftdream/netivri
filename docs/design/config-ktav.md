@@ -1,10 +1,10 @@
-# Config format: Ktav 0.8.0
+# Config format: Ktav 0.8
 
 ## Decision
 
-Local settings are stored in [Ktav](https://github.com/ktav-lang/spec) 0.8.0,
+Local settings are stored in [Ktav](https://github.com/ktav-lang/spec) 0.8,
 read and written with the official Go binding
-[`github.com/ktav-lang/golang`](https://github.com/ktav-lang/golang) v0.8.0,
+[`github.com/ktav-lang/golang`](https://github.com/ktav-lang/golang) v0.8.1,
 used as is. No own parser.
 
 License: the binding is `MIT OR Apache-2.0`, its dependencies (`purego`,
@@ -13,28 +13,30 @@ License: the binding is `MIT OR Apache-2.0`, its dependencies (`purego`,
 
 ## How the binding works (constraints we design around)
 
-The binding is `purego` over the reference Rust library (`ktav_cabi`). It loads
-the native library at the first call, resolving it in this order:
-
-1. `$KTAV_LIB_PATH`
-2. user cache `{USER_CACHE_DIR}/ktav-go/v{VERSION}/`
-3. download from GitHub Releases (needs network on first call)
+The binding has two backends: the reference Rust library (`ktav_cabi`, loaded
+through `purego`, downloaded from GitHub Releases on first use when it is not
+found) and a self-contained pure-Go one. netivri runs the pure-Go backend only:
+`ktav.UsePure()` is called once when `internal/config` is initialised, before
+any other call.
 
 Consequences:
 
-- **No hidden downloads.** Step 3 is a direct connection to github.com. It
-  would bypass the fetch proxy rule (all outgoing fetches go through the
-  configured proxy, see subscriptions). netivri therefore ships the native
-  library with every distribution (npm platform packages, standalone installer,
-  release archives) and sets `KTAV_LIB_PATH` in-process before the first call.
-  If the library is missing, fail with a clear error; never fall through to
-  the download.
-- **Release plan.** The Go binary itself stays `CGO_ENABLED=0`. Archives and
-  packages carry the native library next to the binary:
-  `ktav_cabi.dll` / `libktav_cabi.so` / `libktav_cabi.dylib` for the
-  platforms the binding supports (linux/darwin/windows × amd64/arm64).
-  glibc 2.17+ on Linux; musl (Alpine) is not supported by the binding yet.
-- Version pin: the library version must match the Go module version (0.8.0).
+- **Nothing to load, download or ship.** The pure backend never loads a shared
+  library, never downloads anything and never spawns a process, so the binding
+  cannot make a connection of its own and cannot bypass the fetch proxy rule
+  (all outgoing fetches go through the configured proxy, see subscriptions).
+  The Go binary stays `CGO_ENABLED=0` and is the only file of a release; there
+  is no `ktav_cabi`, no `KTAV_LIB_PATH`, and no way for a missing library to
+  break a command.
+- **The same results.** The pure backend passes the whole conformance corpus of
+  the pinned spec (valid, invalid, unrepresentable, parseable-unrepresentable,
+  strict-lossy). On the configuration and the stored subscription snapshots of
+  a real installation it gave the same parsed values, the same rendered text
+  and the same round trip as the native library.
+- Only the typed decode (`LoadsInto`) and the rendering of arbitrary structs
+  go through `encoding/json` on the Go side, as before.
+- Version pin: the Go module version (0.8.1) selects the spec the binding
+  implements.
 
 ## Usage in netivri
 
@@ -57,7 +59,6 @@ Consequences:
 
 ## To verify in CI
 
-- Start with `KTAV_LIB_PATH` set and the network blocked: config loads, no
-  outgoing connection is made.
-- Library missing → clear error, still no connection.
+- Config and subscription snapshots load and save with `KTAV_LIB_PATH` pointing
+  at nothing: no library is involved.
 - Round trip: netivri renders with `Dumps`, parses back with `LoadsStrict`, decodes onto the defaults and requires deep equality before writing; comments are regenerated, not preserved.

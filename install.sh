@@ -2,8 +2,7 @@
 # netivri standalone installer (POSIX sh, no bashisms).
 #
 # Downloads a release archive, verifies its SHA256 checksum against the
-# published SHA256SUMS, and installs the netivri binary plus the Ktav
-# native library (which must sit next to the binary) into a user
+# published SHA256SUMS, and installs the netivri binary into a user
 # directory. See docs/install.md.
 set -eu
 
@@ -21,7 +20,7 @@ usage() {
   cat <<USAGE_EOF
 Usage: $PROG [options]
 
-Install the netivri binary and its Ktav native library.
+Install the netivri binary.
 
 Options:
   --version X.Y.Z  Install this version (default: latest release).
@@ -129,16 +128,16 @@ case "$(uname -m)" in
 esac
 
 case "$GOOS" in
-  linux) LIB=libktav_cabi.so ;;
-  darwin) LIB=libktav_cabi.dylib ;;
+  linux) LEGACY_LIB=libktav_cabi.so ;;
+  darwin) LEGACY_LIB=libktav_cabi.dylib ;;
 esac
 
 if [ "$GOOS" = "linux" ]; then
   if [ -f /etc/alpine-release ]; then
-    fail "Alpine Linux (musl) is not supported: the Ktav native library needs glibc 2.17+"
+    fail "Alpine Linux (musl) is not supported: releases are built and tested for glibc only"
   fi
   if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
-    fail "musl-based Linux is not supported: the Ktav native library needs glibc 2.17+"
+    fail "musl-based Linux is not supported: releases are built and tested for glibc only"
   fi
 fi
 
@@ -238,7 +237,7 @@ trap 'exit 143' TERM
 
 # install_file SRC DST MODE: copy via a temp name in the destination
 # directory, then rename. The rename is atomic: it works while netivri
-# is running (a mapped binary or a loaded library keeps its old inode)
+# is running (a mapped binary keeps its old inode)
 # and a failed mv leaves the destination untouched.
 install_file() {
   tmpdst="$2.tmp.$$"
@@ -291,7 +290,7 @@ print_path_hint() {
 }
 
 # do_install_from SRC VER LICROOT: shared install steps for both source
-# modes. SRC holds the binary and library; VER is the version string, empty
+# modes. SRC holds the binary; VER is the version string, empty
 # when unknown (--from-dir); LICROOT holds LICENSE and THIRD_PARTY_LICENSES
 # (it is not SRC for an npm package, where SRC is DIR/bin).
 do_install_from() {
@@ -302,7 +301,7 @@ do_install_from() {
   mkdir -p "$INSTALL_DIR" "$SHARE/THIRD_PARTY_LICENSES"
 
   install_file "$src/netivri" "$INSTALL_DIR/netivri" 755
-  install_file "$src/$LIB" "$INSTALL_DIR/$LIB" 755
+  rm -f "$INSTALL_DIR/$LEGACY_LIB"
   if [ -f "$licroot/LICENSE" ]; then
     cp "$licroot/LICENSE" "$SHARE/LICENSE"
   elif [ -z "$FROM_DIR" ]; then
@@ -326,7 +325,7 @@ do_install_from() {
 if [ "$UNINSTALL" -eq 1 ]; then
   share="$INSTALL_DIR/../share/netivri"
   removed=0
-  for f in "$INSTALL_DIR/netivri" "$INSTALL_DIR/$LIB"; do
+  for f in "$INSTALL_DIR/netivri" "$INSTALL_DIR/$LEGACY_LIB"; do
     if [ -f "$f" ]; then
       rm -f "$f"
       say "removed $f"
@@ -354,7 +353,6 @@ if [ -n "$FROM_DIR" ]; then
   else
     fail "no netivri binary in $FROM_DIR (looked for $FROM_DIR/netivri and $FROM_DIR/bin/netivri)"
   fi
-  [ -f "$SRC/$LIB" ] || fail "$FROM_DIR does not contain $LIB (looked in $SRC)"
   do_install_from "$SRC" "" "$FROM_DIR"
   exit 0
 fi
@@ -408,6 +406,5 @@ if [ -z "$SRC" ] || [ ! -d "$SRC" ]; then
   fail "the archive does not contain the expected netivri_${VERSION}_${GOOS}_${GOARCH}/ directory"
 fi
 [ -f "$SRC/netivri" ] || fail "the archive does not contain the netivri binary"
-[ -f "$SRC/$LIB" ] || fail "the archive does not contain $LIB"
 
 do_install_from "$SRC" "$VERSION" "$SRC"

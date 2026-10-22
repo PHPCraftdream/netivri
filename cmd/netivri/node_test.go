@@ -7,11 +7,9 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestNodeListAll(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app,
 		config.Subscription{Name: "a", URL: "https://a.example/sub"},
@@ -53,7 +51,6 @@ func TestNodeListAll(t *testing.T) {
 }
 
 func TestNodeListFilters(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app,
 		config.Subscription{Name: "a", URL: "https://a.example/sub"},
@@ -114,7 +111,6 @@ func TestNodeListAliveRejected(t *testing.T) {
 }
 
 func TestNodeListUnknownSub(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	err := app.nodeList([]string{"--home", app.home, "--sub", "nosuch"})
@@ -122,7 +118,6 @@ func TestNodeListUnknownSub(t *testing.T) {
 }
 
 func TestNodeListWithoutSnapshots(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	if err := app.nodeList([]string{"--home", app.home}); err != nil {

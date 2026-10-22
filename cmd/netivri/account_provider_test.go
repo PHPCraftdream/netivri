@@ -9,13 +9,11 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // accountProviderHome seeds a home with two providers and returns it.
 func accountProviderHome(t *testing.T) string {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	// Both providers have stored nodes: switching an account to one needs them.
 	seedProviders(t, home, map[string][]subscription.Node{

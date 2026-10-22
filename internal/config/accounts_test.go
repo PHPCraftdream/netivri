@@ -146,7 +146,6 @@ type previousConfig struct {
 }
 
 func TestMarshalAccountsBackwardCompatibility(t *testing.T) {
-	requireKtavLib(t)
 	for _, base := range []*Config{Default(), fullConfig()} {
 		for _, accounts := range [][]Account{nil, {}} {
 			cfg := *base
@@ -170,7 +169,6 @@ func TestMarshalAccountsBackwardCompatibility(t *testing.T) {
 }
 
 func TestMarshalAndLoadAccountsRawScalarsAndNormalization(t *testing.T) {
-	requireKtavLib(t)
 	cfg := Default()
 	cfg.Accounts = []Account{
 		{Login: "123", Password: "init", ExitCountry: "NO"},
@@ -200,7 +198,6 @@ func TestMarshalAndLoadAccountsRawScalarsAndNormalization(t *testing.T) {
 }
 
 func TestLoadNormalizesLowercaseAccountCountry(t *testing.T) {
-	requireKtavLib(t)
 	fixture := `listen.bind: 127.0.0.1
 listen.port: 7890
 accounts: [
@@ -275,7 +272,6 @@ func TestValidateAccountProvider(t *testing.T) {
 }
 
 func TestMarshalAndLoadAccountProvider(t *testing.T) {
-	requireKtavLib(t)
 	cfg := Default()
 	cfg.Accounts = []Account{
 		{Login: "alice", Password: "init", Provider: "main", ExitCountry: "DE"},

@@ -21,7 +21,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // fakeCore stands in for a running core.
@@ -134,7 +133,6 @@ func (f *reloadFixture) saveNodes(t *testing.T, server, name string) {
 // daemon starts with no routes.
 func newReloadFixture(t *testing.T, opts upOptions, accounts ...config.Account) *reloadFixture {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	f := &reloadFixture{home: t.TempDir(), script: &coreScript{port: 43210}}
 	var err error
 	if f.hash, err = auth.Hash("fixture-password"); err != nil {
@@ -445,7 +443,6 @@ func (c *fetchCounter) get(context.Context, string, fetch.Options) (*fetch.Resul
 
 func runRefreshLoop(t *testing.T, interval string, fc *fetchCounter) (*liveDaemon, *subscription.Store, func()) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	oldWake, oldDelay, oldFetch := refreshWake, refreshStartDelay, subFetch
 	refreshWake, refreshStartDelay, subFetch = 5*time.Millisecond, 0, fc.get
 	t.Cleanup(func() { refreshWake, refreshStartDelay, subFetch = oldWake, oldDelay, oldFetch })

@@ -11,15 +11,6 @@ import (
 	ktav "github.com/ktav-lang/golang"
 )
 
-// requireKtavLib fails (does not skip) when the Ktav native library is
-// not provided: CI sets KTAV_LIB_PATH via scripts/fetch-ktav-lib.sh.
-func requireKtavLib(t *testing.T) {
-	t.Helper()
-	if os.Getenv("KTAV_LIB_PATH") == "" {
-		t.Fatal("KTAV_LIB_PATH is not set: CI must provide the Ktav native library (scripts/fetch-ktav-lib.sh)")
-	}
-}
-
 const validSample = `## netivri sample configuration
 listen.bind: 127.0.0.1
 listen.port: 7890
@@ -33,7 +24,6 @@ subscriptions: [
 `
 
 func TestLoadValid(t *testing.T) {
-	requireKtavLib(t)
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	if err := os.WriteFile(path, []byte(validSample), 0o600); err != nil {
 		t.Fatal(err)
@@ -54,7 +44,6 @@ func TestLoadValid(t *testing.T) {
 }
 
 func TestLoadMissingFile(t *testing.T) {
-	requireKtavLib(t)
 	_, err := Load(filepath.Join(t.TempDir(), "absent.ktav"))
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("err = %v, want os.ErrNotExist", err)
@@ -62,7 +51,6 @@ func TestLoadMissingFile(t *testing.T) {
 }
 
 func TestLoadOrDefaultFallsBack(t *testing.T) {
-	requireKtavLib(t)
 	cfg, err := LoadOrDefault(filepath.Join(t.TempDir(), "absent.ktav"))
 	if err != nil {
 		t.Fatalf("LoadOrDefault: %v", err)
@@ -73,10 +61,8 @@ func TestLoadOrDefaultFallsBack(t *testing.T) {
 	}
 }
 
-// A missing file yields the defaults without touching the Ktav native
-// library, even when KTAV_LIB_PATH points at nothing.
-func TestLoadOrDefaultMissingFileNeedsNoLibrary(t *testing.T) {
-	t.Setenv("KTAV_LIB_PATH", filepath.Join(t.TempDir(), "no-such-lib.so"))
+// A missing file yields the defaults.
+func TestLoadOrDefaultMissingFileYieldsDefaults(t *testing.T) {
 	cfg, err := LoadOrDefault(filepath.Join(t.TempDir(), "absent.ktav"))
 	if err != nil {
 		t.Fatalf("LoadOrDefault: %v", err)
@@ -89,7 +75,6 @@ func TestLoadOrDefaultMissingFileNeedsNoLibrary(t *testing.T) {
 // A minimal existing file inherits the defaults for every key it does
 // not set.
 func TestLoadMinimalFileInheritsDefaults(t *testing.T) {
-	requireKtavLib(t)
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	if err := os.WriteFile(path, []byte("listen.port: 8443\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -111,7 +96,6 @@ func TestLoadMinimalFileInheritsDefaults(t *testing.T) {
 }
 
 func TestLoadRejectsBadSyntax(t *testing.T) {
-	requireKtavLib(t)
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	// Missing separator space: a syntax error (MissingSeparatorSpace).
 	if err := os.WriteFile(path, []byte("listen.port:7890\n"), 0o600); err != nil {
@@ -122,7 +106,6 @@ func TestLoadRejectsBadSyntax(t *testing.T) {
 }
 
 func TestLoadRejectsLossyNumbers(t *testing.T) {
-	requireKtavLib(t)
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	// Base-prefixed literal: a lossy scalar the strict parser rejects.
 	if err := os.WriteFile(path, []byte("listen.port: 0x1ED2\n"), 0o600); err != nil {
@@ -136,7 +119,6 @@ func TestLoadRejectsLossyNumbers(t *testing.T) {
 // any document text: the CONFIG_INVALID message is built only from the
 // binding's structured fields (Class, Reason, Line, SpecSection, Path).
 func TestLoadErrorHidesDocumentText(t *testing.T) {
-	requireKtavLib(t)
 	// (a) a lossy numeric spelling on the line after the secret;
 	// (b) a real syntax error (missing separator space, spec section 4)
 	// on the line after the secret. Both must fail without leaking the
@@ -171,14 +153,7 @@ func TestLoadErrorHidesDocumentText(t *testing.T) {
 	}
 }
 
-// A guarded-wrapper failure that occurs where a binding error would
-// otherwise be expected keeps its KTAV_LIB_MISSING code instead of
-// being converted to CONFIG_INVALID.
-func TestConfigFromBindingErrorPropagatesCliError(t *testing.T) {
-	cliErr := &cli.Error{Code: CodeKtavLibMissing, Exit: cli.ExitInternal, Message: "library vanished"}
-	if got := configFromBindingError(cliErr); got != cliErr {
-		t.Fatalf("cli error not propagated: got %+v", got)
-	}
+func TestConfigFromBindingErrorHidesSource(t *testing.T) {
 	// A ktav error is reduced to structured fields only.
 	kerr := &ktav.Error{
 		Msg:   "LossyScalar: body s3cr3t-value canonical 7890",

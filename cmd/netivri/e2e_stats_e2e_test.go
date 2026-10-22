@@ -8,7 +8,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // TestE2EStatsAndAffinity runs the daemon with one account that may use two
@@ -16,7 +15,6 @@ import (
 // node, the daemon reports the binding, and after `down` (which flushes the
 // store) `stats` shows the dials of exactly that node.
 func TestE2EStatsAndAffinity(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	h := newDaemonHome(t)
 	pass := "stats-e2e-password"
 	hash, err := auth.Hash(pass)

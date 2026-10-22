@@ -12,7 +12,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // capturedDiagOptions holds what the fake diagDial received.
@@ -46,7 +45,6 @@ func useDiagDial(t *testing.T, fake func(context.Context, core.DiagOptions) ([]c
 // account "alice" bound to that provider.
 func diagHome(t *testing.T) string {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	cfg := config.Default()
 	cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://secret.invalid/sub"}}

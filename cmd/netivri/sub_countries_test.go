@@ -13,14 +13,12 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // seedCountriesApp creates an app with a seeded config and returns it, the
 // stdout buffer and its subscription store.
 func seedCountriesApp(t *testing.T, subs ...config.Subscription) (*subApp, *bytes.Buffer, *subscription.Store) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, nil)
 	seedConfig(t, app, subs...)
 	return app, out, app.store()

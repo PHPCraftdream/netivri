@@ -59,9 +59,6 @@ fi
 cat > "${out}/README.txt" <<'EOF'
 License and notice files of the third-party Go modules linked into netivri,
 one directory per module. netivri itself is GPL-3.0-only (see LICENSE).
-
-The Ktav native library shipped next to the binary (ktav_cabi) is
-MIT OR Apache-2.0, see https://github.com/ktav-lang/golang.
 EOF
 
 echo "collected notices for ${count} modules into ${out}" >&2

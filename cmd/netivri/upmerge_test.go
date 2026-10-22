@@ -8,7 +8,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestMergeUpFlagsVsConfig(t *testing.T) {
@@ -116,7 +115,6 @@ func TestAuthStatus(t *testing.T) {
 }
 
 func TestPersistClosure(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	path := config.ConfigPath(home)
 	cfg := config.Default()

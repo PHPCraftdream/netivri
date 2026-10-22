@@ -58,7 +58,6 @@ func TestWriteFileAtomicCreatesMissingDir(t *testing.T) {
 // one of the rendered configurations (rename is atomic) and no temp
 // files remain.
 func TestSaveConcurrentWriters(t *testing.T) {
-	requireKtavLib(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.ktav")
 	cfgs := []*Config{Default(), fullConfig(), remoteInitBaseline()}

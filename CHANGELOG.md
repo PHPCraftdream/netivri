@@ -30,6 +30,16 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **No native Ktav library.** The Ktav binding is `ktav-lang/golang` v0.8.1
+  run in its pure-Go backend, so `ktav_cabi` is gone: it is no longer loaded,
+  fetched, packed into the archives and the npm packages, or copied by the
+  installers (an earlier copy next to the binary is removed on the next
+  install). A release is one static binary; `KTAV_LIB_PATH` and the error
+  code `KTAV_LIB_MISSING` no longer exist. The results are the same: the pure
+  backend passes the whole conformance corpus and gave the same values and
+  the same text as the native library on a real configuration and real
+  subscription snapshots. Linux musl (Alpine) stays unsupported: it is not
+  built or tested.
 - **Node check before a switch.** `account set-provider` and `account
   set-country` now check, before writing anything, that every account they
   change still has a stored node on its route (its subscription, or all of

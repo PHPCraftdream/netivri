@@ -20,7 +20,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 const (
@@ -224,7 +223,6 @@ func accountsCommand(t *testing.T, home string, args ...string) (int, string, st
 }
 
 func TestE2EAccountsRoutingAndCLI(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	de, err := auth.Hash(accountsDEPass)
 	if err != nil {
@@ -325,7 +323,6 @@ func TestE2EAccountsRoutingAndCLI(t *testing.T) {
 }
 
 func TestE2EAccountsMissingCountryFailsClosed(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	hash, err := auth.Hash(accountsDEPass)
 	if err != nil {

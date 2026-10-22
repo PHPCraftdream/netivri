@@ -21,7 +21,7 @@ The level determines what the test is allowed to touch:
 
 | Level          | Tag            | File name                   | Allowed                                       |
 |----------------|----------------|-----------------------------|-----------------------------------------------|
-| unit (default) | none           | `*_test.go`                 | Hermetic: no sockets, no network, no external processes. May load the Ktav native library via `KTAV_LIB_PATH`. |
+| unit (default) | none           | `*_test.go`                 | Hermetic: no sockets, no network, no external processes. |
 | integration    | `integration`  | `*_integration_test.go`     | Loopback sockets (`127.0.0.1:0`), embedded Mihomo core, `t.TempDir()` files/dirs. |
 | e2e            | `e2e`          | `*_e2e_test.go`             | Builds and spawns the real `netivri` binary.   |
 | bench          | `bench`        | `*_bench_test.go`           | Benchmarks (hermetic).                         |
@@ -45,11 +45,8 @@ Unit test files have **no** build tag.
   fake HTTP/SOCKS server on loopback.
 - **No secrets in test output.** Never print subscription URLs or tokens;
   fake credentials only.
-- **Ktav native library.** A test that needs it must **fail clearly**
-  (never skip) when `KTAV_LIB_PATH` is unset or points to a missing file.
-  Call `testutil.RequireKtavLib(t)` at the start of such a test; CI always
-  sets `KTAV_LIB_PATH` via `scripts/fetch-ktav-lib.sh`, so a failure means
-  a broken workflow, not an optional feature.
+- **Ktav is pure Go.** Tests that read or write Ktav need no native library,
+  no environment variable and no setup; they run anywhere `go test` runs.
 
 ## Picking a scope in CI
 

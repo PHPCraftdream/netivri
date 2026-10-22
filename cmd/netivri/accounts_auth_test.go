@@ -12,7 +12,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestAuthStatusAccounts(t *testing.T) {
@@ -43,7 +42,6 @@ func TestAuthStatusAccounts(t *testing.T) {
 }
 
 func TestAuthStatusAccountHash(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	hash, err := auth.Hash("test password")
 	if err != nil {
 		t.Fatal(err)
@@ -81,7 +79,6 @@ func TestAuthStatusAccountHash(t *testing.T) {
 }
 
 func TestAccountPersistUpdatesOnlyMatchingPassword(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	path := config.ConfigPath(home)
 	cfg := config.Default()
@@ -140,7 +137,6 @@ func TestAccountStatusJSONSortedAndRedacted(t *testing.T) {
 }
 
 func TestUpMissingAccountCountryDoesNotSpawn(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	cfg := config.Default()
 	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, ExitCountry: "DE"}}
@@ -165,7 +161,6 @@ func TestUpMissingAccountCountryDoesNotSpawn(t *testing.T) {
 }
 
 func TestAccountCommandErrors(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	cases := []struct {
 		name string
 		args []string

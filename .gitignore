@@ -10,5 +10,3 @@
 /worktrees/
 # rush agent prompts and outputs
 /.rush/
-# Ktav native library fetched by CI
-/.ktav-lib/

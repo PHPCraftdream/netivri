@@ -130,14 +130,11 @@ errors are reported from the binding's structured fields only (error
 class, reason, line number, spec section, key path), e.g.
 `subscriptions[1] duplicates subscriptions[0]`.
 
-## Native library
+## Parser
 
-Reading and writing the file uses the Ktav reference parser, a native
-library (`ktav_cabi.dll` / `libktav_cabi.so` / `libktav_cabi.dylib`)
-shipped next to the `netivri` binary. Before the first parse, netivri
-checks `$KTAV_LIB_PATH` or the canonical name next to the executable
-and pins it; if it is missing, netivri fails with the error code
-`KTAV_LIB_MISSING` instead of downloading anything behind your back.
+Reading and writing the file uses the pure-Go backend of the official Ktav
+binding, built into the `netivri` binary: no native library is loaded,
+downloaded or shipped, and nothing can be fetched behind your back.
 
 ## Redaction
 

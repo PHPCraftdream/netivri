@@ -8,11 +8,9 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestAccountCommands(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	var out bytes.Buffer
 	call := func(args ...string) error {

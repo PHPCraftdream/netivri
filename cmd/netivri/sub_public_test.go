@@ -11,7 +11,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // The public entry points (runSub/runNode) must hand command-specific flags
@@ -96,7 +95,6 @@ func TestRunSubListEmpty(t *testing.T) {
 
 // add -> update -> rm through the public entry point with real flag parsing.
 func TestRunSubFlagsEndToEnd(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	var gotProxies []string
 	old := subFetch
 	subFetch = func(_ context.Context, _ string, o fetch.Options) (*fetch.Result, error) {

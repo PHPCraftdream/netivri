@@ -10,14 +10,12 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // seedProviders configures the subscriptions and stores their node snapshots
 // in home; accounts already in the config are kept.
 func seedProviders(t *testing.T, home string, subs map[string][]subscription.Node) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	cfg, err := config.LoadOrDefault(config.ConfigPath(home))
 	if err != nil {
 		t.Fatal(err)

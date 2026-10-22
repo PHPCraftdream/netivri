@@ -10,7 +10,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func testDesired() desiredState {
@@ -136,7 +135,6 @@ func TestWatchSignature(t *testing.T) {
 }
 
 func TestPersistAccountKeepsEditsMadeOnDisk(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	path := config.ConfigPath(home)
 	hash, err := auth.Hash("claimed-password")
@@ -177,7 +175,6 @@ func TestPersistAccountKeepsEditsMadeOnDisk(t *testing.T) {
 }
 
 func TestPersistRefusesAClaimOnAChangedFile(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	path := config.ConfigPath(home)
 	newHash, err := auth.Hash("someone-elses-password")

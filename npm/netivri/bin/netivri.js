@@ -53,7 +53,7 @@ function errorEnvelope(message, hint) {
   };
 }
 
-const HINT_GLIBC = 'netivri on Linux needs glibc 2.17+; musl (Alpine) is not supported';
+const HINT_GLIBC = 'netivri on Linux is built and tested for glibc; musl (Alpine) is not supported';
 const HINT_MISSING_PKG = 'reinstall the package: npm i -g netivri (do not use --no-optional or --omit=optional)';
 
 function unsupportedMessage(platform, arch, isMusl) {

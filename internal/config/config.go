@@ -14,10 +14,7 @@ import (
 )
 
 // Stable error codes produced by this package (see docs/cli.md).
-const (
-	CodeConfigInvalid  = "CONFIG_INVALID"
-	CodeKtavLibMissing = "KTAV_LIB_MISSING"
-)
+const CodeConfigInvalid = "CONFIG_INVALID"
 
 // Selection modes.
 const (

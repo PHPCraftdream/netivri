@@ -13,7 +13,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // Fixed clock for deterministic fetched_at assertions.
@@ -54,7 +53,6 @@ func testApp(t *testing.T, fetchFn func(context.Context, string, fetch.Options) 
 
 func seedConfig(t *testing.T, app *subApp, subs ...config.Subscription) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	cfg := config.Default()
 	cfg.Subscriptions = subs
 	if err := config.Save(app.configPath(), cfg); err != nil {
@@ -96,7 +94,6 @@ func assertCode(t *testing.T, err error, code string, exit int) {
 }
 
 func TestSubAddNew(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	err := app.add([]string{"--home", app.home, "https://provider.example/sub?token=secret123", "--name", "prov"})
 	if err != nil {
@@ -137,7 +134,6 @@ func TestSubAddNew(t *testing.T) {
 }
 
 func TestSubAddIdempotent(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	subURL := "https://provider.example/sub?token=secret123"
 	app, out := testApp(t, fakeBody(testBody))
 	if err := app.add([]string{"--home", app.home, subURL, "--name", "prov"}); err != nil {
@@ -197,7 +193,6 @@ func TestSubAddNameDerivation(t *testing.T) {
 }
 
 func TestSubAddNameConflict(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "prov", URL: "https://a.example/sub"})
 	err := app.add([]string{"--home", app.home, "https://b.example/sub", "--name", "prov"})
@@ -212,7 +207,6 @@ func TestSubAddNameConflict(t *testing.T) {
 }
 
 func TestSubAddFetchFailureLeavesConfigUntouched(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
 		return nil, &cli.Error{Code: "FETCH_FAILED", Message: "boom", Exit: cli.ExitNetwork}
 	})
@@ -233,7 +227,6 @@ func TestSubAddInvalidName(t *testing.T) {
 }
 
 func TestSubAddInvalidProxy(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	// Real fetch.Get: an invalid --via fails before any network activity.
 	app, _ := testApp(t, fetch.Get)
 	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--via", "ftp://proxy.example:1080"})
@@ -246,7 +239,6 @@ func TestSubAddInvalidProxy(t *testing.T) {
 // Proxy selection: --via beats fetch.proxy; otherwise fetch.proxy; with
 // neither the fetcher sees Proxy == "" (explicit direct, no env proxy).
 func TestSubAddProxySelection(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	var got []fetch.Options
 	app, _ := testApp(t, func(_ context.Context, _ string, o fetch.Options) (*fetch.Result, error) {
 		got = append(got, o)
@@ -279,7 +271,6 @@ func TestSubAddProxySelection(t *testing.T) {
 }
 
 func TestSubAddStoresSnapshotFields(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBodyFI))
 	if err := app.add([]string{"--home", app.home, "https://fi.example/sub"}); err != nil {
 		t.Fatalf("add: %v", err)

@@ -83,19 +83,13 @@ npm audit signatures
 `netivri_{VERSION}_{GOOS}_{GOARCH}.zip` (windows) or `.tar.gz` (others):
 
 - `netivri` / `netivri.exe` — the Go binary, built with `CGO_ENABLED=0`.
-- The Ktav native library (`ktav_cabi.dll`, `libktav_cabi.so` or
-  `libktav_cabi.dylib`) next to the binary.
 - `LICENSE`, `README.md`.
 - `THIRD_PARTY_LICENSES/` — license texts of the linked Go modules (see
   `docs/licenses.md`).
 
-The native library ships with every archive because the Ktav Go binding
-resolves `$KTAV_LIB_PATH` first, and netivri sets that in-process before the
-first config call. If the library were missing, the binding would fall back
-to downloading it from GitHub — a hidden, unproxied network fetch that netivri
-must never do (see `docs/design/config-ktav.md`). Library version 0.8.0 is
-pinned to match the Go module, and verified against the SHA256 list in
-`scripts/ktav-lib.sha256` at build time.
+The archive holds no native library: the Ktav Go binding runs its pure-Go
+backend inside the binary (see `docs/design/config-ktav.md`), so nothing is
+loaded, downloaded or fetched at run time.
 
 ## Verifying checksums
 
@@ -112,5 +106,5 @@ these same archives; they repackage, they do not rebuild.
 
 ## Known limitation
 
-musl-based Linux distributions such as Alpine are not supported by the
-Ktav binding. Linux needs glibc 2.17+.
+musl-based Linux distributions such as Alpine are not supported: the Linux
+release is built and tested for glibc only.

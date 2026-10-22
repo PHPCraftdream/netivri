@@ -13,7 +13,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // The daemon applies changes made to its files while it runs: no down and up.
@@ -82,7 +81,6 @@ type liveFixture struct {
 // stored DE node that leads to the upstream p1.
 func startLive(t *testing.T, more ...string) *liveFixture {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	f := &liveFixture{home: t.TempDir(), pass: "live-e2e-password"}
 	var err error
 	if f.hash, err = auth.Hash(f.pass); err != nil {

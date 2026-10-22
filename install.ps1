@@ -1,8 +1,7 @@
 # netivri standalone installer for Windows (PowerShell 5.1 and 7).
 #
 # Downloads the release zip, verifies its SHA256 checksum against the
-# published SHA256SUMS, and installs netivri.exe plus the Ktav native
-# library (ktav_cabi.dll, which must sit next to the binary).
+# published SHA256SUMS, and installs netivri.exe.
 # See docs/install.md.
 
 param(
@@ -22,7 +21,7 @@ Set-StrictMode -Version 2
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
 $Repo = 'PHPCraftdream/netivri'
-$LibName = 'ktav_cabi.dll'
+$LegacyLib = 'ktav_cabi.dll'
 
 function Fail([string]$Message) {
   [Console]::Error.WriteLine("install.ps1: error: $Message")
@@ -170,7 +169,7 @@ function Get-RunningNetivriPid {
 # ktav_cabi.dll from earlier installs. Locked files stay and are counted.
 function Remove-OldFiles {
   $locked = 0
-  foreach ($name in @('netivri.exe', $LibName)) {
+  foreach ($name in @('netivri.exe', $LegacyLib)) {
     $old = Get-ChildItem -LiteralPath $InstallDir -Filter "$name.old-*" -File -ErrorAction SilentlyContinue
     foreach ($f in $old) {
       try {
@@ -186,7 +185,7 @@ function Remove-OldFiles {
 }
 
 # Install-File SRC DST: copy SRC next to DST under a temp name, then move
-# it into place. A running netivri.exe or a mapped ktav_cabi.dll cannot
+# it into place. A running netivri.exe cannot
 # be overwritten or deleted, but it CAN be renamed: so an existing DST is
 # always renamed aside first, and the fresh copy takes its place. The old
 # file is deleted at once when nothing holds it open. On failure the old
@@ -224,7 +223,7 @@ function Install-File([string]$Src, [string]$Dst) {
 }
 
 # Invoke-Install SRC VER LICROOT: shared install steps for both source
-# modes. SRC holds the binary and library; VER is the version string, empty
+# modes. SRC holds the binary; VER is the version string, empty
 # when unknown (-FromDir); LICROOT holds LICENSE and THIRD_PARTY_LICENSES
 # (not SRC for an npm package, where SRC is DIR\bin).
 # Update-UserPath DIR ADD: looks DIR up in the user PATH (entries are compared
@@ -283,7 +282,8 @@ function Invoke-Install([string]$Src, [string]$Ver, [string]$LicRoot) {
   New-Item -ItemType Directory -Path (Join-Path $share 'THIRD_PARTY_LICENSES') -Force | Out-Null
 
   Install-File (Join-Path $Src 'netivri.exe') (Join-Path $InstallDir 'netivri.exe')
-  Install-File (Join-Path $Src $LibName) (Join-Path $InstallDir $LibName)
+  # A library left by an earlier version; the daemon of that version may still hold it.
+  Remove-Item -LiteralPath (Join-Path $InstallDir $LegacyLib) -Force -ErrorAction SilentlyContinue
 
   $license = Join-Path $LicRoot 'LICENSE'
   $third = Join-Path $LicRoot 'THIRD_PARTY_LICENSES'
@@ -326,11 +326,11 @@ function Invoke-Install([string]$Src, [string]$Ver, [string]$LicRoot) {
 function Invoke-Uninstall {
   $share = Join-Path $InstallDir '..\share\netivri'
   $existed = $false
-  foreach ($name in @('netivri.exe', $LibName)) {
+  foreach ($name in @('netivri.exe', $LegacyLib)) {
     $left = Get-ChildItem -LiteralPath $InstallDir -Filter "$name.old-*" -File -ErrorAction SilentlyContinue
     if ($left) { $existed = $true }
   }
-  foreach ($f in @((Join-Path $InstallDir 'netivri.exe'), (Join-Path $InstallDir $LibName))) {
+  foreach ($f in @((Join-Path $InstallDir 'netivri.exe'), (Join-Path $InstallDir $LegacyLib))) {
     if (Test-Path -LiteralPath $f) {
       $existed = $true
       try {
@@ -376,9 +376,6 @@ if ($FromDir) {
     $src = Join-Path $FromDir 'bin'
   } else {
     Fail "no netivri.exe in $FromDir (looked for $FromDir\netivri.exe and $FromDir\bin\netivri.exe)"
-  }
-  if (-not (Test-Path -LiteralPath (Join-Path $src $LibName))) {
-    Fail "$FromDir does not contain $LibName (looked in $src)"
   }
   Invoke-Install $src '' $FromDir
   exit 0
@@ -442,9 +439,6 @@ try {
   }
   if (-not (Test-Path -LiteralPath (Join-Path $src 'netivri.exe'))) {
     Fail 'the archive does not contain netivri.exe'
-  }
-  if (-not (Test-Path -LiteralPath (Join-Path $src $LibName))) {
-    Fail "the archive does not contain $LibName"
   }
 
   Invoke-Install $src $Version $src

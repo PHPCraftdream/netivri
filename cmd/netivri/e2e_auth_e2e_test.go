@@ -11,7 +11,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 const (
@@ -26,7 +25,6 @@ const (
 
 func requireKtav(t *testing.T) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 }
 
 // Scenario 1: no config file at all.

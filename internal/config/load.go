@@ -18,13 +18,6 @@ import (
 // URL — and are never included. A non-*ktav.Error gets a fixed generic
 // message.
 func configFromBindingError(err error) *cli.Error {
-	// Guarded-wrapper failures (KTAV_LIB_MISSING) propagate unchanged,
-	// wherever they occur — including a library check that fails after
-	// an earlier call succeeded.
-	var cliErr *cli.Error
-	if errors.As(err, &cliErr) {
-		return cliErr
-	}
 	var kerr *ktav.Error
 	if !errors.As(err, &kerr) {
 		return invalid("config parse error: the document is not valid Ktav")
@@ -72,14 +65,8 @@ func bindingErrorSummary(err error) string {
 
 // Load reads and validates the configuration file at path. A missing
 // file is reported as an error wrapping os.ErrNotExist; parse or
-// validation problems are *cli.Error with code CONFIG_INVALID. Errors
-// from the guarded ktav wrappers (KTAV_LIB_MISSING) propagate
-// unchanged. The Ktav native library is pinned first so no hidden
-// download happens.
+// validation problems are *cli.Error with code CONFIG_INVALID.
 func Load(path string) (*Config, error) {
-	if err := EnsureKtavLib(); err != nil {
-		return nil, err
-	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
@@ -103,8 +90,7 @@ func Load(path string) (*Config, error) {
 }
 
 // LoadOrDefault loads the configuration file, falling back to Default()
-// when the file does not exist. Any other error is propagated. A missing
-// file never needs the Ktav native library.
+// when the file does not exist. Any other error is propagated.
 func LoadOrDefault(path string) (*Config, error) {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return Default(), nil

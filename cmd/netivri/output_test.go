@@ -8,7 +8,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestWantsJSON(t *testing.T) {
@@ -46,10 +45,6 @@ func TestWantsJSON(t *testing.T) {
 
 func useKtavOutput(t *testing.T) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
-	if err := config.EnsureKtavLib(); err != nil {
-		t.Fatal(err)
-	}
 	cli.UseKtav(config.KtavDumps)
 	t.Cleanup(cli.UseJSON)
 }

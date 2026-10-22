@@ -14,9 +14,6 @@ on:
 permissions:
   contents: read
 
-env:
-  KTAV_VERSION: '0.8.0'
-
 jobs:
   build:
     name: build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -61,14 +58,6 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
 
-      - name: Fetch Ktav native library
-        shell: bash
-        run: |
-          set -euo pipefail
-          KTAV_LIB="$(bash scripts/fetch-ktav-lib.sh \
-            "${{ matrix.goos }}" "${{ matrix.goarch }}" staging | tail -n 1)"
-          echo "KTAV_LIB=$KTAV_LIB" >> "$GITHUB_ENV"
-
       - name: Collect third-party licenses
         shell: bash
         run: bash scripts/collect-licenses.sh build/THIRD_PARTY_LICENSES
@@ -86,7 +75,6 @@ jobs:
           mkdir -p "pkg/$NAME"
           BIN="netivri${{ matrix.goos == 'windows' && '.exe' || '' }}"
           cp "build/$BIN" "pkg/$NAME/"
-          cp "$KTAV_LIB" "pkg/$NAME/"
           cp LICENSE README.md "pkg/$NAME/"
           cp -R build/THIRD_PARTY_LICENSES "pkg/$NAME/"
           if [ "${{ matrix.goos }}" = "windows" ]; then
@@ -281,8 +269,8 @@ jobs:
             shasum -a 256 netivri_*.zip netivri_*.tar.gz > SHA256SUMS
           fi
 
-      # A config file makes the binary load the Ktav native library, which
-      # proves the library was installed next to the binary.
+      # A config file makes `sub list` read and parse the configuration, which
+      # proves the installed binary works on its own.
       - name: Standalone installer (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -342,7 +330,7 @@ jobs:
           dir3="${RUNNER_TEMP}/netivri-inst3/bin"
           rm -rf "${pkg}" "${RUNNER_TEMP}/netivri-inst3"
           mkdir -p "${pkg}/bin"
-          cp "${src}"/netivri "${src}"/libktav_cabi.* "${pkg}/bin/"
+          cp "${src}"/netivri "${pkg}/bin/"
           cp "${src}/LICENSE" "${pkg}/LICENSE"
           cp -R "${src}/THIRD_PARTY_LICENSES" "${pkg}/THIRD_PARTY_LICENSES"
           sh install.sh --from-dir "${pkg}" --dir "${dir3}" --quiet
@@ -393,11 +381,11 @@ jobs:
           & (Join-Path $dir 'netivri.exe') version
           if ($LASTEXITCODE -ne 0) { throw "netivri version failed" }
           & (Join-Path $dir 'netivri.exe') sub list --home $home_
-          if ($LASTEXITCODE -ne 0) { throw "netivri sub list failed (Ktav library missing?)" }
+          if ($LASTEXITCODE -ne 0) { throw "netivri sub list failed" }
 
           # Re-installing while a daemon runs from the install dir: the
-          # running exe and the mapped Ktav DLL cannot be overwritten, so the
-          # installer renames them aside and installs the new files.
+          # running exe cannot be overwritten, so the installer renames it aside
+          # and installs the new file.
           $exe = Join-Path $dir 'netivri.exe'
           & $exe up --port 0 --home $home_ | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'netivri up (daemon) failed' }
@@ -431,7 +419,6 @@ jobs:
           if (Test-Path $pkg) { Remove-Item -Recurse -Force $pkg }
           New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'bin') | Out-Null
           Copy-Item (Join-Path $src 'netivri.exe') (Join-Path $pkg 'bin')
-          Copy-Item (Join-Path $src 'ktav_cabi.dll') (Join-Path $pkg 'bin')
           Copy-Item (Join-Path $src 'LICENSE') $pkg
           Copy-Item -Recurse (Join-Path $src 'THIRD_PARTY_LICENSES') $pkg
           $dir3 = Join-Path $env:RUNNER_TEMP 'netivri-inst3\bin'

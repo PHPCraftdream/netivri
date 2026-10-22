@@ -7,7 +7,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func seedStore(t *testing.T, app *subApp, name, body string) {
@@ -23,7 +22,6 @@ func seedStore(t *testing.T, app *subApp, name, body string) {
 }
 
 func TestSubListRedactsURLs(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app,
 		config.Subscription{Name: "a", URL: "https://a.example/sub/topsecret123?token=abcd", Via: "socks5://user:secretpw@127.0.0.1:1080"},
@@ -59,7 +57,6 @@ func TestSubListRedactsURLs(t *testing.T) {
 }
 
 func TestSubListEmpty(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app)
 	if err := app.list(); err != nil {
@@ -73,7 +70,6 @@ func TestSubListEmpty(t *testing.T) {
 }
 
 func TestSubRm(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app,
 		config.Subscription{Name: "a", URL: "https://a.example/sub"},
@@ -104,7 +100,6 @@ func TestSubRm(t *testing.T) {
 }
 
 func TestSubRmWithoutSnapshot(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	if err := app.rm([]string{"--home", app.home, "a"}); err != nil {
@@ -113,7 +108,6 @@ func TestSubRmWithoutSnapshot(t *testing.T) {
 }
 
 func TestSubRmUnknown(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	app, _ := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
 	err := app.rm([]string{"--home", app.home, "nosuch"})

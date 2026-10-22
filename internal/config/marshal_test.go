@@ -1,13 +1,10 @@
 package config
 
 import (
-	"errors"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
 // fullConfig is a fully populated configuration, including a login
@@ -25,7 +22,6 @@ func fullConfig() *Config {
 }
 
 func TestMarshalHasHeaderComment(t *testing.T) {
-	requireKtavLib(t)
 	doc, err := Marshal(Default())
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -39,7 +35,6 @@ func TestMarshalHasHeaderComment(t *testing.T) {
 // whole-file rewrite: Marshal round-trips, and Save+Load is deeply
 // equal to the input.
 func TestMarshalSaveLoadRoundTrip(t *testing.T) {
-	requireKtavLib(t)
 	cfg := fullConfig()
 	doc, err := Marshal(cfg)
 	if err != nil {
@@ -64,7 +59,6 @@ func TestMarshalSaveLoadRoundTrip(t *testing.T) {
 // An explicitly empty subscription list renders like an absent one and
 // must survive the round-trip comparison (nil vs empty slice).
 func TestMarshalEmptySubscriptions(t *testing.T) {
-	requireKtavLib(t)
 	cfg := Default()
 	cfg.Subscriptions = []Subscription{}
 	doc, err := Marshal(cfg)
@@ -77,34 +71,7 @@ func TestMarshalEmptySubscriptions(t *testing.T) {
 }
 
 func TestMarshalNilConfig(t *testing.T) {
-	requireKtavLib(t)
 	if _, err := Marshal(nil); err == nil {
 		t.Fatal("expected an error for a nil config")
-	}
-}
-
-// Errors from the guarded wrappers must propagate UNCHANGED through
-// every public entry point: with KTAV_LIB_PATH pointing at a missing
-// file, Load, Marshal and Save return code KTAV_LIB_MISSING.
-func TestMissingLibPropagatesUnchanged(t *testing.T) {
-	t.Setenv("KTAV_LIB_PATH", filepath.Join(t.TempDir(), "no-such-lib.so"))
-	path := filepath.Join(t.TempDir(), "config.ktav")
-	checks := map[string]func() error{
-		"Load":    func() error { _, err := Load(path); return err },
-		"Marshal": func() error { _, err := Marshal(Default()); return err },
-		"Save":    func() error { return Save(path, Default()) },
-	}
-	for name, check := range checks {
-		err := check()
-		if err == nil {
-			t.Fatalf("%s: expected an error", name)
-		}
-		var cliErr *cli.Error
-		if !errors.As(err, &cliErr) {
-			t.Fatalf("%s: error type = %T, want *cli.Error", name, err)
-		}
-		if cliErr.Code != CodeKtavLibMissing {
-			t.Errorf("%s: code = %q, want %q", name, cliErr.Code, CodeKtavLibMissing)
-		}
 	}
 }

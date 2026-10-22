@@ -6,7 +6,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // accountCommand runs `account <args> --home <home>` and fails the test on error.
@@ -29,7 +28,6 @@ func loadAccounts(t *testing.T, home string) []config.Account {
 }
 
 func TestAccountSetCountryPersists(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	// A country can only be set when some stored node has it.
 	seedProviders(t, home, map[string][]subscription.Node{"s": {node("nl-1", "NL")}})
@@ -47,7 +45,6 @@ func TestAccountSetCountryPersists(t *testing.T) {
 }
 
 func TestAccountRmPersistsAndKeepsOthers(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	accountCommand(t, home, "add", "alice", "--country", "DE")
 	accountCommand(t, home, "add", "bob", "--country", "NL")

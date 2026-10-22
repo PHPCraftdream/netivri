@@ -26,7 +26,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 const (
@@ -358,7 +357,6 @@ func assertStatusSuccess(t *testing.T, st upStatus) {
 // to the default configuration.
 func writeConfig(t *testing.T, home string, mutate func(*config.Config)) {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	cfg := config.Default()
 	mutate(cfg)
 	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
@@ -369,7 +367,6 @@ func writeConfig(t *testing.T, home string, mutate func(*config.Config)) {
 // loadConfigFile reads config.ktav back through config.Load.
 func loadConfigFile(t *testing.T, home string) *config.Config {
 	t.Helper()
-	testutil.RequireKtavLib(t)
 	cfg, err := config.Load(config.ConfigPath(home))
 	if err != nil {
 		t.Fatalf("load config: %v", err)

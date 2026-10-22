@@ -21,7 +21,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // accountsRun runs any netivri subcommand against home. Failure messages
@@ -84,7 +83,6 @@ func accountsSaveSnapshot(t *testing.T, home, name string, nodes []subscription.
 }
 
 func TestE2EAccountsProviderRouting(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	pass := "provider-e2e-password"
 	hash, err := auth.Hash(pass)
@@ -155,7 +153,6 @@ func TestE2EAccountsProviderRouting(t *testing.T) {
 }
 
 func TestE2ESubCountriesProviderForms(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	writeConfig(t, home, func(cfg *config.Config) {
 		cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://main.invalid/sub"}}

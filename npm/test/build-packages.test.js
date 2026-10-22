@@ -25,7 +25,6 @@ function writeFakeArchive(dir, p) {
   if (process.platform !== 'win32') {
     fs.chmodSync(path.join(dir, p.bin), 0o755);
   }
-  fs.writeFileSync(path.join(dir, p.lib), 'fake native library');
   fs.writeFileSync(path.join(dir, 'LICENSE'), 'GPL-3.0-only');
   fs.writeFileSync(path.join(dir, 'README.md'), 'netivri');
   fs.writeFileSync(path.join(dir, 'THIRD_PARTY_LICENSES', 'a.txt'), 'license text');
@@ -153,7 +152,6 @@ test('buildPackages generates platform packages with os/cpu/libc and files', (t)
     assert.equal(manifest.license, 'GPL-3.0-only');
 
     assert.ok(fs.existsSync(path.join(pkgDir, 'bin', p.bin)), `${p.pkg} binary`);
-    assert.ok(fs.existsSync(path.join(pkgDir, 'bin', p.lib)), `${p.pkg} library`);
     assert.ok(fs.existsSync(path.join(pkgDir, 'LICENSE')));
     assert.ok(fs.existsSync(path.join(pkgDir, 'THIRD_PARTY_LICENSES', 'a.txt')));
 
@@ -217,17 +215,6 @@ test('buildPackages rejects a missing binary file', (t) => {
   assert.throws(
     () => buildPackages({ version: VERSION, archiveDir: archives, out }),
     /binary for linux\/arm64/
-  );
-});
-
-test('buildPackages rejects a missing Ktav library', (t) => {
-  const root = tempRoot(t);
-  const archives = makeFakeArchives(root);
-  fs.rmSync(path.join(archives, `netivri_${VERSION}_darwin_amd64`, 'libktav_cabi.dylib'));
-  const out = path.join(root, 'out');
-  assert.throws(
-    () => buildPackages({ version: VERSION, archiveDir: archives, out }),
-    /Ktav library for darwin\/amd64/
   );
 });
 

@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // Numbers inside Raw are float64 here because that is what a decoded file
@@ -31,7 +29,6 @@ func testSnap(fetched time.Time) Snapshot {
 }
 
 func TestStoreRoundTrip(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	dir := t.TempDir()
 	s := NewStore(filepath.Join(dir, "subscriptions"))
 	fetched := time.Now().UTC().Truncate(time.Second)
@@ -92,7 +89,6 @@ func TestStoreRoundTrip(t *testing.T) {
 // What provider links hold: numbers, booleans and null written as text, text
 // that looks like them, nested lists and maps, other scripts.
 func TestStoreRoundTripOfAwkwardValues(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	snap := Snapshot{
 		FetchedAt: time.Now().UTC().Truncate(time.Second),
@@ -133,7 +129,6 @@ func TestStoreRoundTripOfAwkwardValues(t *testing.T) {
 // A value that Ktav cannot hold without change keeps the snapshot in the JSON
 // form instead of damaging it.
 func TestStoreFallsBackToJSONWhenKtavWouldChangeAValue(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	dir := filepath.Join(t.TempDir(), "subscriptions")
 	s := NewStore(dir)
 	snap := Snapshot{
@@ -166,7 +161,6 @@ func TestStoreFallsBackToJSONWhenKtavWouldChangeAValue(t *testing.T) {
 }
 
 func TestStoreReadsAndMigratesTheLegacyJSONFile(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	dir := filepath.Join(t.TempDir(), "subscriptions")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -209,7 +203,6 @@ func TestStoreReadsAndMigratesTheLegacyJSONFile(t *testing.T) {
 }
 
 func TestStoreListWithBothFormsCountsANameOnce(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	dir := filepath.Join(t.TempDir(), "subscriptions")
 	s := NewStore(dir)
 	if err := s.Save("a", testSnap(time.Now())); err != nil {
@@ -232,7 +225,6 @@ func TestStoreListWithBothFormsCountsANameOnce(t *testing.T) {
 }
 
 func TestStoreList(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	for _, name := range []string{"b", "a", "c"} {
 		if err := s.Save(name, testSnap(time.Now())); err != nil {
@@ -262,7 +254,6 @@ func TestStoreList(t *testing.T) {
 }
 
 func TestStoreRemove(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	if err := s.Save("main", testSnap(time.Now())); err != nil {
 		t.Fatal(err)
@@ -284,7 +275,6 @@ func TestStoreRemove(t *testing.T) {
 }
 
 func TestStoreNameValidation(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	bad := []string{"", ".", "..", "a/b", "a b", "a\b", strings.Repeat("a", 65), "sub name", "n\n", "..hidden/escape"}
 	for _, name := range bad {
@@ -307,7 +297,6 @@ func TestStoreNameValidation(t *testing.T) {
 }
 
 func TestStoreCorrupt(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	dir := filepath.Join(t.TempDir(), "subscriptions")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -347,7 +336,6 @@ func TestStoreLoadMissing(t *testing.T) {
 }
 
 func TestStoreConcurrentSave(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {

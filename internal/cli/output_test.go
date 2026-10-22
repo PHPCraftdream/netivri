@@ -214,10 +214,10 @@ func TestKtavErrorCarriesCodeMessageAndHint(t *testing.T) {
 }
 
 func TestKtavFallsBackToJSONWhenTheRendererFails(t *testing.T) {
-	UseKtav(func(any) (string, error) { return "", errors.New("native library missing") })
+	UseKtav(func(any) (string, error) { return "", errors.New("renderer failed") })
 	t.Cleanup(UseJSON)
 	var buf bytes.Buffer
-	Render(&buf, &Error{Code: "KTAV_LIB_MISSING", Message: "Ktav native library not found", Exit: ExitInternal})
+	Render(&buf, &Error{Code: "INTERNAL", Message: "something broke", Exit: ExitInternal})
 	m := decodeEnvelope(t, &buf)
 	if m["ok"] != false {
 		t.Errorf("fallback output = %v, want the JSON error envelope", m)

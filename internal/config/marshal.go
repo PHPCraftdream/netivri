@@ -15,7 +15,6 @@ const managedHeader = "## Managed by netivri: this file is rewritten on change a
 // comment. Before returning, the produced text is parsed back with the
 // guarded strict loader onto Default() and must be deeply equal to the
 // input: netivri never writes a document that does not round-trip.
-// Errors from the ktav wrappers (KTAV_LIB_MISSING) propagate unchanged.
 func Marshal(cfg *Config) (string, error) {
 	if cfg == nil {
 		return "", invalid("configuration must not be nil")
@@ -23,7 +22,7 @@ func Marshal(cfg *Config) (string, error) {
 	body, err := ktavDumps(cfg)
 	if err != nil {
 		// Binding rendering errors get the same structured-fields-only
-		// hygiene as parse errors; guard errors stay unchanged.
+		// hygiene as parse errors.
 		return "", configFromBindingError(err)
 	}
 	doc := managedHeader + body

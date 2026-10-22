@@ -11,7 +11,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func snap(nodes ...subscription.Node) *subscription.Snapshot {
@@ -142,7 +141,6 @@ func TestBuildAccountRoutePoolFailClosed(t *testing.T) {
 }
 
 func TestAccountRoutePoolLoadsStoredSnapshotsAndSkipsMissing(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	store := subscription.NewStore(home + "/subscriptions")
 	if err := store.Save("matching", subscription.Snapshot{Nodes: []subscription.Node{{ID: "1", Country: "DE", Raw: map[string]any{"name": "fixture"}}}}); err != nil {
@@ -220,7 +218,6 @@ func brokenSnapshot(t *testing.T, home, name string) {
 }
 
 func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	brokenSnapshot(t, home, "unused")
 	cfg := &config.Config{
@@ -245,7 +242,6 @@ func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
 }
 
 func TestAccountRoutePoolBrokenSnapshotOfNeededProvider(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	brokenSnapshot(t, home, "p")
 	cfg := &config.Config{

@@ -17,9 +17,8 @@ npm) is the only network path.
   `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`,
   `win32-arm64`) installed as `optionalDependencies` of the main package.
   Each declares `os`, `cpu` and (on Linux) `libc: ["glibc"]`, so npm
-  downloads exactly one. Each contains `bin/netivri[.exe]`, the Ktav native
-  library under its canonical name next to the binary (required by
-  `internal/config/ktavlib.go`), `LICENSE` and `THIRD_PARTY_LICENSES/`.
+  downloads exactly one. Each contains `bin/netivri[.exe]` (a single static
+  file), `LICENSE` and `THIRD_PARTY_LICENSES/`.
 
 If the platform is unsupported, or the platform package is missing (e.g.
 installed with `--omit=optional` or `--no-optional`), the launcher prints
@@ -29,8 +28,8 @@ matching the CLI contract in [`cli.md`](cli.md).
 ## musl / Alpine limitation
 
 The Linux platform packages declare `libc: ["glibc"]`, so npm skips them on
-musl-based systems such as Alpine. The Ktav binding needs glibc 2.17+, so
-Alpine/musl is unsupported for every distribution channel — the npm
+musl-based systems such as Alpine. The Linux release is built and tested
+for glibc only, so Alpine/musl is unsupported for every distribution channel — the npm
 packages and the standalone installer alike. Use a glibc-based
 distribution or a glibc container.
 
@@ -45,8 +44,8 @@ node npm/scripts/build-packages.js \
   --version X.Y.Z --archive-dir {DIR_WITH_EXTRACTED_ARCHIVES} --out {OUT_DIR}
 ```
 
-The script validates that each archive contains the expected binary and
-Ktav library, substitutes the version into every `package.json`, copies
+The script validates that each archive contains the expected binary,
+substitutes the version into every `package.json`, copies
 `LICENSE` and `THIRD_PARTY_LICENSES/` into each package, preserves the
 executable bit, writes only under `--out`, and prints a JSON summary.
 

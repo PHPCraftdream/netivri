@@ -1,8 +1,8 @@
 # Standalone installation (no npm)
 
 The standalone installers download a prebuilt release archive, verify its
-SHA256 checksum, and put the `netivri` binary and the Ktav native library
-next to each other in a user directory. They never rebuild anything, never
+SHA256 checksum, and put the `netivri` binary (a single file) in a user
+directory. They never rebuild anything, never
 use `sudo`, never touch your shell profile, and never prompt.
 
 An npm-based alternative exists; see [docs/npm.md](npm.md).
@@ -43,15 +43,14 @@ curl/wget, tar, sha256sum/shasum (POSIX) and built-in PowerShell cmdlets.
 
 | OS | Architectures | Notes |
 |---|---|---|
-| Linux | amd64, arm64 | glibc 2.17+ required |
+| Linux | amd64, arm64 | glibc distributions |
 | macOS (darwin) | amd64, arm64 | |
 | Windows | amd64, arm64 | PowerShell 5.1 or 7 |
 
 **Alpine and every other musl-based distribution are not supported.** The
-Ktav native library (`libktav_cabi.so`), which must sit next to the binary,
-is built against glibc; the installer detects musl (`ldd --version` or
-`/etc/alpine-release`) and aborts with a clear message. See
-[docs/release.md](release.md) and [docs/design/config-ktav.md](design/config-ktav.md).
+Linux release is built and tested for glibc only; the installer detects musl
+(`ldd --version` or `/etc/alpine-release`) and aborts with a clear message.
+See [docs/release.md](release.md).
 
 ## Options
 
@@ -92,7 +91,7 @@ in place, it replaces them by renaming, which is safe while netivri runs:
 - **Linux / macOS:** the new file is copied to a temp name in the install
   directory and `mv -f`'d over the target. The rename is atomic; the
   running process keeps executing the old file (it holds the old inode,
-  even for the mapped binary and the loaded Ktav library). If a netivri
+  even for the mapped binary). If a netivri
   process runs from the install directory, one note is printed
   (unless `--quiet`):
   `note: netivri is running (pid N); it keeps using the previous version
@@ -106,8 +105,9 @@ in place, it replaces them by renaming, which is safe while netivri runs:
   to delete the renamed-aside file — a file still held open by the running
   daemon simply stays. If the install directory would ever be left without
   a working binary, the old file is renamed back and the install fails.
-  Leftover `netivri.exe.old-*` and `ktav_cabi.dll.old-*` files are cleaned
-  up by the next install or uninstall; when some are still locked the
+  Leftover `netivri.exe.old-*` files (and `ktav_cabi.dll.old-*` files of
+  earlier builds) are cleaned up by the next install or uninstall; when
+  some are still locked the
   installer prints once:
   `note: N old file(s) are still in use and will be removed by the next
   install or uninstall`.
@@ -125,10 +125,10 @@ installer uses this mode npm's own registry integrity check already
 covers the download. Two layouts are accepted:
 
 - **Archive layout** — the extracted release archive: the binary
-  (`netivri` / `netivri.exe`), the Ktav library, `LICENSE` and
-  `THIRD_PARTY_LICENSES/` sit directly in `{DIR}`.
-- **npm platform package layout** — `{DIR}/bin/` holds the binary and the
-  library; `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `{DIR}`.
+  (`netivri` / `netivri.exe`), `LICENSE` and `THIRD_PARTY_LICENSES/` sit
+  directly in `{DIR}`.
+- **npm platform package layout** — `{DIR}/bin/` holds the binary;
+  `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `{DIR}`.
 
 The binary and the library must exist (the install fails otherwise);
 `LICENSE` and `THIRD_PARTY_LICENSES/` are copied when present and silently
@@ -161,7 +161,6 @@ Checksum verification is mandatory and cannot be skipped by any flag
 
 ```
 {DIR}/netivri            (or netivri.exe)   mode 0755, real file, no symlink
-{DIR}/libktav_cabi.so | libktav_cabi.dylib | ktav_cabi.dll
 {DIR}/../share/netivri/LICENSE
 {DIR}/../share/netivri/THIRD_PARTY_LICENSES/
 ```

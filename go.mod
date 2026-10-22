@@ -3,7 +3,7 @@ module github.com/PHPCraftdream/netivri
 go 1.26
 
 require (
-	github.com/ktav-lang/golang v0.8.0
+	github.com/ktav-lang/golang v0.8.1
 	github.com/metacubex/mihomo v1.19.32
 	github.com/sirupsen/logrus v1.9.4
 	go.yaml.in/yaml/v3 v3.0.5

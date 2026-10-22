@@ -15,7 +15,6 @@ import (
 	ktav "github.com/ktav-lang/golang"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 // runOutput runs the real binary with NETIVRI_OUTPUT removed from the
@@ -58,7 +57,6 @@ func loadKtavDoc(t *testing.T, text string) map[string]any {
 }
 
 func TestE2EOutputIsKtavByDefault(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 
 	code, stdout, stderr := runOutput(t, nil, "version")
@@ -103,7 +101,6 @@ func TestE2EOutputIsKtavByDefault(t *testing.T) {
 }
 
 func TestE2EJSONOnRequest(t *testing.T) {
-	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	for name, c := range map[string]struct {
 		env  []string
