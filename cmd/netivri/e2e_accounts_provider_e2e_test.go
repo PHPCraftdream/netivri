@@ -270,7 +270,7 @@ func TestE2ESubCountriesProviderForms(t *testing.T) {
 		t.Fatal("the config file changed")
 	}
 	names, err := os.ReadDir(filepath.Join(home, "subscriptions"))
-	if err != nil || len(names) != 1 || names[0].Name() != "main.json" {
+	if err != nil || len(names) != 1 || names[0].Name() != "main.ktav" {
 		t.Fatalf("subscription store changed: %v (err %v)", names, err)
 	}
 	assertNoSecrets(t, out, stderr, url, "main.invalid")

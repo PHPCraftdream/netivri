@@ -9,6 +9,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
+	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func TestRefreshSchedule(t *testing.T) {
@@ -110,6 +111,7 @@ func TestRefreshInfoInterval(t *testing.T) {
 // A refreshed list that would leave an account without nodes must not replace
 // the working one; a refreshed list that keeps every route is stored.
 func TestRefreshOneKeepsWorkingRoutes(t *testing.T) {
+	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	if err := store.Save("main", subscription.Snapshot{FetchedAt: time.Now().Add(-37 * time.Hour), Nodes: []subscription.Node{node("us-1", "US")}}); err != nil {
@@ -170,6 +172,7 @@ func TestRefreshOneKeepsWorkingRoutes(t *testing.T) {
 }
 
 func TestAccountRoutePoolWithOverride(t *testing.T) {
+	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	if err := store.Save("main", subscription.Snapshot{Nodes: []subscription.Node{node("old", "DE")}}); err != nil {

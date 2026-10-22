@@ -52,7 +52,7 @@ the claimed hash.
 ## Watching the files
 
 Every 2 seconds the daemon takes a signature (size and modification time) of
-`config.ktav` and of every `subscriptions/*.json`. A new signature has to be
+`config.ktav` and of every `subscriptions/*.ktav` (and legacy `*.json`). A new signature has to be
 seen twice in a row before it is applied, so a hand edit that is still being
 written is not read half done. A reload also runs once when the watcher
 starts, to catch what changed between loading and watching.

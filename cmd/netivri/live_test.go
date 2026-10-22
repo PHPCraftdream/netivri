@@ -93,17 +93,30 @@ func TestWatchSignature(t *testing.T) {
 		}
 	}
 	cfgPath := config.ConfigPath(home)
-	subPath := filepath.Join(home, "subscriptions", "main.json")
+	subPath := filepath.Join(home, "subscriptions", "main.ktav")
+	legacyPath := filepath.Join(home, "subscriptions", "old.json")
 
 	write(cfgPath, "listen.port: 7890\n")
 	withConfig := watchSignature(home)
 	if withConfig == empty {
 		t.Error("a new config file does not change the signature")
 	}
-	write(subPath, "{}")
+	write(subPath, "skipped: 0\n")
 	withSub := watchSignature(home)
 	if withSub == withConfig {
 		t.Error("a new subscription does not change the signature")
+	}
+	// A snapshot of an earlier version ({NAME}.json) is watched as well.
+	write(legacyPath, "{}")
+	withLegacy := watchSignature(home)
+	if withLegacy == withSub {
+		t.Error("a legacy .json subscription does not change the signature")
+	}
+	if err := os.Remove(legacyPath); err != nil {
+		t.Fatal(err)
+	}
+	if got := watchSignature(home); got != withSub {
+		t.Error("removing the legacy file does not bring the signature back")
 	}
 	write(filepath.Join(home, "subscriptions", ".netivri-sub-1.tmp"), "half written")
 	write(filepath.Join(home, "stats.db"), "samples")

@@ -445,6 +445,7 @@ func (c *fetchCounter) get(context.Context, string, fetch.Options) (*fetch.Resul
 
 func runRefreshLoop(t *testing.T, interval string, fc *fetchCounter) (*liveDaemon, *subscription.Store, func()) {
 	t.Helper()
+	testutil.RequireKtavLib(t)
 	oldWake, oldDelay, oldFetch := refreshWake, refreshStartDelay, subFetch
 	refreshWake, refreshStartDelay, subFetch = 5*time.Millisecond, 0, fc.get
 	t.Cleanup(func() { refreshWake, refreshStartDelay, subFetch = oldWake, oldDelay, oldFetch })

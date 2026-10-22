@@ -46,6 +46,12 @@ versions; every such change is listed here.
   in the environment, writes JSON as before; scripts and agents should ask for
   it. If the Ktav library cannot be loaded the output falls back to JSON. Help
   is still text, and JSON with `--json`.
+- **Subscription snapshots are stored as Ktav.** The nodes of a subscription
+  are kept in `subscriptions/{NAME}.ktav`, in the format of the configuration
+  file, instead of `{NAME}.json`. A file of an earlier version is still read and
+  is replaced by a `.ktav` file the next time the subscription is updated (by
+  `sub update`, `sub add`, or the daemon's hourly refresh). A snapshot that
+  Ktav could not hold without changing a value stays in the JSON form.
 - A password claimed by the first client is written into the configuration
   file as it is on disk, not from the daemon's copy loaded at start, so an
   `account add` made meanwhile is no longer overwritten. A claim against a file

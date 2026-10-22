@@ -1,7 +1,11 @@
 package config
 
 import (
+	"errors"
+
 	ktav "github.com/ktav-lang/golang"
+
+	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
 // Every call into the ktav binding must go through these wrappers: each
@@ -33,4 +37,20 @@ func ktavDumps(v any) (string, error) {
 		return "", err
 	}
 	return ktav.Dumps(v)
+}
+
+// KtavLoadsInto parses src as Ktav into target (a struct or a map), pinning the
+// native library first. A parse error is reduced to its structured fields
+// (class, reason, line, key path): the binding's own message can quote the
+// source text, which for a stored subscription is a node credential.
+func KtavLoadsInto(src string, target any) error {
+	err := ktavLoadsInto(src, target)
+	if err == nil {
+		return nil
+	}
+	var ce *cli.Error
+	if errors.As(err, &ce) {
+		return ce
+	}
+	return errors.New(bindingErrorSummary(err))
 }

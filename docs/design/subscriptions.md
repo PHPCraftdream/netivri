@@ -83,11 +83,22 @@ snapshot is reported with null fields; the URL is never printed.
 
 ## On-disk layout
 
-`Store` persists one JSON file per subscription under
-`{HOME}/subscriptions/`:
+`Store` persists one Ktav file per subscription under
+`{HOME}/subscriptions/`, in the same format as `config.ktav`:
 
-- `{NAME}.json` — `Snapshot{fetched_at, nodes[], skipped}` including each
-  node's **raw proxy mapping** (needed to build the outbound later).
+- `{NAME}.ktav` — `fetched_at`, `skipped` and `nodes` (a list of records with
+  `id`, `name`, `type`, `server`, `port`, `country` and each node's **raw proxy
+  mapping** `raw`, needed to build the outbound later), under a two-line
+  comment header.
+- A snapshot is written as Ktav only if reading the text back gives exactly
+  the same data: Ktav trims the whitespace around a value and has no place for
+  every string (a multi-line key, a padded text). Such a snapshot is kept as
+  `{NAME}.json`, the form of earlier versions, instead of being damaged.
+- `Load` reads `{NAME}.ktav`, else `{NAME}.json`; `Save` writes the new file
+  and removes the other form, so an installation migrates one subscription at
+  a time, on its next update. `List` and `Remove` cover both forms. A corrupt
+  Ktav file is reported by its error class, reason and line only: the text
+  holds credentials and is never quoted.
 - Names must match `^[A-Za-z0-9._-]{1,64}$` and are not `.`/`..`
   (path traversal); every Store method validates.
 - Files are **secret**: mode `0600`, directory `0700`, written atomically

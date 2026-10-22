@@ -183,7 +183,7 @@ func TestSetCountryChecksTheAccountsOwnProvider(t *testing.T) {
 
 func TestSetCountryRefusedWhenTheSnapshotIsMissing(t *testing.T) {
 	home := switchHome(t)
-	if err := os.Remove(filepath.Join(home, "subscriptions", "p1.json")); err != nil {
+	if err := os.Remove(filepath.Join(home, "subscriptions", "p1.ktav")); err != nil {
 		t.Fatal(err)
 	}
 	wantNoNodes(t, runAccountErr(t, home, "set-country", "alice", "NL"), "alice")
@@ -214,7 +214,7 @@ func TestSetClearingProviderChecksTheCountryAcrossSubscriptions(t *testing.T) {
 	// bob keeps NL; with no provider any subscription may supply it, p1 does.
 	runAccountOK(t, home, "set-provider", "bob", "--none")
 	// Without p1's snapshot only p2 is left: it offers DE but not NL.
-	if err := os.Remove(filepath.Join(home, "subscriptions", "p1.json")); err != nil {
+	if err := os.Remove(filepath.Join(home, "subscriptions", "p1.ktav")); err != nil {
 		t.Fatal(err)
 	}
 	runAccountOK(t, home, "set-country", "bob", "DE")

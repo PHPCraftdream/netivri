@@ -345,7 +345,7 @@ func watchSignature(home string) string {
 	dir := filepath.Join(home, "subscriptions")
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
+		if ext := filepath.Ext(e.Name()); !e.IsDir() && (ext == ".ktav" || ext == ".json") {
 			add(filepath.Join(dir, e.Name()))
 		}
 	}

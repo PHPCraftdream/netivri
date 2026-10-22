@@ -49,6 +49,27 @@ func configFromBindingError(err error) *cli.Error {
 	return invalid("%s", b.String())
 }
 
+// bindingErrorSummary is the part of a Ktav binding error that is safe to
+// show: the structured fields only, never the quoted source text.
+func bindingErrorSummary(err error) string {
+	var kerr *ktav.Error
+	if !errors.As(err, &kerr) {
+		return "the document is not valid Ktav"
+	}
+	var b strings.Builder
+	b.WriteString("Ktav parse error")
+	if kerr.Class != "" {
+		b.WriteString(": " + kerr.Class)
+	}
+	if kerr.Reason != "" {
+		b.WriteString(" (" + kerr.Reason + ")")
+	}
+	if kerr.Line > 0 {
+		b.WriteString(fmt.Sprintf(" at line %d", kerr.Line))
+	}
+	return b.String()
+}
+
 // Load reads and validates the configuration file at path. A missing
 // file is reported as an error wrapping os.ErrNotExist; parse or
 // validation problems are *cli.Error with code CONFIG_INVALID. Errors

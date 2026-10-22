@@ -271,7 +271,7 @@ func TestSubRmRefusesProviderInUse(t *testing.T) {
 	if len(after.Subscriptions) != 1 || len(after.Accounts) != 1 {
 		t.Fatalf("config changed: %+v", after)
 	}
-	if _, err := os.Stat(filepath.Join(app.home, "subscriptions", "p1.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(app.home, "subscriptions", "p1.ktav")); err != nil {
 		t.Fatalf("snapshot removed: %v", err)
 	}
 	out.Reset()

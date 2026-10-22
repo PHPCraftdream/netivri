@@ -11,6 +11,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
+	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 func snap(nodes ...subscription.Node) *subscription.Snapshot {
@@ -141,6 +142,7 @@ func TestBuildAccountRoutePoolFailClosed(t *testing.T) {
 }
 
 func TestAccountRoutePoolLoadsStoredSnapshotsAndSkipsMissing(t *testing.T) {
+	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	store := subscription.NewStore(home + "/subscriptions")
 	if err := store.Save("matching", subscription.Snapshot{Nodes: []subscription.Node{{ID: "1", Country: "DE", Raw: map[string]any{"name": "fixture"}}}}); err != nil {
@@ -212,12 +214,13 @@ func brokenSnapshot(t *testing.T, home, name string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, name+".json"), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, name+".ktav"), []byte("nodes: [\n    {\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
+	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	brokenSnapshot(t, home, "unused")
 	cfg := &config.Config{
@@ -242,6 +245,7 @@ func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
 }
 
 func TestAccountRoutePoolBrokenSnapshotOfNeededProvider(t *testing.T) {
+	testutil.RequireKtavLib(t)
 	home := t.TempDir()
 	brokenSnapshot(t, home, "p")
 	cfg := &config.Config{
