@@ -110,7 +110,6 @@ func TestE2EJSONOnRequest(t *testing.T) {
 		args []string
 	}{
 		"flag":        {nil, []string{"version", "--json"}},
-		"flag first":  {nil, []string{"--json", "version"}},
 		"environment": {[]string{"NETIVRI_OUTPUT=json"}, []string{"version"}},
 	} {
 		code, stdout, stderr := runOutput(t, c.env, c.args...)

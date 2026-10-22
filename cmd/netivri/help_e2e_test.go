@@ -68,7 +68,7 @@ func TestE2EHelpOfOneCommand(t *testing.T) {
 		if code != 0 || stderr != "" {
 			t.Fatalf("netivri %q: exit %d, stderr %q", args, code, stderr)
 		}
-		for _, want := range []string{"netivri sub add - ", "FLAGS", "--via PROXY", "EXAMPLES", "ERRORS", "SUB_EXISTS_NAME"} {
+		for _, want := range []string{"netivri sub add - ", "FLAGS", "--via {PROXY}", "EXAMPLES", "ERRORS", "SUB_EXISTS_NAME"} {
 			if !strings.Contains(stdout, want) {
 				t.Errorf("netivri %q: stdout lacks %q", args, want)
 			}

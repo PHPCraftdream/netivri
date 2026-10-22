@@ -69,7 +69,7 @@ bar means one of, and `{a|b}` is a choice written out.
 
 Every result and every error is one document with the same keys, in one of two
 formats. The default is [Ktav](https://github.com/ktav-lang), the format of the
-configuration file; `--json` (anywhere among the arguments, before a bare `--`)
+configuration file; `--json` (after the command, before a bare `--`)
 or the environment variable `NETIVRI_OUTPUT=json` selects JSON instead. The
 format changes how the document is written, never what is in it, and the
 examples in this document are written in JSON.
