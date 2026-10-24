@@ -10,6 +10,16 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Several providers and countries per account, in priority order.** `provider`
+  and `exit_country` of an account (and `--provider`, `--country`,
+  `account set-provider`, `account set-country`) take a comma-separated list:
+  `--provider main,backup --country DE,NL`. The countries come first, and inside
+  a country the providers; a new connection goes to a node of the first tier
+  that has a node not marked down, so the later ones are fallbacks. A pair
+  without nodes is skipped, a route fails only when it has none at all. The
+  lists are stored in a canonical form, and a provider in any account's list
+  cannot be removed. Single values work as before. See
+  `docs/design/accounts.md`.
 - **More on the release page.** Every release also carries `install.sh` and
   `install.ps1` of the tag, Linux packages (`.deb` and `.rpm`, amd64 and
   arm64), a Scoop manifest (`netivri.json`), a Homebrew formula

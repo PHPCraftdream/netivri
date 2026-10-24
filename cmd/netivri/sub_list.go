@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func (a *subApp) rm(args []string) error {
 		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
 	}
 	for _, ac := range cfg.Accounts {
-		if ac.Provider == name {
+		if providers, _ := config.ParseProviderList(ac.Provider); slices.Contains(providers, name) {
 			return &cli.Error{
 				Code:    "SUB_IN_USE",
 				Message: fmt.Sprintf("subscription %q is bound to an account", name),

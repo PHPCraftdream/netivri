@@ -261,7 +261,7 @@ func TestValidateAccountProvider(t *testing.T) {
 		if !ok || ce.Code != CodeConfigInvalid || ce.Exit != cli.ExitUsage {
 			t.Fatalf("provider %q: error = %#v", provider, err)
 		}
-		want := "accounts[0].provider must be empty or a valid provider name"
+		want := "accounts[0].provider must be empty or a valid provider name, or a comma-separated list of them"
 		if ce.Message != want {
 			t.Fatalf("provider %q: message = %q", provider, ce.Message)
 		}

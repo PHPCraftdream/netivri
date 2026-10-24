@@ -115,13 +115,25 @@ func validAccountLogin(login string) bool {
 	return true
 }
 
-// validRouteKey accepts opaque route keys of 1..128 printable ASCII
+// Longest route key and node label, in printable ASCII characters. A route
+// key can hold the provider and country lists of an account.
+const (
+	maxRouteKeyLen  = 2048
+	maxNodeLabelLen = 128
+)
+
+// validRouteKey accepts opaque route keys of 1..2048 printable ASCII
 // characters (0x20..0x7E). Keys are internal only and never reach a rule.
-func validRouteKey(key string) bool {
-	if len(key) < 1 || len(key) > 128 {
+func validRouteKey(key string) bool { return printableASCII(key, maxRouteKeyLen) }
+
+// validNodeLabel accepts statistics labels of 1..128 printable ASCII characters.
+func validNodeLabel(label string) bool { return printableASCII(label, maxNodeLabelLen) }
+
+func printableASCII(s string, max int) bool {
+	if len(s) < 1 || len(s) > max {
 		return false
 	}
-	for _, c := range []byte(key) {
+	for _, c := range []byte(s) {
 		if c < 0x20 || c > 0x7e {
 			return false
 		}

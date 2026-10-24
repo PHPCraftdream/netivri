@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/auth"
@@ -56,6 +57,7 @@ func TestFingerprint(t *testing.T) {
 		"node server":   func(d *desiredState) { d.pool.nodes["p~DE"][0]["server"] = "192.0.2.2" },
 		"node removed":  func(d *desiredState) { d.pool.nodes["p~DE"] = nil },
 		"node label":    func(d *desiredState) { d.pool.labels["p~DE"][0] = "p/n2" },
+		"node tier":     func(d *desiredState) { d.pool.tiers = map[string][]int{"p~DE": {1}} },
 		"account route": func(d *desiredState) { d.pool.accountRoutes["alice"] = "p~NL" },
 		"account added": func(d *desiredState) {
 			d.cfg.Accounts = append(d.cfg.Accounts, config.Account{Login: "carol", Password: "init"})
@@ -229,5 +231,16 @@ func TestPortOf(t *testing.T) {
 		if got := portOf(addr); got != want {
 			t.Errorf("portOf(%q) = %d, want %d", addr, got, want)
 		}
+	}
+}
+
+// The route tiers reach the core: without them the priority order of the
+// account lists would be ignored.
+func TestCoreOptionsCarryNodeTiers(t *testing.T) {
+	d := testDesired()
+	d.pool.tiers = map[string][]int{"p~DE": {0}}
+	o := (&liveDaemon{}).coreOptions(d, nil, nil)
+	if !reflect.DeepEqual(o.NodeTiers, d.pool.tiers) {
+		t.Fatalf("NodeTiers = %v, want %v", o.NodeTiers, d.pool.tiers)
 	}
 }

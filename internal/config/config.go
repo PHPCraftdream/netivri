@@ -283,17 +283,14 @@ func (c *Config) Validate() error {
 		if err := checkScalar(fmt.Sprintf("accounts[%d].password", i), a.Password); err != nil {
 			return err
 		}
-		if a.ExitCountry != "" {
-			_, ok := NormalizeCountry(a.ExitCountry)
-			if !ok {
-				return invalid("accounts[%d].exit_country must be empty or two ASCII letters", i)
-			}
+		if _, ok := ParseCountryList(a.ExitCountry); !ok {
+			return invalid("accounts[%d].exit_country must be empty or a comma-separated list of two-letter country codes", i)
 		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].exit_country", i), a.ExitCountry); err != nil {
 			return err
 		}
-		if a.Provider != "" && !ValidProviderName(a.Provider) {
-			return invalid("accounts[%d].provider must be empty or a valid provider name", i)
+		if _, ok := ParseProviderList(a.Provider); !ok {
+			return invalid("accounts[%d].provider must be empty or a valid provider name, or a comma-separated list of them", i)
 		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].provider", i), a.Provider); err != nil {
 			return err
@@ -305,18 +302,19 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) normalizeCountries() error {
+// normalizeAccountLists puts the provider and exit-country lists of every
+// account into the canonical stored form: no blanks, upper-case codes, a
+// repeated item kept once. An invalid list is left for Validate to report.
+func (c *Config) normalizeAccountLists() {
 	for i := range c.Accounts {
-		if c.Accounts[i].ExitCountry == "" {
-			continue
+		a := &c.Accounts[i]
+		if codes, ok := ParseCountryList(a.ExitCountry); ok {
+			a.ExitCountry = JoinList(codes)
 		}
-		country, ok := NormalizeCountry(c.Accounts[i].ExitCountry)
-		if !ok {
-			return invalid("accounts[%d].exit_country must be empty or two ASCII letters", i)
+		if names, ok := ParseProviderList(a.Provider); ok {
+			a.Provider = JoinList(names)
 		}
-		c.Accounts[i].ExitCountry = country
 	}
-	return nil
 }
 
 func (c *Config) usesInitAuth() bool {

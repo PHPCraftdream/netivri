@@ -59,6 +59,7 @@ type stickyGroup struct {
 	table    *affinityTable
 	health   *healthTable
 	healths  []*nodeHealth // per member, same order; Down() is one atomic load
+	tiers    []int         // priority tier per member (lower first), nil = one tier
 	isDownFn func(member int) bool
 	observer Observer
 	hedgeAll bool // test seam: fake members are hedgeable when set
@@ -115,6 +116,11 @@ func (g *stickyGroup) memberDown(member int) bool {
 func (g *stickyGroup) pickFor(login, site string) func() (int, bool) {
 	return func() (int, bool) {
 		views := g.health.views(g.labels)
+		if len(g.tiers) == len(views) {
+			for i := range views {
+				views[i].Tier = g.tiers[i]
+			}
+		}
 		index := selectMember(views, login, site)
 		if index < 0 {
 			index = 0
@@ -250,6 +256,26 @@ type routePlan struct {
 	index  int
 	names  []string // internal proxy names, member order
 	labels []string // statistics labels, member order
+	tiers  []int    // priority tier per member, lower first; nil = one tier
+}
+
+// checkedTiers validates the tiers of a route of n nodes: none, or one
+// non-negative tier per node that never decreases along the route.
+func checkedTiers(tiers []int, n int) ([]int, error) {
+	if len(tiers) == 0 {
+		return nil, nil
+	}
+	if len(tiers) != n {
+		return nil, nodeInvalid("node tier count does not match the route")
+	}
+	prev := 0
+	for _, tier := range tiers {
+		if tier < prev {
+			return nil, nodeInvalid("node tiers must not decrease along the route")
+		}
+		prev = tier
+	}
+	return append([]int(nil), tiers...), nil
 }
 
 // buildRoutePlans mirrors the route indexing of prepareRoutes (route keys are
@@ -268,7 +294,7 @@ func buildRoutePlans(o Options) ([]routePlan, error) {
 			return nil, nodeInvalid("node label count does not match the route")
 		}
 		for _, label := range labels {
-			if !validRouteKey(label) {
+			if !validNodeLabel(label) {
 				return nil, nodeInvalid("invalid node label")
 			}
 		}
@@ -306,12 +332,17 @@ func buildRoutePlans(o Options) ([]routePlan, error) {
 				return nil, nodeInvalid("node label count does not match the route")
 			}
 			for _, label := range labels {
-				if !validRouteKey(label) {
+				if !validNodeLabel(label) {
 					return nil, nodeInvalid("invalid node label")
 				}
 			}
 			plan.labels = append([]string(nil), labels...)
 		}
+		tiers, err := checkedTiers(o.NodeTiers[key], len(nodes))
+		if err != nil {
+			return nil, err
+		}
+		plan.tiers = tiers
 		plans = append(plans, plan)
 	}
 	return plans, nil
@@ -336,7 +367,9 @@ func installStickyGroups(plans []routePlan, table *affinityTable, health *health
 			}
 			members = append(members, proxy)
 		}
-		updated[name] = adapter.NewProxy(newStickyGroup(name, members, plan.labels, table, health, observer))
+		group := newStickyGroup(name, members, plan.labels, table, health, observer)
+		group.tiers = plan.tiers
+		updated[name] = adapter.NewProxy(group)
 	}
 	tunnel.UpdateProxies(updated, tunnel.Providers())
 	return nil

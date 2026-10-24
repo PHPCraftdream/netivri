@@ -30,11 +30,11 @@ netivri sub countries [{SUBSCRIPTION} | --url {URL} [--via {PROXY}]]
 netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
 netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]
 
-netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}] [--country {COUNTRY}]
+netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
 netivri account list
-netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY} | --all {COUNTRY}
+netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...] | --all {COUNTRY}[,{COUNTRY}...]
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
-netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION} | --all {SUBSCRIPTION}
+netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...] | --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account rm {ACCOUNT}
 
@@ -300,16 +300,25 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 
 - `add` creates the account with the `init` password placeholder: the first
   client that authenticates with that login sets the password. `--provider
-  {SUBSCRIPTION}` binds it to a provider (subscription). Repeating `add` with
-  the same provider and country succeeds with `existing: true`; any
-  difference is `ACCOUNT_EXISTS` (exit 6).
+  {SUBSCRIPTION}` binds it to a provider (subscription), `--country
+  {COUNTRY}` to an exit country. Each takes one value or **several separated
+  by commas, in priority order** (`--provider main,backup --country
+  DE,NL`; spaces around a comma are ignored, a repeated item counts once, the
+  value is stored in this canonical form, with upper-case codes). Repeating
+  `add` with the same providers and countries in the same order succeeds with
+  `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
+  (exit 6).
 - `list` reports `login`, `provider`, `exit_country` and `password_set`
   (`false` until the placeholder is claimed); it never returns a password or
   a hash.
-- `set-country` takes an ISO 3166-1 alpha-2 code or `--none` to clear it.
-- `set-provider` binds the accounts to a provider, or `--none` clears it. A
-  provider must match `[A-Za-z0-9._-]{1,64}` (usage error otherwise) and be
-  a configured subscription (`SUB_NOT_FOUND`, exit 5).
+- `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
+  codes in priority order, or `--none` to clear it. A malformed code or list
+  is `COUNTRY_INVALID`.
+- `set-provider` binds the accounts to a provider or to a comma-separated list
+  of providers in priority order, or `--none` clears it. Each provider must
+  match `[A-Za-z0-9._-]{1,64}` (usage error otherwise) and be a configured
+  subscription (`SUB_NOT_FOUND`, exit 5). A list holds at most 16 providers,
+  a country list at most 32 codes.
 - `set-country` and `set-provider` change several accounts at once: the first
   argument is one login or several separated by commas with no spaces
   (`alice,bob`), or `--all` stands for every account (`ACCOUNT_NOT_FOUND`,
@@ -318,9 +327,11 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   list counts once.
 - **Check before the change.** Before anything is written, every account
   whose provider or country would change is checked as `up` would check it:
-  its route (the new provider, or its own provider, or every subscription when
-  it has none, together with the new or its own country) must have a stored
-  node. If one account fails, nothing is changed for any account and the
+  its route (the new providers, or its own, or every subscription when it
+  has none, together with the new or its own countries) must have a stored
+  node; one listed provider or country without nodes does not matter while
+  another one has some. If one account fails, nothing is changed for any
+  account and the
   command ends with `NO_NODES_FOR_COUNTRY` (exit 5; the message names the
   account, the hint points to `netivri sub countries` and `netivri sub
   update`). An account whose value stays the same is not checked, so repeating
@@ -341,17 +352,28 @@ set-provider with one login, and rm. `set-country` and `set-provider` with
 several logins or `--all` print the `{"accounts": [...]}` form of `list` with
 the accounts that were addressed, in the order given (`--all`: config order).
 
-Routing is applied by `up`. An account with a provider and/or an exit country
-needs stored subscription snapshots that hold matching nodes (provider set:
-only that provider; country set: only nodes of that country); `up` does not
-require those nodes to be alive. If no stored node matches, `up` fails with
-`NO_NODES_FOR_COUNTRY` (exit 5, hint `netivri sub update`; the message names
-the country and/or the provider, never a URL) before binding anything.
+Routing is applied by `up`. An account with providers and/or exit countries
+needs stored subscription snapshots that hold matching nodes (providers set:
+only those providers; countries set: only nodes of those countries); `up` does
+not require those nodes to be alive. If no stored node matches at all, `up`
+fails with `NO_NODES_FOR_COUNTRY` (exit 5, hint `netivri sub update`; the
+message names the countries and/or the providers, never a URL) before binding
+anything.
 
-The nodes of a route are ordered by ascending node id (ties across
-providers by provider name) and used only for the accounts of that
-route: there is no fallback to a direct connection or to another
-country or provider. Accounts without a provider and country, and
+**Priority.** A route is a list of tiers tried in order, and the order is the
+order of the lists. The countries come first: all the nodes of the first
+country, then those of the second, and so on. Inside a country the providers
+follow in their order, so `--provider main,backup --country DE,NL` tries
+`main` in DE, `backup` in DE, `main` in NL, `backup` in NL. A tier is the
+nodes of one (country, provider) pair, and a pair without nodes is skipped.
+Without a provider list every provider shares one tier per country; without a
+country list the tiers are the providers alone. A new connection goes to a
+node of the first tier that has a node not marked down (the fastest of them,
+by the usual latency choice), so a later tier is only a fallback; a site that
+is already bound to a node keeps it while it is up, even after a better tier
+recovers. A route is used only for the accounts that name it: there is no
+fallback to a direct connection or to a country or provider that is not in the
+lists. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.
 A running daemon applies a change to accounts by itself, within a few seconds
 (no `down` and `up` needed): it restarts its listener on the same port, which
@@ -673,7 +695,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
-| `SUB_IN_USE` | 6 | `sub rm` of a subscription an account is bound to as its provider (nothing is removed; hint: `netivri account set-provider {ACCOUNT} --none`) |
+| `SUB_IN_USE` | 6 | `sub rm` of a subscription that is the provider, or one of the providers in the list, of an account (nothing is removed; hint: `netivri account set-provider {ACCOUNT} --none`) |
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |

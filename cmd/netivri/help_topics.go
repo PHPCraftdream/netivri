@@ -294,8 +294,11 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri account {add|list|set-country|set-provider|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
-			"to a direct connection or to another country. An account with neither uses the default route, which is " +
-			"direct.\n\n" +
+			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
+			"default route, which is direct.\n\n" +
+			"Both may be a comma-separated list in priority order: the countries come first, and inside a country " +
+			"the providers, so 'main,backup' with 'DE,NL' tries main in DE, backup in DE, main in NL, backup in NL. " +
+			"New connections use the first of these that has a node that is up; the later ones are fallbacks.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
 			"A running daemon applies account changes by itself within a few seconds. Its listener restarts on the " +
@@ -309,20 +312,22 @@ var helpTopics = []helpTopic{
 		Name:    "account add",
 		Group:   groupAccount,
 		Summary: "Create an account",
-		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}] [--country {COUNTRY}]"},
+		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]"},
 		Description: "Creates a proxy login with the password placeholder 'init': the first client that connects with " +
 			"this login sets the password. A login uses the characters A-Z a-z 0-9 . _ @ - (and is not 'init').\n\n" +
-			"Repeating the command with the same provider and country succeeds and reports existing true; any " +
-			"difference for an existing login is ACCOUNT_EXISTS (use set-country or set-provider to change it). " +
+			"Repeating the command with the same providers and countries, in the same order, succeeds and reports " +
+			"existing true; any difference for an existing login is ACCOUNT_EXISTS (use set-country or " +
+			"set-provider to change it). " +
 			"A running daemon applies the new account within a few seconds.",
 		Flags: []helpFlag{
-			{"--provider {SUBSCRIPTION}", "Route only through the nodes of this subscription. It must be a configured subscription."},
-			{"--country {COUNTRY}", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case."},
+			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
+			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
 			{"Exit through the Netherlands, any subscription that has such nodes", "netivri account add bob --country NL"},
 			{"Any country of one subscription", "netivri account add carol --provider main"},
+			{"Germany first, then the Netherlands; main first, then backup", "netivri account add dave --provider main,backup --country DE,NL"},
 			{"Connect: the first password you send for alice becomes her password", "curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org"},
 		},
 		Errors: []helpError{
@@ -348,11 +353,12 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Change or clear the exit country of an account",
 		Usage: []string{
-			"netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}",
-			"netivri account set-country --all {COUNTRY}",
+			"netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...]",
+			"netivri account set-country --all {COUNTRY}[,{COUNTRY}...]",
 			"netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none",
 		},
-		Description: "Sets the exit country of existing accounts, or clears it with --none. {ACCOUNT} is the login of an " +
+		Description: "Sets the exit country of existing accounts, or clears it with --none. The value is one code or " +
+			"several, separated by commas and in priority order (DE,NL). {ACCOUNT} is the login of an " +
 			"account, for example alice; several logins are separated by commas, with no spaces, and --all means every " +
 			"account.\n\n" +
 			"Before anything is written, every account is checked against the stored nodes of its own subscription (of " +
@@ -368,6 +374,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Move alice to the Netherlands", "netivri account set-country alice NL"},
 			{"Move alice and bob together", "netivri account set-country alice,bob DE"},
+			{"Germany first, the Netherlands as the fallback", "netivri account set-country alice DE,NL"},
 			{"Move every account to Finland", "netivri account set-country --all FI"},
 			{"Let alice use every country of her provider", "netivri account set-country alice --none"},
 		},
@@ -384,11 +391,12 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Change or clear the provider of an account",
 		Usage: []string{
-			"netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}",
-			"netivri account set-provider --all {SUBSCRIPTION}",
+			"netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...]",
+			"netivri account set-provider --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]",
 			"netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none",
 		},
-		Description: "Binds existing accounts to a configured subscription, or clears the binding with --none. " +
+		Description: "Binds existing accounts to a configured subscription, or to several separated by commas and in " +
+			"priority order (main,backup), or clears the binding with --none. " +
 			"{ACCOUNT} is the login of an account, for example alice; {SUBSCRIPTION} is the name of a subscription, for " +
 			"example main (see 'netivri sub list'). Several logins are separated by commas, with no spaces, and --all " +
 			"means every account.\n\n" +
@@ -405,6 +413,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Route alice through the subscription main", "netivri account set-provider alice main"},
 			{"Switch alice and bob to the subscription own", "netivri account set-provider alice,bob own"},
+			{"main first, own as the fallback", "netivri account set-provider alice main,own"},
 			{"Switch every account to the subscription own", "netivri account set-provider --all own"},
 			{"Free alice from her provider, for example before 'sub rm'", "netivri account set-provider alice --none"},
 		},

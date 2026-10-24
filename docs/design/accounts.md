@@ -25,9 +25,45 @@ separately:
 | `main` | empty | a node of provider `main`, any country |
 | `main` | `DE` | a node in `DE` of provider `main` only |
 
-Nodes of a route are ordered by stable node id; with several providers the
-order is by node id across all of them. A provider that is bound to an
-account cannot be removed (`sub rm` fails with `SUB_IN_USE`, exit 6).
+`provider` and `exit_country` may each be a **list**, items separated by
+commas (`main,backup`, `DE,NL`). The order is the priority, see
+[Priority](#priority). A provider that is in the list of any account cannot be
+removed (`sub rm` fails with `SUB_IN_USE`, exit 6).
+
+## Priority
+
+A route is a list of **tiers**. The countries come first, in the order
+listed; inside a country the providers follow, in the order listed. A tier is
+the nodes of one (country, provider) pair, ordered by node id:
+
+| `provider` | `exit_country` | Tiers, first to last |
+| --- | --- | --- |
+| `main,backup` | empty | `main`, `backup` |
+| empty | `DE,NL` | DE (all providers, one tier), NL (all providers, one tier) |
+| `main,backup` | `DE,NL` | `main` in DE, `backup` in DE, `main` in NL, `backup` in NL |
+
+Rules:
+
+- Without a provider list all providers share a tier (nodes ordered by node id,
+  ties by provider name), as before lists existed. Without a country list the
+  tiers are the providers alone.
+- A pair without a stored node is skipped and takes no tier. A route fails
+  (`NO_NODES_FOR_COUNTRY`) only when it has no node at all; one listed
+  provider or country without nodes is not an error while another has some.
+- Selection: a new binding goes to a node of the **first tier that has a node
+  not marked down**; inside the tier the usual choice applies (the lowest
+  score, near-equal nodes shared by hash). When every node of a tier is down
+  the next tier is used; when every node of the route is down the first tier
+  is tried again. A later tier is a fallback, never a load-sharing partner.
+- A binding of a site to a node (the sticky table) is kept while the node is
+  up, so traffic does not move back to a better tier by itself when it
+  recovers: new sites go there, existing ones when their node goes down or
+  their binding expires.
+- Lists never reach beyond themselves: no fallback to a provider or country
+  that is not listed, and none to a direct connection.
+- The canonical stored form drops blanks and repeats (the first occurrence
+  keeps its place) and upper-cases codes; the route key is built from it, so
+  two spellings of one list are one route. Limits: 16 providers, 32 countries.
 
 ## Config shape
 
@@ -56,8 +92,8 @@ docs/config.md.)
 | --- | --- |
 | `login` | Required, unique, 1..64 characters of `A-Za-z0-9._@-`. The restricted alphabet keeps the login safe inside a Mihomo rule (`IN-USER,{LOGIN},{GROUP}`: no commas, slashes or spaces). |
 | `password` | Required: an argon2id PHC hash, or the placeholder `init`. |
-| `provider` | Optional: the name of a subscription (`subscriptions[].name`, 1..64 characters of `A-Za-z0-9._-`). Empty or missing = every provider. Config validation checks the shape only; `up` and the `account` commands check that the provider exists. |
-| `exit_country` | Optional ISO 3166-1 alpha-2 code, stored upper case (`de` is normalised to `DE`). Empty or missing = default route. |
+| `provider` | Optional: the name of a subscription (`subscriptions[].name`, 1..64 characters of `A-Za-z0-9._-`), or a comma-separated list of names in priority order (at most 16). Empty or missing = every provider. Config validation checks the shape only; `up` and the `account` commands check that the provider exists. |
+| `exit_country` | Optional ISO 3166-1 alpha-2 code, stored upper case (`de` is normalised to `DE`), or a comma-separated list of codes in priority order (at most 32). Empty or missing = default route. |
 
 Rules that follow from the choice of a separate object:
 
@@ -106,8 +142,9 @@ Consequences:
 - **Fail closed.** An account whose route has no node (its country has none,
   its provider is unknown or holds no snapshot or no node of the country) is
   rejected at `up` with `NO_NODES_FOR_COUNTRY` (exit 5); a node that dies
-  later makes the connections of that account fail. There is never a fallback to direct and
-  never to another country.
+  later makes the connections of that account fail, unless a later tier of its
+  route has a node. There is never a fallback to direct and never to a country
+  or provider outside the account's lists.
 - Accounts without a country, and `auth`'s account, take the default route.
 - A running daemon applies changes by itself (see [live-reload.md](live-reload.md));
   the listener restarts, so open connections end.
@@ -173,6 +210,10 @@ type Options struct {
 	RouteNodes map[string][]map[string]any
 	// AccountRoute maps an authenticated login to the route key it uses.
 	AccountRoute map[string]string
+	// NodeTiers gives, per route key, a priority tier for every node of
+	// RouteNodes[key] (same order, never decreasing); nil = one tier. A new
+	// binding goes to the first tier that has a node not down.
+	NodeTiers map[string][]int
 }
 // func (i *Instance) AccountRoutes() map[string]string // login -> route key
 

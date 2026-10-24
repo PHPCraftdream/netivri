@@ -16,10 +16,18 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
-// routeKey builds the opaque route key of a (provider, country) pair; both
-// parts are already normalised (upper-case country) and either may be empty.
-func routeKey(provider, country string) string {
-	return provider + "~" + country
+// routeLists returns the canonical provider and country lists of an account:
+// blanks dropped, codes upper-cased, a repeated item kept once (the first).
+func routeLists(a config.Account) (providers, countries []string) {
+	providers, _ = config.ParseProviderList(a.Provider)
+	countries, _ = config.ParseCountryList(a.ExitCountry)
+	return providers, countries
+}
+
+// routeKey builds the opaque route key of a (providers, countries) pair, each
+// a canonical comma-separated list that may be empty.
+func routeKey(providers, countries string) string {
+	return providers + "~" + countries
 }
 
 // snapshotDemand tells which stored snapshots the routes read: all of them
@@ -27,10 +35,13 @@ func routeKey(provider, country string) string {
 func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool) {
 	named = make(map[string]bool)
 	for _, a := range accounts {
+		providers, countries := routeLists(a)
 		switch {
-		case a.Provider != "":
-			named[a.Provider] = true
-		case a.ExitCountry != "":
+		case len(providers) > 0:
+			for _, p := range providers {
+				named[p] = true
+			}
+		case len(countries) > 0:
 			all = true
 		}
 	}
@@ -72,11 +83,13 @@ func accountRoutePoolWith(home string, cfg *config.Config, override map[string]*
 }
 
 // routePool is the outcome of buildAccountRoutePool: the nodes of every
-// route, a stable label per node (same order) and each account's route key.
-// infos describes every distinct node for the statistics store.
+// route, a stable label per node and a priority tier per node (same order), and
+// each account's route key. infos describes every distinct node for the
+// statistics store.
 type routePool struct {
 	nodes         map[string][]map[string]any
 	labels        map[string][]string
+	tiers         map[string][]int
 	infos         []stats.NodeInfo
 	accountRoutes map[string]string
 }
@@ -87,32 +100,39 @@ func nodeLabel(provider, id string) string {
 }
 
 // buildAccountRoutePool is a pure function over the stored snapshots: for
-// every account with a provider and/or an exit country it collects the
-// route's nodes per docs/design/accounts.md, ordered by ascending node id
-// (ties broken by provider name). An account with neither has no route.
-// A route without nodes is a hard error: `up` fails closed.
+// every account with providers and/or exit countries it collects the route's
+// nodes per docs/design/accounts.md. A route is a list of tiers, tried in
+// order: the countries in the order listed, and within a country the
+// providers in the order listed; a tier holds the nodes of one (country,
+// provider) pair by ascending node id. Without a provider list every
+// provider shares one tier per country (ascending node id, ties by provider
+// name); without a country list the tiers are the providers alone. An account
+// with neither has no route. A route without any node is a hard error: `up`
+// fails closed.
 func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot) (routePool, error) {
 	pool := routePool{
 		nodes:         map[string][]map[string]any{},
 		labels:        map[string][]string{},
+		tiers:         map[string][]int{},
 		accountRoutes: map[string]string{},
 	}
 	infoSeen := make(map[string]bool)
 	type demand struct {
-		provider string
-		country  string
+		providers []string
+		countries []string
 	}
-	seen := make(map[demand]bool)
+	seen := make(map[string]bool)
 	var wanted []demand // in account order, so the first failure is stable
 	for _, a := range accounts {
-		if a.Provider == "" && a.ExitCountry == "" {
+		providers, countries := routeLists(a)
+		if len(providers) == 0 && len(countries) == 0 {
 			continue
 		}
-		pool.accountRoutes[a.Login] = routeKey(a.Provider, a.ExitCountry)
-		d := demand{a.Provider, a.ExitCountry}
-		if !seen[d] {
-			seen[d] = true
-			wanted = append(wanted, d)
+		key := routeKey(config.JoinList(providers), config.JoinList(countries))
+		pool.accountRoutes[a.Login] = key
+		if !seen[key] {
+			seen[key] = true
+			wanted = append(wanted, demand{providers, countries})
 		}
 	}
 	if len(wanted) == 0 {
@@ -125,9 +145,18 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 	}
 	sort.Strings(allProviders)
 	for _, d := range wanted {
-		names := allProviders
-		if d.provider != "" {
-			names = []string{d.provider}
+		// Each group is the set of providers that share a tier.
+		var groups [][]string
+		if len(d.providers) > 0 {
+			for _, name := range d.providers {
+				groups = append(groups, []string{name})
+			}
+		} else {
+			groups = [][]string{allProviders}
+		}
+		countries := d.countries
+		if len(countries) == 0 {
+			countries = []string{""} // any country
 		}
 		type poolNode struct {
 			provider string
@@ -135,53 +164,63 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 			country  string
 			raw      map[string]any
 		}
-		var nodes []poolNode
-		for _, name := range names {
-			snap := snapshots[name]
-			if snap == nil {
-				continue
-			}
-			for _, n := range snap.Nodes {
-				if d.country != "" && n.Country != d.country {
+		key := routeKey(config.JoinList(d.providers), config.JoinList(d.countries))
+		tier := 0
+		for _, country := range countries {
+			for _, names := range groups {
+				var nodes []poolNode
+				for _, name := range names {
+					snap := snapshots[name]
+					if snap == nil {
+						continue
+					}
+					for _, n := range snap.Nodes {
+						if country != "" && n.Country != country {
+							continue
+						}
+						nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, raw: n.Raw})
+					}
+				}
+				if len(nodes) == 0 {
 					continue
 				}
-				nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, raw: n.Raw})
+				sort.Slice(nodes, func(i, j int) bool {
+					if nodes[i].id != nodes[j].id {
+						return nodes[i].id < nodes[j].id
+					}
+					return nodes[i].provider < nodes[j].provider
+				})
+				for _, n := range nodes {
+					label := nodeLabel(n.provider, n.id)
+					pool.nodes[key] = append(pool.nodes[key], n.raw)
+					pool.labels[key] = append(pool.labels[key], label)
+					pool.tiers[key] = append(pool.tiers[key], tier)
+					if !infoSeen[label] {
+						infoSeen[label] = true
+						pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country})
+					}
+				}
+				tier++
 			}
 		}
-		if len(nodes) == 0 {
-			return routePool{}, noNodesError(d.provider, d.country)
-		}
-		sort.Slice(nodes, func(i, j int) bool {
-			if nodes[i].id != nodes[j].id {
-				return nodes[i].id < nodes[j].id
-			}
-			return nodes[i].provider < nodes[j].provider
-		})
-		key := routeKey(d.provider, d.country)
-		for _, n := range nodes {
-			label := nodeLabel(n.provider, n.id)
-			pool.nodes[key] = append(pool.nodes[key], n.raw)
-			pool.labels[key] = append(pool.labels[key], label)
-			if !infoSeen[label] {
-				infoSeen[label] = true
-				pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country})
-			}
+		if len(pool.nodes[key]) == 0 {
+			return routePool{}, noNodesError(d.providers, d.countries)
 		}
 	}
 	return pool, nil
 }
 
 // noNodesError reports a route without nodes. The message names the
-// country code and/or the provider name, never a URL.
-func noNodesError(provider, country string) error {
+// country codes and/or the provider names, never a URL.
+func noNodesError(providers, countries []string) error {
 	var msg string
 	switch {
-	case provider != "" && country != "":
-		msg = fmt.Sprintf("no nodes available for country %s of provider %q", country, provider)
-	case provider != "":
-		msg = fmt.Sprintf("no nodes available for provider %q", provider)
+	case len(providers) > 0 && len(countries) > 0:
+		msg = "no nodes available for " + countryPhrase(countries) + " of " + providerPhrase(providers)
+	case len(providers) > 0:
+		msg = "no nodes available for " + providerPhrase(providers)
 	default:
-		msg = fmt.Sprintf("no nodes available for country %s", country)
+		msg = "no nodes available for " + countryPhrase(countries)
 	}
 	return &cli.Error{
 		Code:    "NO_NODES_FOR_COUNTRY",
@@ -189,6 +228,22 @@ func noNodesError(provider, country string) error {
 		Hint:    "run netivri sub update before netivri up",
 		Exit:    cli.ExitNotFound,
 	}
+}
+
+// countryPhrase reads "country DE" or "countries DE,NL".
+func countryPhrase(codes []string) string {
+	if len(codes) > 1 {
+		return "countries " + strings.Join(codes, ",")
+	}
+	return "country " + codes[0]
+}
+
+// providerPhrase reads `provider "main"` or `providers "main,backup"`.
+func providerPhrase(names []string) string {
+	if len(names) > 1 {
+		return fmt.Sprintf("providers %q", strings.Join(names, ","))
+	}
+	return fmt.Sprintf("provider %q", names[0])
 }
 
 // warmOptions turns background probing on, with the default interval and no

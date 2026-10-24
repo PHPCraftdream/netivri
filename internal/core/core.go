@@ -63,6 +63,11 @@ type Options struct {
 	// node: route key -> one label per node, same order and length as
 	// RouteNodes[key]. nil labels a node "r<R>-<N>".
 	NodeLabels map[string][]string
+	// NodeTiers optionally ranks the nodes of a route: route key -> one tier per
+	// node, same order and length as RouteNodes[key], never decreasing. A new
+	// binding goes to a node of the first tier (smallest number) that has a node
+	// not down, so the later tiers are fallbacks. nil puts all nodes in one tier.
+	NodeTiers map[string][]int
 	// Observer optionally receives probe, dial and throughput measurements
 	// of the route nodes. nil disables reporting.
 	Observer Observer

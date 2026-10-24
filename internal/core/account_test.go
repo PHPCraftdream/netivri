@@ -356,7 +356,7 @@ func TestPrepareRoutesRejectsInvalidRouteKeys(t *testing.T) {
 		key  string
 	}{
 		{name: "empty key", key: ""},
-		{name: "129 bytes", key: strings.Repeat("a", 129)},
+		{name: "2049 bytes", key: strings.Repeat("a", 2049)},
 		{name: "control character", key: "de\x01"},
 		{name: "newline", key: "de\n"},
 		{name: "non ASCII", key: "dé"},
@@ -382,7 +382,7 @@ func TestPrepareRoutesRejectsInvalidRouteKeys(t *testing.T) {
 		})
 	}
 	t.Run("valid boundary keys", func(t *testing.T) {
-		for _, key := range []string{"de", strings.Repeat("a", 128), `~ /,"'`} {
+		for _, key := range []string{"de", strings.Repeat("a", 2048), `~ /,"'`} {
 			options := Options{
 				AccountRoute: map[string]string{"alice": key},
 				RouteNodes: map[string][]map[string]any{

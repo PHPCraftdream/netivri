@@ -202,30 +202,48 @@ func (t *affinityTable) rebindCount() uint64 {
 	return t.rebinds.Load()
 }
 
-// selectMember picks the member index for a new binding per the design:
-// candidates are the members that are not down and have a delay; if there are
-// none, the members that are not down; if there are none, all members.
-// best is the lowest score; candidates within max(20 ms, 15 % of best) of
-// best are near-equal, and among them the one with the highest
-// fnv64a(login|site|label) wins, so equal nodes share the sites of an
-// account deterministically. Returns -1 only for an empty route.
+// selectMember picks the member index for a new binding per the design.
+// Members are in priority tiers (memberHealthView.Tier, lower first; all
+// zero when the route has no tiers): only the lowest tier that still has a
+// member that is not down is considered, or the lowest tier when every member
+// is down. Within it, candidates are the members that are not down and have a
+// delay; if there are none, the members that are not down; if there are none,
+// all of its members. best is the lowest score; candidates within
+// max(20 ms, 15 % of best) of best are near-equal, and among them the one with
+// the highest fnv64a(login|site|label) wins, so equal nodes share the sites of
+// an account deterministically. Returns -1 only for an empty route.
 func selectMember(views []memberHealthView, login, site string) int {
+	tier, found := 0, false
+	for _, view := range views {
+		if !view.Down && (!found || view.Tier < tier) {
+			tier, found = view.Tier, true
+		}
+	}
+	if !found {
+		for _, view := range views {
+			if !found || view.Tier < tier {
+				tier, found = view.Tier, true
+			}
+		}
+	}
 	pool := make([]int, 0, len(views))
 	for i, view := range views {
-		if view.Known && !view.Down {
+		if view.Tier == tier && view.Known && !view.Down {
 			pool = append(pool, i)
 		}
 	}
 	if len(pool) == 0 {
 		for i, view := range views {
-			if !view.Down {
+			if view.Tier == tier && !view.Down {
 				pool = append(pool, i)
 			}
 		}
 	}
 	if len(pool) == 0 {
-		for i := range views {
-			pool = append(pool, i)
+		for i, view := range views {
+			if view.Tier == tier {
+				pool = append(pool, i)
+			}
 		}
 	}
 	if len(pool) == 0 {

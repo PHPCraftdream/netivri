@@ -133,6 +133,7 @@ func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store 
 		RouteNodes:    d.pool.nodes,
 		AccountRoute:  d.pool.accountRoutes,
 		NodeLabels:    d.pool.labels,
+		NodeTiers:     d.pool.tiers,
 		Observer:      observer,
 		Warm:          warmOptions(d.pool.nodes),
 	}
@@ -207,8 +208,9 @@ func fingerprint(d desiredState) string {
 		Accounts                      []acct
 		Nodes                         map[string][]map[string]any
 		Labels                        map[string][]string
+		Tiers                         map[string][]int
 		Routes                        map[string]string
-	}{Bind: d.bind, Port: d.port, Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Routes: d.pool.accountRoutes}
+	}{Bind: d.bind, Port: d.port, Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers, Routes: d.pool.accountRoutes}
 	// The persist callbacks rewrite credentials of this config in place.
 	persistMu.Lock()
 	v.AuthLogin, v.AuthPassword = d.cfg.Auth.Login, d.cfg.Auth.Password

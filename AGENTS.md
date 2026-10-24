@@ -37,6 +37,8 @@ To verify a change, push it and read the CI result.
      running daemon applies the change within a few seconds (its listener
      restarts, open connections end) and `netivri status` reports it under
      `reload`. The daemon also re-fetches the subscriptions once an hour.
+     `--provider` and `--country` also take comma-separated lists in priority
+     order (`--provider main,backup --country DE,NL`).
      `netivri use` is described in `docs/cli.md` but not implemented yet.
   4. Use the proxy at `data.listen` from `status`.
 - Never print or log subscription URLs; they are credentials.

@@ -27,8 +27,10 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   subscription is fetched through a strict proxy and never silently directly;
   its URL is a credential and is never printed.
 - **Accounts with an exit country.** Several logins share the port; each can
-  name a provider and an exit country and is routed only through matching
-  nodes, with no fallback to a direct connection or another country.
+  name providers and exit countries (one or a comma-separated list in priority
+  order, `--provider main,backup --country DE,NL`) and is routed only through
+  matching nodes, with no fallback to a direct connection or a country it does
+  not name.
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
@@ -100,8 +102,9 @@ command.
 - **Daemon and CLI:** `netivri up` starts a background daemon; the other
   commands talk to it over a local control channel (a named pipe on Windows, a
   Unix socket elsewhere), never over TCP.
-- **Routing:** each account's provider and exit country select a set of
-  nodes; a sticky group keeps one node per site and re-binds when it
+- **Routing:** each account's providers and exit countries select a set of
+  nodes, in priority tiers (countries first, then providers inside a
+  country); a sticky group keeps one node per site and re-binds when it
   degrades. Design notes are in [`docs/design/`](docs/design/).
 - **Configuration:** a Ktav file in the state directory
   ([`docs/config.md`](docs/config.md)); passwords are stored as argon2id

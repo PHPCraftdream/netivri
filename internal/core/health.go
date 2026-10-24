@@ -182,6 +182,8 @@ type memberHealthView struct {
 	Known   bool
 	Down    bool
 	Score   float64
+	// Tier is the priority tier of the member in its route (lower first).
+	Tier int
 }
 
 // view snapshots one record under its lock.

@@ -69,15 +69,15 @@ func runAccount(args []string, stdout io.Writer) error {
 		}
 		cc := ""
 		if *country != "" {
-			var ok bool
-			cc, ok = config.NormalizeCountry(*country)
-			if !ok {
-				return &cli.Error{Code: "COUNTRY_INVALID", Message: "invalid country code", Exit: cli.ExitUsage}
+			var err error
+			if cc, err = parseCountries(*country); err != nil {
+				return err
 			}
 		}
-		prov := *provider
-		if prov != "" {
-			if err := checkProvider(cfg, prov); err != nil {
+		prov := ""
+		if *provider != "" {
+			var err error
+			if prov, err = parseProviders(cfg, *provider); err != nil {
 				return err
 			}
 		}
@@ -157,13 +157,13 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 	value := ""
 	if !*none {
 		value = pos[0]
+		var err error
 		if field == "country" {
-			cc, ok := config.NormalizeCountry(value)
-			if !ok {
-				return &cli.Error{Code: "COUNTRY_INVALID", Message: "invalid country code", Exit: cli.ExitUsage}
-			}
-			value = cc
-		} else if err := checkProvider(cfg, value); err != nil {
+			value, err = parseCountries(value)
+		} else {
+			value, err = parseProviders(cfg, value)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -252,6 +252,32 @@ func checkRoute(home string, cfg *config.Config, a config.Account) error {
 		}
 	}
 	return err
+}
+
+// parseCountries turns an exit-country argument, one code or a comma-separated
+// list in priority order, into the canonical stored form ("DE,NL").
+func parseCountries(raw string) (string, error) {
+	codes, ok := config.ParseCountryList(raw)
+	if !ok || len(codes) == 0 {
+		return "", &cli.Error{Code: "COUNTRY_INVALID", Message: "invalid country code or list of codes", Exit: cli.ExitUsage}
+	}
+	return config.JoinList(codes), nil
+}
+
+// parseProviders turns a provider argument, one name or a comma-separated list
+// in priority order, into the canonical stored form ("main,backup") and
+// requires every name to be a configured subscription.
+func parseProviders(cfg *config.Config, raw string) (string, error) {
+	names, ok := config.ParseProviderList(raw)
+	if !ok || len(names) == 0 {
+		return "", cli.Usage("account: the provider must be a name matching [A-Za-z0-9._-]{1,64} or a comma-separated list of them")
+	}
+	for _, name := range names {
+		if err := checkProvider(cfg, name); err != nil {
+			return "", err
+		}
+	}
+	return config.JoinList(names), nil
 }
 
 // checkProvider validates a provider name and requires it to be a
