@@ -157,3 +157,41 @@ func TestSaveLoadAnyCountry(t *testing.T) {
 		t.Fatalf("roundtrip mismatch: %#v", loaded.Accounts)
 	}
 }
+
+// A list item with a control character or a list with outer blanks is
+// refused without echoing the value.
+func TestValidateAccountListsRejectBadScalars(t *testing.T) {
+	for _, tc := range []struct{ provider, country, field string }{
+		{"main\n", "", "provider"},
+		{" main", "", "provider"},
+		{"", " DE", "exit_country"},
+		{"", "DE\t", "exit_country"},
+	} {
+		c := Default()
+		c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: tc.provider, ExitCountry: tc.country}}
+		err := c.Validate()
+		ce, ok := err.(*cli.Error)
+		if !ok || ce.Code != CodeConfigInvalid || !strings.Contains(ce.Message, "accounts[0]."+tc.field) {
+			t.Errorf("%+v: error = %#v", tc, err)
+		}
+	}
+}
+
+// A bad list in the file is a CONFIG_INVALID error that names the field only.
+func TestLoadRejectsBadAccountLists(t *testing.T) {
+	for _, line := range []string{"provider: main,,backup-secret", "exit_country: DE,NLD-secret"} {
+		fixture := "listen.bind: 127.0.0.1\nlisten.port: 7890\naccounts: [\n    {\n        login: alice\n        password:: init\n        " + line + "\n    }\n]\n"
+		path := filepath.Join(t.TempDir(), "bad.ktav")
+		if err := os.WriteFile(path, []byte(fixture), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Load(path)
+		ce, ok := err.(*cli.Error)
+		if !ok || ce.Code != CodeConfigInvalid {
+			t.Fatalf("%q: error = %#v", line, err)
+		}
+		if strings.Contains(err.Error(), "secret") {
+			t.Fatalf("%q: the error echoes the value: %v", line, err)
+		}
+	}
+}

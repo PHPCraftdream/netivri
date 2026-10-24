@@ -343,3 +343,33 @@ func TestDiagDiagFailedPassesCLIErrorThrough(t *testing.T) {
 		t.Fatalf("error = %#v", ce)
 	}
 }
+
+// An account with a country list is diagnosed in the priority order of its
+// route: the first listed country first, "*" for what is left last.
+func TestDiagAccountWithListsFollowsPriority(t *testing.T) {
+	useDiagDial(t, fakeDiagDial)
+	home := diagHome(t)
+	cfg, err := config.Load(config.ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts = append(cfg.Accounts,
+		config.Account{Login: "listy", Password: config.InitPlaceholder, Provider: "main", ExitCountry: "NL,DE"},
+		config.Account{Login: "starry", Password: config.InitPlaceholder, ExitCountry: "NL,*"},
+	)
+	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, login := range []string{"listy", "starry"} {
+		if err := runDiag([]string{"dial", "--account", login, "--home", home}, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%s: %v", login, err)
+		}
+		var labels []string
+		for _, n := range capturedDiagOptions.Nodes {
+			labels = append(labels, n.Label)
+		}
+		if strings.Join(labels, ",") != "main/b2,main/a1" {
+			t.Fatalf("%s: nodes = %v, want [main/b2 main/a1]", login, labels)
+		}
+	}
+}

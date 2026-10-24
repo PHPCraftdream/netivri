@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -138,5 +139,23 @@ func TestAccountCountryAnyStar(t *testing.T) {
 	runAccountOK(t, home, "add", "bob", "--country", "*")
 	if a := loadedAccount(t, home, "bob"); a.Provider != "" || a.ExitCountry != "*" {
 		t.Fatalf("stored %+v", a)
+	}
+}
+
+// Lists over the limits are refused with the usual usage errors.
+func TestAccountAddListsOverTheLimit(t *testing.T) {
+	home := accountProviderHome(t)
+	var codes, names []string
+	for i := 0; i <= config.MaxAccountCountries; i++ {
+		codes = append(codes, string(rune('A'+i/26))+string(rune('A'+i%26)))
+	}
+	for i := 0; i <= config.MaxAccountProviders; i++ {
+		names = append(names, "p"+string(rune('a'+i)))
+	}
+	if ce := runAccountErr(t, home, "add", "bob", "--country", strings.Join(codes, ",")); ce.Code != "COUNTRY_INVALID" {
+		t.Fatalf("unexpected error: %#v", ce)
+	}
+	if ce := runAccountErr(t, home, "add", "bob", "--provider", strings.Join(names, ",")); ce.Exit != cli.ExitUsage {
+		t.Fatalf("unexpected error: %#v", ce)
 	}
 }
