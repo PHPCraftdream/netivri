@@ -264,3 +264,30 @@ func TestE2ELiveBadConfigKeepsRunning(t *testing.T) {
 		t.Errorf("reloads after the fix = %d, want 0 (nothing changed)", st.Data.Reload.Count)
 	}
 }
+
+// Changing the order of an account's provider list while the daemon runs
+// moves the traffic to the other provider: the tiers are part of what the
+// daemon rebuilds on a reload.
+func TestE2ELiveProviderListOrderApplied(t *testing.T) {
+	f := startLive(t)
+
+	code, out, stderr := accountsCommand(t, f.home, "set-provider", "alice", "p2,p1")
+	if code != 0 {
+		t.Fatalf("set-provider p2,p1: %s%s", out, stderr)
+	}
+	waitLive(t, f.home, "p2,p1 applied", func(s liveStatus) bool { return s.Data.Reload.Count >= 1 })
+	accountsClient(t, f.listen, "alice", f.pass, f.backend)
+	if f.p1.count.Load() != 0 || f.p2.count.Load() != 1 {
+		t.Fatalf("with p2,p1 upstream counts p1=%d p2=%d, want 0/1", f.p1.count.Load(), f.p2.count.Load())
+	}
+
+	code, out, stderr = accountsCommand(t, f.home, "set-provider", "alice", "p1,p2")
+	if code != 0 {
+		t.Fatalf("set-provider p1,p2: %s%s", out, stderr)
+	}
+	waitLive(t, f.home, "p1,p2 applied", func(s liveStatus) bool { return s.Data.Reload.Count >= 2 })
+	accountsClient(t, f.listen, "alice", f.pass, f.backend)
+	if f.p1.count.Load() != 1 || f.p2.count.Load() != 1 {
+		t.Fatalf("with p1,p2 upstream counts p1=%d p2=%d, want 1/1", f.p1.count.Load(), f.p2.count.Load())
+	}
+}

@@ -115,3 +115,24 @@ func BenchmarkHealthRecordDial(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkStickyChooseMissTiered is BenchmarkStickyChooseMiss with the
+// members split into two priority tiers: the cost of the tier filter in a
+// full selection.
+func BenchmarkStickyChooseMissTiered(b *testing.B) {
+	for _, members := range []int{2, 20} {
+		b.Run(fmt.Sprintf("members-%d", members), func(b *testing.B) {
+			g := benchStickyGroup(b, members)
+			g.tiers = make([]int, members)
+			for i := members / 2; i < members; i++ {
+				g.tiers[i] = 1
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				login := fmt.Sprintf("miss%d", i)
+				_, _ = g.choose(login, "miss.example")
+			}
+		})
+	}
+}
