@@ -14,6 +14,10 @@ import (
 // Accounts with provider and country lists, end to end through the daemon:
 // the first listed provider and country that has a node gets the traffic, and
 // a listed country without nodes is skipped instead of failing `up`.
+//
+// Every account has providers and nodes of its own. The fake upstreams cannot
+// answer the background probes, so a node that sits in several routes is
+// marked down at start, and which tier is "up" would then depend on timing.
 func TestE2EAccountsListsPriority(t *testing.T) {
 	home := t.TempDir()
 	pass := "lists-e2e-password"
@@ -22,40 +26,59 @@ func TestE2EAccountsListsPriority(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := accountsEcho(t)
-	p1Up := accountsServer(t)
-	p2Up := accountsServer(t)
+	ups := map[string]*accountsUpstream{}
+	for _, name := range []string{"a1", "a2", "c1", "c2", "d1"} {
+		ups[name] = accountsServer(t)
+	}
 	writeConfig(t, home, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{
 			// Both providers have a DE node: the first listed one wins.
-			{Login: "alice", Password: hash, Provider: "p2,p1", ExitCountry: "DE"},
-			{Login: "bob", Password: hash, Provider: "p1,p2", ExitCountry: "DE"},
-			// Only p2 has an NL node: the first country beats the first provider.
-			{Login: "carol", Password: hash, Provider: "p1,p2", ExitCountry: "NL,DE"},
-			// JP has no node anywhere: skipped, DE of p1 is used.
-			{Login: "dave", Password: hash, Provider: "p1", ExitCountry: "JP,DE"},
+			{Login: "alice", Password: hash, Provider: "a2,a1", ExitCountry: "DE"},
+			// Only c2 has an NL node: the first country beats the first provider.
+			{Login: "carol", Password: hash, Provider: "c1,c2", ExitCountry: "NL,DE"},
+			// JP has no node anywhere: skipped, DE of d1 is used.
+			{Login: "dave", Password: hash, Provider: "d1", ExitCountry: "JP,DE"},
 		}
-		cfg.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://p1.invalid/sub"}, {Name: "p2", URL: "https://p2.invalid/sub"}}
+		for _, name := range []string{"a1", "a2", "c1", "c2", "d1"} {
+			cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: name, URL: "https://" + name + ".invalid/sub"})
+		}
 	})
-	accountsSaveSnapshot(t, home, "p1", []subscription.Node{accountsSocksNode("de-p1", "DE", p1Up)})
-	accountsSaveSnapshot(t, home, "p2", []subscription.Node{accountsSocksNode("nl-p2", "NL", p2Up), accountsSocksNode("de-p2", "DE", p2Up)})
+	accountsSaveSnapshot(t, home, "a1", []subscription.Node{accountsSocksNode("de-a1", "DE", ups["a1"])})
+	accountsSaveSnapshot(t, home, "a2", []subscription.Node{accountsSocksNode("de-a2", "DE", ups["a2"])})
+	accountsSaveSnapshot(t, home, "c1", []subscription.Node{accountsSocksNode("de-c1", "DE", ups["c1"])})
+	accountsSaveSnapshot(t, home, "c2", []subscription.Node{accountsSocksNode("nl-c2", "NL", ups["c2"]), accountsSocksNode("de-c2", "DE", ups["c2"])})
+	accountsSaveSnapshot(t, home, "d1", []subscription.Node{accountsSocksNode("de-d1", "DE", ups["d1"])})
 
 	p := startUp(t, home, "--port", "0")
 	st := p.Status()
 	assertStatusSuccess(t, st)
 	listen := st.Data.Listen
 
-	step := func(login string, wantP1, wantP2 int64) {
+	counts := func() map[string]int64 {
+		out := map[string]int64{}
+		for name, up := range ups {
+			out[name] = up.count.Load()
+		}
+		return out
+	}
+	step := func(login, wantUpstream string) {
 		t.Helper()
+		before := counts()
 		accountsClient(t, listen, login, pass, backend)
-		if p1Up.count.Load() != wantP1 || p2Up.count.Load() != wantP2 {
-			t.Fatalf("%s: upstream counts p1=%d p2=%d, want p1=%d p2=%d",
-				login, p1Up.count.Load(), p2Up.count.Load(), wantP1, wantP2)
+		after := counts()
+		for name := range ups {
+			want := before[name]
+			if name == wantUpstream {
+				want++
+			}
+			if after[name] != want {
+				t.Fatalf("%s: upstream %s count %d, want %d (all: %v)", login, name, after[name], want, after)
+			}
 		}
 	}
-	step("alice", 0, 1)
-	step("bob", 1, 1)
-	step("carol", 1, 2)
-	step("dave", 2, 2)
+	step("alice", "a2")
+	step("carol", "c2")
+	step("dave", "d1")
 	p.Stop()
 	assertNoSecrets(t, p.Stdout(), p.Stderr(), pass, hash)
 }
