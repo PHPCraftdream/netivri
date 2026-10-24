@@ -176,3 +176,55 @@ func TestAccountStatusShowsLists(t *testing.T) {
 		t.Fatalf("got %#v", got)
 	}
 }
+
+// "*" is every country the list does not name, at its place in the order,
+// nodes of an unknown country included.
+func TestBuildAccountRoutePoolAnyCountry(t *testing.T) {
+	snapshots := map[string]*subscription.Snapshot{
+		"a": snap(node("a-de", "DE"), node("a-fr", "FR"), node("a-nl", "NL"), node("a-unknown", "")),
+		"b": snap(node("b-fr", "FR"), node("b-nl", "NL")),
+	}
+	for _, tc := range []struct {
+		name      string
+		account   config.Account
+		key       string
+		wantNames string
+		wantTiers []int
+	}{
+		{"last", config.Account{Login: "u", Provider: "a,b", ExitCountry: "NL,*"}, "a,b~NL,*", "a-nl,b-nl,a-de,a-fr,a-unknown,b-fr", []int{0, 1, 2, 2, 2, 3}},
+		{"first", config.Account{Login: "u", Provider: "a", ExitCountry: "*,DE"}, "a~*,DE", "a-fr,a-nl,a-unknown,a-de", []int{0, 0, 0, 1}},
+		{"alone with providers", config.Account{Login: "u", Provider: "b,a", ExitCountry: "*"}, "b,a~*", "b-fr,b-nl,a-de,a-fr,a-nl,a-unknown", []int{0, 0, 1, 1, 1, 1}},
+		{"alone without providers", config.Account{Login: "u", ExitCountry: "*"}, "~*", "a-de,a-fr,a-nl,a-unknown,b-fr,b-nl", []int{0, 0, 0, 0, 0, 0}},
+		{"nothing left for it", config.Account{Login: "u", Provider: "b", ExitCountry: "FR,NL,*"}, "b~FR,NL,*", "b-fr,b-nl", []int{0, 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.accountRoutes["u"] != tc.key {
+				t.Fatalf("route = %q, want %q", got.accountRoutes["u"], tc.key)
+			}
+			if names := strings.Join(routeNames(t, got, tc.key), ","); names != tc.wantNames {
+				t.Fatalf("order = %s, want %s", names, tc.wantNames)
+			}
+			if !reflect.DeepEqual(got.tiers[tc.key], tc.wantTiers) {
+				t.Fatalf("tiers = %v, want %v", got.tiers[tc.key], tc.wantTiers)
+			}
+		})
+	}
+}
+
+func TestSnapshotDemandAnyCountryReadsEverySnapshot(t *testing.T) {
+	if all, _ := snapshotDemand([]config.Account{{Login: "u", ExitCountry: "*"}}); !all {
+		t.Fatal(`"*" without providers must read every snapshot`)
+	}
+}
+
+func TestBuildAccountRoutePoolAnyCountryWithoutNodesFailsClosed(t *testing.T) {
+	_, err := buildAccountRoutePool([]config.Account{{Login: "u", Provider: "a", ExitCountry: "*"}}, map[string]*subscription.Snapshot{"a": snap()})
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" {
+		t.Fatalf("error = %#v", err)
+	}
+}

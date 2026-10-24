@@ -298,7 +298,9 @@ var helpTopics = []helpTopic{
 			"default route, which is direct.\n\n" +
 			"Both may be a comma-separated list in priority order: the countries come first, and inside a country " +
 			"the providers, so 'main,backup' with 'DE,NL' tries main in DE, backup in DE, main in NL, backup in NL. " +
-			"New connections use the first of these that has a node that is up; the later ones are fallbacks.\n\n" +
+			"New connections use the first of these that has a node that is up; the later ones are fallbacks. In a " +
+			"country list * stands for every country not named in it, so 'DE,*' is Germany first and then anywhere; " +
+			"quote it in shells that expand globs.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
 			"A running daemon applies account changes by itself within a few seconds. Its listener restarts on the " +
@@ -321,7 +323,7 @@ var helpTopics = []helpTopic{
 			"A running daemon applies the new account within a few seconds.",
 		Flags: []helpFlag{
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
-			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order."},
+			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
@@ -375,6 +377,8 @@ var helpTopics = []helpTopic{
 			{"Move alice to the Netherlands", "netivri account set-country alice NL"},
 			{"Move alice and bob together", "netivri account set-country alice,bob DE"},
 			{"Germany first, the Netherlands as the fallback", "netivri account set-country alice DE,NL"},
+			{"Germany first, then any country that has a node", "netivri account set-country alice 'DE,*'"},
+			{"Any country at all", "netivri account set-country alice '*'"},
 			{"Move every account to Finland", "netivri account set-country --all FI"},
 			{"Let alice use every country of her provider", "netivri account set-country alice --none"},
 		},

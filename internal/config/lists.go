@@ -19,10 +19,20 @@ func ParseProviderList(s string) (names []string, ok bool) {
 	})
 }
 
-// ParseCountryList parses an account's exit-country list: two-letter codes
-// separated by commas, upper-cased, with the same rules as ParseProviderList.
+// AnyCountry is the exit-country list item that stands for every country not
+// named elsewhere in the list, nodes of an unknown country included.
+const AnyCountry = "*"
+
+// ParseCountryList parses an account's exit-country list: two-letter codes or
+// AnyCountry separated by commas, upper-cased, with the same rules as
+// ParseProviderList.
 func ParseCountryList(s string) (codes []string, ok bool) {
-	return parseList(s, MaxAccountCountries, NormalizeCountry)
+	return parseList(s, MaxAccountCountries, func(item string) (string, bool) {
+		if item == AnyCountry {
+			return item, true
+		}
+		return NormalizeCountry(item)
+	})
 }
 
 // JoinList renders a list in the canonical stored form: items joined by a

@@ -27,7 +27,7 @@ func TestE2EAccountsListsPriority(t *testing.T) {
 	}
 	backend := accountsEcho(t)
 	ups := map[string]*accountsUpstream{}
-	for _, name := range []string{"a1", "a2", "c1", "c2", "d1"} {
+	for _, name := range []string{"a1", "a2", "c1", "c2", "d1", "e1", "ffr", "fde"} {
 		ups[name] = accountsServer(t)
 	}
 	writeConfig(t, home, func(cfg *config.Config) {
@@ -38,8 +38,12 @@ func TestE2EAccountsListsPriority(t *testing.T) {
 			{Login: "carol", Password: hash, Provider: "c1,c2", ExitCountry: "NL,DE"},
 			// JP has no node anywhere: skipped, DE of d1 is used.
 			{Login: "dave", Password: hash, Provider: "d1", ExitCountry: "JP,DE"},
+			// "*" takes whatever is left: DE has no node, so the FR node of e1 is used.
+			{Login: "erin", Password: hash, Provider: "e1", ExitCountry: "DE,*"},
+			// FR is listed first, so the FR node wins over the DE node that "*" covers.
+			{Login: "frank", Password: hash, Provider: "f1", ExitCountry: "FR,*"},
 		}
-		for _, name := range []string{"a1", "a2", "c1", "c2", "d1"} {
+		for _, name := range []string{"a1", "a2", "c1", "c2", "d1", "e1", "f1"} {
 			cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: name, URL: "https://" + name + ".invalid/sub"})
 		}
 	})
@@ -48,6 +52,8 @@ func TestE2EAccountsListsPriority(t *testing.T) {
 	accountsSaveSnapshot(t, home, "c1", []subscription.Node{accountsSocksNode("de-c1", "DE", ups["c1"])})
 	accountsSaveSnapshot(t, home, "c2", []subscription.Node{accountsSocksNode("nl-c2", "NL", ups["c2"]), accountsSocksNode("de-c2", "DE", ups["c2"])})
 	accountsSaveSnapshot(t, home, "d1", []subscription.Node{accountsSocksNode("de-d1", "DE", ups["d1"])})
+	accountsSaveSnapshot(t, home, "e1", []subscription.Node{accountsSocksNode("fr-e1", "FR", ups["e1"])})
+	accountsSaveSnapshot(t, home, "f1", []subscription.Node{accountsSocksNode("de-f1", "DE", ups["fde"]), accountsSocksNode("fr-f1", "FR", ups["ffr"])})
 
 	p := startUp(t, home, "--port", "0")
 	st := p.Status()
@@ -79,6 +85,8 @@ func TestE2EAccountsListsPriority(t *testing.T) {
 	step("alice", "a2")
 	step("carol", "c2")
 	step("dave", "d1")
+	step("erin", "e1")
+	step("frank", "ffr")
 	p.Stop()
 	assertNoSecrets(t, p.Stdout(), p.Stderr(), pass, hash)
 }

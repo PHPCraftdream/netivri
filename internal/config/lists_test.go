@@ -20,13 +20,16 @@ func TestParseCountryList(t *testing.T) {
 		{"de,NL", []string{"DE", "NL"}},
 		{" nl , de ", []string{"NL", "DE"}},
 		{"DE,de,NL,DE", []string{"DE", "NL"}}, // the first of a repeat keeps its place
+		{"*", []string{"*"}},
+		{" * ", []string{"*"}},
+		{"de,*,nl,*", []string{"DE", "*", "NL"}},
 	} {
 		got, ok := ParseCountryList(tc.in)
 		if !ok || !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ParseCountryList(%q) = %v, %v; want %v", tc.in, got, ok, tc.want)
 		}
 	}
-	for _, in := range []string{",", "DE,", ",DE", "DE,,NL", "D", "DEU", "D1", "é1", "DE NL"} {
+	for _, in := range []string{",", "DE,", ",DE", "DE,,NL", "D", "DEU", "D1", "é1", "DE NL", "**", "*DE", "D*", "*,"} {
 		if got, ok := ParseCountryList(in); ok {
 			t.Errorf("ParseCountryList(%q) = %v, want invalid", in, got)
 		}
@@ -81,7 +84,7 @@ func TestValidateAccountLists(t *testing.T) {
 		c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: provider, ExitCountry: country}}
 		return c
 	}
-	for _, tc := range [][2]string{{"main,backup", "DE,NL"}, {"main", "DE"}, {"", "DE,NL"}, {"main,backup", ""}} {
+	for _, tc := range [][2]string{{"main,backup", "DE,NL"}, {"main", "DE,*"}, {"", "*"}, {"main", "DE"}, {"", "DE,NL"}, {"main,backup", ""}} {
 		if err := valid(tc[0], tc[1]).Validate(); err != nil {
 			t.Errorf("%v: %v", tc, err)
 		}
@@ -132,5 +135,25 @@ accounts: [
 	}
 	if !reflect.DeepEqual(reloaded, loaded) {
 		t.Fatalf("roundtrip mismatch: %#v", reloaded)
+	}
+}
+
+// "*" survives a save and a load, alone and in a list.
+func TestSaveLoadAnyCountry(t *testing.T) {
+	cfg := Default()
+	cfg.Accounts = []Account{
+		{Login: "alice", Password: InitPlaceholder, ExitCountry: "*"},
+		{Login: "bob", Password: InitPlaceholder, Provider: "main", ExitCountry: "DE,*"},
+	}
+	path := filepath.Join(t.TempDir(), "any.ktav")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Fatalf("roundtrip mismatch: %#v", loaded.Accounts)
 	}
 }

@@ -44,6 +44,11 @@ the nodes of one (country, provider) pair, ordered by node id:
 
 Rules:
 
+- A `*` item in the country list is the tier of every country the list does not
+  name (nodes of an unknown country included), at its place: `DE,*` is DE, then
+  the rest; `*,DE` the rest, then DE; `*` alone is any country, and with no
+  provider list a route through every node of every provider. It is the same
+  tier rule as for a named country: one tier per provider.
 - Without a provider list all providers share a tier (nodes ordered by node id,
   ties by provider name), as before lists existed. Without a country list the
   tiers are the providers alone.

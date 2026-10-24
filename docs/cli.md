@@ -314,6 +314,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
+  A `*` item stands for every country the list does not name, nodes of an
+  unknown country included, at its place in the order: `US,DE,*` is US, then
+  DE, then everything else; `*` alone is any country. Quote it where the shell
+  expands globs (`--country '*'`).
 - `set-provider` binds the accounts to a provider or to a comma-separated list
   of providers in priority order, or `--none` clears it. Each provider must
   match `[A-Za-z0-9._-]{1,64}` (usage error otherwise) and be a configured
@@ -367,7 +371,7 @@ follow in their order, so `--provider main,backup --country DE,NL` tries
 `main` in DE, `backup` in DE, `main` in NL, `backup` in NL. A tier is the
 nodes of one (country, provider) pair, and a pair without nodes is skipped.
 Without a provider list every provider shares one tier per country; without a
-country list the tiers are the providers alone. A new connection goes to a
+country list the tiers are the providers alone. A `*` in the country list is one more tier at its place: the nodes of every country the list does not name (so `DE,*` is DE first, then all the rest, and `*,DE` the rest first and DE last). A new connection goes to a
 node of the first tier that has a node not marked down (the fastest of them,
 by the usual latency choice), so a later tier is only a fallback; a site that
 is already bound to a node keeps it while it is up, even after a better tier

@@ -117,3 +117,26 @@ func TestSubRmRefusesProviderInAccountList(t *testing.T) {
 		}
 	}
 }
+
+// "*" is accepted as "any other country", also alone, and keeps its place.
+func TestAccountCountryAnyStar(t *testing.T) {
+	home := accountProviderHome(t)
+	out := runAccountOK(t, home, "add", "alice", "--provider", "p1", "--country", "nl, *, de")
+	if !bytes.Contains(out, []byte(`"exit_country":"NL,*,DE"`)) {
+		t.Fatalf("add output %s", out)
+	}
+	runAccountOK(t, home, "set-country", "alice", "*")
+	if a := loadedAccount(t, home, "alice"); a.ExitCountry != "*" {
+		t.Fatalf("stored %+v", a)
+	}
+	// Any country always has a node while the provider has one.
+	runAccountOK(t, home, "set-country", "alice", "FI,*")
+	if ce := runAccountErr(t, home, "set-country", "alice", "FI,**"); ce.Code != "COUNTRY_INVALID" {
+		t.Fatalf("unexpected error: %#v", ce)
+	}
+	// A star alone without providers is a route through every node.
+	runAccountOK(t, home, "add", "bob", "--country", "*")
+	if a := loadedAccount(t, home, "bob"); a.Provider != "" || a.ExitCountry != "*" {
+		t.Fatalf("stored %+v", a)
+	}
+}

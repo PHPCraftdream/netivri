@@ -156,7 +156,12 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		}
 		countries := d.countries
 		if len(countries) == 0 {
-			countries = []string{""} // any country
+			countries = []string{config.AnyCountry}
+		}
+		// "*" takes the nodes of every country the list does not name.
+		named := make(map[string]bool, len(countries))
+		for _, c := range countries {
+			named[c] = true
 		}
 		type poolNode struct {
 			provider string
@@ -175,7 +180,11 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 						continue
 					}
 					for _, n := range snap.Nodes {
-						if country != "" && n.Country != country {
+						if country == config.AnyCountry {
+							if named[n.Country] {
+								continue
+							}
+						} else if n.Country != country {
 							continue
 						}
 						nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, raw: n.Raw})

@@ -18,7 +18,9 @@ versions; every such change is listed here.
   that has a node not marked down, so the later ones are fallbacks. A pair
   without nodes is skipped, a route fails only when it has none at all. The
   lists are stored in a canonical form, and a provider in any account's list
-  cannot be removed. Single values work as before. See
+  cannot be removed. A `*` in the country list means every country not named
+  in it (`DE,*`: Germany first, then anywhere; `*` alone: any country), at its
+  place in the order. Single values work as before. See
   `docs/design/accounts.md`.
 - **More on the release page.** Every release also carries `install.sh` and
   `install.ps1` of the tag, Linux packages (`.deb` and `.rpm`, amd64 and
