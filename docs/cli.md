@@ -50,7 +50,7 @@ netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR}]
 netivri down
 netivri status
 
-netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}]
+netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
 netivri doctor
 netivri schema                            this contract as JSON
 netivri version
@@ -144,7 +144,7 @@ the contract; the JSON is.
 
 ```json
 {"kind": "overview", "summary": "...", "description": "...", "usage": ["..."],
- "quick_start": ["..."], "planned": ["use", "node test", "logs", "doctor", "schema"],
+ "quick_start": ["..."], "planned": ["use", "node test", "doctor", "schema"],
  "commands": [{"name": "up", "group": "Proxy service", "summary": "...", "usage": ["..."]}],
  "global_flags": [{"name": "--home {DIR}", "meaning": "..."}],
  "exit_codes": [{"code": 0, "meaning": "success"}]}
@@ -240,6 +240,44 @@ only `max`. Items are sorted by label or group name.
 
 When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 `--by` or `--country`: usage error, exit 2.
+
+### `logs`
+
+```
+netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
+```
+
+The daemon log, `{HOME}/run/netivri.log`: start and stop, applied and rejected
+configuration changes, subscription refreshes, storage problems, and route nodes going
+down (`WARN`) or coming back (`INFO`), with the node label, provider and country. It reads the
+file, so it works while the daemon runs and after it stopped or failed to start.
+Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
+level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
+as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
+before it. The file is moved to `netivri.log.1` at the next start when it is
+bigger than 8 MiB; `logs` reads the current file only.
+
+| Flag | Meaning |
+|---|---|
+| `--follow` | Keep running and print new entries until interrupted; wait for the log when the daemon has not started yet. |
+| `--level L` | Only this level and above (default: all). |
+| `--since D` | Only the last period: `90m`, `24h`, `7d`, ... (at most `365d`). |
+| `--tail N` | At most the newest `N` entries (default `100`, `0` for all). With `--follow` it limits the backlog shown first. |
+
+Without `--follow` the result is one document, oldest entry first:
+
+```json
+{"entries": [
+  {"time": "2026-10-24T12:00:00Z", "level": "INFO", "message": "start pid=4242 listen=127.0.0.1:7890 route=direct"},
+  {"time": "2026-10-24T12:05:10Z", "level": "WARN", "message": "subscription main: refresh failed: FETCH_HTTP_STATUS: unexpected HTTP status 403"}]}
+```
+
+With `--follow` the output is not a document but a stream: the entries as log
+lines, or with `--json` one JSON object per line (`time`, `level`, `message`).
+`time` is an empty string for a line that has none.
+
+No log yet: `LOG_NOT_FOUND`, exit 5 (not with `--follow`, which waits). Invalid
+`--level`, `--since` or `--tail`: usage error, exit 2.
 
 ### `diag dial`
 
@@ -483,7 +521,7 @@ Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
 `version` (the daemon binary's version), `accounts` (see `account`; each record is
-`{"login", "provider", "exit_country"}`, sorted by login), `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
+`{"login", "provider", "exit_country"}`, sorted by login), `active_accounts`, `activity`, `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
 
 `refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
@@ -508,6 +546,36 @@ number of site-to-node bindings held now, how many times a binding moved
 to another node because its node was down, how many second dial attempts
 (to the same node) were started for a slow handshake and how many dials such
 an attempt won (see [design/node-stats.md](design/node-stats.md)).
+
+`activity` and `active_accounts` answer "who is using the proxy now, and
+through what". `activity` has one record per account, sorted by login, and
+`active_accounts` counts those with open connections:
+
+```json
+{"active_accounts": 1,
+ "activity": [
+  {"login": "alice", "active": true, "connections": 3,
+   "upload_bytes": 20480, "download_bytes": 1048576,
+   "providers": ["main"], "countries": ["DE", "NL"],
+   "nodes": [
+     {"node": "main/a1b2c3", "provider": "main", "country": "DE",
+      "connections": 2, "upload_bytes": 16384, "download_bytes": 917504},
+     {"node": "main/d4e5f6", "provider": "main", "country": "NL",
+      "connections": 1, "upload_bytes": 4096, "download_bytes": 131072}]},
+  {"login": "bob", "active": false, "connections": 0,
+   "upload_bytes": 0, "download_bytes": 0,
+   "providers": [], "countries": [], "nodes": []}]}
+```
+
+An account is `active` while it has open connections. `nodes`, `providers`
+(the subscriptions) and `countries` list what those connections use right now,
+the busiest node first, each provider and country once, in the order of the
+nodes; they are empty for an idle account, and the byte counts are those of the
+open connections, not totals. `node` is the label of `node list` and `stats`
+(`{PROVIDER}/{NODE_ID}`); traffic of an account without a route is `direct`
+(or `node` when the whole instance goes through one node), with no provider
+and country. `activity` is present while the listener runs. The configured
+provider and exit-country lists stay in `accounts`.
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,
@@ -709,6 +777,7 @@ Raw proxy mappings (credentials) are never printed.
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
 | `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
 | `STATS_UNAVAILABLE` | 5 | `stats`: no statistics database exists yet (nothing was recorded) |
+| `LOG_NOT_FOUND` | 5 | `logs`: the daemon has not written a log yet |
 | `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
 | `DAEMON_START_FAILED` | 1 | The daemon child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
 | `DAEMON_START_TIMEOUT` | 1 | The daemon did not report startup within 15 s |
@@ -742,8 +811,9 @@ Raw proxy mappings (credentials) are never printed.
   port) guarded by a bearer token that lives only in
   `{HOME}/run/netivri.json` (mode `0600` on Unix). Every request must carry
   the token; the Host header must match the listener. No remote control API.
-- The daemon log (`{HOME}/run/netivri.log`) records lifecycle lines only:
-  start and stop with pid, listen address and reason. No tokens, no
-  credentials, no subscription URLs.
+- The daemon log (`{HOME}/run/netivri.log`, read with `netivri logs`) records
+  lifecycle and housekeeping lines only: start and stop with pid, listen
+  address and reason, applied and rejected configuration changes, subscription
+  refreshes. No tokens, no credentials, no subscription URLs.
 - Subscription URLs contain secrets: they are stored in the state directory
   only and are redacted in all output (`https://provider.example/sub/****`).

@@ -157,18 +157,18 @@ func (l *liveDaemon) refreshOne(ctx context.Context, store *subscription.Store, 
 	snap, err := fetchSnapshot(ctx, subFetch, time.Now, cfg, s)
 	if err != nil {
 		l.noteRefresh(false, err)
-		l.logf("subscription %s: refresh failed: %s", s.Name, errText(err))
+		l.warnf("subscription %s: refresh failed: %s", s.Name, errText(err))
 		return false
 	}
 	override := map[string]*subscription.Snapshot{s.Name: &snap}
 	if _, err := accountRoutePoolWith(l.opts.Home, cfg, override); err != nil {
 		l.noteRefresh(false, err)
-		l.logf("subscription %s: refreshed list rejected, the old one stays: %s", s.Name, errText(err))
+		l.warnf("subscription %s: refreshed list rejected, the old one stays: %s", s.Name, errText(err))
 		return false
 	}
 	if err := store.Save(s.Name, snap); err != nil {
 		l.noteRefresh(false, err)
-		l.logf("subscription %s: refreshed list not stored: %v", s.Name, err)
+		l.warnf("subscription %s: refreshed list not stored: %v", s.Name, err)
 		return false
 	}
 	l.noteRefresh(true, nil)

@@ -69,7 +69,7 @@ var helpExitCodes = []helpExit{
 }
 
 // helpPlanned lists what docs/cli.md describes but the binary lacks.
-var helpPlanned = []string{"use", "node test", "logs", "doctor", "schema"}
+var helpPlanned = []string{"use", "node test", "doctor", "schema"}
 
 func herr(code string, exit int, meaning string) helpError {
 	return helpError{Code: code, Exit: exit, Meaning: meaning}
@@ -133,9 +133,12 @@ var helpTopics = []helpTopic{
 		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
 			"probes, the statistics store and the sticky-routing counters.\n\n" +
+			"The 'activity' list shows who is using the proxy now: for every account whether it is active (has open " +
+			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
+			"busiest first. 'active_accounts' counts the active ones.\n\n" +
 			"It exits with 4 when no daemon is running, so it works as a check in scripts.",
 		Examples: []helpExample{
-			{"Show the daemon", "netivri status"},
+			{"Show the daemon and who is using it (see activity)", "netivri status"},
 			{"Start the daemon only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
 		},
 		Errors:  []helpError{herr("DAEMON_NOT_RUNNING", cli.ExitNoDaemon, "nothing is running; start it with 'netivri up'")},
@@ -471,6 +474,37 @@ var helpTopics = []helpTopic{
 			herr("USAGE", cli.ExitUsage, "invalid --since, --by or --country"),
 		},
 		SeeAlso: []string{"diag dial", "status"},
+	},
+	{
+		Name:    "logs",
+		Group:   groupDiag,
+		Summary: "Show the daemon log",
+		Usage:   []string{"netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}] [--home {DIR}]"},
+		Description: "Shows what the daemon wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
+			"configuration changes, subscription refreshes, storage problems and route nodes going down or coming back, " +
+			"each with a time and a level. It " +
+			"reads the file, so it works while the daemon runs and after it stopped or failed to start. Passwords, " +
+			"tokens and subscription URLs are never logged.\n\n" +
+			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +
+			"running and prints new entries as lines until Ctrl+C; with --json each line is one JSON object (NDJSON).",
+		Flags: []helpFlag{
+			{"--follow", "Keep running and print new entries. Waits for the log when the daemon has not started yet."},
+			{"--level {LEVEL}", "Only this level and above: debug, info, warn or error. Default: all."},
+			{"--since {DURATION}", "Only the last period: 90m, 24h, 7d and so on, at most 365d. Default: no limit."},
+			{"--tail {N}", "At most the newest N entries (default 100, 0 for all). With --follow it limits the backlog shown first."},
+		},
+		Examples: []helpExample{
+			{"The newest entries", "netivri logs"},
+			{"Problems of the last day", "netivri logs --level warn --since 24h"},
+			{"Watch the daemon live", "netivri logs --follow"},
+			{"Stream to a script, one JSON object per line", "netivri logs --follow --json"},
+		},
+		Errors: []helpError{
+			herr("LOG_NOT_FOUND", cli.ExitNotFound, "the daemon has not written a log yet"),
+			herr("USAGE", cli.ExitUsage, "invalid --level, --since or --tail"),
+		},
+		Notes:   []string{"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only."},
+		SeeAlso: []string{"status", "stats"},
 	},
 	{
 		Name:        "diag",

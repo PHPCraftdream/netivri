@@ -394,15 +394,19 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Only the daemon child has a log; a foreground run stays silent on stderr.
-	logf := func(format string, args ...any) {
-		if opts.Handshake != "" {
-			daemonLog.Printf(format, args...)
+	leveled := func(write func(string, ...any)) func(string, ...any) {
+		return func(format string, args ...any) {
+			if opts.Handshake != "" {
+				write(format, args...)
+			}
 		}
 	}
-	store := openStats(opts.Home, pool.infos, logf)
+	logf, warnf, errorf := leveled(daemonInfo), leveled(daemonWarn), leveled(daemonError)
+	store := openStats(opts.Home, pool.infos, warnf)
 	stopRequested := make(chan struct{})
 	requestStop := sync.OnceFunc(func() { close(stopRequested) })
 	live := newLiveDaemon(opts, logf, requestStop)
+	live.warnf, live.errorf = warnf, errorf
 	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, authenticator, store); err != nil {
 		closeStats(store)
 		return err
@@ -442,7 +446,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			shutdown()
 			return err
 		}
-		daemonLog.Printf("start pid=%d listen=%s route=%s", st.PID, st.Listen, st.Route)
+		logf("start pid=%d listen=%s route=%s", st.PID, st.Listen, st.Route)
 	} else {
 		cli.Success(stdout, map[string]any{
 			"daemon":     "running",
@@ -461,9 +465,9 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	case <-stopRequested:
 		reason = "control"
 	}
+	// Logged before the state file goes: `down` returns once it is gone, and a
+	// `logs` right after it must already see this line.
+	logf("stop pid=%d reason=%s", st.PID, reason)
 	shutdown()
-	if opts.Handshake != "" {
-		daemonLog.Printf("stop pid=%d reason=%s", st.PID, reason)
-	}
 	return nil
 }

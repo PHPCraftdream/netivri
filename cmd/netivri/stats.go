@@ -90,8 +90,11 @@ func runStats(args []string, stdout io.Writer) error {
 
 // parseWindow reads a duration with an extra "d" (days) suffix, bounded to
 // 1 second .. 365 days.
-func parseWindow(s string) (time.Duration, error) {
-	bad := cli.Usage("stats: --since must be a duration like 90m, 24h or 7d, at most 365d")
+func parseWindow(s string) (time.Duration, error) { return parseWindowFor("stats", s) }
+
+// parseWindowFor is parseWindow with the command named in the usage error.
+func parseWindowFor(command, s string) (time.Duration, error) {
+	bad := cli.Usage("%s: --since must be a duration like 90m, 24h or 7d, at most 365d", command)
 	if s == "" {
 		return 0, bad
 	}

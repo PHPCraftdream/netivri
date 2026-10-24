@@ -37,8 +37,12 @@ Under the resolved home:
   `protocols`, `route`. The token is a secret: it never appears on stdout,
   stderr, errors, logs or test output.
 - `run/netivri.log` — daemon log, append-only, `0600`. The detached child's
-  stdout/stderr are redirected here; lifecycle lines are logged only by
-  that child (foreground mode has no lifecycle stderr output). It is not rotated.
+  stdout/stderr are redirected here; the daemon's own lines are logged only by
+  that child (foreground mode has no lifecycle stderr output). A line is
+  `<RFC3339 UTC> <LEVEL> <message>` with the level INFO, WARN or ERROR, one
+  line per message; `netivri logs` reads it (also the lines of the older
+  `netivri-daemon <date> <time> <message>` format, as INFO). Spawn moves the file
+  to `netivri.log.1` when it is bigger than 8 MiB, so the log stays bounded.
 
 Stale handling: `Probe` requires state and a live control answer from the
 same pid; `ProbeLive` also returns the authenticated live status used by

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
@@ -23,9 +25,21 @@ var (
 	}
 )
 
-// daemonLog is written by the daemon child only, whose stderr is the
-// append-only run/netivri.log. It never carries credentials or tokens.
-var daemonLog = log.New(os.Stderr, "netivri-daemon ", log.LstdFlags|log.LUTC)
+// daemonLogf returns the writer of one level of the daemon log. It is used by
+// the daemon child only, whose stderr is the append-only run/netivri.log
+// (`netivri logs` reads it). It never carries credentials or tokens.
+func daemonLogf(level string) func(format string, args ...any) {
+	return func(format string, args ...any) {
+		line := daemon.FormatLogLine(time.Now(), level, fmt.Sprintf(format, args...))
+		_, _ = io.WriteString(os.Stderr, line+"\n")
+	}
+}
+
+var (
+	daemonInfo  = daemonLogf(daemon.LevelInfo)
+	daemonWarn  = daemonLogf(daemon.LevelWarn)
+	daemonError = daemonLogf(daemon.LevelError)
+)
 
 // daemonProtocols are the protocols the mixed port speaks.
 var daemonProtocols = []string{"socks5", "socks4", "http"}
@@ -127,7 +141,7 @@ func failStartup(handshake string, err error) error {
 		return err
 	}
 	if werr := daemon.WriteHandshakeError(handshake, daemon.NewHandshakeError(err)); werr != nil {
-		daemonLog.Printf("write handshake failed: %v", werr)
+		daemonError("write handshake failed: %v", werr)
 	}
 	return err
 }

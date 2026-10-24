@@ -50,6 +50,16 @@ func runStatus(args []string, stdout io.Writer) error {
 		"version":        st.Version,
 		"accounts":       accounts,
 	}
+	if st.Activity != nil {
+		active := 0
+		for _, a := range st.Activity {
+			if a.Active {
+				active++
+			}
+		}
+		data["active_accounts"] = active
+		data["activity"] = st.Activity
+	}
 	if st.Warm != nil {
 		data["warm"] = st.Warm
 	}

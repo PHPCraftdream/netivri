@@ -36,6 +36,7 @@ type coreInstance interface {
 	AccountRoutes() map[string]string
 	WarmStats() (core.WarmStats, bool)
 	AffinityStats() core.AffinityStats
+	Activity() []core.AccountActivity
 	Close() error
 }
 
@@ -68,8 +69,11 @@ type desiredState struct {
 // core is built from really changed.
 type liveDaemon struct {
 	opts upOptions
-	logf func(format string, args ...any)
-	stop func() // asks the daemon to shut down; idempotent
+	logf func(format string, args ...any) // INFO
+	// warnf and errorf write the WARN and ERROR lines; they default to logf.
+	warnf  func(format string, args ...any)
+	errorf func(format string, args ...any)
+	stop   func() // asks the daemon to shut down; idempotent
 
 	reloadMu sync.Mutex // one reload at a time, held across a restart
 
@@ -95,7 +99,7 @@ type liveDaemon struct {
 }
 
 func newLiveDaemon(opts upOptions, logf func(format string, args ...any), stop func()) *liveDaemon {
-	return &liveDaemon{opts: opts, logf: logf, stop: stop}
+	return &liveDaemon{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
 }
 
 // errText is the one-line form of an error kept in the status answer and the
@@ -134,6 +138,7 @@ func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store 
 		AccountRoute:  d.pool.accountRoutes,
 		NodeLabels:    d.pool.labels,
 		NodeTiers:     d.pool.tiers,
+		OnNodeHealth:  nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
 		Observer:      observer,
 		Warm:          warmOptions(d.pool.nodes),
 	}
@@ -261,7 +266,7 @@ func (l *liveDaemon) noteReloadError(what string, err error) {
 	l.mu.Lock()
 	l.reloadErr = text
 	l.mu.Unlock()
-	l.logf("%s: %s", what, text)
+	l.warnf("%s: %s", what, text)
 }
 
 // startCore starts a core instance, retrying briefly while the port of the
@@ -291,9 +296,9 @@ func (l *liveDaemon) restart(ctx context.Context, d desiredState) {
 	l.mu.Unlock()
 	if len(d.pool.infos) > 0 {
 		if store == nil {
-			store = openStats(l.opts.Home, d.pool.infos, l.logf)
+			store = openStats(l.opts.Home, d.pool.infos, l.warnf)
 		} else if err := store.SetNodes(d.pool.infos); err != nil {
-			l.logf("statistics: node details not stored: %v", err)
+			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
 
@@ -312,10 +317,10 @@ func (l *liveDaemon) restart(ctx context.Context, d desiredState) {
 	inst, err := startCore(ctx, o)
 	if err != nil {
 		l.reloadErr = errText(err)
-		l.logf("new configuration not applied, restoring the previous one: %s", l.reloadErr)
+		l.warnf("new configuration not applied, restoring the previous one: %s", l.reloadErr)
 		back, err2 := startCore(ctx, prev)
 		if err2 != nil {
-			l.logf("the previous configuration did not start either, stopping: %s", errText(err2))
+			l.errorf("the previous configuration did not start either, stopping: %s", errText(err2))
 			l.stop()
 			return
 		}
@@ -448,6 +453,7 @@ func (l *liveDaemon) status(startedAt string) daemon.Status {
 	st.Listen = l.inst.Addr()
 	st.Route = l.inst.Route()
 	st.Accounts = accountStatus(l.applied.cfg, l.inst.AccountRoutes())
+	st.Activity = activityInfo(st.Accounts, l.inst.Activity(), l.applied.pool.infos)
 	st.Warm = warmInfo(l.inst)
 	st.Affinity = affinityInfo(l.inst, len(l.applied.pool.accountRoutes) > 0)
 	return st

@@ -10,6 +10,17 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Who is active, in `netivri status`.** The new `activity` list has one record
+  per account: whether it is active (has open connections), the number of
+  connections and bytes, and the nodes, providers and countries they use right
+  now, the busiest first; `active_accounts` counts the active ones.
+- **`netivri logs`.** Shows the daemon log: `--level`, `--since`, `--tail`, and
+  `--follow` (with `--json`, one JSON object per line). The log lines now carry
+  a UTC time and a level (`INFO`, `WARN`, `ERROR`); lines of the older format
+  are read as `INFO`. The log is moved to `netivri.log.1` at a start when it is
+  bigger than 8 MiB. It also records a route node going down (`WARN`) and coming
+  back (`INFO`), with its label, provider and country, so that "why can't I
+  connect" has an answer in `netivri logs --level warn`.
 - **Several providers and countries per account, in priority order.** `provider`
   and `exit_country` of an account (and `--provider`, `--country`,
   `account set-provider`, `account set-country`) take a comma-separated list:

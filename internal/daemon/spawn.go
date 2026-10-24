@@ -100,6 +100,7 @@ func Spawn(ctx context.Context, o SpawnOptions) (State, error) {
 	handshakePath := filepath.Join(RunDir(o.Home), "start-"+suffix+".json")
 	defer os.Remove(handshakePath)
 
+	_ = RotateLog(o.Home, MaxLogBytes) // best effort: a log kept whole is only larger
 	log, err := os.OpenFile(LogPath(o.Home), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return zero, &cli.Error{Code: "INTERNAL", Message: "open daemon log: " + err.Error(), Exit: cli.ExitInternal}

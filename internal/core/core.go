@@ -68,6 +68,11 @@ type Options struct {
 	// binding goes to a node of the first tier (smallest number) that has a node
 	// not down, so the later tiers are fallbacks. nil puts all nodes in one tier.
 	NodeTiers map[string][]int
+	// OnNodeHealth optionally hears every change of a route node's down state
+	// (true: it just went down, false: it is back) with the node label. It runs
+	// on the goroutine that recorded the measurement, so it must return quickly.
+	// nil disables it.
+	OnNodeHealth func(label string, down bool)
 	// Observer optionally receives probe, dial and throughput measurements
 	// of the route nodes. nil disables reporting.
 	Observer Observer
@@ -91,6 +96,7 @@ type Instance struct {
 	stickyTable  *affinityTable
 	stickyHealth *healthTable
 	poller       *throughputPoller
+	memberLabels map[string]string // route member proxy name -> node label, for Activity
 }
 
 var (
@@ -189,6 +195,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if len(plans) > 0 {
 		table = newAffinityTable(nil, o.AffinityTTL)
 		health = newHealthTable()
+		health.notify = o.OnNodeHealth
 	}
 	if everApplied {
 		// A previous configuration left adapters whose finalizers read the
@@ -260,6 +267,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		stickyTable:   table,
 		stickyHealth:  health,
 		poller:        poller,
+		memberLabels:  memberNameLabels(plans),
 	}
 	current = inst
 

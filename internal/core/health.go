@@ -61,11 +61,25 @@ type nodeHealth struct {
 
 	consProbeFail int
 	consDialFail  int
+
+	// label and notify report a change of the down state; notify may be nil.
+	label  string
+	notify func(label string, down bool)
 }
 
-// recomputeDown refreshes the atomic flag; the caller holds h.mu.
-func (h *nodeHealth) recomputeDown() {
-	h.downFlag.Store(h.consProbeFail >= downProbeFailures || h.consDialFail >= downDialFailures)
+// recomputeDown refreshes the atomic flag and reports whether it changed; the
+// caller holds h.mu.
+func (h *nodeHealth) recomputeDown() bool {
+	down := h.consProbeFail >= downProbeFailures || h.consDialFail >= downDialFailures
+	return h.downFlag.Swap(down) != down
+}
+
+// announce tells the owner of the table that the node went down or came back.
+// It runs after h.mu is released, so a slow listener never holds the lock.
+func (h *nodeHealth) announce(changed bool) {
+	if changed && h.notify != nil {
+		h.notify(h.label, h.downFlag.Load())
+	}
 }
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3
@@ -74,7 +88,13 @@ func (h *nodeHealth) Down() bool { return h.downFlag.Load() }
 
 func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	changed := h.applyProbe(alive, delay)
+	h.mu.Unlock()
+	h.announce(changed)
+}
+
+// applyProbe is recordProbe under h.mu; it reports a change of the down state.
+func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 	if alive {
 		h.consProbeFail = 0
 		h.consDialFail = 0
@@ -89,12 +109,18 @@ func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 		h.consProbeFail++
 	}
 	h.recordOutcome(alive)
-	h.recomputeDown()
+	return h.recomputeDown()
 }
 
 func (h *nodeHealth) recordDial(ok bool, took time.Duration) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	changed := h.applyDial(ok, took)
+	h.mu.Unlock()
+	h.announce(changed)
+}
+
+// applyDial is recordDial under h.mu; it reports a change of the down state.
+func (h *nodeHealth) applyDial(ok bool, took time.Duration) bool {
 	if ok {
 		h.consDialFail = 0
 		h.consProbeFail = 0
@@ -108,7 +134,7 @@ func (h *nodeHealth) recordDial(ok bool, took time.Duration) {
 		h.consDialFail++
 	}
 	h.recordOutcome(ok)
-	h.recomputeDown()
+	return h.recomputeDown()
 }
 
 func (h *nodeHealth) recordOutcome(ok bool) {
@@ -205,6 +231,9 @@ func (h *nodeHealth) view(label string) memberHealthView {
 // lock; measurements on unknown labels are ignored.
 type healthTable struct {
 	entries map[string]*nodeHealth
+	// notify, set before the first register, hears every change of a node's
+	// down state with the node label. It may be nil.
+	notify func(label string, down bool)
 }
 
 func newHealthTable() *healthTable {
@@ -215,7 +244,7 @@ func newHealthTable() *healthTable {
 func (t *healthTable) register(labels []string) {
 	for _, label := range labels {
 		if _, ok := t.entries[label]; !ok {
-			h := &nodeHealth{}
+			h := &nodeHealth{label: label, notify: t.notify}
 			h.initHedgeBudget()
 			t.entries[label] = h
 		}

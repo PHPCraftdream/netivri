@@ -30,6 +30,32 @@ type AccountInfo struct {
 	ExitCountry string `json:"exit_country"`
 }
 
+// NodeUse is the live traffic of one account through one node. Node is the
+// node label ({PROVIDER}/{NODE_ID}, as in `node list` and `stats`), or "direct"
+// or "node" for traffic that used no route node.
+type NodeUse struct {
+	Node          string `json:"node"`
+	Provider      string `json:"provider,omitempty"`
+	Country       string `json:"country,omitempty"`
+	Connections   int    `json:"connections"`
+	UploadBytes   int64  `json:"upload_bytes"`
+	DownloadBytes int64  `json:"download_bytes"`
+}
+
+// AccountActivity is what one account is doing now: whether it has open
+// connections, how much traffic they carry, and through which nodes, providers
+// and countries (the busiest first).
+type AccountActivity struct {
+	Login         string    `json:"login"`
+	Active        bool      `json:"active"`
+	Connections   int       `json:"connections"`
+	UploadBytes   int64     `json:"upload_bytes"`
+	DownloadBytes int64     `json:"download_bytes"`
+	Providers     []string  `json:"providers"`
+	Countries     []string  `json:"countries"`
+	Nodes         []NodeUse `json:"nodes"`
+}
+
 // NodeHealth is the last probe result of one node proxy.
 type NodeHealth struct {
 	Name    string `json:"name"` // internal proxy name, never the provider name
@@ -90,11 +116,13 @@ type Status struct {
 	StartedAt  string        `json:"started_at"`
 	Version    string        `json:"version"`
 	Accounts   []AccountInfo `json:"accounts,omitempty"`
-	Warm       *WarmInfo     `json:"warm,omitempty"`
-	Stats      *StatsInfo    `json:"stats,omitempty"`
-	Affinity   *AffinityInfo `json:"affinity,omitempty"`
-	Refresh    *RefreshInfo  `json:"refresh,omitempty"`
-	Reload     *ReloadInfo   `json:"reload,omitempty"`
+	// Activity has one entry per account while the core runs.
+	Activity []AccountActivity `json:"activity,omitempty"`
+	Warm     *WarmInfo         `json:"warm,omitempty"`
+	Stats    *StatsInfo        `json:"stats,omitempty"`
+	Affinity *AffinityInfo     `json:"affinity,omitempty"`
+	Refresh  *RefreshInfo      `json:"refresh,omitempty"`
+	Reload   *ReloadInfo       `json:"reload,omitempty"`
 }
 
 // Server is the loopback control HTTP server. It always binds 127.0.0.1:0,
