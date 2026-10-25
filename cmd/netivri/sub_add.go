@@ -7,8 +7,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/fetch"
-	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 // add implements `sub add <url> [--name N] [--via PROXY]`.
@@ -68,16 +66,14 @@ func (a *subApp) add(args []string) error {
 		}
 	}
 
-	res, err := a.fetch(context.Background(), rawURL, fetch.Options{Proxy: proxyFor(*viaFlag, cfg.Fetch.Proxy)})
+	// Quota follows the latest fetch (consistent with `sub update`):
+	// a re-add of an existing URL refreshes the stored quota instead of
+	// keeping the stale one or erasing it.
+	snap, err := fetchSnapshot(context.Background(), a.fetch, a.now, cfg, config.Subscription{Name: name, URL: rawURL, Via: *viaFlag})
 	if err != nil {
 		return err
 	}
-	parsed, err := subscription.ParseDetailed(res.Body)
-	if err != nil {
-		return err
-	}
-	skipped := parsed.Skipped.Banner + parsed.Skipped.Invalid
-	if err := a.store().Save(name, subscription.Snapshot{FetchedAt: a.now().UTC(), Nodes: parsed.Nodes, Skipped: skipped}); err != nil {
+	if err := a.store().Save(name, snap); err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: "store subscription: " + err.Error(), Exit: cli.ExitInternal}
 	}
 
@@ -92,7 +88,7 @@ func (a *subApp) add(args []string) error {
 	}
 
 	countries := map[string]int{}
-	for _, n := range parsed.Nodes {
+	for _, n := range snap.Nodes {
 		cc := n.Country
 		if cc == "" {
 			cc = "unknown"
@@ -103,8 +99,8 @@ func (a *subApp) add(args []string) error {
 		"name":      name,
 		"added":     !existing,
 		"existing":  existing,
-		"nodes":     len(parsed.Nodes),
-		"skipped":   skipped,
+		"nodes":     len(snap.Nodes),
+		"skipped":   snap.Skipped,
 		"countries": countries,
 	})
 	return nil

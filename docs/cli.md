@@ -711,15 +711,20 @@ without an inferable country are counted under `"unknown"`.
 ```json
 {"subscriptions": [
   {"name": "main", "host": "provider.example", "via_set": true,
-   "nodes": 24, "fetched_at": "2026-10-19T10:00:00Z"},
+   "nodes": 24, "fetched_at": "2026-10-19T10:00:00Z",
+   "quota": {"used": 123, "total": 107374182400, "expire": "2026-12-31T00:00:00Z"}},
   {"name": "backup", "host": "other.example", "via_set": false,
-   "nodes": null, "fetched_at": null}
+   "nodes": null, "fetched_at": null, "quota": null}
 ]}
 ```
 
 The URL and the via proxy are never printed: only the host of the
 subscription URL and a `via_set` boolean. `nodes` / `fetched_at` are
-`null` when no snapshot is stored for the subscription.
+`null` when no snapshot is stored for the subscription. `quota` carries
+what the provider reports in its `subscription-userinfo` header: `used`
+(upload plus download bytes), `total` (bytes, `null` when the provider
+sends none) and `expire` (RFC3339 UTC, `null` when absent). It is `null`
+when the provider sends no such header.
 
 ### `sub update`
 
@@ -735,11 +740,17 @@ routes within a few seconds, so this command is for refreshing on demand.
 
 ```json
 {"results": [
-  {"name": "main", "ok": true, "nodes": 24, "skipped": 1, "error": null},
-  {"name": "backup", "ok": false, "nodes": null, "skipped": null,
+  {"name": "main", "ok": true, "nodes": 24, "skipped": 1, "error": null,
+   "quota": {"used": 123, "total": 107374182400, "expire": "2026-12-31T00:00:00Z"}},
+  {"name": "backup", "ok": false, "nodes": null, "skipped": null, "quota": null,
    "error": {"code": "FETCH_HTTP_STATUS", "message": "unexpected HTTP status 403"}}
 ]}
 ```
+
+`quota` carries what the provider reports in its `subscription-userinfo`
+header: `used` (upload plus download bytes), `total` (bytes, `null` when
+the provider sends none) and `expire` (RFC3339 UTC, `null` when absent).
+It is `null` when the provider sends no such header or the fetch failed.
 
 Exit 0 when all succeeded. When any subscription fails, the results
 object is still printed on stdout and the command ends with

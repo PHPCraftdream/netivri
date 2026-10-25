@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -53,6 +54,57 @@ func TestSubListRedactsURLs(t *testing.T) {
 	b := subs[1].(map[string]any)
 	if b["via_set"] != false || b["nodes"] != nil || b["fetched_at"] != nil {
 		t.Errorf("entry b = %v, want via_set false and null nodes/fetched_at", b)
+	}
+}
+
+// One stored quota, one without: only the first entry carries a quota.
+func TestSubListQuota(t *testing.T) {
+	app, out := testApp(t, fakeBody(testBody))
+	seedConfig(t, app,
+		config.Subscription{Name: "a", URL: "https://a.example/sub"},
+		config.Subscription{Name: "b", URL: "https://b.example/sub"},
+	)
+	seedStore(t, app, "a", testBodyFI)
+	snap, err := subscription.ParseDetailed([]byte(testBodyFI))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	quotaSnap := subscription.Snapshot{
+		FetchedAt: testNow,
+		Nodes:     snap.Nodes,
+		Skipped:   snap.Skipped.Banner + snap.Skipped.Invalid,
+		Quota: &subscription.Quota{
+			Upload:   100,
+			Download: 23,
+			Total:    1000,
+			Expire:   time.Unix(1800000000, 0).UTC(),
+		},
+	}
+	if err := app.store().Save("b", quotaSnap); err != nil {
+		t.Fatalf("store save b: %v", err)
+	}
+	if err := app.list(); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	data := decodeData(t, out)
+	subs, _ := data["subscriptions"].([]any)
+	if len(subs) != 2 {
+		t.Fatalf("subscriptions = %v", data["subscriptions"])
+	}
+	a := subs[0].(map[string]any)
+	if a["quota"] != nil {
+		t.Errorf("entry a quota = %v, want nil (no header stored)", a["quota"])
+	}
+	b := subs[1].(map[string]any)
+	q, ok := b["quota"].(map[string]any)
+	if !ok {
+		t.Fatalf("entry b quota = %v, want an object", b["quota"])
+	}
+	if q["used"] != float64(123) || q["total"] != float64(1000) {
+		t.Errorf("quota used/total = %v/%v, want 123/1000", q["used"], q["total"])
+	}
+	if exp, _ := q["expire"].(string); exp != "2027-01-15T08:00:00Z" || !strings.HasSuffix(exp, "Z") {
+		t.Errorf("quota expire = %v, want 2027-01-15T08:00:00Z", q["expire"])
 	}
 }
 

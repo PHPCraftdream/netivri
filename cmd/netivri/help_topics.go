@@ -192,7 +192,8 @@ var helpTopics = []helpTopic{
 		Summary: "List subscriptions",
 		Usage:   []string{"netivri sub list [--home {DIR}]"},
 		Description: "Shows each subscription: its name, the host of its URL, whether a --via proxy is set, how many " +
-			"nodes are stored and when they were fetched (null until the first fetch). The URL and the proxy are never " +
+			"nodes are stored, when they were fetched (null until the first fetch) and the quota and expiry the " +
+			"provider reports (null without a subscription-userinfo header). The URL and the proxy are never " +
 			"printed.",
 		Examples: []helpExample{{"List the subscriptions", "netivri sub list"}},
 		SeeAlso:  []string{"sub update", "sub rm"},
@@ -203,8 +204,9 @@ var helpTopics = []helpTopic{
 		Summary: "Re-fetch subscriptions",
 		Usage:   []string{"netivri sub update [{SUBSCRIPTION} | --all]"},
 		Description: "Fetches subscriptions again and replaces their stored nodes. With a {SUBSCRIPTION} only that subscription, " +
-			"with --all or no argument every one, in config order. A subscription that fails keeps its old nodes. When " +
-			"any fails, the results are still printed and the command ends with SUB_UPDATE_FAILED.\n\n" +
+			"with --all or no argument every one, in config order. Each result also reports the quota and expiry the " +
+			"provider sent in its subscription-userinfo header (null without one). A subscription that fails keeps its " +
+			"old nodes. When any fails, the results are still printed and the command ends with SUB_UPDATE_FAILED.\n\n" +
 			"A running daemon applies the new nodes to its accounts within a few seconds, and re-fetches every " +
 			"subscription by itself once an hour (fetch.update_interval in config.ktav), so this command is for " +
 			"refreshing on demand.",

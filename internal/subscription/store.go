@@ -24,6 +24,7 @@ type Snapshot struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	Nodes     []Node    `json:"nodes"`
 	Skipped   int       `json:"skipped"`
+	Quota     *Quota    `json:"quota,omitempty"`
 }
 
 // Store persists subscriptions as Ktav files in dir ({NAME}.ktav). Files carry
@@ -58,6 +59,7 @@ type diskSnapshot struct {
 	FetchedAt time.Time  `json:"fetched_at"`
 	Nodes     []diskNode `json:"nodes"`
 	Skipped   int        `json:"skipped"`
+	Quota     *Quota     `json:"quota,omitempty"`
 }
 
 func validName(name string) error {
@@ -110,7 +112,7 @@ func (s *Store) Save(name string, snap Snapshot) error {
 	if err := validName(name); err != nil {
 		return err
 	}
-	d := diskSnapshot{FetchedAt: snap.FetchedAt, Skipped: snap.Skipped, Nodes: make([]diskNode, 0, len(snap.Nodes))}
+	d := diskSnapshot{FetchedAt: snap.FetchedAt, Skipped: snap.Skipped, Quota: snap.Quota, Nodes: make([]diskNode, 0, len(snap.Nodes))}
 	for _, n := range snap.Nodes {
 		d.Nodes = append(d.Nodes, diskNode{ID: n.ID, Name: n.Name, Type: n.Type, Server: n.Server, Port: n.Port, Country: n.Country, Raw: n.Raw})
 	}
@@ -162,7 +164,7 @@ func (s *Store) Load(name string) (*Snapshot, error) {
 	default:
 		return nil, fmt.Errorf("read subscription %q: %w", name, err)
 	}
-	snap := &Snapshot{FetchedAt: d.FetchedAt, Skipped: d.Skipped, Nodes: make([]Node, 0, len(d.Nodes))}
+	snap := &Snapshot{FetchedAt: d.FetchedAt, Skipped: d.Skipped, Quota: d.Quota, Nodes: make([]Node, 0, len(d.Nodes))}
 	for _, n := range d.Nodes {
 		snap.Nodes = append(snap.Nodes, Node{ID: n.ID, Name: n.Name, Type: n.Type, Server: n.Server, Port: n.Port, Country: n.Country, Raw: n.Raw})
 	}

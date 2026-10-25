@@ -79,6 +79,7 @@ func (a *subApp) update(args []string) error {
 // per-subscription result. On failure the stored snapshot is untouched.
 func (a *subApp) updateOne(store *subscription.Store, cfg *config.Config, s config.Subscription) map[string]any {
 	res := map[string]any{"name": s.Name, "ok": false, "nodes": nil, "skipped": nil, "error": nil}
+	res["quota"] = nil
 	snap, err := fetchSnapshot(context.Background(), a.fetch, a.now, cfg, s)
 	if err != nil {
 		return withFetchError(res, err)
@@ -90,6 +91,7 @@ func (a *subApp) updateOne(store *subscription.Store, cfg *config.Config, s conf
 	res["ok"] = true
 	res["nodes"] = len(snap.Nodes)
 	res["skipped"] = snap.Skipped
+	res["quota"] = quotaView(snap.Quota)
 	return res
 }
 
@@ -114,6 +116,7 @@ func fetchSnapshot(
 		FetchedAt: now().UTC(),
 		Nodes:     parsed.Nodes,
 		Skipped:   parsed.Skipped.Banner + parsed.Skipped.Invalid,
+		Quota:     fetch.ParseQuota(res.Header.Get("subscription-userinfo")),
 	}, nil
 }
 
