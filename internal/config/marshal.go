@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 )
 
 // managedHeader is prepended to every rendered configuration. The
@@ -19,7 +20,13 @@ func Marshal(cfg *Config) (string, error) {
 	if cfg == nil {
 		return "", invalid("configuration must not be nil")
 	}
-	body, err := ktavDumps(cfg)
+	// Render a shallow copy with the default listen.allowed_clients
+	// omitted, like other defaults: an absent key decodes back to "*".
+	render := *cfg
+	if render.Listen.AllowedClients == AllowedClientsAny {
+		render.Listen.AllowedClients = ""
+	}
+	body, err := ktavDumps(&render)
 	if err != nil {
 		// Binding rendering errors get the same structured-fields-only
 		// hygiene as parse errors.
@@ -58,6 +65,15 @@ func configEqual(a, b *Config) bool {
 	}
 	if len(y.Subscriptions) == 0 {
 		y.Subscriptions = nil
+	}
+	// An empty listen.allowed_clients means the default "*": normalize
+	// both sides so a programmatically built "" and an omitted key are
+	// one state.
+	if strings.TrimSpace(x.Listen.AllowedClients) == "" {
+		x.Listen.AllowedClients = AllowedClientsAny
+	}
+	if strings.TrimSpace(y.Listen.AllowedClients) == "" {
+		y.Listen.AllowedClients = AllowedClientsAny
 	}
 	return reflect.DeepEqual(x, y)
 }

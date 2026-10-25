@@ -25,9 +25,10 @@ func NewToken() (string, error) {
 
 // AccountInfo describes an account's configured provider and exit-country route.
 type AccountInfo struct {
-	Login       string `json:"login"`
-	Provider    string `json:"provider"`
-	ExitCountry string `json:"exit_country"`
+	Login          string `json:"login"`
+	Provider       string `json:"provider"`
+	ExitCountry    string `json:"exit_country"`
+	AllowedClients string `json:"allowed_clients"`
 }
 
 // NodeUse is the live traffic of one account through one node. Node is the
@@ -110,16 +111,18 @@ type ReloadInfo struct {
 
 // Status is the live answer of GET /v1/status.
 type Status struct {
-	Daemon     string        `json:"daemon"`
-	Foreground bool          `json:"foreground"`
-	PID        int           `json:"pid"`
-	Listen     string        `json:"listen"`
-	Protocols  []string      `json:"protocols"`
-	Auth       string        `json:"auth"`
-	Route      string        `json:"route"`
-	StartedAt  string        `json:"started_at"`
-	Version    string        `json:"version"`
-	Accounts   []AccountInfo `json:"accounts,omitempty"`
+	Daemon     string   `json:"daemon"`
+	Foreground bool     `json:"foreground"`
+	PID        int      `json:"pid"`
+	Listen     string   `json:"listen"`
+	Protocols  []string `json:"protocols"`
+	Auth       string   `json:"auth"`
+	Route      string   `json:"route"`
+	// AllowedClients is the effective listen.allowed_clients value ("*" when unset).
+	AllowedClients string        `json:"allowed_clients"`
+	StartedAt      string        `json:"started_at"`
+	Version        string        `json:"version"`
+	Accounts       []AccountInfo `json:"accounts,omitempty"`
 	// Activity has one entry per account while the core runs.
 	Activity []AccountActivity `json:"activity,omitempty"`
 	Warm     *WarmInfo         `json:"warm,omitempty"`

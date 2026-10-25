@@ -25,13 +25,14 @@ not preserved, so keep personal notes elsewhere.
 | --- | --- | --- | --- |
 | `listen.bind` | string | `127.0.0.1` | Address the mixed HTTP/SOCKS5 proxy binds. An IP address or `localhost`. Keep it on loopback unless you understand the exposure. |
 | `listen.port` | integer | `7890` | Proxy port, 1–65535. HTTP and SOCKS5 are served on the same port. |
+| `listen.allowed_clients` | string | `*` | Client addresses that may connect to the proxy: comma-separated rules (`*`, `loopback`, an exact address, an IPv4 whole-octet mask such as `192.168.1.*`, or a CIDR prefix such as `10.0.0.0/8`); see below. |
 | `auth.login` | string | *(empty)* | Proxy username. A literal, or the placeholder `init` (see below). Empty together with `auth.password` means: no authentication. |
 | `auth.password` | string | *(empty)* | Proxy password: `init`, or an argon2id PHC hash (starts with `$argon2id$`). Plaintext passwords are rejected by validation. |
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running daemon re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
-| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"). |
+| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, so an `init` account cannot be claimed from a disallowed address). |
 | `selection.node` | string | *(empty)* | Preferred exit node name (set by `netivri use {NODE}`). |
 | `selection.country` | string | *(empty)* | Preferred exit country code (set by `netivri use --country {COUNTRY}`). |
 | `selection.mode` | string | `manual` | How the exit is chosen: `manual` (explicit node), `fastest` (lowest latency), `auto` (re-check periodically). |
@@ -39,6 +40,57 @@ not preserved, so keep personal notes elsewhere.
 `accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters per code, not whether that code represents a real country. Config validation checks the provider's shape only; `up` and the `account` commands check that the named subscriptions exist.
 
 `provider` and `exit_country` may each hold a list: items separated by commas, blanks around a comma ignored, a repeated item kept once. In `exit_country` a `*` item stands for every country the list does not name, nodes of an unknown country included, at its place in the order (`DE,*` is DE first, then everything else; `*` alone is any country). When the file is loaded the lists are rewritten in the canonical form (`DE,NL`, `main,backup`), and the commands store them that way. The order is the priority: the countries first, then, inside a country, the providers (`provider: main,backup` with `exit_country: DE,NL` tries `main` in DE, `backup` in DE, `main` in NL, `backup` in NL). See [`docs/design/accounts.md`](design/accounts.md).
+
+## Allowed clients
+
+`listen.allowed_clients` says which client addresses may connect to the
+proxy at all. The value is a comma-separated list of rules; spaces around
+a comma are ignored:
+
+- `*` — every address. It may appear anywhere in the list and allows
+  everything.
+- `loopback` — `127.0.0.0/8` and `::1` (case-insensitive).
+- an exact IPv4 or IPv6 address — `192.168.1.5`, `fd00::1`.
+- an IPv4 whole-octet mask — trailing `*` octets, whole octets only:
+  `192.168.1.*` is `/24`, `192.168.*` and `192.168.*.*` are `/16`,
+  `10.*` is `/8`. A `*` anywhere else (`192.*.1.5`, `19*`) is an error;
+  use a CIDR prefix instead.
+- a CIDR prefix — `10.0.0.0/8`, `fd00::/8` (IPv4 or IPv6).
+
+Limits: at most 64 rules, at most 1024 bytes in total. An absent key
+means `*` (every address may connect); the key is then not rendered to
+the file, and the loaded value of an absent key is the effective `*`.
+Any present value that is empty or whitespace-only — including the
+raw-string spelling `listen.allowed_clients::` and a nested-table
+form — is `CONFIG_INVALID` naming `listen.allowed_clients`: omit the
+key or set it to `*`. The value is stored as written,
+after trimming the spaces around the commas; `netivri status` shows it
+as `allowed_clients` (`*` when unset). An empty item or an unparsable
+item is `CONFIG_INVALID` naming the key and the bad item.
+
+The rule is checked against the real TCP peer address (an IPv4-mapped
+IPv6 peer is unmapped first) in the listener's accept loop, before any
+SOCKS or HTTP handshake and before authentication: a refused connection
+is closed without a single reply byte. It is an additional gate, not a
+replacement for authentication — a non-loopback `listen.bind` still
+requires proxy authentication (`AUTH_REQUIRED` is unchanged). A change
+takes effect through the live reload, which restarts the listener.
+
+Each account may carry its own optional `allowed_clients` with the same
+grammar and limits. Unlike the global key, an empty account value is not
+an error — it means the account has no rule of its own — but a value
+that is present and unparsable is `CONFIG_INVALID`
+(`accounts[i].allowed_clients: ...`). The two rules cascade: the peer
+must match the global rule and, when the account has one, the account
+rule, so an account rule can only narrow what the global rule already
+allows, never widen it. To let one account in from a wider set than the
+others, keep the global rule `*` and restrict the other accounts
+individually. The account rule is enforced during authentication,
+before the password is verified and before an `init` placeholder can be
+claimed: a client from a disallowed address sees the same failure as a
+wrong password and can never claim the init password. The legacy
+`auth.login` / `auth.password` credential has no per-account rule; only
+the global one applies.
 
 ## The `init` placeholder
 

@@ -52,8 +52,36 @@ config's `authentication` list). netivri must not rely on it.
   `additions` are required: with none, the listener counts as the default one
   and Mihomo's global allow/skip-auth lists apply.
 - Port busy: `Listen` returns an error, mapped to `PORT_IN_USE` (exit 6).
-- Mihomo's remote-address filtering (`lan-allowed-ips`) does not apply to our
-  store. The default bind is `127.0.0.1`; a non-loopback bind requires auth.
+- Mihomo's remote-address filtering (`lan-allowed-ips`) now DOES apply to our
+  store. netivri enables it in the accept loop: the global
+  `listen.allowed_clients` rule is checked against the peer address of every
+  accepted connection and a refused connection is closed before any handshake
+  (no reply bytes). The filter is set after `executor.ApplyConfig` (which resets
+  the process-global state on every call) and reset to allow-all when the
+  instance closes. It is enabled with a tiny vendored patch (option (a))
+  because `mixed.NewWithConfig` offers no listener or conn-wrapper injection
+  point, so the filter had to be enabled inside the accept loop; `skip-auth`
+  stays default-listener-only, so authentication is never skipped. The default
+  bind is `127.0.0.1`; a non-loopback bind requires auth.
+
+### Client address rules
+
+Enforcement order for `listen.allowed_clients` and the per-account
+`allowed_clients`:
+
+1. The global rule, at accept time, before any SOCKS or HTTP handshake: the
+   peer address is matched against the rule and a refused connection is closed
+   with no reply bytes.
+2. The per-account rule, during authentication, through the vendored `VerifyFrom`
+   seam (SOCKS5 user/pass and HTTP `Proxy-Authorization` pass the peer address
+   to the authenticator): it is checked before the password is verified, so an
+   `init` placeholder can never be claimed from a disallowed address.
+
+The rules cascade: an account rule can only narrow the global rule, never
+widen it (see [docs/config.md](../config.md), "Allowed clients"). A
+per-account refusal during authentication is indistinguishable from a
+wrong-password failure: the peer is answered 403 when credentials were
+sent, and 407 only when none were.
 
 ## UDP
 

@@ -375,17 +375,22 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   {COUNTRY}` to an exit country. Each takes one value or **several separated
   by commas, in priority order** (`--provider main,backup --country
   DE,NL`; spaces around a comma are ignored, a repeated item counts once, the
-  value is stored in this canonical form, with upper-case codes). Repeating
+  value is stored in this canonical form, with upper-case codes).
+  `--clients {RULES}` restricts the addresses the account may authenticate
+  from: one comma-separated allowed-clients rule list (same grammar as
+  `listen.allowed_clients`; see [config.md](config.md), "Allowed clients").
+  Repeating
   `add` with the same providers and countries in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
-- `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider and exit
-  country of `{SOURCE}` and, by default, its password: the stored hash is copied,
+- `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider, exit
+  country and `allowed_clients` of `{SOURCE}` and, by default, its password: the stored hash is copied,
   so both logins accept the same password (a source that still has the `init`
   placeholder gives a copy with the placeholder). `--password {PASSWORD}` gives
   the new account a password of its own (1 to 1024 bytes, hashed with argon2id
   like any other), and `--password init` leaves it to the first client that
-  connects. `--provider` and `--country` replace the copied route with the same
+  connects. `--clients {RULES}` replaces the copied `allowed_clients` with the
+  same rules as `add`. `--provider` and `--country` replace the copied route with the same
   rules as `add`; a replaced route is checked like `set-country` checks it, and
   with no stored node nothing is created (`NO_NODES_FOR_COUNTRY`). Unlike
   `add`, an existing `{ACCOUNT}` is always `ACCOUNT_EXISTS` (exit 6), and an
@@ -394,7 +399,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `init`); the password and its hash are never printed. A password given with
   `--password` is visible in the shell history and the process list: prefer
   `--password init` when that matters. `{SOURCE}` is not changed.
-- `list` reports `login`, `provider`, `exit_country` and `password_set`
+- `list` reports `login`, `provider`, `exit_country`, `allowed_clients`
+  (empty when the account has no rule of its own) and `password_set`
   (`false` until the placeholder is claimed); it never returns a password or
   a hash.
 - `show {ACCOUNT}` reports one account: its login, its configured provider
@@ -416,6 +422,20 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   (the live fields are null). Unknown login: `ACCOUNT_NOT_FOUND` (exit 5);
   malformed login or not exactly one argument: exit 2. Passwords, hashes and
   subscription URLs are never shown.
+- `set-clients` takes one comma-separated allowed-clients rule list (same
+  grammar as `listen.allowed_clients`: `*`, `loopback`, exact addresses,
+  IPv4 whole-octet masks like `192.168.1.*`, CIDR prefixes; see
+  [config.md](config.md), "Allowed clients"), or `--none` to clear the
+  account's rule. A malformed list is `CONFIG_INVALID` (exit 2; the message
+  names the bad item). Like `set-country` and `set-provider`, it changes
+  several accounts at once: `{ACCOUNT}` may be several logins separated by
+  commas with no spaces, or `--all` for every account (`ACCOUNT_NOT_FOUND`,
+  exit 5, when a named login does not exist or there are no accounts;
+  `ACCOUNT_INVALID`, exit 2, for a malformed login). The account rule only
+  narrows what the global `listen.allowed_clients` already allows; a client
+  allowed by neither is refused before the password is verified, so an
+  `init` account cannot be claimed from a disallowed address. A running
+  daemon applies the change within a few seconds.
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
@@ -450,10 +470,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 - `ACCOUNT_INVALID` and `COUNTRY_INVALID` are usage errors (exit 2).
 
 ```json
-{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}, "existing": false}
-{"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}]}
-{"account": {"login": "alice", "provider": "", "exit_country": "NL", "password_set": false}}
 {"login": "alice", "provider": "main,backup", "exit_country": "DE,NL", "providers": ["main", "backup"], "countries": ["DE", "NL"], "live": false, "tiers": [{"tier": 0, "country": "DE", "providers": ["main"], "nodes": [{"label": "main/de-1", "provider": "main", "country": "DE", "tier": 0, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 1, "country": "DE", "providers": ["backup"], "nodes": [{"label": "backup/de-2", "provider": "backup", "country": "DE", "tier": 1, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 2, "country": "NL", "providers": ["main"], "nodes": [{"label": "main/nl-1", "provider": "main", "country": "NL", "tier": 2, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 3, "country": "NL", "providers": ["backup"], "skipped": true, "reason": "no nodes for this country and provider", "nodes": []}]}
+{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "password_set": false}, "existing": false}
+{"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "password_set": false}]}
+{"account": {"login": "alice", "provider": "", "exit_country": "NL", "allowed_clients": "loopback", "password_set": false}}
 {"removed": "alice"}
 ```
 
@@ -527,7 +547,9 @@ home it fails with `ALREADY_RUNNING` (exit 6).
 this contract; see [design/daemon.md](design/daemon.md).
 
 `listen` is the actual bound address: with `--port 0` it is the random free
-port that was picked. The daemon writes its state to `run/netivri.json` and
+port that was picked. `netivri status` reports `allowed_clients`, the
+effective `listen.allowed_clients` value — which client addresses may
+connect; `*` when unrestricted. The daemon writes its state to `run/netivri.json` and
 its log to `run/netivri.log` inside the state directory. The state file
 holds the local control token: mode `0600` on Unix, profile-directory ACL on
 Windows; never print it. `auth` is one of:
@@ -551,7 +573,8 @@ not an error: defaults apply, no proxy authentication, and **no config file
 is created**. Explicit `--port` / `--bind` flags override `listen.port` /
 `listen.bind`; otherwise the config values are used. Without a config the
 defaults stay `127.0.0.1:7890`. A `--bind` that is neither an IP address nor
-`localhost` is a usage error.
+`localhost` is a usage error. `listen.allowed_clients` from `config.ktav`
+applies at start and is picked up by the live reload.
 
 ### The dual-protocol port
 
@@ -582,6 +605,7 @@ Reports the live status of the running instance.
  "data": {"daemon": "running", "foreground": false, "pid": 12345,
           "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
+          "allowed_clients": "*",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
           "uptime_seconds": 3721, "version": "0.1.0"}}
 ```
@@ -589,8 +613,9 @@ Reports the live status of the running instance.
 Exactly these fields exist today: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
-`version` (the daemon binary's version), `accounts` (see `account`; each record is
-`{"login", "provider", "exit_country"}`, sorted by login), `active_accounts`, `activity`, `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
+`version` (the daemon binary's version), `allowed_clients` (which client
+addresses may connect; `*` when unrestricted), `accounts` (see `account`; each record is
+`{"login", "provider", "exit_country", "allowed_clients"}`, sorted by login), `active_accounts`, `activity`, `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
 
 `refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
@@ -848,6 +873,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
+| `CONFIG_INVALID` | 2 | An allowed-clients rule list is not valid (`account add --clients`, `account set-clients`, `account clone --clients`); the message names the bad item |
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings; `account clone` onto an existing login |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
@@ -892,6 +918,12 @@ Raw proxy mappings (credentials) are never printed.
   configured proxy authentication (`auth.login` / `auth.password` in
   `config.ktav`; the password may be `init`), otherwise `up` exits with
   `AUTH_REQUIRED`.
+- Proxy authentication guards who may **use** the proxy; `listen.allowed_clients`
+  (and the per-account `allowed_clients`) guard which addresses may **connect at
+  all**. A refused connection is closed before any handshake, before
+  authentication, and an account rule is enforced before a password is verified
+  or an `init` placeholder claimed (see [config.md](config.md), "Allowed
+  clients").
 - The control channel is a loopback HTTP server (`127.0.0.1` only, random
   port) guarded by a bearer token that lives only in
   `{HOME}/run/netivri.json` (mode `0600` on Unix). Every request must carry

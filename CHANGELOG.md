@@ -18,6 +18,23 @@ versions; every such change is listed here.
   (`node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down`).
   Names are cleaned of control characters and capped at 64 characters and are
   display only; without a name the field is omitted.
+- **`listen.allowed_clients`.** Which client addresses may connect to the proxy:
+  a comma-separated list of rules (`*`, `loopback`, an exact address, an IPv4
+  whole-octet mask such as `192.168.1.*`, or a CIDR prefix such as
+  `10.0.0.0/8`; default `*`, at most 64 rules, 1024 bytes). It is checked
+  against the real peer address in the listener's accept loop, before any
+  handshake and before authentication, so a refused connection is closed
+  without a reply byte; it does not replace proxy authentication. A change is
+  applied by the live reload; `netivri status` shows it as `allowed_clients`.
+- **Per-account client rules.** An account may carry an optional
+  `allowed_clients` with the same rule grammar:
+  `netivri account add {ACCOUNT} --clients {RULES}`,
+  `netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] {RULES} | --all
+  {RULES} | --none`, `account clone` copies the rule and `--clients` replaces
+  it, and `account list` and the `status` account records carry it. The
+  account rule is enforced during authentication, before the password is
+  verified, and can only narrow the global rule, never widen it — so an `init`
+  account can never be claimed from a disallowed address.
 - **`netivri account clone {SOURCE} {ACCOUNT}`.** A new account from an existing
   one: the provider, the exit country and, by default, the password (the hash is
   copied) are taken over. `--password {PASSWORD}` sets a password of its own,

@@ -17,24 +17,30 @@ const (
 )
 
 // accountClone implements `account clone SOURCE NEW`: a new account with the
-// provider and exit country of SOURCE and, by default, its password. --password
-// sets another one, or `init` leaves it to the first client that connects;
-// --provider and --country replace the copied route. Nothing is written when
-// any check fails, and the password and its hash are never printed.
+// provider, exit country and allowed_clients of SOURCE and, by default, its
+// password. --password sets another one, or `init` leaves it to the first
+// client that connects; --provider and --country replace the copied route,
+// --clients the copied allowed_clients. Nothing is written when any check
+// fails, and the password and its hash are never printed.
 func accountClone(home string, cfg *config.Config, rest []string, save func() error, stdout io.Writer) error {
 	fs := flag.NewFlagSet("account clone", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	password := fs.String("password", "", "password of the new account, or init")
 	country := fs.String("country", "", "exit country instead of the copied one")
 	provider := fs.String("provider", "", "provider instead of the copied one")
+	clients := fs.String("clients", "", "replace the copied allowed-clients rule list")
 	pos, err := parseFlags(fs, rest)
 	if err != nil {
 		return cli.Usage("account clone: invalid flags")
 	}
 	passwordGiven := false
+	clientsGiven := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "password" {
+		switch f.Name {
+		case "password":
 			passwordGiven = true
+		case "clients":
+			clientsGiven = true
 		}
 	})
 	if len(pos) != 2 {
@@ -54,7 +60,7 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists: " + newLogin, Exit: cli.ExitConflict}
 	}
 
-	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry}
+	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, AllowedClients: src.AllowedClients}
 	mode := clonePasswordCopied
 	if src.Password == config.InitPlaceholder {
 		mode = clonePasswordInit
@@ -74,6 +80,12 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 			}
 			next.Password, mode = hash, clonePasswordNew
 		}
+	}
+	if clientsGiven {
+		if _, err := config.ParseAllowedClients(*clients); err != nil {
+			return &cli.Error{Code: "CONFIG_INVALID", Message: "invalid --clients: " + err.Error(), Exit: cli.ExitUsage}
+		}
+		next.AllowedClients = config.NormalizeAllowedClients(*clients)
 	}
 	routeChanged := false
 	if *provider != "" {
@@ -99,7 +111,7 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		return err
 	}
 	cli.Success(stdout, map[string]any{
-		"account":     accountInfo{next.Login, next.Provider, next.ExitCountry, accountHasPassword(&next)},
+		"account":     accountInfo{next.Login, next.Provider, next.ExitCountry, next.AllowedClients, accountHasPassword(&next)},
 		"cloned_from": srcLogin,
 		"password":    mode,
 	})

@@ -16,6 +16,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"strconv"
 	"sync"
@@ -44,6 +45,10 @@ type Options struct {
 	Bind          string             // default "127.0.0.1"
 	Port          int                // 0 = random free port
 	Authenticator auth.Authenticator // nil = no authentication
+	// AllowedClients optionally restricts which client addresses may connect:
+	// parsed prefixes of listen.allowed_clients (nil = allow all). It is
+	// enforced by the listener's accept loop, before any handshake.
+	AllowedClients []netip.Prefix
 	// Node optionally routes every connection accepted by the mixed listener
 	// through this Mihomo proxy mapping (a Clash `proxies:` entry as produced
 	// by internal/subscription). nil keeps Direct mode. The node is fixed for
@@ -205,11 +210,23 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	executor.ApplyConfig(cfg, true)
 	everApplied = true
 
+	// ApplyConfig resets the process-global address filter; set ours after
+	// it and before the listener opens. A nil rule list means "no rule"
+	// (allow all); an empty list refuses everyone and must never be
+	// silently widened to allow-all.
+	allowed := o.AllowedClients
+	if allowed == nil {
+		allowed = allowAllIPs
+	}
+	inbound.SetAllowedIPs(allowed)
+
 	if len(plans) > 0 {
 		// The replaced select groups become garbage; their finalizers are
 		// drained by the next Start through drainFinalizers.
 		if err := installStickyGroups(plans, table, health, o.Observer); err != nil {
+			// The filter was already set; restore allow-all on shutdown.
 			executor.Shutdown()
+			resetAllowedClients()
 			return nil, err
 		}
 	}
@@ -228,6 +245,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	)
 	if err != nil {
 		executor.Shutdown()
+		resetAllowedClients()
 		if isAddrInUse(err) {
 			return nil, &cli.Error{Code: "PORT_IN_USE", Message: "listen " + addr + ": port is already in use", Exit: cli.ExitConflict}
 		}
@@ -253,6 +271,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		if err != nil {
 			_ = ln.Close()
 			executor.Shutdown()
+			resetAllowedClients()
 			return nil, err
 		}
 	}
@@ -367,6 +386,8 @@ func (i *Instance) Close() error {
 	// The probes and the pool dial through Mihomo's proxies: stop them first.
 	i.warm.Close()
 	executor.Shutdown()
+	// Allow-all again: the filter is process-global state.
+	resetAllowedClients()
 	if current == i {
 		current = nil // claim released only after the core is fully down
 	}

@@ -46,6 +46,9 @@ type Account struct {
 	Password    string `json:"password"`
 	Provider    string `json:"provider,omitempty"`
 	ExitCountry string `json:"exit_country,omitempty"`
+	// AllowedClients optionally narrows the client addresses this account
+	// may authenticate from; empty means no account restriction.
+	AllowedClients string `json:"allowed_clients,omitempty"`
 }
 
 // Account returns the account and its index, or (nil, -1) when absent.
@@ -105,6 +108,10 @@ func NormalizeCountry(code string) (string, bool) {
 type Listen struct {
 	Bind string `json:"bind"`
 	Port int    `json:"port"`
+	// AllowedClients restricts which client addresses may connect: an
+	// allowed-clients rule list (allowed_clients.go). Empty is invalid;
+	// the loaded value of an absent key is "*".
+	AllowedClients string `json:"allowed_clients,omitempty"`
 }
 
 // Auth controls who may use the local proxy. Empty Auth means no auth.
@@ -177,7 +184,7 @@ type Selection struct {
 // Default returns the safe default configuration.
 func Default() *Config {
 	return &Config{
-		Listen:    Listen{Bind: "127.0.0.1", Port: 7890},
+		Listen:    Listen{Bind: "127.0.0.1", Port: 7890, AllowedClients: AllowedClientsAny},
 		Selection: Selection{Mode: ModeManual},
 	}
 }
@@ -191,6 +198,11 @@ func (c *Config) Validate() error {
 	}
 	if c.Listen.Port < 1 || c.Listen.Port > 65535 {
 		return invalid("listen.port must be between 1 and 65535")
+	}
+	if v := strings.TrimSpace(c.Listen.AllowedClients); v == "" {
+		return invalid(`listen.allowed_clients must not be empty; omit the key or set it to "*"`)
+	} else if _, err := ParseAllowedClients(v); err != nil {
+		return invalid("listen.allowed_clients: %v", err)
 	}
 	if err := checkScalar("fetch.proxy", c.Fetch.Proxy); err != nil {
 		return err
@@ -294,6 +306,9 @@ func (c *Config) Validate() error {
 		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].provider", i), a.Provider); err != nil {
 			return err
+		}
+		if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
+			return invalid("accounts[%d].allowed_clients: %v", i, err)
 		}
 	}
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {

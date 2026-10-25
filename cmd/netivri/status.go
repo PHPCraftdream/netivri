@@ -38,17 +38,18 @@ func runStatus(args []string, stdout io.Writer) error {
 	accounts := append([]daemon.AccountInfo{}, st.Accounts...)
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Login < accounts[j].Login })
 	data := map[string]any{
-		"daemon":         "running",
-		"foreground":     st.Foreground,
-		"pid":            st.PID,
-		"listen":         st.Listen,
-		"protocols":      st.Protocols,
-		"auth":           st.Auth,
-		"route":          st.Route,
-		"started_at":     st.StartedAt,
-		"uptime_seconds": uptimeSeconds(st.StartedAt),
-		"version":        st.Version,
-		"accounts":       accounts,
+		"daemon":          "running",
+		"foreground":      st.Foreground,
+		"pid":             st.PID,
+		"listen":          st.Listen,
+		"protocols":       st.Protocols,
+		"auth":            st.Auth,
+		"route":           st.Route,
+		"allowed_clients": allowedClientsLabel(st.AllowedClients),
+		"started_at":      st.StartedAt,
+		"uptime_seconds":  uptimeSeconds(st.StartedAt),
+		"version":         st.Version,
+		"accounts":        accounts,
 	}
 	if st.Activity != nil {
 		active := 0
@@ -92,4 +93,13 @@ func uptimeSeconds(startedAt string) int64 {
 		return 0
 	}
 	return int64(d.Seconds())
+}
+
+// allowedClientsLabel renders the allowed_clients status value: an empty
+// value (a state file written before the field existed) shows as "*".
+func allowedClientsLabel(s string) string {
+	if s == "" {
+		return "*"
+	}
+	return s
 }

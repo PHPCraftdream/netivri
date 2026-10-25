@@ -11,15 +11,16 @@ import (
 )
 
 type accountInfo struct {
-	Login       string `json:"login"`
-	Provider    string `json:"provider"`
-	ExitCountry string `json:"exit_country"`
-	PasswordSet bool   `json:"password_set"`
+	Login          string `json:"login"`
+	Provider       string `json:"provider"`
+	ExitCountry    string `json:"exit_country"`
+	AllowedClients string `json:"allowed_clients"`
+	PasswordSet    bool   `json:"password_set"`
 }
 
 func runAccount(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return cli.Usage("account: missing subcommand (add, clone, list, show, set-country, set-provider, rm)")
+		return cli.Usage("account: missing subcommand (add, clone, list, show, set-country, set-provider, set-clients, rm)")
 	}
 	home, rest, err := parseHomeArgs("account "+args[0], args[1:])
 	if err != nil {
@@ -47,7 +48,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		}
 		items := make([]accountInfo, 0, len(cfg.Accounts))
 		for _, a := range cfg.Accounts {
-			items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(&a)})
+			items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(&a)})
 		}
 		cli.Success(stdout, map[string]any{"accounts": items})
 		return nil
@@ -58,6 +59,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		fs.SetOutput(io.Discard)
 		country := fs.String("country", "", "exit country")
 		provider := fs.String("provider", "", "subscription (provider) the account exits through")
+		clients := fs.String("clients", "", "client addresses that may use this account (allowed-clients rules)")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
 			return usage("invalid flags")
@@ -83,21 +85,28 @@ func runAccount(args []string, stdout io.Writer) error {
 				return err
 			}
 		}
+		clientsVal := ""
+		if *clients != "" {
+			if _, err := config.ParseAllowedClients(*clients); err != nil {
+				return &cli.Error{Code: "CONFIG_INVALID", Message: "invalid --clients: " + err.Error(), Exit: cli.ExitUsage}
+			}
+			clientsVal = config.NormalizeAllowedClients(*clients)
+		}
 		if cfg.Auth.Login == login && cfg.Auth.Login != config.InitPlaceholder {
 			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
 		}
 		if a, _ := cfg.Account(login); a != nil {
-			if a.ExitCountry == cc && a.Provider == prov {
-				cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(a)}, "existing": true})
+			if a.ExitCountry == cc && a.Provider == prov && a.AllowedClients == clientsVal {
+				cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(a)}, "existing": true})
 				return nil
 			}
-			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider or country", Exit: cli.ExitConflict}
+			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country or clients rule", Exit: cli.ExitConflict}
 		}
-		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc})
+		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, AllowedClients: clientsVal})
 		if err := save(); err != nil {
 			return err
 		}
-		cli.Success(stdout, map[string]any{"account": accountInfo{login, prov, cc, false}, "existing": false})
+		cli.Success(stdout, map[string]any{"account": accountInfo{login, prov, cc, clientsVal, false}, "existing": false})
 		return nil
 	case "clone":
 		return accountClone(home, cfg, rest, save, stdout)
@@ -105,6 +114,8 @@ func runAccount(args []string, stdout io.Writer) error {
 		return accountSet("country", home, cfg, rest, save, stdout)
 	case "set-provider":
 		return accountSet("provider", home, cfg, rest, save, stdout)
+	case "set-clients":
+		return accountSet("clients", home, cfg, rest, save, stdout)
 	case "rm":
 		if len(rest) != 1 {
 			return usage("requires LOGIN")
@@ -128,11 +139,11 @@ func runAccount(args []string, stdout io.Writer) error {
 	}
 }
 
-// accountSet implements `account set-country` and `account set-provider`
-// (field "country" or "provider"): ACCOUNT[,ACCOUNT...] VALUE, --all VALUE,
-// or either form with --none. Every account is checked before anything is
-// written: a change that would leave an account without nodes is refused as a
-// whole.
+// accountSet implements `account set-country`, `account set-provider` and
+// `account set-clients` (field "country", "provider" or "clients"):
+// ACCOUNT[,ACCOUNT...] VALUE, --all VALUE, or either form with --none. Every
+// account is checked before anything is written: a change that would leave an
+// account without nodes is refused as a whole.
 func accountSet(field, home string, cfg *config.Config, rest []string, save func() error, stdout io.Writer) error {
 	name := "account set-" + field
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -164,6 +175,11 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 		var err error
 		if field == "country" {
 			value, err = parseCountries(value)
+		} else if field == "clients" {
+			if _, err = config.ParseAllowedClients(value); err != nil {
+				return &cli.Error{Code: "CONFIG_INVALID", Message: err.Error(), Exit: cli.ExitUsage}
+			}
+			value = config.NormalizeAllowedClients(value)
 		} else {
 			value, err = parseProviders(cfg, value)
 		}
@@ -175,6 +191,8 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 		c := *a
 		if field == "country" {
 			c.ExitCountry = to
+		} else if field == "clients" {
+			c.AllowedClients = to
 		} else {
 			c.Provider = to
 		}
@@ -185,8 +203,10 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 		if next == *a {
 			continue // repeating the same value always succeeds
 		}
-		if err := checkRoute(home, cfg, next); err != nil {
-			return err
+		if field != "clients" {
+			if err := checkRoute(home, cfg, next); err != nil {
+				return err
+			}
 		}
 	}
 	for _, a := range targets {
@@ -197,7 +217,7 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 	}
 	items := make([]accountInfo, 0, len(targets))
 	for _, a := range targets {
-		items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, accountHasPassword(a)})
+		items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(a)})
 	}
 	if !*all && !strings.Contains(spec, ",") {
 		cli.Success(stdout, map[string]any{"account": items[0]})

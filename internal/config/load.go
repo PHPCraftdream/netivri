@@ -84,6 +84,12 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	// An explicitly empty value was already rejected by Validate; a loaded
+	// value is never "" for this key, so this normalizer only documents
+	// that state (an absent key decoded onto Default() as "*").
+	if cfg.Listen.AllowedClients == "" {
+		cfg.Listen.AllowedClients = AllowedClientsAny
+	}
 	return cfg, nil
 }
 

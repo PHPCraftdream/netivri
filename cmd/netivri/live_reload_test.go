@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,6 +234,114 @@ func TestReloadRestartsOnlyOnChange(t *testing.T) {
 	f.l.mu.Unlock()
 	if subs != 1 {
 		t.Errorf("latest configuration has %d subscriptions", subs)
+	}
+}
+
+// The live fingerprint hashes NormalizeAllowedClients(listen.allowed_clients)
+// on both sides (live.go), so only a change of the canonical value restarts
+// the core. Removing 10.0.0.0/8 turns the effective rule back into the
+// default "*", which is a different canonical value and therefore a restart.
+// An account's empty allowed_clients and an absent key both normalize to the
+// same value, and spacing around commas is canonicalized away, so neither
+// restarts.
+func TestReloadRestartsOnAllowedClientsChange(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	ctx := t.Context()
+	if f.script.calls() != 1 {
+		t.Fatalf("starts = %d, want 1", f.script.calls())
+	}
+
+	// Step 1: set a global rule — a restart is required.
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Listen.AllowedClients = "10.0.0.0/8"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(ctx)
+	if f.script.calls() != 2 || f.reloads() != 1 {
+		t.Fatalf("a changed listen rule did not restart the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
+	}
+	if !f.script.inst(0).isClosed() || f.script.inst(1).isClosed() {
+		t.Error("the old core must be closed and the new one running")
+	}
+	var covered bool
+	for _, p := range f.script.call(1).AllowedClients {
+		if p.Contains(netip.MustParseAddr("10.1.2.3")) {
+			covered = true
+		}
+	}
+	if !covered {
+		t.Errorf("the new core got %v, want a prefix covering 10.1.2.3", f.script.call(1).AllowedClients)
+	}
+
+	// Step 2: remove the rule again. Load yields "*" and Save renders the
+	// key absent, so the effective rule became "*" — a different canonical
+	// value than "10.0.0.0/8", hence a restart.
+	cfg, err = config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Listen.AllowedClients = ""
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "allowed_clients") {
+		t.Fatalf("clearing the rule must render the key absent, got %q", b)
+	}
+	f.l.reload(ctx)
+	if f.script.calls() != 3 || f.reloads() != 2 {
+		t.Fatalf("removing the rule did not restart the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
+	}
+
+	// Step 3a: an ACCOUNT's empty allowed_clients normalizes like an absent
+	// one (both ""), so no restart.
+	cfg, err = config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts[0].AllowedClients = ""
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(ctx)
+	if f.script.calls() != 3 || f.reloads() != 2 {
+		t.Fatalf("an account rule normalized to \"\" restarted the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
+	}
+
+	// Step 3b: a differently spaced spelling of the same global rule is
+	// canonicalized by NormalizeAllowedClients. Setting a new global rule
+	// still restarts...
+	cfg, err = config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Listen.AllowedClients = "10.0.0.0/8,loopback"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(ctx)
+	if f.script.calls() != 4 || f.reloads() != 3 {
+		t.Fatalf("a changed listen rule did not restart the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
+	}
+	// ...but the same rules with blanks around the commas must not.
+	cfg, err = config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Listen.AllowedClients = " 10.0.0.0/8 , loopback "
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(ctx)
+	if f.script.calls() != 4 || f.reloads() != 3 {
+		t.Fatalf("a re-spelled equivalent rule restarted the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
 	}
 }
 

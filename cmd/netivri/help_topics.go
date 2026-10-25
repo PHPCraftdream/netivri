@@ -86,7 +86,10 @@ var helpTopics = []helpTopic{
 			"daemon and returns at once; running it again is safe and reports the running instance.\n\n" +
 			"Settings come from config.ktav in the state directory; --port and --bind override listen.port and " +
 			"listen.bind. An account with a provider or an exit country is routed only through matching nodes, " +
-			"never directly. UDP is not relayed.",
+			"never directly. UDP is not relayed.\n\n" +
+			"listen.allowed_clients in config.ktav restricts which client addresses may connect at all " +
+			"(for example loopback or 10.0.0.0/8); it is checked before any handshake, is not a replacement " +
+			"for authentication, and each account's own allowed_clients can only narrow it.",
 		Flags: []helpFlag{
 			{"--port {N}", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
 			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication in config.ktav, otherwise up fails with AUTH_REQUIRED."},
@@ -130,7 +133,8 @@ var helpTopics = []helpTopic{
 		Group:   groupService,
 		Summary: "Show the running daemon",
 		Usage:   []string{"netivri status [--home {DIR}]"},
-		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, accounts " +
+		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, the " +
+			"allowed_clients rule, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
 			"probes, the statistics store and the sticky-routing counters.\n\n" +
 			"The 'activity' list shows who is using the proxy now: for every account whether it is active (has open " +
@@ -297,7 +301,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|rm} [arguments]"},
+		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|set-clients|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
@@ -331,6 +335,7 @@ var helpTopics = []helpTopic{
 		Flags: []helpFlag{
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
+			{"--clients {RULES}", "Client addresses that may use this account: an allowed-clients rule list (e.g. 10.0.0.0/8, 192.168.1.*, loopback, *). Default: no account restriction."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
@@ -338,12 +343,14 @@ var helpTopics = []helpTopic{
 			{"Any country of one subscription", "netivri account add carol --provider main"},
 			{"Germany first, then the Netherlands; main first, then backup", "netivri account add dave --provider main,backup --country DE,NL"},
 			{"Connect: the first password you send for alice becomes her password", "curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org"},
+			{"Only clients from 10.0.0.0/8 may use alice", "netivri account add alice --provider main --clients 10.0.0.0/8"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
 			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
 			herr("ACCOUNT_EXISTS", cli.ExitConflict, "the login exists with a different provider or country"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "--clients is not a valid allowed-clients value"),
 		},
 		SeeAlso: []string{"account list", "account clone", "sub countries", "up"},
 	},
@@ -354,7 +361,8 @@ var helpTopics = []helpTopic{
 		Usage: []string{
 			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]",
 		},
-		Description: "Creates {ACCOUNT} with the provider and exit country of {SOURCE} and, unless --password says " +
+		Description: "Creates {ACCOUNT} with the provider, exit country and allowed_clients of {SOURCE} and, unless " +
+			"--password says " +
 			"otherwise, with the same password: the stored hash is copied, so both logins accept the same password. " +
 			"If {SOURCE} still has the placeholder 'init', so does the copy.\n\n" +
 			"--password {PASSWORD} gives the new account a password of its own (1 to 1024 bytes, stored as an " +
@@ -367,12 +375,14 @@ var helpTopics = []helpTopic{
 			{"--password init", "Use the placeholder: the first password a client sends for {ACCOUNT} becomes its password."},
 			{"--provider {SUBSCRIPTION}[,...]", "Replace the copied provider (or list of providers, in priority order)."},
 			{"--country {COUNTRY}[,...]", "Replace the copied exit country (or list, in priority order; * stands for every country not named)."},
+			{"--clients {RULES}", "Replace the copied allowed-clients rule list. Clear it afterwards with 'account set-clients --none'."},
 		},
 		Examples: []helpExample{
 			{"A second login with the same route and the same password", "netivri account clone alice bob"},
 			{"The same route, a password of its own", "netivri account clone alice bob --password choose-a-password"},
 			{"The same route, the first client sets the password", "netivri account clone alice bob --password init"},
 			{"The same login settings, another country", "netivri account clone alice carol --password init --country NL"},
+			{"Clone alice but restrict her to loopback clients", "netivri account clone alice bob --clients loopback"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "{SOURCE} does not exist"),
@@ -381,6 +391,7 @@ var helpTopics = []helpTopic{
 			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "the replaced route has no stored nodes"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "--clients is not a valid allowed-clients value"),
 		},
 		Notes: []string{
 			"A password given on the command line is visible in the shell history and to other local users in the " +
@@ -394,7 +405,8 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "List accounts",
 		Usage:   []string{"netivri account list [--home {DIR}]"},
-		Description: "Shows each account: login, provider, exit_country and password_set, which is false until the " +
+		Description: "Shows each account: login, provider, exit_country, allowed_clients (empty when the account has " +
+			"no rule of its own) and password_set, which is false until the " +
 			"first client claims the 'init' placeholder. Passwords and hashes are never shown.",
 		Examples: []helpExample{{"List the accounts", "netivri account list"}},
 		SeeAlso:  []string{"account add", "status"},
@@ -505,6 +517,40 @@ var helpTopics = []helpTopic{
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account would have no stored node on that subscription; nothing was changed"),
 		},
 		SeeAlso: []string{"account set-country", "sub rm"},
+	},
+	{
+		Name:    "account set-clients",
+		Group:   groupAccount,
+		Summary: "Change or clear the client addresses that may use an account",
+		Usage: []string{
+			"netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] {RULES}",
+			"netivri account set-clients --all {RULES}",
+			"netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] --none",
+		},
+		Description: "Sets which client addresses may use existing accounts, or clears the restriction with --none. " +
+			"The value is one comma-separated allowed-clients rule list (see docs/config.md for the grammar: * , " +
+			"loopback, exact addresses, IPv4 whole-octet masks like 192.168.1.*, CIDR). {ACCOUNT} is the login of an " +
+			"account, for example alice; several logins are separated by commas, with no spaces, and --all means " +
+			"every account.\n\n" +
+			"The account rule only narrows what the global listen.allowed_clients already allows; a client allowed by " +
+			"neither is refused before the password is verified, so an 'init' account cannot be claimed from a " +
+			"disallowed address. A running daemon applies the change within a few seconds.\n\n" +
+			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
+		Flags: []helpFlag{
+			{"--all", "Change every account instead of naming them."},
+			{"--none", "Clear the rule instead of setting one."},
+		},
+		Examples: []helpExample{
+			{"Only loopback clients may use alice", "netivri account set-clients alice loopback"},
+			{"Restrict every account to one network", "netivri account set-clients --all '10.0.0.0/8'"},
+			{"Let every client use alice again", "netivri account set-clients alice --none"},
+		},
+		Errors: []helpError{
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account in the list does not exist, or --all with no accounts"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login in the list is not valid"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "the rule list is not a valid allowed-clients value"),
+		},
+		SeeAlso: []string{"account set-country", "account set-provider", "status"},
 	},
 	{
 		Name:    "account rm",

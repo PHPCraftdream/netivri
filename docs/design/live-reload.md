@@ -38,8 +38,9 @@ if it differs from what runs, replaces the core.
 
 `fingerprint` (`cmd/netivri/live.go`) is a SHA-256 over what a core is built
 from: the bind address and port, `auth.login` and `auth.password`, every
-account's login and password hash, and the nodes, labels and routes of the
-account pool. Left out on purpose: the subscription URLs and `fetch.*` (the
+account's login and password hash, the global `listen.allowed_clients` rule
+and every account's own `allowed_clients` rule, and the nodes, labels and
+routes of the account pool. Left out on purpose: the subscription URLs and `fetch.*` (the
 core does not read them) and the display name of each node (the core renames
 every node itself, and providers put changing text such as traffic left into
 it).
