@@ -41,9 +41,11 @@ func TestTrackedTunnelCloseAllClosesConnsAndWaits(t *testing.T) {
 	if elapsed := time.Since(start); elapsed >= 4*time.Second {
 		t.Fatalf("closeAll took %v: it must return once the closed connection ends the handler", elapsed)
 	}
+	// closeAll returns when the tracked handler is done; the test goroutine
+	// closes handlerDone just after HandleTCPConn returns, so wait for it.
 	select {
 	case <-handlerDone:
-	default:
+	case <-time.After(2 * time.Second):
 		t.Fatal("handler still running after closeAll returned")
 	}
 	if _, err := client.Write([]byte("x")); err == nil {
