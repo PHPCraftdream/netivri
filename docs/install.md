@@ -68,8 +68,8 @@ The Scoop manifest and the Homebrew formula are written from the archives of
 the release and checked for syntax; they are not installed by the workflow.
 The `.deb`, `.rpm` and npm tarball installs are.
 
-These files first appear in the release that follows 0.1.0; the page of 0.1.0
-has the archives and `SHA256SUMS` only.
+These files first appear in 0.2.0; the page of 0.1.0 has the archives and
+`SHA256SUMS` only.
 
 ## Supported platforms
 
