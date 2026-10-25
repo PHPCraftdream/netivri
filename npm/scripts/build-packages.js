@@ -24,8 +24,8 @@ const PLATFORMS = [
   { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-arm64' },
   { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-x64' },
   { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-arm64' },
-  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', libc: null, pkg: 'netivri-win32-x64' },
-  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', libc: null, pkg: 'netivri-win32-arm64' },
+  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-x64' },
+  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-arm64' },
 ];
 
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/PHPCraftdream/netivri.git' };

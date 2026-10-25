@@ -10,8 +10,8 @@ test('platformPackage maps the six supported platform/arch combos', () => {
     ['linux', 'arm64', false, 'netivri-linux-arm64'],
     ['darwin', 'x64', false, 'netivri-darwin-x64'],
     ['darwin', 'arm64', false, 'netivri-darwin-arm64'],
-    ['win32', 'x64', false, 'netivri-win32-x64'],
-    ['win32', 'arm64', false, 'netivri-win32-arm64'],
+    ['win32', 'x64', false, 'netivri-w32-x64'],
+    ['win32', 'arm64', false, 'netivri-w32-arm64'],
   ];
   for (const [platform, arch, isMusl, expected] of cases) {
     assert.equal(platformPackage(platform, arch, isMusl), expected,

@@ -540,6 +540,7 @@ jobs:
           set -euo pipefail
           VER="${{ steps.version.outputs.version }}"
           plat="$(node -p "process.platform + '-' + process.arch")"
+          plat="${plat/win32-/w32-}"
           prefix="${RUNNER_TEMP}/npm-global"
           home="${RUNNER_TEMP}/netivri-home"
           npm install -g --prefix "${prefix}" \

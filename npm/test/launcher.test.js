@@ -67,7 +67,7 @@ test('resolveBinary resolves the binary next to the platform package.json', () =
 });
 
 test('resolveBinary appends .exe on win32', () => {
-  const pkgDir = path.join('fake', 'netivri-win32-x64');
+  const pkgDir = path.join('fake', 'netivri-w32-x64');
   const res = resolveBinary('win32', 'x64', false,
     () => path.join(pkgDir, 'package.json'));
   assert.equal(res.bin, path.join(pkgDir, 'bin', 'netivri.exe'));

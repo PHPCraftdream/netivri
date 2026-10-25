@@ -60,7 +60,7 @@ environment; it is never printed.
 
 1. For each of the seven packages (`netivri`, `netivri-linux-x64`,
    `netivri-linux-arm64`, `netivri-darwin-x64`, `netivri-darwin-arm64`,
-   `netivri-win32-x64`, `netivri-win32-arm64`) open the package on npmjs.com,
+   `netivri-w32-x64`, `netivri-w32-arm64`) open the package on npmjs.com,
    Settings, Trusted Publisher, and choose GitHub Actions with owner
    `PHPCraftdream`, repository `netivri`, workflow filename `release.yml` and
    an empty environment.

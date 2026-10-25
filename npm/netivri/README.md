@@ -45,7 +45,7 @@ add `--json` (or set `NETIVRI_OUTPUT=json`) for JSON.
 ## Platforms
 
 The binary ships in a per-platform package (`netivri-linux-x64`,
-`netivri-darwin-arm64`, `netivri-win32-x64`, ...) installed automatically as
+`netivri-darwin-arm64`, `netivri-w32-x64`, ...) installed automatically as
 an optional dependency: Linux, macOS and Windows on x64 and arm64. Linux
 builds are made for glibc; musl (Alpine) is not supported.
 

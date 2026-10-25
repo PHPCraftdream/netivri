@@ -8,6 +8,14 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Changed
+
+- **npm: the Windows packages are `netivri-w32-x64` and `netivri-w32-arm64`.**
+  npm refused the name `netivri-win32-x64` as spam on every publish, so the two
+  Windows platform packages are renamed; the launcher still picks them by
+  `process.platform` (`win32`), and the packages keep `os: win32`. Release
+  archives, the installers and the CLI are not affected.
+
 ## [0.2.0] - 2026-10-25
 
 ### Added
