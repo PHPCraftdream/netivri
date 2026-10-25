@@ -39,8 +39,15 @@ To verify a change, push it and read the CI result.
      `reload`. The daemon also re-fetches the subscriptions once an hour.
      `--provider` and `--country` also take comma-separated lists in priority
      order (`--provider main,backup --country DE,NL`).
-     `netivri use` is described in `docs/cli.md` but not implemented yet.
+     `netivri use`, `netivri node test` and `netivri schema` are described in
+     `docs/cli.md` but not implemented yet.
   4. Use the proxy at `data.listen` from `status`.
+- `netivri doctor --json` checks the whole setup in one pass (exit 7 when a
+  check failed); `netivri logs --since 10m --json` reads the daemon log.
+- `netivri status` is short; pass `--full` for `warm.nodes`, `stats` and
+  `affinity`. `netivri help config`, `netivri help routing` and
+  `netivri help output` (also with `--json`) explain the configuration file,
+  routing and the fields of every command without the repository.
 - Never print or log subscription URLs; they are credentials.
 - Do not bind the proxy to anything other than `127.0.0.1` unless the user
   asked for it.
