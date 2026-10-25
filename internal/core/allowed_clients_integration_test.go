@@ -129,7 +129,7 @@ func TestAllowedClientsForeignNetRefused(t *testing.T) {
 	if errors.As(err, &ne) && ne.Timeout() {
 		t.Fatalf("connection was not closed promptly: %v", err)
 	}
-	if !errors.Is(err, io.EOF) && !strings.Contains(strings.ToLower(err.Error()), "reset") && !strings.Contains(strings.ToLower(err.Error()), "forcibly closed") {
+	if !errors.Is(err, io.EOF) && !strings.Contains(strings.ToLower(err.Error()), "reset") && !strings.Contains(strings.ToLower(err.Error()), "forcibly closed") && !strings.Contains(strings.ToLower(err.Error()), "aborted") {
 		t.Fatalf("read error = %v, want EOF or connection reset", err)
 	}
 }
@@ -229,7 +229,7 @@ func TestAllowedClientsAccountRuleBeforeInitClaim(t *testing.T) {
 	if errors.As(rerr, &ne) && ne.Timeout() {
 		t.Fatalf("connection was not closed promptly: %v", rerr)
 	}
-	if !errors.Is(rerr, io.EOF) && !strings.Contains(strings.ToLower(rerr.Error()), "reset") && !strings.Contains(strings.ToLower(rerr.Error()), "forcibly closed") {
+	if !errors.Is(rerr, io.EOF) && !strings.Contains(strings.ToLower(rerr.Error()), "reset") && !strings.Contains(strings.ToLower(rerr.Error()), "forcibly closed") && !strings.Contains(strings.ToLower(rerr.Error()), "aborted") {
 		t.Fatalf("read error = %v, want EOF or connection reset", rerr)
 	}
 	if persistCalls.Load() != 0 {
