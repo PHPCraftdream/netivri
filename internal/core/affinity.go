@@ -56,7 +56,7 @@ type binding struct {
 }
 
 type affinityShard struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	bindings map[affinityKey]*binding
 	cap      int
 }
@@ -98,7 +98,8 @@ func (t *affinityTable) shardIndex(login, site string) int {
 }
 
 // acquire returns the member for key in one atomic step. A live binding
-// whose member is not down is returned and its lastUsed refreshed; an
+// whose member is not down is returned and its lastUsed refreshed under the
+// shard's read lock; the write lock is taken only on the slow path: an
 // expired binding is deleted; a missing binding or one whose member is down
 // calls pick once, installs the result and returns it. rebound is true only
 // when an existing live binding was moved to a different member because its
@@ -108,6 +109,14 @@ func (t *affinityTable) shardIndex(login, site string) int {
 func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, pick func() (member int, provisional bool)) (member int, rebound bool) {
 	now := t.now()
 	shard := t.shards[t.shardIndex(key.login, key.site)]
+	shard.mu.RLock()
+	if b, ok := shard.bindings[key]; ok && !t.expired(b, now) && !isDown(b.member) {
+		b.lastUsed.Store(now.UnixNano())
+		shard.mu.RUnlock()
+		return b.member, false
+	}
+	shard.mu.RUnlock()
+
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	b, ok := shard.bindings[key]
@@ -145,8 +154,8 @@ func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, p
 func (t *affinityTable) peek(key affinityKey) (member int, ok bool) {
 	now := t.now()
 	shard := t.shards[t.shardIndex(key.login, key.site)]
-	shard.mu.Lock()
-	defer shard.mu.Unlock()
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 	b, found := shard.bindings[key]
 	if !found || t.expired(b, now) {
 		return 0, false
@@ -185,13 +194,13 @@ func (t *affinityTable) count() int {
 	now := t.now()
 	n := 0
 	for _, shard := range t.shards {
-		shard.mu.Lock()
+		shard.mu.RLock()
 		for _, b := range shard.bindings {
 			if !t.expired(b, now) {
 				n++
 			}
 		}
-		shard.mu.Unlock()
+		shard.mu.RUnlock()
 	}
 	return n
 }
