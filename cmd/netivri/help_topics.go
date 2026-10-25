@@ -66,10 +66,11 @@ var helpExitCodes = []helpExit{
 	{cli.ExitNoDaemon, "the daemon is not running (for commands that need it)"},
 	{cli.ExitNotFound, "not found (subscription, account, node, nodes for a country)"},
 	{cli.ExitConflict, "conflict (port in use, daemon already running with other settings)"},
+	{cli.ExitCheckFailed, "doctor: at least one check failed (the document on stdout says which)"},
 }
 
 // helpPlanned lists what docs/cli.md describes but the binary lacks.
-var helpPlanned = []string{"use", "node test", "doctor", "schema"}
+var helpPlanned = []string{"use", "node test", "schema"}
 
 func herr(code string, exit int, meaning string) helpError {
 	return helpError{Code: code, Exit: exit, Meaning: meaning}
@@ -681,6 +682,38 @@ var helpTopics = []helpTopic{
 		},
 		Notes:   []string{"Failed requests are not errors: they are counted in the failures of each node."},
 		SeeAlso: []string{"stats", "account add"},
+	},
+	{
+		Name:    "doctor",
+		Group:   groupDiag,
+		Summary: "One-pass diagnosis of the setup, with an exit code",
+		Usage:   []string{"netivri doctor [--home {DIR}]"},
+		Description: "Runs every check once and prints one document on stdout: checks, each with a " +
+			"name, a status (ok, warn or fail) and a detail, plus a summary count. When a check " +
+			"failed, the error envelope goes to stderr and the exit code is 7, so a script can run " +
+			"'netivri doctor' and branch on the exit code alone.\n\n" +
+			"The checks: config (config.ktav loads and is valid), daemon (a daemon runs for this " +
+			"state directory), listen (the address the running daemon reports, or, when nothing " +
+			"runs, whether the configured port is free), subscriptions (every configured " +
+			"subscription has a stored snapshot no older than twice fetch.update_interval, skipped " +
+			"when the interval is off, and every account names configured subscriptions only), one " +
+			"check per account (its route has stored nodes and, with a running daemon, a live node " +
+			"in the first tier that has nodes; without a daemon the stored nodes are counted and " +
+			"the liveness part is a warn) and log (no WARN or ERROR entries in the last hour of " +
+			"the daemon log; the log is read even when the daemon is down, and a missing log file " +
+			"is fine).\n\n" +
+			"A check that cannot run is a warn with the reason, never a failure of the whole " +
+			"command. No check contacts anything but the local daemon and the local port; " +
+			"subscription URLs, passwords and hashes are never printed.",
+		Examples: []helpExample{
+			{"Check the whole setup; the exit code says whether something failed", "netivri doctor"},
+			{"For a script or an agent", "netivri doctor --json"},
+		},
+		Errors: []helpError{
+			herr("DOCTOR_FAILED", cli.ExitCheckFailed, "at least one check failed; the document on stdout says which"),
+		},
+		Notes:   []string{"A warn means something to look at; only a fail makes the exit code 7."},
+		SeeAlso: []string{"status", "stats", "diag dial", "logs"},
 	},
 
 	{

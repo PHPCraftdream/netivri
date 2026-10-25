@@ -228,7 +228,7 @@ func TestHelpJSONOverview(t *testing.T) {
 			t.Errorf("overview JSON lacks command %q", want)
 		}
 	}
-	if codes, _ := help["exit_codes"].([]any); len(codes) != 7 {
+	if codes, _ := help["exit_codes"].([]any); len(codes) != 8 {
 		t.Errorf("exit_codes = %v", help["exit_codes"])
 	}
 	if planned, _ := help["planned"].([]any); len(planned) == 0 {

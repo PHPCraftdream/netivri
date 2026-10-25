@@ -10,6 +10,16 @@ versions; every such change is listed here.
 
 ### Added
 
+- **`netivri doctor`.** One-pass diagnosis with an exit code: checks the
+  configuration, the daemon, the listen address (or the configured port when
+  nothing runs), the stored subscription snapshots (age against twice
+  `fetch.update_interval`), every account's route (stored nodes; with a
+  running daemon also live nodes per tier) and the daemon log for WARN or
+  ERROR entries of the last hour. It prints one document on stdout
+  (`checks` with `name`, `status` and `detail`, and a `summary` count) and
+  ends with the new exit code 7 and `DOCTOR_FAILED` on stderr when a check
+  failed. A check that cannot run is a `warn`, never a crash; subscription
+  URLs, passwords and hashes are never printed.
 - **Node display names.** Subscriptions carry a display name per node
   (`Finland 1`); the statistics store (schema version 3, additive migration)
   records it and the per-node output shows it next to the hash-like label:

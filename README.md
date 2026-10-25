@@ -130,9 +130,11 @@ command.
 Version 0.x: the CLI contract may still change between minor versions, and
 every change is listed in the [changelog](CHANGELOG.md). Command results are
 documents only, in Ktav or with `--json` in JSON (`netivri help` and
-`netivri logs --follow` are the text outputs). Described in
-[`docs/cli.md`](docs/cli.md) but not implemented yet: `use`, `node test`,
-`doctor` and `schema`.
+`netivri logs --follow` are the text outputs). `netivri doctor`
+checks the whole setup in one pass (configuration, daemon, port, subscription
+snapshots, per-account routes, daemon log) and exits 7 when something failed.
+Described in [`docs/cli.md`](docs/cli.md) but not implemented yet: `use`,
+`node test` and `schema`.
 
 Non-goals for 0.x: TUN or a system-wide VPN mode (it needs admin rights),
 changing the operating system's proxy settings, and a GUI.
