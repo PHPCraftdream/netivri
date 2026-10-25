@@ -71,7 +71,7 @@ func TestControlStatusBody(t *testing.T) {
 		return Status{Daemon: "running", PID: 7, Listen: "127.0.0.1:7890", Accounts: []AccountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}}
 	}
 	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
-	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"main","exit_country":"DE"}]`) || strings.Contains(rec.Body.String(), "password") {
+	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"main","exit_country":"DE","allowed_clients":""}]`) || strings.Contains(rec.Body.String(), "password") {
 		t.Fatalf("unexpected status json: %s", rec.Body.String())
 	}
 	st, err := parseControlStatus(rec.Body.Bytes(), rec.Code)
@@ -87,7 +87,7 @@ func TestControlStatusOmissionAndEmptyCountry(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.status = func() Status { return Status{Accounts: []AccountInfo{{Login: "alice"}}} }
 	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
-	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"","exit_country":""}]`) {
+	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"","exit_country":"","allowed_clients":""}]`) {
 		t.Fatalf("empty provider and country keys omitted: %s", rec.Body.String())
 	}
 	s.status = func() Status { return Status{} }

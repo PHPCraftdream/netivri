@@ -189,9 +189,6 @@ func (a AllowedClients) Allows(addr netip.Addr) bool {
 // AllowsAddr is Allows for a net.Addr (the TCP peer address). An address that
 // is not an IP address matches nothing.
 func (a AllowedClients) AllowsAddr(addr net.Addr) bool {
-	if a == nil {
-		return true // no rule: the kind of address does not matter
-	}
 	ta, ok := addr.(*net.TCPAddr)
 	if !ok {
 		return false
