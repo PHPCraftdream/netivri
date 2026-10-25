@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -289,5 +290,77 @@ func TestSubAddStoresSnapshotFields(t *testing.T) {
 	}
 	if len(snap.Nodes) != 1 || snap.Nodes[0].Country != "FI" || snap.Skipped != 0 {
 		t.Errorf("snapshot = %d nodes, country %q, skipped %d", len(snap.Nodes), snap.Nodes[0].Country, snap.Skipped)
+	}
+}
+
+// quotaBody returns a fake fetch returning the body with a quota header.
+func quotaBody(body, header string) func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+	return func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		return &fetch.Result{
+			Body:   []byte(body),
+			Status: 200,
+			Header: http.Header{"Subscription-Userinfo": {header}},
+		}, nil
+	}
+}
+
+// sub add must store the quota from the subscription-userinfo header.
+func TestSubAddStoresQuota(t *testing.T) {
+	app, out := testApp(t, quotaBody(testBodyFI, "upload=100; download=23; total=1000; expire=1800000000"))
+	if err := app.add([]string{"--home", app.home, "https://a.example/sub", "--name", "a"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	snap, err := app.store().Load("a")
+	if err != nil {
+		t.Fatalf("store load: %v", err)
+	}
+	if snap.Quota == nil {
+		t.Fatalf("stored snapshot has no quota")
+	}
+	if snap.Quota.Upload != 100 || snap.Quota.Download != 23 || snap.Quota.Total != 1000 ||
+		!snap.Quota.Expire.Equal(time.Unix(1800000000, 0).UTC()) {
+		t.Errorf("stored quota = %+v", snap.Quota)
+	}
+	out.Reset()
+	if err := app.list(); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	data := decodeData(t, out)
+	subs := data["subscriptions"].([]any)
+	entry := subs[0].(map[string]any)
+	quota := entry["quota"].(map[string]any)
+	if quota["used"] != float64(123) || quota["total"] != float64(1000) || quota["expire"] != "2027-01-15T08:00:00Z" {
+		t.Errorf("list quota = %v", quota)
+	}
+}
+
+// Re-adding an existing URL refreshes the stored quota from the new fetch.
+func TestSubAddReAddRefreshesQuota(t *testing.T) {
+	app, out := testApp(t, quotaBody(testBodyFI, "upload=100; download=23; total=1000; expire=1800000000"))
+	if err := app.add([]string{"--home", app.home, "https://a.example/sub", "--name", "a"}); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+	app.fetch = quotaBody(testBodyFI, "upload=1; download=2; total=10; expire=1900000000")
+	if err := app.add([]string{"--home", app.home, "https://a.example/sub", "--name", "ignored"}); err != nil {
+		t.Fatalf("second add: %v", err)
+	}
+	snap, err := app.store().Load("a")
+	if err != nil {
+		t.Fatalf("store load: %v", err)
+	}
+	if snap.Quota == nil || snap.Quota.Upload != 1 || snap.Quota.Download != 2 || snap.Quota.Total != 10 ||
+		!snap.Quota.Expire.Equal(time.Unix(1900000000, 0).UTC()) {
+		t.Errorf("stored quota after re-add = %+v, want the fresh one", snap.Quota)
+	}
+	out.Reset()
+	if err := app.list(); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	data := decodeData(t, out)
+	subs := data["subscriptions"].([]any)
+	entry := subs[0].(map[string]any)
+	quota := entry["quota"].(map[string]any)
+	if quota["used"] != float64(3) {
+		t.Errorf("list quota used = %v, want 3", quota["used"])
 	}
 }

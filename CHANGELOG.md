@@ -22,6 +22,10 @@ versions; every such change is listed here.
   pairs without nodes are listed as skipped tiers with a reason. Without a
   daemon the static part is shown with `live` false. Passwords, hashes and
   subscription URLs are never shown.
+- **Subscription quota in `sub list` and `sub update`.** Both report the
+  `quota` parsed from the provider's `subscription-userinfo` header: `used`
+  (upload plus download bytes), `total` and `expire` (RFC3339 UTC), all
+  `null` when the provider sends no such header.
 - **Who is active, in `netivri status`.** The new `activity` list has one record
   per account: whether it is active (has open connections), the number of
   connections and bytes, and the nodes, providers and countries they use right

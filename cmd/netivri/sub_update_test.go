@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,52 @@ func TestSubUpdateOne(t *testing.T) {
 	}
 	if len(snap.Nodes) != 1 || snap.Nodes[0].Country != "FI" || !snap.FetchedAt.Equal(testNow) {
 		t.Errorf("snapshot not updated: %d nodes, %v", len(snap.Nodes), snap.FetchedAt)
+	}
+}
+
+// One fetcher response with a subscription-userinfo header, one without.
+func TestSubUpdateQuota(t *testing.T) {
+	withQuota := func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		return &fetch.Result{
+			Body:   []byte(testBodyFI),
+			Status: 200,
+			Header: http.Header{"Subscription-Userinfo": {"upload=100; download=23; total=1000; expire=1800000000"}},
+		}, nil
+	}
+	app, out := testApp(t, withQuota)
+	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
+	if err := app.update([]string{"--home", app.home, "a"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	data := decodeData(t, out)
+	r := data["results"].([]any)[0].(map[string]any)
+	q, ok := r["quota"].(map[string]any)
+	if !ok {
+		t.Fatalf("quota = %v, want an object", r["quota"])
+	}
+	if q["used"] != float64(123) || q["total"] != float64(1000) {
+		t.Errorf("quota used/total = %v/%v, want 123/1000", q["used"], q["total"])
+	}
+	if exp, _ := q["expire"].(string); exp != "2027-01-15T08:00:00Z" {
+		t.Errorf("quota expire = %v, want 2027-01-15T08:00:00Z", q["expire"])
+	}
+	snap, err := app.store().Load("a")
+	if err != nil {
+		t.Fatalf("store load: %v", err)
+	}
+	if snap.Quota == nil || snap.Quota.Upload != 100 || snap.Quota.Download != 23 {
+		t.Errorf("stored quota = %+v", snap.Quota)
+	}
+
+	app, out = testApp(t, fakeBody(testBodyFI))
+	seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub"})
+	if err := app.update([]string{"--home", app.home, "a"}); err != nil {
+		t.Fatalf("update without header: %v", err)
+	}
+	data = decodeData(t, out)
+	r = data["results"].([]any)[0].(map[string]any)
+	if r["quota"] != nil {
+		t.Errorf("quota without header = %v, want nil", r["quota"])
 	}
 }
 

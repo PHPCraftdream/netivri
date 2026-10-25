@@ -13,6 +13,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 // list implements `sub list`. The subscription URL and the via proxy are
@@ -31,12 +32,14 @@ func (a *subApp) list() error {
 			"via_set":    s.Via != "",
 			"nodes":      nil,
 			"fetched_at": nil,
+			"quota":      nil,
 		}
 		snap, err := store.Load(s.Name)
 		switch {
 		case err == nil:
 			entry["nodes"] = len(snap.Nodes)
 			entry["fetched_at"] = snap.FetchedAt.Format(time.RFC3339)
+			entry["quota"] = quotaView(snap.Quota)
 		case errors.Is(err, os.ErrNotExist):
 			// Never fetched: nodes and fetched_at stay null.
 		default:
@@ -46,6 +49,21 @@ func (a *subApp) list() error {
 	}
 	cli.Success(a.stdout, map[string]any{"subscriptions": subs})
 	return nil
+}
+
+// quotaView renders a stored quota for output; nil stays nil.
+func quotaView(q *subscription.Quota) map[string]any {
+	if q == nil {
+		return nil
+	}
+	v := map[string]any{"used": q.Upload + q.Download, "total": nil, "expire": nil}
+	if q.Total > 0 {
+		v["total"] = q.Total
+	}
+	if !q.Expire.IsZero() {
+		v["expire"] = q.Expire.UTC().Format(time.RFC3339)
+	}
+	return v
 }
 
 // snapshotError reports a stored snapshot that exists but cannot be read
