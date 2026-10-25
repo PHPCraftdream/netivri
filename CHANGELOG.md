@@ -15,6 +15,13 @@ versions; every such change is listed here.
   copied) are taken over. `--password {PASSWORD}` sets a password of its own,
   `--password init` leaves it to the first client that connects, and
   `--provider` / `--country` replace the copied route.
+- **`netivri account show {ACCOUNT}`.** Shows the account's configured provider
+  and country lists and its route as ordered tiers: per node the label,
+  provider, country and tier index and, while the daemon runs, the last probe
+  result (alive, delay) and the account's live connections through the node;
+  pairs without nodes are listed as skipped tiers with a reason. Without a
+  daemon the static part is shown with `live` false. Passwords, hashes and
+  subscription URLs are never shown.
 - **Who is active, in `netivri status`.** The new `activity` list has one record
   per account: whether it is active (has open connections), the number of
   connections and bytes, and the nodes, providers and countries they use right

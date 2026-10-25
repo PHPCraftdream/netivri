@@ -37,6 +37,7 @@ type coreInstance interface {
 	WarmStats() (core.WarmStats, bool)
 	AffinityStats() core.AffinityStats
 	Activity() []core.AccountActivity
+	MemberLabels() map[string]string
 	Close() error
 }
 

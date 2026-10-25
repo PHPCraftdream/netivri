@@ -19,7 +19,7 @@ type accountInfo struct {
 
 func runAccount(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return cli.Usage("account: missing subcommand (add, clone, list, set-country, set-provider, rm)")
+		return cli.Usage("account: missing subcommand (add, clone, list, show, set-country, set-provider, rm)")
 	}
 	home, rest, err := parseHomeArgs("account "+args[0], args[1:])
 	if err != nil {
@@ -51,6 +51,8 @@ func runAccount(args []string, stdout io.Writer) error {
 		}
 		cli.Success(stdout, map[string]any{"accounts": items})
 		return nil
+	case "show":
+		return accountShow(home, cfg, rest, stdout)
 	case "add":
 		fs := flag.NewFlagSet("account add", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
