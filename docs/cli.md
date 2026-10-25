@@ -31,6 +31,7 @@ netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
 netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]
 
 netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
+netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
 netivri account list
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...] | --all {COUNTRY}[,{COUNTRY}...]
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
@@ -346,6 +347,21 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `add` with the same providers and countries in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
+- `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider and exit
+  country of `{SOURCE}` and, by default, its password: the stored hash is copied,
+  so both logins accept the same password (a source that still has the `init`
+  placeholder gives a copy with the placeholder). `--password {PASSWORD}` gives
+  the new account a password of its own (1 to 1024 bytes, hashed with argon2id
+  like any other), and `--password init` leaves it to the first client that
+  connects. `--provider` and `--country` replace the copied route with the same
+  rules as `add`; a replaced route is checked like `set-country` checks it, and
+  with no stored node nothing is created (`NO_NODES_FOR_COUNTRY`). Unlike
+  `add`, an existing `{ACCOUNT}` is always `ACCOUNT_EXISTS` (exit 6), and an
+  unknown `{SOURCE}` is `ACCOUNT_NOT_FOUND` (exit 5). The result carries
+  `account` (as in `list`), `cloned_from` and `password` (`copied`, `new` or
+  `init`); the password and its hash are never printed. A password given with
+  `--password` is visible in the shell history and the process list: prefer
+  `--password init` when that matters. `{SOURCE}` is not changed.
 - `list` reports `login`, `provider`, `exit_country` and `password_set`
   (`false` until the placeholder is claimed); it never returns a password or
   a hash.
@@ -765,7 +781,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
-| `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings |
+| `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings; `account clone` onto an existing login |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
 | `SUB_IN_USE` | 6 | `sub rm` of a subscription that is the provider, or one of the providers in the list, of an account (nothing is removed; hint: `netivri account set-provider {ACCOUNT} --none`) |
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
@@ -799,7 +815,8 @@ Raw proxy mappings (credentials) are never printed.
 - `use` with the current selection: exit 0.
 - `account add` with the same login, provider and country, repeated `account
   set-country` with the same country and repeated `account set-provider` with
-  the same provider: exit 0; `account rm` and `sub rm` are not idempotent.
+  the same provider: exit 0; `account clone`, `account rm` and `sub rm` are not
+  idempotent.
 
 ## Security
 

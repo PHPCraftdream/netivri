@@ -14,6 +14,10 @@ import (
 // maxPasswordLen bounds argon2 input cost from hostile clients.
 const maxPasswordLen = 1024
 
+// MaxPasswordLen is the longest password a client can authenticate with; a
+// longer one set in the configuration could never be used.
+const MaxPasswordLen = maxPasswordLen
+
 // verifyHash is the package verification seam; tests replace it to
 // observe and gate argon2 work.
 var verifyHash = VerifyHash

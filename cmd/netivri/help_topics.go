@@ -294,7 +294,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account {add|list|set-country|set-provider|rm} [arguments]"},
+		Usage:   []string{"netivri account {add|clone|list|set-country|set-provider|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
@@ -341,7 +341,49 @@ var helpTopics = []helpTopic{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
 			herr("ACCOUNT_EXISTS", cli.ExitConflict, "the login exists with a different provider or country"),
 		},
-		SeeAlso: []string{"account list", "sub countries", "up"},
+		SeeAlso: []string{"account list", "account clone", "sub countries", "up"},
+	},
+	{
+		Name:    "account clone",
+		Group:   groupAccount,
+		Summary: "Create an account from an existing one",
+		Usage: []string{
+			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]",
+		},
+		Description: "Creates {ACCOUNT} with the provider and exit country of {SOURCE} and, unless --password says " +
+			"otherwise, with the same password: the stored hash is copied, so both logins accept the same password. " +
+			"If {SOURCE} still has the placeholder 'init', so does the copy.\n\n" +
+			"--password {PASSWORD} gives the new account a password of its own (1 to 1024 bytes, stored as an " +
+			"argon2id hash); --password init leaves it to the first client that connects. --provider and --country " +
+			"replace the copied route, each as in 'account add', and the new route must have stored nodes, otherwise " +
+			"nothing is created. {SOURCE} is never changed. A running daemon picks the new account up within a few " +
+			"seconds.",
+		Flags: []helpFlag{
+			{"--password {PASSWORD}", "A new password for {ACCOUNT}. Default: copy the password of {SOURCE}."},
+			{"--password init", "Use the placeholder: the first password a client sends for {ACCOUNT} becomes its password."},
+			{"--provider {SUBSCRIPTION}[,...]", "Replace the copied provider (or list of providers, in priority order)."},
+			{"--country {COUNTRY}[,...]", "Replace the copied exit country (or list, in priority order; * stands for every country not named)."},
+		},
+		Examples: []helpExample{
+			{"A second login with the same route and the same password", "netivri account clone alice bob"},
+			{"The same route, a password of its own", "netivri account clone alice bob --password choose-a-password"},
+			{"The same route, the first client sets the password", "netivri account clone alice bob --password init"},
+			{"The same login settings, another country", "netivri account clone alice carol --password init --country NL"},
+		},
+		Errors: []helpError{
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "{SOURCE} does not exist"),
+			herr("ACCOUNT_EXISTS", cli.ExitConflict, "{ACCOUNT} exists already (or is the login of the proxy authentication)"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login is not valid"),
+			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
+			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
+			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "the replaced route has no stored nodes"),
+		},
+		Notes: []string{
+			"A password given on the command line is visible in the shell history and to other local users in the " +
+				"process list. Use --password init to avoid typing it.",
+			"The password is never printed; 'password' in the result says copied, new or init.",
+		},
+		SeeAlso: []string{"account add", "account list", "account set-country"},
 	},
 	{
 		Name:    "account list",
