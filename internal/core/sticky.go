@@ -158,7 +158,7 @@ func (g *stickyGroup) observeAccountDial(login, label string, ok bool, took time
 	if g.observer == nil || login == "" {
 		return
 	}
-	if ao, ok := g.observer.(AccountObserver); ok {
+	if ao, isAccount := g.observer.(AccountObserver); isAccount {
 		ao.ObserveAccountDial(login, label, ok, took)
 	}
 }
