@@ -12,6 +12,11 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Self-contained help.** `netivri help` now teaches configuration and
+  operation without the repository: three concept topics (`netivri help
+  config`, `netivri help routing`, `netivri help output`) under a new
+  "Concepts" group in the overview, and the documentation references in the
+  help text are absolute GitHub URLs instead of repository paths.
 - **`netivri doctor`.** One-pass diagnosis with an exit code: checks the
   configuration, the daemon, the listen address (or the configured port when
   nothing runs), the stored subscription snapshots (age against twice

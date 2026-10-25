@@ -11,11 +11,14 @@ const (
 	groupSubs    = "Subscriptions and nodes"
 	groupAccount = "Accounts"
 	groupDiag    = "Statistics and diagnostics"
-	groupOther   = "Other"
+	// groupConcepts holds the concept topics: not commands, but things an
+	// operator with only the binary needs to learn from help alone.
+	groupConcepts = "Concepts"
+	groupOther    = "Other"
 )
 
 // helpGroups is the order of the command list in the overview.
-var helpGroups = []string{groupService, groupSubs, groupAccount, groupDiag, groupOther}
+var helpGroups = []string{groupService, groupSubs, groupAccount, groupDiag, groupConcepts, groupOther}
 
 const helpSummary = "local proxy service for provider subscriptions"
 
@@ -541,10 +544,10 @@ var helpTopics = []helpTopic{
 			"netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] --none",
 		},
 		Description: "Sets which client addresses may use existing accounts, or clears the restriction with --none. " +
-			"The value is one comma-separated allowed-clients rule list (see docs/config.md for the grammar: * , " +
-			"loopback, exact addresses, IPv4 whole-octet masks like 192.168.1.*, CIDR). {ACCOUNT} is the login of an " +
-			"account, for example alice; several logins are separated by commas, with no spaces, and --all means " +
-			"every account.\n\n" +
+			"The value is one comma-separated allowed-clients rule list ('netivri help config' has the full " +
+			"grammar: * , loopback, exact addresses, IPv4 whole-octet masks like 192.168.1.*, CIDR). {ACCOUNT} is " +
+			"the login of an account, for example alice; several logins are separated by commas, with no spaces, " +
+			"and --all means every account.\n\n" +
 			"The account rule only narrows what the global listen.allowed_clients already allows; a client allowed by " +
 			"neither is refused before the password is verified, so an 'init' account cannot be claimed from a " +
 			"disallowed address. A running daemon applies the change within a few seconds.\n\n" +
@@ -563,7 +566,7 @@ var helpTopics = []helpTopic{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login in the list is not valid"),
 			herr("CONFIG_INVALID", cli.ExitUsage, "the rule list is not a valid allowed-clients value"),
 		},
-		SeeAlso: []string{"account set-country", "account set-provider", "status"},
+		SeeAlso: []string{"account set-country", "account set-provider", "config"},
 	},
 	{
 		Name:    "account rm",
@@ -749,5 +752,187 @@ var helpTopics = []helpTopic{
 			{"A subcommand, either way", "netivri help sub add\nnetivri sub add --help"},
 			{"For a script or an agent", "netivri help account add --json"},
 		},
+	},
+
+	// Concept topics: not commands, but everything an operator with only
+	// the binary needs in order to configure and run netivri.
+	{
+		Name:    "config",
+		Group:   groupConcepts,
+		Summary: "The config.ktav file and every key it accepts",
+		Usage:   []string{"netivri help config"},
+		Description: "netivri keeps its settings in config.ktav inside the state directory: the directory given by " +
+			"--home {DIR} or $NETIVRI_HOME, else the user config directory plus /netivri (%APPDATA%\\netivri on " +
+			"Windows, ~/.config/netivri on Linux, ~/Library/Application Support/netivri on macOS). A missing file " +
+			"is not an error: safe defaults apply (proxy on 127.0.0.1:7890, every client address allowed, no " +
+			"authentication, manual selection). Every command that changes settings writes this file; a running " +
+			"daemon notices and applies the change by itself within a few seconds.\n\n" +
+			"The file is Ktav, a plain-text key/value format, and safe to edit by hand. But netivri rewrites the " +
+			"whole file whenever it persists a change, so hand-written comments are not preserved; keep notes in " +
+			"a separate file.\n\n" +
+			"The keys: listen.bind is the address the proxy binds (default 127.0.0.1), listen.port the port " +
+			"(default 7890, 1 to 65535), listen.allowed_clients which client addresses may connect (see below). " +
+			"auth.login and auth.password turn proxy authentication on; either both or neither. auth.password is " +
+			"either the placeholder init or an argon2id hash (it starts with $argon2id$); a plain password is " +
+			"rejected. auth.allow_init_remote (default false) permits the init placeholder on a non-loopback bind. " +
+			"fetch.proxy is the proxy for all outgoing subscription fetches, a socks5://, socks5h://, http:// or " +
+			"https:// URL with a host. fetch.update_interval is how often the daemon re-fetches every " +
+			"subscription: a duration from 5m to 168h, or off; the default is 1h.\n\n" +
+			"subscriptions is an array of provider subscriptions, each with subscriptions.name, subscriptions.url " +
+			"(a secret, never printed) and an optional subscriptions.via, a per-subscription fetch proxy with the " +
+			"same rules as fetch.proxy. accounts is an array of proxy accounts: accounts.login (1 to 64 " +
+			"characters of A-Za-z0-9._@-, unique, not the reserved init, not a duplicate of a non-init " +
+			"auth.login), accounts.password (init or an argon2id hash), and optional accounts.provider (a " +
+			"comma-separated list of subscription names in priority order), accounts.exit_country (a " +
+			"comma-separated list of two-letter country codes, * allowed) and accounts.allowed_clients (the " +
+			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
+			"fastest or auto; " +
+			"default manual) set the preferred exit.\n\n" +
+			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
+			"around a comma are ignored. The rules: * (every address), loopback (127.0.0.0/8 and ::1), an exact " +
+			"IPv4 or IPv6 address, an IPv4 whole-octet mask (trailing * octets only: 192.168.1.*, 10.*; a * " +
+			"anywhere else, such as 192.*.1.5, is an error - use a CIDR prefix) and a CIDR prefix (10.0.0.0/8, " +
+			"fd00::/8). At most 64 rules and 1024 bytes in total. The value is checked against the client " +
+			"address before any handshake, so a refused connection is closed without a reply. The global rule and " +
+			"the account rule cascade: the account rule can only narrow what the global rule already allows. An " +
+			"absent listen.allowed_clients means *; a value that is present but empty, including the raw-string " +
+			"spelling listen.allowed_clients::, is a CONFIG_INVALID error naming the key.\n\n" +
+			"The init placeholder means the first client that authenticates with that login sets the password: " +
+			"the daemon stores its argon2id hash in the file. init is accepted only when listen.bind is a " +
+			"loopback address, unless auth.allow_init_remote is true, and a client from an address the " +
+			"allowed_clients rules refuse can never claim it.",
+		Examples: []helpExample{
+			{"A complete config.ktav; the :: marker keeps a value from being read as a number or boolean", "" +
+				"listen.bind: 127.0.0.1\n" +
+				"listen.port: 7890\n" +
+				"auth.login:: init\n" +
+				"auth.password:: init\n" +
+				"auth.allow_init_remote: false\n" +
+				"subscriptions: [\n" +
+				"    {\n" +
+				"        name: main\n" +
+				"        url:: https://provider.example/sub/SECRET\n" +
+				"    }\n" +
+				"]\n" +
+				"accounts: [\n" +
+				"    {\n" +
+				"        login: alice\n" +
+				"        password:: init\n" +
+				"        provider: main\n" +
+				"        exit_country: DE\n" +
+				"    }\n" +
+				"]\n" +
+				"selection.node::\n" +
+				"selection.country::\n" +
+				"selection.mode: manual"},
+			{"Limit the proxy to your local network", "listen.allowed_clients: loopback,192.168.1.*"},
+			{"Full reference for every key", "https://github.com/PHPCraftdream/netivri/blob/main/docs/config.md"},
+		},
+		SeeAlso: []string{"routing", "up", "account add"},
+	},
+	{
+		Name:    "routing",
+		Group:   groupConcepts,
+		Summary: "How a connection picks its exit node: tiers, fallback, sticky bindings",
+		Usage:   []string{"netivri help routing"},
+		Description: "An account with a provider list or an exit-country list is routed through subscription nodes, " +
+			"never directly. The exit_country list gives the countries first in list order; inside a country the " +
+			"providers of the account follow in their order. A tier is the nodes of one (country, provider) pair, " +
+			"and a new connection goes to a node of the first tier that has one up, so a later tier is only a " +
+			"fallback. There is no fallback beyond the lists: no direct connection, and no country or provider " +
+			"the account does not name. An account with neither a provider nor a country uses the default route, " +
+			"which is direct until a node is selected.\n\n" +
+			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
+			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
+			"country. Quote it in shells that expand globs (--country '*').\n\n" +
+			"The binding between an account and a site is sticky: once the daemon picked an exit node for the " +
+			"(login, site) pair it keeps that node for later connections to the same site while the node is up, " +
+			"even after a better tier recovers. The bindings survive restarts and configuration reloads: the " +
+			"daemon stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
+			"describes the affinity counters.\n\n" +
+			"The daemon probes the route nodes in the background. A node is marked down after 2 consecutive " +
+			"failed probes or 3 consecutive failed dials. A single failed dial is returned to the client as an " +
+			"error and the client retries; the connection is not moved on the spot, unless the node just went " +
+			"down with that failure, in which case the daemon re-binds and retries once on the node it now " +
+			"selects. Once a node is down, new connections skip it and existing bindings to it re-bind to the " +
+			"next up node or tier; the node comes back as soon as a probe or a dial succeeds. A down node is " +
+			"probed with growing pauses: the probe interval doubles twice (base, 2x, 4x) and then caps.\n\n" +
+			"An account is created with the password placeholder init: the first client that authenticates with " +
+			"that login claims it, and the daemon stores the argon2id hash of the password it sent. A client from " +
+			"an address the allowed_clients rules refuse is turned away before the password is checked, so a " +
+			"disallowed address can never claim an init password.\n\n" +
+			"The client-address rules cascade: the global listen.allowed_clients is checked first, then the " +
+			"account's own allowed_clients. The account rule can only narrow what the global rule already " +
+			"allows, never widen it.",
+		Examples: []helpExample{
+			{"The route of an account, tier by tier", "netivri account show alice"},
+			{"Give an account providers and countries in priority order", "netivri account add alice --provider main,backup --country DE,NL"},
+			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
+		},
+		SeeAlso: []string{"config", "account show", "account set-country", "status"},
+	},
+	{
+		Name:    "output",
+		Group:   groupConcepts,
+		Summary: "The fields each command prints",
+		Usage:   []string{"netivri help output"},
+		Description: "Every command prints one document with schema_version, ok and data, in Ktav by default and as " +
+			"one JSON object with --json; a failure prints the same shape on stderr with a stable error code. " +
+			"'netivri help {COMMAND}' gives the document of one command; this topic lists the fields of the " +
+			"data objects. Subscription URLs, passwords and hashes are never printed.",
+		Examples: []helpExample{
+			{"The document of one command, as JSON for a script", "netivri help status --json"},
+			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
+		},
+		Notes: []string{
+			"status: daemon, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
+				"provider, exit_country, allowed_clients), route, started_at, uptime_seconds, version, " +
+				"active_accounts, activity[] (login, active, connections, upload_bytes, download_bytes - byte counts -, " +
+				"providers[], countries[], nodes[] with node, name, provider, country, connections and the byte " +
+				"counters), warm (alive = nodes whose last probe succeeded, total = the number of nodes, " +
+				"probes = probes sent so far, probe_failures = failed probes), refresh (interval_seconds = 0 " +
+				"when the refresh is off, ok, failed, last_at, last_error) and reload (count = core restarts " +
+				"caused by a changed configuration, last_at, last_error). Timestamps are RFC3339 UTC. --full " +
+				"adds the complete warm with nodes[] (name = the internal proxy name, alive, delay_ms, 0 until " +
+				"a probe succeeded, label, provider, country, node_name), stats (path, dropped = samples lost " +
+				"to a full write queue) and affinity (bindings = current site-to-node bindings held, rebinds = " +
+				"how often a binding moved to another node, hedges = hedge dial attempts started, hedge_wins = " +
+				"dials won by the hedge attempt, restored = persisted bindings loaded at the latest core start " +
+				"or reload, saved_at = RFC3339 UTC of the last successful bindings write, omitted when none). " +
+				"--watch prints one frame per interval: time, active_accounts, accounts[] (login, active, " +
+				"connections, up_bytes_per_s, down_bytes_per_s - bytes per second, null on the first frame) " +
+				"and nodes[] (node, name, provider, country, connections, byte counters).",
+			"stats: since, by, items[]. Timestamps are RFC3339 UTC (last_seen and last_ok are null when never). Percent fields run 0 to 100 with one " +
+				"decimal and are null when nothing was measured: uptime_pct is successful probes over all " +
+				"probes of the window, dial_ok_pct successful dials over all dials. Per node (by node): " +
+				"label, name (only when the subscription gives a display name), provider, country, probes, " +
+				"uptime_pct, delay_ms (avg, p50, p95 - milliseconds of probe delays), dials, dial_ok_pct, " +
+				"dial_ms_avg (mean milliseconds of successful dials), throughput_kbps (p50, max - KiB/s per " +
+				"throughput window), bytes (total bytes moved in the window), last_seen, last_ok. By country " +
+				"or provider the group name stands under the --by key and percentiles are left out. By " +
+				"account: login, bytes_up, bytes_down (byte counts), dials, dial_ok_pct, nodes (a count), countries, " +
+				"providers (comma-joined).",
+			"doctor: checks[] (name, status - ok, warn or fail - and detail, omitted when empty) plus " +
+				"summary (the ok, warn and fail counts). Exit code 7 when a check failed.",
+			"account show: login, provider, exit_country (the raw configured lists), providers and countries " +
+				"(the parsed lists in priority order, * included), tiers[] and live (true when the daemon " +
+				"answered). tiers[]: tier (the index; a tier without nodes is marked skipped true, carries a " +
+				"reason and keeps the index it would have had, so it consumes no tier number), country, " +
+				"providers[], nodes[] (label, name - only when the subscription gives a display name -, " +
+				"provider, country, tier, alive, delay_ms, connections). Without the daemon, alive, delay_ms " +
+				"and connections are null. With it, connections is the live connection count when the daemon tracks the " +
+				"account (0 for an idle node) and null when it does not track it; alive and delay_ms are null unless " +
+				"the daemon's warm-up list contains the node's label.",
+			"logs: entries[] (time - RFC3339 UTC -, level, message), oldest first. With --follow the output " +
+				"is a stream: log lines, or with --json one object per line (time, level, message).",
+			"sub list: subscriptions[] (name, host - of the URL; the URL itself is never printed -, via_set " +
+				"(a via proxy is set), nodes (a count, null until the first fetch), fetched_at (RFC3339 UTC, " +
+				"null until the first fetch), quota). quota is null when the provider sent no " +
+				"subscription-userinfo header; otherwise used (upload + download, bytes), total (bytes, null " +
+				"when the provider gives none) and expire (RFC3339 UTC, null when the provider gives none).",
+			"node list: nodes[] (id, name - the node name as the provider gave it -, type, server, port, country (read " +
+				"from the node name, a hint), sub) and count.",
+		},
+		SeeAlso: []string{"status", "stats", "account show", "sub list", "node list", "logs", "doctor"},
 	},
 }
