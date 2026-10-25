@@ -28,23 +28,25 @@ netivri sub rm {SUBSCRIPTION}
 netivri sub countries [{SUBSCRIPTION} | --url {URL} [--via {PROXY}]]
 
 netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
-netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]
+netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]   (planned)
 
-netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
-netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
+netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--clients {RULES}]
+netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--clients {RULES}]
 netivri account list
 netivri account show {ACCOUNT}
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...] | --all {COUNTRY}[,{COUNTRY}...]
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...] | --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
+netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] {RULES} | --all {RULES}
+netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] --none
 netivri account rm {ACCOUNT}
 
 netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider|account}] [--account {ACCOUNT}]
 
 netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
-netivri use {NODE}
+netivri use {NODE}                        (planned)
 netivri use --country {COUNTRY} [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
@@ -54,7 +56,7 @@ netivri status [--full] [--watch] [--interval {DURATION}]
 
 netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
 netivri doctor
-netivri schema                            this contract as JSON
+netivri schema                            this contract as JSON (planned)
 netivri version
 netivri help [{COMMAND} [{SUBCOMMAND}]]   also: netivri, netivri {COMMAND} --help
 ```
@@ -63,7 +65,9 @@ Placeholders are written in curly braces, here and in the help of the
 program. `{ACCOUNT}` is the login of an account (`alice`) and `{SUBSCRIPTION}`
 the name of a subscription (`main`). `{NODE}` is a node id (stable hash) or an
 exact node name. `{COUNTRY}` is an ISO 3166-1 alpha-2 country code (`DE`, `NL`,
-`FI`). `{URL}`, `{PROXY}`, `{DIR}`, `{ADDR}`, `{PORT}`, `{N}`, `{DURATION}` and
+`FI`). `{RULES}` is an allowed-clients rule list (`loopback`, `10.0.0.0/8`,
+`*`; see `netivri help config`). Commands marked (planned) are described here
+but not implemented yet. `{URL}`, `{PROXY}`, `{DIR}`, `{ADDR}`, `{PORT}`, `{N}`, `{DURATION}` and
 `{LIST}` stand for a value of the kind they name. Brackets mean optional, a
 bar means one of, and `{a|b}` is a choice written out.
 
@@ -82,7 +86,7 @@ Success: one document on stdout.
 schema_version: 1
 ok: true
 data: {
-    version: 0.1.0
+    version: 0.3.0
 }
 ```
 
@@ -663,7 +667,7 @@ Short view:
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
           "allowed_clients": "*",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
-          "uptime_seconds": 3721, "version": "0.1.0",
+          "uptime_seconds": 3721, "version": "0.3.0",
           "active_accounts": 0, "activity": [],
           "warm": {"alive": 4, "total": 5, "probes": 12, "probe_failures": 1},
           "refresh": {"interval_seconds": 3600, "ok": 3, "failed": 0,

@@ -5,7 +5,17 @@ SHA256 checksum, and put the `netivri` binary (a single file) in a user
 directory. They never rebuild anything, never
 use `sudo`, never touch your shell profile, and never prompt.
 
-An npm-based alternative exists; see [docs/npm.md](npm.md).
+With Node.js 18 or newer you can install the same binary through npm
+instead:
+
+```sh
+npm i -g netivri
+```
+
+npm picks the package of your platform (`netivri-linux-x64`,
+`netivri-darwin-arm64`, `netivri-w32-x64`, ...) by itself; how the packages
+are laid out and published is in [docs/npm.md](npm.md). Upgrade with
+`npm i -g netivri@latest`, remove with `npm rm -g netivri`.
 
 ## One-liners
 
@@ -68,9 +78,6 @@ them listed there and covered by the build provenance):
 The Scoop manifest and the Homebrew formula are written from the archives of
 the release and checked for syntax; they are not installed by the workflow.
 The `.deb`, `.rpm` and npm tarball installs are.
-
-These files first appear in 0.2.0; the page of 0.1.0 has the archives and
-`SHA256SUMS` only.
 
 ## Supported platforms
 
