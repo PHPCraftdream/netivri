@@ -58,8 +58,12 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 
 ## Install
 
-The installers download the release archive of your platform, verify its
-SHA256 checksum and put one binary into a user directory (no `sudo`):
+Two ways, both install the same prebuilt binary.
+
+### 1. Install script
+
+The script downloads the release archive of your platform, verifies its
+SHA256 checksum and puts one binary into a user directory (no `sudo`):
 
 ```sh
 # macOS / Linux
@@ -71,12 +75,18 @@ curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.
 iwr -useb https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.ps1 | iex
 ```
 
-With Node.js 18 or newer, npm installs the same prebuilt binary (no build and
-no download scripts at install time; see [`docs/npm.md`](docs/npm.md)):
+### 2. npm
+
+With Node.js 18 or newer (no build and no download scripts at install time;
+see [`docs/npm.md`](docs/npm.md)):
 
 ```sh
 npm i -g netivri
 ```
+
+Upgrade with `npm i -g netivri@latest`, remove with `npm rm -g netivri`.
+
+### Other options
 
 You can also download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
 and check it against `SHA256SUMS`. Options, upgrading while netivri runs and
