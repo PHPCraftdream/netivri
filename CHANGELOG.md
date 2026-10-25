@@ -8,6 +8,8 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-25
+
 ### Added
 
 - **`netivri doctor`.** One-pass diagnosis with an exit code: checks the
