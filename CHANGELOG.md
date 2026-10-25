@@ -22,10 +22,10 @@ it ships in 0.3.0.
   "Concepts" group in the overview, and the documentation references in the
   help text are absolute GitHub URLs instead of repository paths.
 - **`netivri doctor`.** One-pass diagnosis with an exit code: checks the
-  configuration, the daemon, the listen address (or the configured port when
+  configuration, the angel, the listen address (or the configured port when
   nothing runs), the stored subscription snapshots (age against twice
   `fetch.update_interval`), every account's route (stored nodes; with a
-  running daemon also live nodes per tier) and the daemon log for WARN or
+  running angel also live nodes per tier) and the angel log for WARN or
   ERROR entries of the last hour. It prints one document on stdout
   (`checks` with `name`, `status` and `detail`, and a `summary` count) and
   ends with the new exit code 7 and `DOCTOR_FAILED` on stderr when a check
@@ -33,16 +33,16 @@ it ships in 0.3.0.
   URLs, passwords and hashes are never printed.
 - **Site bindings survive a restart or reload.** The statistics store (schema
   version 4, additive migration; the migration keeps existing data) records
-  the site-to-node bindings by node label, so the daemon reloads them when it
+  the site-to-node bindings by node label, so the angel reloads them when it
   starts or applies a configuration change: a site keeps its exit node across
-  restarts instead of moving to a fresh pick. The daemon writes the live
+  restarts instead of moving to a fresh pick. The angel writes the live
   bindings every 30 seconds and once more before the core closes; rows idle
   longer than the binding lifetime (24 hours) are deleted on every write and
   load. `status` `affinity` reports `restored` (bindings loaded at the latest
   core start) and `saved_at` (RFC3339 UTC of the last successful write).
   The table holds the visited sites (hostnames) per account; it is never
   printed or logged and expires with the binding.
-- **`netivri status --watch`.** A live view of who is active: `netivri status --watch [--interval {DURATION}]` polls the daemon every interval (default 2s, between 1s and 60s) and prints one frame per tick until interrupted: one row per account with state, connections, up and down per second, the busiest nodes and the countries, under a header with the listen address, uptime and `active_accounts`; the text frame is ASCII (a display name that is not ASCII shows `?` per non-ASCII rune). On a terminal each frame clears the screen; `--json` prints one JSON object per line instead (rates `null` on the first frame). When the daemon stops the watch ends with `DAEMON_NOT_RUNNING` (exit 4) after a final line; a control timeout or any other poll error is a warning and retried (the watch polls without ever removing the state file), three in a row end the watch with `INTERNAL`; a state file that is gone, a foreign pid behind the control channel or a refused control port end the watch with `DAEMON_NOT_RUNNING`. `--watch` cannot be combined with `--full`; `--interval` without `--watch` is a usage error.
+- **`netivri status --watch`.** A live view of who is active: `netivri status --watch [--interval {DURATION}]` polls the angel every interval (default 2s, between 1s and 60s) and prints one frame per tick until interrupted: one row per account with state, connections, up and down per second, the busiest nodes and the countries, under a header with the listen address, uptime and `active_accounts`; the text frame is ASCII (a display name that is not ASCII shows `?` per non-ASCII rune). On a terminal each frame clears the screen; `--json` prints one JSON object per line instead (rates `null` on the first frame). When the angel stops the watch ends with `ANGEL_NOT_RUNNING` (exit 4) after a final line; a control timeout or any other poll error is a warning and retried (the watch polls without ever removing the state file), three in a row end the watch with `INTERNAL`; a state file that is gone, a foreign pid behind the control channel or a refused control port end the watch with `ANGEL_NOT_RUNNING`. `--watch` cannot be combined with `--full`; `--interval` without `--watch` is a usage error.
 - **Node display names.** Subscriptions carry a display name per node
   (`Finland 1`); the statistics store (schema version 3, additive migration)
   records it and the per-node output shows it next to the hash-like label:
@@ -75,10 +75,10 @@ it ships in 0.3.0.
   `--provider` / `--country` replace the copied route.
 - **`netivri account show {ACCOUNT}`.** Shows the account's configured provider
   and country lists and its route as ordered tiers: per node the label,
-  provider, country and tier index and, while the daemon runs, the last probe
+  provider, country and tier index and, while the angel runs, the last probe
   result (alive, delay) and the account's live connections through the node;
   pairs without nodes are listed as skipped tiers with a reason. Without a
-  daemon the static part is shown with `live` false. Passwords, hashes and
+  angel the static part is shown with `live` false. Passwords, hashes and
   subscription URLs are never shown.
 - **Subscription quota in `sub list` and `sub update`.** Both report the
   `quota` parsed from the provider's `subscription-userinfo` header: `used`
@@ -96,7 +96,7 @@ it ships in 0.3.0.
   per account: whether it is active (has open connections), the number of
   connections and bytes, and the nodes, providers and countries they use right
   now, the busiest first; `active_accounts` counts the active ones.
-- **`netivri logs`.** Shows the daemon log: `--level`, `--since`, `--tail`, and
+- **`netivri logs`.** Shows the angel log: `--level`, `--since`, `--tail`, and
   `--follow` (with `--json`, one JSON object per line). The log lines now carry
   a UTC time and a level (`INFO`, `WARN`, `ERROR`); lines of the older format
   are read as `INFO`. The log is moved to `netivri.log.1` at a start when it is
@@ -124,8 +124,16 @@ it ships in 0.3.0.
 
 ### Changed
 
+- **The background process is called the angel.** Every place that said
+  daemon now says angel: the `angel` field of `up`, `down` and `status`
+  (was `daemon`), the error codes `ANGEL_NOT_RUNNING`,
+  `ANGEL_START_FAILED`, `ANGEL_START_TIMEOUT` and `ANGEL_STOP_TIMEOUT` (were
+  `DAEMON_*`), the `doctor` check `angel`, help and documents. Exit codes and
+  the files in `run/` are unchanged, and log lines of older versions are still
+  read. `schema_version` stays 1: 0.3.0 is the first release after the
+  withdrawn ones.
 - **`netivri status` is short by default.** The default answer keeps the
-  daemon, route, accounts, activity, refresh and reload fields and a reduced
+  angel, route, accounts, activity, refresh and reload fields and a reduced
   `warm` summary (`alive`, `total`, `probes`, `probe_failures`). The complete
   warm node list, the warm pool counters (`pool_hits`, `pool_misses`,
   `pool_discards`), `stats` and `affinity` moved behind `netivri status

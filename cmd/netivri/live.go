@@ -19,17 +19,17 @@ import (
 
 	mihauth "github.com/metacubex/mihomo/component/auth"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
-// watchEvery is how often the daemon looks at the configuration files.
+// watchEvery is how often the angel looks at the configuration files.
 const watchEvery = 2 * time.Second
 
-// coreInstance is what the daemon needs from a running core; tests start
+// coreInstance is what the angel needs from a running core; tests start
 // fakes through coreStart.
 type coreInstance interface {
 	Addr() string
@@ -66,18 +66,18 @@ type desiredState struct {
 	pool routePool
 }
 
-// liveDaemon keeps the running core in step with the files in the state
+// liveAngel keeps the running core in step with the files in the state
 // directory (docs/design/live-reload.md). The core takes its routes and its
 // accounts at Start, so applying a change means closing the listener and
 // starting a new one on the same port; that happens only when something the
 // core is built from really changed.
-type liveDaemon struct {
+type liveAngel struct {
 	opts upOptions
 	logf func(format string, args ...any) // INFO
 	// warnf and errorf write the WARN and ERROR lines; they default to logf.
 	warnf  func(format string, args ...any)
 	errorf func(format string, args ...any)
-	stop   func() // asks the daemon to shut down; idempotent
+	stop   func() // asks the angel to shut down; idempotent
 
 	reloadMu sync.Mutex // one reload at a time, held across a restart
 
@@ -118,8 +118,8 @@ type liveDaemon struct {
 	writeBindings    func(*stats.Store, []stats.Binding) error
 }
 
-func newLiveDaemon(opts upOptions, logf func(format string, args ...any), stop func()) *liveDaemon {
-	l := &liveDaemon{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
+func newLiveAngel(opts upOptions, logf func(format string, args ...any), stop func()) *liveAngel {
+	l := &liveAngel{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
 	l.writeBindings = func(store *stats.Store, rows []stats.Binding) error {
 		return store.ReplaceBindings(rows)
 	}
@@ -127,7 +127,7 @@ func newLiveDaemon(opts upOptions, logf func(format string, args ...any), stop f
 }
 
 // errText is the one-line form of an error kept in the status answer and the
-// daemon log: the stable code and message, never a URL or a credential.
+// angel log: the stable code and message, never a URL or a credential.
 func errText(err error) string {
 	var ce *cli.Error
 	if errors.As(err, &ce) {
@@ -148,7 +148,7 @@ func portOf(addr string) int {
 	return n
 }
 
-func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
+func (l *liveAngel) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
 	var observer core.Observer
 	if store != nil {
 		observer = statsObserver{store: store}
@@ -172,7 +172,7 @@ func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store 
 }
 
 // start opens the first core instance.
-func (l *liveDaemon) start(ctx context.Context, d desiredState, a mihauth.Authenticator, store *stats.Store) error {
+func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authenticator, store *stats.Store) error {
 	o := l.coreOptions(d, a, store)
 	inst, err := coreStart(ctx, o)
 	if err != nil {
@@ -192,7 +192,7 @@ func (l *liveDaemon) start(ctx context.Context, d desiredState, a mihauth.Authen
 
 // load reads the configuration and the stored snapshots the way `up` does and
 // validates the result. Nothing is applied.
-func (l *liveDaemon) load() (desiredState, error) {
+func (l *liveAngel) load() (desiredState, error) {
 	cfg, err := loadConfig(l.opts.Home)
 	if err != nil {
 		return desiredState{}, err
@@ -261,7 +261,7 @@ func fingerprint(d desiredState) string {
 // reload applies the files on disk when they differ from what runs. A file
 // that does not load, or routes that cannot be built, leave the running core
 // untouched and show up as reload.last_error in the status.
-func (l *liveDaemon) reload(ctx context.Context) {
+func (l *liveAngel) reload(ctx context.Context) {
 	l.reloadMu.Lock()
 	defer l.reloadMu.Unlock()
 	l.mu.Lock()
@@ -290,7 +290,7 @@ func (l *liveDaemon) reload(ctx context.Context) {
 	}
 }
 
-func (l *liveDaemon) noteReloadError(what string, err error) {
+func (l *liveAngel) noteReloadError(what string, err error) {
 	text := errText(err)
 	l.mu.Lock()
 	l.reloadErr = text
@@ -314,7 +314,7 @@ func startCore(ctx context.Context, o core.Options) (coreInstance, error) {
 // restart replaces the core. Open connections end with it; the caller only
 // gets here when the fingerprint changed. A failed start of the new core
 // brings the previous one back.
-func (l *liveDaemon) restart(ctx context.Context, d desiredState) {
+func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	a, err := newAuthenticator(d.cfg, l.opts.Home)
 	if err != nil {
 		l.noteReloadError("configuration not applied", err)
@@ -401,9 +401,9 @@ func watchSignature(home string) string {
 // watch calls reload when the files changed. A change must be seen on two
 // polls in a row before it is applied, so an edit that is still being written
 // is not read half done.
-func (l *liveDaemon) watch(ctx context.Context, every time.Duration) {
+func (l *liveAngel) watch(ctx context.Context, every time.Duration) {
 	applied := watchSignature(l.opts.Home)
-	// The daemon loaded its files before this started: catch up once.
+	// The angel loaded its files before this started: catch up once.
 	l.reload(ctx)
 	pending := ""
 	t := time.NewTicker(every)
@@ -428,7 +428,7 @@ func (l *liveDaemon) watch(ctx context.Context, every time.Duration) {
 }
 
 // startLoops starts the file watcher and the subscription refresh.
-func (l *liveDaemon) startLoops() {
+func (l *liveAngel) startLoops() {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.loopsCancel = cancel
 	l.loopsRunning.Add(3)
@@ -447,7 +447,7 @@ func (l *liveDaemon) startLoops() {
 }
 
 // close stops the loops, then the core and the statistics store.
-func (l *liveDaemon) close() {
+func (l *liveAngel) close() {
 	if l.loopsCancel != nil {
 		l.loopsCancel()
 	}
@@ -467,26 +467,26 @@ func (l *liveDaemon) close() {
 }
 
 // currentStore is the statistics store, which may be opened late.
-func (l *liveDaemon) currentStore() *stats.Store {
+func (l *liveAngel) currentStore() *stats.Store {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.store
 }
 
 // status is the answer of GET /v1/status.
-func (l *liveDaemon) status(startedAt string) daemon.Status {
+func (l *liveAngel) status(startedAt string) angel.Status {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	st := daemon.Status{
-		Daemon:         "running",
+	st := angel.Status{
+		Angel:          "running",
 		Foreground:     l.opts.Handshake == "",
 		PID:            os.Getpid(),
-		Protocols:      daemonProtocols,
+		Protocols:      angelProtocols,
 		Auth:           liveAuth(l.applied.cfg),
 		StartedAt:      startedAt,
 		Version:        version,
 		Stats:          statsInfo(l.store, l.opts.Home),
-		Reload:         &daemon.ReloadInfo{Count: l.reloads, LastError: l.reloadErr},
+		Reload:         &angel.ReloadInfo{Count: l.reloads, LastError: l.reloadErr},
 		Refresh:        l.refreshInfoLocked(),
 		AllowedClients: config.NormalizeAllowedClients(l.applied.cfg.Listen.AllowedClients),
 	}

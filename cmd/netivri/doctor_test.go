@@ -13,10 +13,10 @@ import (
 
 	ktav "github.com/ktav-lang/golang"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -42,27 +42,27 @@ func doctorFixTime(t *testing.T) time.Time {
 	return fixed
 }
 
-func doctorStubDaemon(t *testing.T, fn func(context.Context, string) (daemon.State, daemon.Status, error)) {
+func doctorStubAngel(t *testing.T, fn func(context.Context, string) (angel.State, angel.Status, error)) {
 	t.Helper()
-	old := daemonProbeLive
-	daemonProbeLive = fn
-	t.Cleanup(func() { daemonProbeLive = old })
+	old := angelProbeLive
+	angelProbeLive = fn
+	t.Cleanup(func() { angelProbeLive = old })
 }
 
-func doctorDaemonDown(t *testing.T) {
-	doctorStubDaemon(t, func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{}, daemon.ErrNotRunning
+func doctorAngelDown(t *testing.T) {
+	doctorStubAngel(t, func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{}, angel.ErrNotRunning
 	})
 }
 
-// doctorDaemonUp stubs a running daemon that reports the given warm nodes.
-func doctorDaemonUp(t *testing.T, warm ...daemon.NodeHealth) {
-	doctorStubDaemon(t, func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{
+// doctorAngelUp stubs a running angel that reports the given warm nodes.
+func doctorAngelUp(t *testing.T, warm ...angel.NodeHealth) {
+	doctorStubAngel(t, func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{
 			PID:            42,
 			Listen:         "127.0.0.1:7890",
 			AllowedClients: "*",
-			Warm:           &daemon.WarmInfo{Nodes: warm},
+			Warm:           &angel.WarmInfo{Nodes: warm},
 		}, nil
 	})
 }
@@ -111,10 +111,10 @@ func doctorSnapshot(t *testing.T, home, name string, snap subscription.Snapshot)
 
 func doctorWriteLog(t *testing.T, home string, lines ...string) {
 	t.Helper()
-	if err := os.MkdirAll(daemon.RunDir(home), 0o700); err != nil {
+	if err := os.MkdirAll(angel.RunDir(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(daemon.LogPath(home), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(angel.LogPath(home), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -170,7 +170,7 @@ func doctorStatusMap(doc doctorDoc) map[string]string {
 
 func TestDoctorAllOK(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonUp(t, daemon.NodeHealth{Label: "main/m-de", Alive: true})
+	doctorAngelUp(t, angel.NodeHealth{Label: "main/m-de", Alive: true})
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
 		cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://provider.example/sub/secret"}}
@@ -182,7 +182,7 @@ func TestDoctorAllOK(t *testing.T) {
 		t.Fatalf("doctor = %v, want nil", err)
 	}
 	want := map[string]string{
-		"config": doctorOK, "daemon": doctorOK, "listen": doctorOK,
+		"config": doctorOK, "angel": doctorOK, "listen": doctorOK,
 		"subscriptions": doctorOK, "account alice": doctorOK, "log": doctorOK,
 	}
 	if got := doctorStatusMap(doc); !equalStrings(got, want) {
@@ -211,7 +211,7 @@ func equalStrings(a, b map[string]string) bool {
 
 func TestDoctorConfigInvalid(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	home := t.TempDir()
 	// Port 0 is not a valid configured value (only the --port flag allows
 	// it); the file is raw text, not the guarded fixture helper.
@@ -237,9 +237,9 @@ func TestDoctorConfigInvalid(t *testing.T) {
 	}
 }
 
-func TestDoctorDaemonDown(t *testing.T) {
+func TestDoctorAngelDown(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -251,14 +251,14 @@ func TestDoctorDaemonDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("doctor = %v, want nil", err)
 	}
-	if c := doctorFind(t, doc, "daemon"); c.Status != doctorWarn || c.Detail != "daemon is not running" {
-		t.Errorf("daemon = %+v", c)
+	if c := doctorFind(t, doc, "angel"); c.Status != doctorWarn || c.Detail != "angel is not running" {
+		t.Errorf("angel = %+v", c)
 	}
 	if c := doctorFind(t, doc, "listen"); c.Status != doctorOK || !strings.Contains(c.Detail, "is free") {
 		t.Errorf("listen = %+v", c)
 	}
 	acc := doctorFind(t, doc, "account alice")
-	if acc.Status != doctorWarn || !strings.Contains(acc.Detail, "1 stored node(s)") || !strings.Contains(acc.Detail, "daemon is not running") {
+	if acc.Status != doctorWarn || !strings.Contains(acc.Detail, "1 stored node(s)") || !strings.Contains(acc.Detail, "angel is not running") {
 		t.Errorf("account = %+v", acc)
 	}
 	if doc.Summary.Warn != 2 || doc.Summary.Fail != 0 {
@@ -268,7 +268,7 @@ func TestDoctorDaemonDown(t *testing.T) {
 
 func TestDoctorSnapshotMissingAndStale(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -297,7 +297,7 @@ func TestDoctorSnapshotMissingAndStale(t *testing.T) {
 
 func TestDoctorSnapshotAgeSkippedWhenIntervalOff(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -316,7 +316,7 @@ func TestDoctorSnapshotAgeSkippedWhenIntervalOff(t *testing.T) {
 
 func TestDoctorSnapshotWithoutFetchTime(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -335,7 +335,7 @@ func TestDoctorSnapshotWithoutFetchTime(t *testing.T) {
 
 func TestDoctorProviderNotConfigured(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -361,7 +361,7 @@ func TestDoctorProviderNotConfigured(t *testing.T) {
 
 func TestDoctorRouteWithoutNodes(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -383,7 +383,7 @@ func TestDoctorRouteWithoutNodes(t *testing.T) {
 
 func TestDoctorDirectAccount(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -400,9 +400,9 @@ func TestDoctorDirectAccount(t *testing.T) {
 
 func TestDoctorFallbackTierWarn(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonUp(t,
-		daemon.NodeHealth{Label: "main/m-de", Alive: false},
-		daemon.NodeHealth{Label: "backup/b-de", Alive: true},
+	doctorAngelUp(t,
+		angel.NodeHealth{Label: "main/m-de", Alive: false},
+		angel.NodeHealth{Label: "backup/b-de", Alive: true},
 	)
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
@@ -431,7 +431,7 @@ func TestDoctorFallbackTierWarn(t *testing.T) {
 
 func TestDoctorNoLiveNode(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonUp(t, daemon.NodeHealth{Label: "main/m-de", Alive: false})
+	doctorAngelUp(t, angel.NodeHealth{Label: "main/m-de", Alive: false})
 	home := t.TempDir()
 	doctorConfig(t, home, func(cfg *config.Config) {
 		cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://a.example/sub/x"}}
@@ -450,7 +450,7 @@ func TestDoctorNoLiveNode(t *testing.T) {
 
 func TestDoctorPortTaken(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, errors.New("bind: address already in use"))
 	home := t.TempDir()
 	doctorConfig(t, home, nil)
@@ -466,14 +466,14 @@ func TestDoctorPortTaken(t *testing.T) {
 
 func TestDoctorLogWarnEntries(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, nil)
 	doctorWriteLog(t, home,
-		daemon.FormatLogLine(fixed.Add(-2*time.Hour), daemon.LevelWarn, "old warn"),
-		daemon.FormatLogLine(fixed.Add(-time.Minute), daemon.LevelWarn, "route node main/m-de is down"),
-		daemon.FormatLogLine(fixed.Add(-time.Minute), daemon.LevelError, "boom"),
+		angel.FormatLogLine(fixed.Add(-2*time.Hour), angel.LevelWarn, "old warn"),
+		angel.FormatLogLine(fixed.Add(-time.Minute), angel.LevelWarn, "route node main/m-de is down"),
+		angel.FormatLogLine(fixed.Add(-time.Minute), angel.LevelError, "boom"),
 	)
 	doc, err := doctorRunDoc(t, home)
 	if err != nil {
@@ -487,14 +487,14 @@ func TestDoctorLogWarnEntries(t *testing.T) {
 
 func TestDoctorLogCleanAndMissing(t *testing.T) {
 	fixed := doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, nil)
 	// A log with only old or harmless entries is fine; a missing one too.
 	doctorWriteLog(t, home,
-		daemon.FormatLogLine(fixed.Add(-2*time.Hour), daemon.LevelError, "old"),
-		daemon.FormatLogLine(fixed.Add(-time.Minute), daemon.LevelInfo, "fine"),
+		angel.FormatLogLine(fixed.Add(-2*time.Hour), angel.LevelError, "old"),
+		angel.FormatLogLine(fixed.Add(-time.Minute), angel.LevelInfo, "fine"),
 	)
 	doc, err := doctorRunDoc(t, home)
 	if err != nil {
@@ -514,7 +514,7 @@ func TestDoctorLogCleanAndMissing(t *testing.T) {
 
 func TestDoctorNoSecretsInOutput(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	const (
 		secretURL  = "https://provider.example/sub/supersecret"
@@ -552,7 +552,7 @@ func TestDoctorNoSecretsInOutput(t *testing.T) {
 
 func TestDoctorKtavShape(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	home := t.TempDir()
 	doctorConfig(t, home, nil)

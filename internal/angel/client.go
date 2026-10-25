@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // ProbeTimeout bounds a single control request.
 const ProbeTimeout = 2 * time.Second
 
-// Client talks to the daemon control server. It never uses a configured or
+// Client talks to the angel control server. It never uses a configured or
 // environment proxy and never follows redirects.
 type Client struct {
 	Addr  string
@@ -71,7 +71,7 @@ func (c Client) Status(ctx context.Context) (Status, error) {
 	return parseControlStatus(data, code)
 }
 
-// Stop asks the daemon to shut down. The daemon answers 202 before stopping:
+// Stop asks the angel to shut down. The angel answers 202 before stopping:
 // a nil error means "stop accepted", not "stopped".
 func (c Client) Stop(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, ProbeTimeout)
@@ -92,7 +92,7 @@ func (c Client) Stop(ctx context.Context) error {
 
 // ProbeLiveKeep is ProbeLive without any cleanup: a failed control request
 // leaves the state file alone and is reported as the request error, a pid
-// mismatch is a wrapped ErrNotRunning (the daemon the state file names is
+// mismatch is a wrapped ErrNotRunning (the angel the state file names is
 // gone), and a missing state file is ErrNotRunning. The status watch polls
 // through it, so a transient control timeout stays a retryable failure
 // instead of ending the watch and deleting the state.
@@ -104,7 +104,7 @@ func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
 	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
 	if err != nil {
 		if isConnRefused(err) {
-			// Nothing listens on the recorded control port: the daemon
+			// Nothing listens on the recorded control port: the angel
 			// the state file names is gone (a crash leaves the file).
 			return st, Status{}, fmt.Errorf("%w: nothing listens on %s: %v",
 				ErrNotRunning, st.Control, err)
@@ -118,13 +118,13 @@ func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
 	return st, status, nil
 }
 
-// Probe reports the state file of a running daemon, or ErrNotRunning.
+// Probe reports the state file of a running angel, or ErrNotRunning.
 func Probe(ctx context.Context, home string) (State, error) {
 	st, _, err := ProbeLive(ctx, home)
 	return st, err
 }
 
-// ProbeLive checks whether a daemon runs for this home: the state file AND
+// ProbeLive checks whether an angel runs for this home: the state file AND
 // a live control answer from the same pid are required, anything else is
 // ErrNotRunning and a stale state file is removed best-effort. It returns the
 // state file content and the live status.
@@ -132,9 +132,9 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 	st, err := ReadState(home)
 	if err != nil {
 		if !errors.Is(err, ErrNotRunning) {
-			// A corrupt file is cleared. Accepted race: a successor daemon
+			// A corrupt file is cleared. Accepted race: a successor angel
 			// could replace it between the read and the removal, which needs
-			// the previous daemon to exit and a new one to start in between.
+			// the previous angel to exit and a new one to start in between.
 			_ = os.Remove(StatePath(home))
 		}
 		return State{}, Status{}, ErrNotRunning

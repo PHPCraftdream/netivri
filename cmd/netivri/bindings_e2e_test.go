@@ -176,18 +176,18 @@ func bindingsStatusOf(t *testing.T, home string) bindingsStatus {
 // TestE2EBindingsSurviveRestart proves that the persisted binding keeps a
 // site's exit node across a graceful `down` and a later `up`.
 //
-// The first connection of the daemon creates a provisional binding (the
+// The first connection of the angel creates a provisional binding (the
 // route member still has unknown health), and provisional bindings are never
 // persisted. A second connection to a DIFFERENT site is non-provisional,
 // because its member's health became known through the first connection's
 // dial (internal/core/affinity.go provisionalBinding). That second site is
 // the one whose persistence the test asserts: two distinct IP-literal sites
 // (127.0.0.1 and 127.0.0.2, the echo backend listens on 0.0.0.0), the same
-// upstream, the same port. While the daemon is down the provider order is
+// upstream, the same port. While the angel is down the provider order is
 // flipped, so a fresh pick would prefer the other provider's node; only the
 // stored binding can keep the first node.
 func TestE2EBindingsSurviveRestart(t *testing.T) {
-	h := newDaemonHome(t)
+	h := newAngelHome(t)
 	home := h.dir
 	pass := "bindings-e2e-password"
 	hash, err := auth.Hash(pass)
@@ -228,13 +228,13 @@ func TestE2EBindingsSurviveRestart(t *testing.T) {
 		}
 	})
 
-	// Start as a real daemon: `down` shuts it down gracefully, so the final
+	// Start as a real angel: `down` shuts it down gracefully, so the final
 	// binding write completes before the state file disappears.
-	code, stdout, stderr := daemonRun(t, home, "up", "--port", "0")
+	code, stdout, stderr := angelRun(t, home, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	listen, _ := daemonData(t, stdout)["listen"].(string)
+	listen, _ := angelData(t, stdout)["listen"].(string)
 	if listen == "" {
 		t.Fatal("up returned no listen address")
 	}
@@ -255,11 +255,11 @@ func TestE2EBindingsSurviveRestart(t *testing.T) {
 	})
 
 	// Graceful stop: the shutdown writes the last snapshot.
-	if code, stdout, stderr := daemonRun(t, home, "down"); code != 0 {
+	if code, stdout, stderr := angelRun(t, home, "down"); code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 
-	// While the daemon is down, make the p2 node the preferred one: a fresh
+	// While the angel is down, make the p2 node the preferred one: a fresh
 	// pick on the next start would choose it. The whole configuration is
 	// written again (accounts and subscriptions), not a fresh default.
 	cfg := loadConfigFile(t, home)
@@ -268,18 +268,18 @@ func TestE2EBindingsSurviveRestart(t *testing.T) {
 		t.Fatalf("save reordered config: %v", err)
 	}
 
-	code, stdout, stderr = daemonRun(t, home, "up", "--port", "0")
+	code, stdout, stderr = angelRun(t, home, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("second up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	listen, _ = daemonData(t, stdout)["listen"].(string)
+	listen, _ = angelData(t, stdout)["listen"].(string)
 	if listen == "" {
 		t.Fatal("second up returned no listen address")
 	}
 
 	// The core reports what it restored; restored counts only the
 	// non-provisional bindings, so site2's binding gives at least 1.
-	bindingsRetryUntil(t, "affinity.restored >= 1 on the restarted daemon", func() bool {
+	bindingsRetryUntil(t, "affinity.restored >= 1 on the restarted angel", func() bool {
 		st := bindingsStatusOf(t, home)
 		return st.Data.Affinity != nil && st.Data.Affinity.Restored >= 1
 	})
@@ -293,7 +293,7 @@ func TestE2EBindingsSurviveRestart(t *testing.T) {
 	if n := up2.count(site2); n != 0 {
 		t.Errorf("the p2 upstream relayed %d connections of the bound site, want 0 (the stored binding must keep the p1 node)", n)
 	}
-	if code, stdout, stderr := daemonRun(t, home, "down"); code != 0 {
+	if code, stdout, stderr := angelRun(t, home, "down"); code != 0 {
 		t.Fatalf("final down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 }

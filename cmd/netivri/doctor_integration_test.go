@@ -14,7 +14,7 @@ import (
 // port of a live listener is taken, a released one is free.
 func TestDoctorListenRealSocket(t *testing.T) {
 	doctorFixTime(t)
-	doctorDaemonDown(t)
+	doctorAngelDown(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

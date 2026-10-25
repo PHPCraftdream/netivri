@@ -24,7 +24,7 @@ const (
 
 // runStats implements `stats`: the recorded health, delay and throughput of
 // the exit nodes. It reads the database read-only, so it works while the
-// daemon runs and after it stopped.
+// angel runs and after it stopped.
 func runStats(args []string, stdout io.Writer) error {
 	home, rest, err := parseHomeArgs("stats", args)
 	if err != nil {

@@ -290,8 +290,8 @@ jobs:
           # Upgrade in place works.
           sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}"
 
-          # Re-installing while the daemon of the installed binary runs: the
-          # replacement is a rename, so the daemon keeps answering and the
+          # Re-installing while the angel of the installed binary runs: the
+          # replacement is a rename, so the angel keeps answering and the
           # installer tells the user to restart it.
           "${dir}/netivri" up --port 0 --home "${home}"
           sh install.sh --version "${VER}" --base-url "file://${GITHUB_WORKSPACE}/artifacts" --dir "${dir}" 2> "${RUNNER_TEMP}/reinstall.err"
@@ -383,25 +383,25 @@ jobs:
           & (Join-Path $dir 'netivri.exe') sub list --home $home_
           if ($LASTEXITCODE -ne 0) { throw "netivri sub list failed" }
 
-          # Re-installing while a daemon runs from the install dir: the
+          # Re-installing while an angel runs from the install dir: the
           # running exe cannot be overwritten, so the installer renames it aside
           # and installs the new file.
           $exe = Join-Path $dir 'netivri.exe'
           & $exe up --port 0 --home $home_ | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'netivri up (daemon) failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'netivri up (angel) failed' }
           & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir
-          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed while the daemon runs' }
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed while the angel runs' }
           $aside = @(Get-ChildItem -Path $dir -Filter '*.old-*')
-          if ($aside.Count -lt 1) { throw 'nothing was renamed aside although the daemon holds the files' }
+          if ($aside.Count -lt 1) { throw 'nothing was renamed aside although the angel holds the files' }
           & $exe status --home $home_ | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'the daemon stopped answering after the re-install' }
+          if ($LASTEXITCODE -ne 0) { throw 'the angel stopped answering after the re-install' }
           & $exe version | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'the re-installed binary does not run' }
           & $exe down --home $home_ | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'netivri down failed' }
           for ($i = 0; $i -lt 20 -and (Get-Process -Name netivri -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Seconds 1 }
           & .\install.ps1 -Version $ver -BaseUrl $artifacts -InstallDir $dir -Quiet
-          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed after the daemon stopped' }
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed after the angel stopped' }
           if (@(Get-ChildItem -Path $dir -Filter '*.old-*').Count -ne 0) { throw 'leftover .old-* files were not cleaned up' }
 
           # Local source mode: the extracted archive and an npm package layout.

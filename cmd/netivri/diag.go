@@ -38,7 +38,7 @@ var diagDial = core.DiagDial
 
 // runDiag implements `diag dial`: a handful of small probe requests through
 // the nodes of an account route or a single node, with per-phase timings.
-// It runs without the daemon and never prints node addresses.
+// It runs without the angel and never prints node addresses.
 func runDiag(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return cli.Usage("diag: missing subcommand (dial)")

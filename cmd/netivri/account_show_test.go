@@ -6,9 +6,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -137,14 +137,14 @@ func TestAccountShowErrors(t *testing.T) {
 }
 
 func TestAccountShowLiveMerge(t *testing.T) {
-	old := daemonProbeLive
-	t.Cleanup(func() { daemonProbeLive = old })
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{
-			Warm: &daemon.WarmInfo{Nodes: []daemon.NodeHealth{
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{
+			Warm: &angel.WarmInfo{Nodes: []angel.NodeHealth{
 				{Name: "netivri-r0-0", Label: "main/m-de", Alive: true, DelayMS: 42},
 			}},
-			Activity: []daemon.AccountActivity{{Login: "alice", Nodes: []daemon.NodeUse{
+			Activity: []angel.AccountActivity{{Login: "alice", Nodes: []angel.NodeUse{
 				{Node: "main/m-de", Connections: 3},
 			}}},
 		}, nil
@@ -167,11 +167,11 @@ func TestAccountShowLiveMerge(t *testing.T) {
 	}
 }
 
-func TestAccountShowNoDaemon(t *testing.T) {
-	old := daemonProbeLive
-	t.Cleanup(func() { daemonProbeLive = old })
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{}, daemon.ErrNotRunning
+func TestAccountShowNoAngel(t *testing.T) {
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{}, angel.ErrNotRunning
 	}
 	known := map[string]bool{"main": true}
 	snapshots := map[string]*subscription.Snapshot{

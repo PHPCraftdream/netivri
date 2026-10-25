@@ -27,4 +27,4 @@ internal/stats 78
 # The control server, client and the detached spawn run under the integration
 # and e2e levels (loopback sockets, a real child process); the unit level
 # measures the pure parts only. Ratcheted after the first green run.
-internal/daemon 52
+internal/angel 52

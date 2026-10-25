@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 // statusWatch bounds of --interval.
@@ -79,16 +79,16 @@ type watchOptions struct {
 	now      func() time.Time
 }
 
-// watchStatus polls the daemon every interval and prints one frame per tick.
-// After the daemon was seen running, a poll that reports the state file gone
-// or another pid behind it ends the watch with DAEMON_NOT_RUNNING (exit 4)
+// watchStatus polls the angel every interval and prints one frame per tick.
+// After the angel was seen running, a poll that reports the state file gone
+// or another pid behind it ends the watch with ANGEL_NOT_RUNNING (exit 4)
 // after a final line; any other poll failure (a control timeout, for
 // instance) is a warning and retried on the next tick, and
 // statusWatchMaxFailures in a row end the watch with INTERNAL. The same
-// retry rule covers a failed very first poll; a not-running daemon at the
+// retry rule covers a failed very first poll; a not-running angel at the
 // very first poll is the usual exit-4 error at once. Cancellation returns
 // nil at a frame boundary.
-func watchStatus(ctx context.Context, out io.Writer, poll func() (daemon.Status, error), o watchOptions) error {
+func watchStatus(ctx context.Context, out io.Writer, poll func() (angel.Status, error), o watchOptions) error {
 	if o.now == nil {
 		o.now = time.Now
 	}
@@ -99,9 +99,9 @@ func watchStatus(ctx context.Context, out io.Writer, poll func() (daemon.Status,
 		ticks = t.C
 	}
 	w := watchPrinter{out: out, jsonOut: o.jsonOut, term: o.term}
-	var st daemon.Status
+	var st angel.Status
 	var err error
-	var prev map[string]daemon.AccountActivity
+	var prev map[string]angel.AccountActivity
 	var prevAt time.Time
 	frame := func() {
 		now := o.now()
@@ -135,12 +135,12 @@ func watchStatus(ctx context.Context, out io.Writer, poll func() (daemon.Status,
 			frame()
 			continue
 		}
-		if errors.Is(err, daemon.ErrNotRunning) {
+		if errors.Is(err, angel.ErrNotRunning) {
 			if !seen {
-				return daemonNotRunning()
+				return angelNotRunning()
 			}
 			w.stopped(o.now())
-			return daemonNotRunning()
+			return angelNotRunning()
 		}
 		failures++
 		w.warn(err, o.now())
@@ -150,19 +150,19 @@ func watchStatus(ctx context.Context, out io.Writer, poll func() (daemon.Status,
 	}
 }
 
-// daemonNotRunning is the usual exit-4 error of `status`.
-func daemonNotRunning() error {
+// angelNotRunning is the usual exit-4 error of `status`.
+func angelNotRunning() error {
 	return &cli.Error{
-		Code:    "DAEMON_NOT_RUNNING",
-		Message: "daemon is not running",
+		Code:    "ANGEL_NOT_RUNNING",
+		Message: "angel is not running",
 		Hint:    "start it with: netivri up",
-		Exit:    cli.ExitNoDaemon,
+		Exit:    cli.ExitNoAngel,
 	}
 }
 
 // watchSnapshot copies the activity by login, so the next frame can diff it.
-func watchSnapshot(activity []daemon.AccountActivity) map[string]daemon.AccountActivity {
-	m := make(map[string]daemon.AccountActivity, len(activity))
+func watchSnapshot(activity []angel.AccountActivity) map[string]angel.AccountActivity {
+	m := make(map[string]angel.AccountActivity, len(activity))
 	for _, a := range activity {
 		m[a.Login] = a
 	}
@@ -172,7 +172,7 @@ func watchSnapshot(activity []daemon.AccountActivity) map[string]daemon.AccountA
 // watchRates computes per-login bytes per second from the delta between the
 // two polls, over the real elapsed time. The first frame has no rates (nil);
 // a negative delta counts as 0.
-func watchRates(prev map[string]daemon.AccountActivity, prevAt, now time.Time, activity []daemon.AccountActivity) map[string][2]float64 {
+func watchRates(prev map[string]angel.AccountActivity, prevAt, now time.Time, activity []angel.AccountActivity) map[string][2]float64 {
 	if prev == nil {
 		return nil
 	}
@@ -220,7 +220,7 @@ func (w *watchPrinter) beginFrame() {
 	w.wrote = true
 }
 
-func (w *watchPrinter) frame(st daemon.Status, rates map[string][2]float64, now time.Time) {
+func (w *watchPrinter) frame(st angel.Status, rates map[string][2]float64, now time.Time) {
 	if w.jsonOut {
 		w.frameJSON(st, rates, now)
 		return
@@ -229,7 +229,7 @@ func (w *watchPrinter) frame(st daemon.Status, rates map[string][2]float64, now 
 	w.frameText(st, rates, now)
 }
 
-func (w *watchPrinter) frameText(st daemon.Status, rates map[string][2]float64, now time.Time) {
+func (w *watchPrinter) frameText(st angel.Status, rates map[string][2]float64, now time.Time) {
 	accounts := watchSorted(st.Activity)
 	active := 0
 	for _, a := range accounts {
@@ -264,7 +264,7 @@ func (w *watchPrinter) frameText(st daemon.Status, rates map[string][2]float64, 
 }
 
 // frameJSON writes one JSON object per tick: rates are null on the first frame.
-func (w *watchPrinter) frameJSON(st daemon.Status, rates map[string][2]float64, now time.Time) {
+func (w *watchPrinter) frameJSON(st angel.Status, rates map[string][2]float64, now time.Time) {
 	accounts := watchSorted(st.Activity)
 	type nodeJSON struct {
 		Node          string `json:"node"`
@@ -336,12 +336,12 @@ func (w *watchPrinter) stopped(now time.Time) {
 		return
 	}
 	w.beginFrame()
-	fmt.Fprintln(w.out, "daemon stopped")
+	fmt.Fprintln(w.out, "angel stopped")
 }
 
 // watchSorted copies the activity sorted by login.
-func watchSorted(activity []daemon.AccountActivity) []daemon.AccountActivity {
-	out := append([]daemon.AccountActivity{}, activity...)
+func watchSorted(activity []angel.AccountActivity) []angel.AccountActivity {
+	out := append([]angel.AccountActivity{}, activity...)
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out
 }
@@ -367,8 +367,8 @@ func watchUptime(startedAt string, now time.Time) string {
 
 // watchNodeLabels lists up to statusWatchMaxNodes nodes, busiest first, as
 // the display name or the label, with "+N more" for the rest.
-func watchNodeLabels(a daemon.AccountActivity) []string {
-	nodes := append([]daemon.NodeUse{}, a.Nodes...)
+func watchNodeLabels(a angel.AccountActivity) []string {
+	nodes := append([]angel.NodeUse{}, a.Nodes...)
 	sort.SliceStable(nodes, func(i, j int) bool { return nodes[i].Connections > nodes[j].Connections })
 	labels := make([]string, 0, statusWatchMaxNodes+1)
 	for i, n := range nodes {
@@ -455,11 +455,11 @@ func writeASCIITable(out io.Writer, header []string, rows [][]string) {
 func runStatusWatch(home string, interval time.Duration, jsonOut bool) error {
 	ctx, cancel := statusWatchContext()
 	defer cancel()
-	poll := func() (daemon.Status, error) {
+	poll := func() (angel.Status, error) {
 		// Derived from the watch context: Ctrl+C aborts an in-flight poll.
-		pctx, pcancel := context.WithTimeout(ctx, daemon.ProbeTimeout)
+		pctx, pcancel := context.WithTimeout(ctx, angel.ProbeTimeout)
 		defer pcancel()
-		_, st, err := daemonProbeLiveKeep(pctx, home)
+		_, st, err := angelProbeLiveKeep(pctx, home)
 		return st, err
 	}
 	return watchStatus(ctx, os.Stdout, poll, watchOptions{

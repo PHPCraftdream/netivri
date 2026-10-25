@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"context"
@@ -28,9 +28,9 @@ type SpawnOptions struct {
 
 // awaitHandshake outcomes; Spawn maps them to cli errors.
 var (
-	errSpawnTimeout   = errors.New("daemon start timed out")
-	errSpawnCancelled = errors.New("daemon start cancelled")
-	errSpawnExited    = errors.New("daemon exited before reporting startup")
+	errSpawnTimeout   = errors.New("angel start timed out")
+	errSpawnCancelled = errors.New("angel start cancelled")
+	errSpawnExited    = errors.New("angel exited before reporting startup")
 )
 
 // randomHex returns n random bytes as hex.
@@ -78,7 +78,7 @@ func awaitHandshake(ctx context.Context, read func() (handshake, error), waitCh 
 	}
 }
 
-// Spawn starts the detached daemon child and waits for its handshake:
+// Spawn starts the detached angel child and waits for its handshake:
 // (State, nil) on success, (zero, *cli.Error) on a reported failure, early
 // exit or timeout. Only the child started here is ever killed.
 func Spawn(ctx context.Context, o SpawnOptions) (State, error) {
@@ -103,13 +103,13 @@ func Spawn(ctx context.Context, o SpawnOptions) (State, error) {
 	_ = RotateLog(o.Home, MaxLogBytes) // best effort: a log kept whole is only larger
 	log, err := os.OpenFile(LogPath(o.Home), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return zero, &cli.Error{Code: "INTERNAL", Message: "open daemon log: " + err.Error(), Exit: cli.ExitInternal}
+		return zero, &cli.Error{Code: "INTERNAL", Message: "open angel log: " + err.Error(), Exit: cli.ExitInternal}
 	}
 	defer log.Close()
 
 	cmd, err := startChild(o.Exe, handshakeArgs(o.Args, handshakePath), log, log)
 	if err != nil {
-		return zero, &cli.Error{Code: "DAEMON_START_FAILED", Message: "start daemon: " + err.Error(), Exit: cli.ExitInternal}
+		return zero, &cli.Error{Code: "ANGEL_START_FAILED", Message: "start angel: " + err.Error(), Exit: cli.ExitInternal}
 	}
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
@@ -122,18 +122,18 @@ func Spawn(ctx context.Context, o SpawnOptions) (State, error) {
 	case errors.Is(err, errSpawnTimeout):
 		_ = cmd.Process.Kill()
 		return zero, &cli.Error{
-			Code:    "DAEMON_START_TIMEOUT",
-			Message: "daemon did not report startup within " + timeout.String(),
+			Code:    "ANGEL_START_TIMEOUT",
+			Message: "angel did not report startup within " + timeout.String(),
 			Hint:    "see run/netivri.log in the state directory",
 			Exit:    cli.ExitInternal,
 		}
 	case errors.Is(err, errSpawnCancelled):
 		_ = cmd.Process.Kill()
-		return zero, &cli.Error{Code: "DAEMON_START_FAILED", Message: "startup cancelled: " + ctx.Err().Error(), Exit: cli.ExitInternal}
+		return zero, &cli.Error{Code: "ANGEL_START_FAILED", Message: "startup cancelled: " + ctx.Err().Error(), Exit: cli.ExitInternal}
 	case errors.Is(err, errSpawnExited):
 		return zero, &cli.Error{
-			Code:    "DAEMON_START_FAILED",
-			Message: "daemon exited before reporting startup",
+			Code:    "ANGEL_START_FAILED",
+			Message: "angel exited before reporting startup",
 			Hint:    "see run/netivri.log in the state directory",
 			Exit:    cli.ExitInternal,
 		}

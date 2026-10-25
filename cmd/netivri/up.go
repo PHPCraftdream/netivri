@@ -15,10 +15,10 @@ import (
 
 	mihauth "github.com/metacubex/mihomo/component/auth"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 type upOptions struct {
@@ -28,7 +28,7 @@ type upOptions struct {
 	PortSet    bool // --port given explicitly: overrides listen.port
 	BindSet    bool // --bind given explicitly: overrides listen.bind
 	Home       string
-	Handshake  string // internal: handshake file of the spawning parent (daemon child only)
+	Handshake  string // internal: handshake file of the spawning parent (angel child only)
 }
 
 // defaultHome resolves the state directory: NETIVRI_HOME, then
@@ -59,10 +59,10 @@ func parseUp(args []string, env func(string) string, userConfigDir func() (strin
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	opts := upOptions{Port: 7890, Bind: "127.0.0.1"}
-	fs.BoolVar(&opts.Foreground, "foreground", false, "run in the foreground instead of as a background daemon")
+	fs.BoolVar(&opts.Foreground, "foreground", false, "run in the foreground instead of as a background angel")
 	fs.IntVar(&opts.Port, "port", 7890, "mixed proxy port, 0 for a random free port")
 	fs.StringVar(&opts.Bind, "bind", "127.0.0.1", "bind address")
-	// Internal, not part of the CLI contract: set only by daemon.Spawn.
+	// Internal, not part of the CLI contract: set only by angel.Spawn.
 	fs.StringVar(&opts.Handshake, "handshake", "", "internal: startup handshake file (requires --foreground)")
 	homeFlag := fs.String("home", "", "state directory (default NETIVRI_HOME or user config dir)")
 	// Global flags from docs/cli.md, accepted for compatibility: --json and
@@ -166,7 +166,7 @@ var persistMu sync.Mutex
 // claim is applied to the copy on disk and nothing else is rewritten. A file
 // that does not exist yet is created from the in-memory configuration. When
 // the file no longer holds the placeholder that was claimed, the claim is
-// refused: the daemon applies the new file and the client tries again.
+// refused: the angel applies the new file and the client tries again.
 func saveClaim(path string, mem *config.Config, apply func(*config.Config) error) error {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return config.Save(path, mem)
@@ -315,23 +315,23 @@ func runUp(args []string, stdout io.Writer) error {
 		return failStartup(opts.Handshake, err)
 	}
 	if !opts.Foreground {
-		return runUpDaemon(opts, args, stdout)
+		return runUpAngel(opts, args, stdout)
 	}
 	return runUpForeground(opts, stdout, bind, port, cfg)
 }
 
-// runUpDaemon is plain `up`: a short-lived parent that answers idempotently
-// when a daemon already runs in this home and otherwise spawns the detached
+// runUpAngel is plain `up`: a short-lived parent that answers idempotently
+// when an angel already runs in this home and otherwise spawns the detached
 // child that does the real work. Config problems were already reported by
 // runUp, before anything is spawned.
-func runUpDaemon(opts upOptions, args []string, stdout io.Writer) error {
-	ctx, cancel := context.WithTimeout(context.Background(), daemon.DefaultSpawnTimeout+daemon.ProbeTimeout)
+func runUpAngel(opts upOptions, args []string, stdout io.Writer) error {
+	ctx, cancel := context.WithTimeout(context.Background(), angel.DefaultSpawnTimeout+angel.ProbeTimeout)
 	defer cancel()
-	if _, live, err := daemonProbeLive(ctx, opts.Home); err == nil {
+	if _, live, err := angelProbeLive(ctx, opts.Home); err == nil {
 		if conflictsWithRunning(opts, live.Listen) {
 			return &cli.Error{
 				Code:    "ALREADY_RUNNING",
-				Message: "a daemon is already running with different settings",
+				Message: "an angel is already running with different settings",
 				Hint:    "run netivri down first",
 				Exit:    cli.ExitConflict,
 			}
@@ -343,7 +343,7 @@ func runUpDaemon(opts upOptions, args []string, stdout io.Writer) error {
 	if err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: "resolve executable: " + err.Error(), Exit: cli.ExitInternal}
 	}
-	st, err := daemonSpawn(ctx, daemon.SpawnOptions{Exe: exe, Args: filterUpArgs(args, opts.Home), Home: opts.Home})
+	st, err := angelSpawn(ctx, angel.SpawnOptions{Exe: exe, Args: filterUpArgs(args, opts.Home), Home: opts.Home})
 	if err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func runUpDaemon(opts upOptions, args []string, stdout io.Writer) error {
 }
 
 // runUpForeground runs the proxy in this process: the user's `--foreground`
-// run or the daemon child (opts.Handshake set). A failure of the daemon child
+// run or the angel child (opts.Handshake set). A failure of the angel child
 // reaches the spawning parent through the handshake file.
 func runUpForeground(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.Config) error {
 	if err := runForegroundInner(opts, stdout, bind, port, cfg); err != nil {
@@ -371,13 +371,13 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 		return err
 	}
 	// Foreground cannot be idempotent: refuse a second instance in one home.
-	probeCtx, cancelProbe := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
-	_, err = daemonProbe(probeCtx, opts.Home)
+	probeCtx, cancelProbe := context.WithTimeout(context.Background(), angel.ProbeTimeout)
+	_, err = angelProbe(probeCtx, opts.Home)
 	cancelProbe()
 	if err == nil {
 		return &cli.Error{
 			Code:    "ALREADY_RUNNING",
-			Message: "a daemon is already running in this state directory",
+			Message: "an angel is already running in this state directory",
 			Hint:    "run netivri down first",
 			Exit:    cli.ExitConflict,
 		}
@@ -394,7 +394,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Only the daemon child has a log; a foreground run stays silent on stderr.
+	// Only the angel child has a log; a foreground run stays silent on stderr.
 	leveled := func(write func(string, ...any)) func(string, ...any) {
 		return func(format string, args ...any) {
 			if opts.Handshake != "" {
@@ -402,27 +402,27 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			}
 		}
 	}
-	logf, warnf, errorf := leveled(daemonInfo), leveled(daemonWarn), leveled(daemonError)
+	logf, warnf, errorf := leveled(angelInfo), leveled(angelWarn), leveled(angelError)
 	store := openStats(opts.Home, pool.infos, warnf)
 	stopRequested := make(chan struct{})
 	requestStop := sync.OnceFunc(func() { close(stopRequested) })
-	live := newLiveDaemon(opts, logf, requestStop)
+	live := newLiveAngel(opts, logf, requestStop)
 	live.warnf, live.errorf = warnf, errorf
 	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, authenticator, store); err != nil {
 		closeStats(store)
 		return err
 	}
-	// The store may be opened later by a reload, so ask the daemon for it.
+	// The store may be opened later by a reload, so ask the angel for it.
 	defer func() { closeStats(live.currentStore()) }()
 
-	token, err := daemon.NewToken()
+	token, err := angel.NewToken()
 	if err != nil {
 		live.close()
 		return &cli.Error{Code: "INTERNAL", Message: "generate control token: " + err.Error(), Exit: cli.ExitInternal}
 	}
 	startedAt := time.Now().UTC().Format(time.RFC3339)
-	status := func() daemon.Status { return live.status(startedAt) }
-	ctrl, err := daemon.StartServer(token, status, requestStop)
+	status := func() angel.Status { return live.status(startedAt) }
+	ctrl, err := angel.StartServer(token, status, requestStop)
 	if err != nil {
 		live.close()
 		return err
@@ -436,21 +436,21 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	shutdown := func() {
 		live.close()
 		_ = ctrl.Close()
-		daemon.RemoveStateIf(opts.Home, st.PID, st.Token)
+		angel.RemoveStateIf(opts.Home, st.PID, st.Token)
 	}
-	if err := daemon.WriteState(opts.Home, st); err != nil {
+	if err := angel.WriteState(opts.Home, st); err != nil {
 		shutdown()
 		return err
 	}
 	if opts.Handshake != "" {
-		if err := daemon.WriteHandshake(opts.Handshake, st); err != nil {
+		if err := angel.WriteHandshake(opts.Handshake, st); err != nil {
 			shutdown()
 			return err
 		}
 		logf("start pid=%d listen=%s route=%s", st.PID, st.Listen, st.Route)
 	} else {
 		cli.Success(stdout, map[string]any{
-			"daemon":     "running",
+			"angel":      "running",
 			"pid":        st.PID,
 			"listen":     st.Listen,
 			"protocols":  st.Protocols,

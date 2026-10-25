@@ -183,7 +183,7 @@ func TestBindingWriterWriteFailureIsLogged(t *testing.T) {
 		t.Errorf("the write failure was not logged: %s", f.logText())
 	}
 	if f.stopped.Load() {
-		t.Error("a binding write failure stopped the daemon")
+		t.Error("a binding write failure stopped the angel")
 	}
 	if f.script.calls() != 1 {
 		t.Error("a binding write failure restarted the core")
@@ -216,7 +216,7 @@ func TestReloadPassesStoredBindingsAsInitialBindings(t *testing.T) {
 	if f.script.inst(0).sawClosedSnapshot() {
 		t.Error("the last snapshot was taken after the old core closed")
 	}
-	// The daemon reports what the new core says it installed.
+	// The angel reports what the new core says it installed.
 	f.script.inst(1).mu.Lock()
 	f.script.inst(1).restored = 1
 	f.script.inst(1).mu.Unlock()
@@ -251,7 +251,7 @@ func TestReloadRollbackKeepsFreshBindings(t *testing.T) {
 		t.Fatalf("InitialBindings of the rollback = %+v, want the freshly saved binding", back.InitialBindings)
 	}
 	if f.stopped.Load() {
-		t.Error("a rollback with a working previous configuration stopped the daemon")
+		t.Error("a rollback with a working previous configuration stopped the angel")
 	}
 }
 

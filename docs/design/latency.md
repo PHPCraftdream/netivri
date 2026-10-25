@@ -139,7 +139,7 @@ In the vendored package `adapter/outbound`, for `*Vless` with the default
 
 ## `netivri diag dial`
 
-Runs in its own process with no listener (a running daemon is not touched).
+Runs in its own process with no listener (a running angel is not touched).
 For an account or a node id it parses the node adapters, and per node takes
 N samples (default 5) of: `dns`, `tcp`, `tls` (VLESS only), `first_byte` (an
 HTTP request to the probe URL through the node, as the warm-up does). Then

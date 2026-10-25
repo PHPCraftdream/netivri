@@ -30,7 +30,7 @@ not preserved, so keep personal notes elsewhere.
 | `auth.password` | string | *(empty)* | Proxy password: `init`, or an argon2id PHC hash (starts with `$argon2id$`). Plaintext passwords are rejected by validation. |
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
-| `fetch.update_interval` | string | *(empty)* = `1h` | How often the running daemon re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
+| `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, so an `init` account cannot be claimed from a disallowed address). |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
@@ -95,7 +95,7 @@ the global one applies.
 ## The `init` placeholder
 
 Writing `auth.login: init` / `auth.password: init` means "the first
-local client that authenticates fills the field in": the daemon hashes
+local client that authenticates fills the field in": the angel hashes
 the supplied password with argon2id and replaces the placeholder in the
 file (the file is rewritten as a whole — comments are not preserved). An
 account object's `password: init` similarly accepts a first password for

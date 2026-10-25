@@ -30,20 +30,20 @@ To verify a change, push it and read the CI result.
   lists the commands and `netivri help {COMMAND} --json` gives the usage,
   flags, examples and error codes of one as a JSON object.
 - Typical flow:
-  1. `netivri status --json` — exit 4 means the daemon is not running.
+  1. `netivri status --json` — exit 4 means the angel is not running.
   2. `netivri up --json` — safe to repeat.
   3. Route by account: `netivri account add {ACCOUNT} --provider {SUBSCRIPTION} --country DE --json`
      (the first client that authenticates as {ACCOUNT} sets its password); a
-     running daemon applies the change within a few seconds (its listener
+     running angel applies the change within a few seconds (its listener
      restarts, open connections end) and `netivri status` reports it under
-     `reload`. The daemon also re-fetches the subscriptions once an hour.
+     `reload`. The angel also re-fetches the subscriptions once an hour.
      `--provider` and `--country` also take comma-separated lists in priority
      order (`--provider main,backup --country DE,NL`).
      `netivri use`, `netivri node test` and `netivri schema` are described in
      `docs/cli.md` but not implemented yet.
   4. Use the proxy at `data.listen` from `status`.
 - `netivri doctor --json` checks the whole setup in one pass (exit 7 when a
-  check failed); `netivri logs --since 10m --json` reads the daemon log.
+  check failed); `netivri logs --since 10m --json` reads the angel log.
 - `netivri status` is short; pass `--full` for `warm.nodes`, `stats` and
   `affinity`. `netivri help config`, `netivri help routing` and
   `netivri help output` (also with `--json`) explain the configuration file,

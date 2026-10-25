@@ -143,7 +143,7 @@ func TestPersistAccountKeepsEditsMadeOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// What the daemon loaded: alice only.
+	// What the angel loaded: alice only.
 	loaded := config.Default()
 	loaded.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
 	// What is on disk now: another command added carol and bob since.
@@ -239,7 +239,7 @@ func TestPortOf(t *testing.T) {
 func TestCoreOptionsCarryNodeTiers(t *testing.T) {
 	d := testDesired()
 	d.pool.tiers = map[string][]int{"p~DE": {0}}
-	o := (&liveDaemon{}).coreOptions(d, nil, nil)
+	o := (&liveAngel{}).coreOptions(d, nil, nil)
 	if !reflect.DeepEqual(o.NodeTiers, d.pool.tiers) {
 		t.Fatalf("NodeTiers = %v, want %v", o.NodeTiers, d.pool.tiers)
 	}

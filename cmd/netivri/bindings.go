@@ -8,7 +8,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
-// bindingSaveInterval is how often the daemon replaces the stored bindings
+// bindingSaveInterval is how often the angel replaces the stored bindings
 // with the live snapshot.
 const bindingSaveInterval = 30 * time.Second
 
@@ -55,7 +55,7 @@ func bindingRows(recs []core.BindingRecord) []stats.Binding {
 // bindingWriterLoop replaces the stored bindings with the live snapshot
 // every bindingSaveInterval until the context is done. Ticks come from
 // bindingTickerC when a test provides one.
-func (l *liveDaemon) bindingWriterLoop(ctx context.Context) {
+func (l *liveAngel) bindingWriterLoop(ctx context.Context) {
 	every := l.bindingInterval
 	if every <= 0 {
 		every = bindingSaveInterval
@@ -87,7 +87,7 @@ type bindingsTarget struct {
 }
 
 // captureBindingsTarget reads the current write target under l.mu.
-func (l *liveDaemon) captureBindingsTarget() (bindingsTarget, bool) {
+func (l *liveAngel) captureBindingsTarget() (bindingsTarget, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.closed || l.inst == nil || l.store == nil {
@@ -103,7 +103,7 @@ func (l *liveDaemon) captureBindingsTarget() (bindingsTarget, bool) {
 // generation check and writes nothing; a writer that is already inside
 // bindingsMu when the final write starts completes first, and the final
 // write then overwrites it with fresher data.
-func (l *liveDaemon) saveBindingsFor(t bindingsTarget) {
+func (l *liveAngel) saveBindingsFor(t bindingsTarget) {
 	l.bindingsMu.Lock()
 	if l.bindingsGen.Load() != t.gen {
 		// The instance of this target was sealed or replaced: its snapshot
@@ -124,7 +124,7 @@ func (l *liveDaemon) saveBindingsFor(t bindingsTarget) {
 
 // saveBindingsOnce takes one snapshot of the current instance and replaces
 // the stored set.
-func (l *liveDaemon) saveBindingsOnce() {
+func (l *liveAngel) saveBindingsOnce() {
 	if t, ok := l.captureBindingsTarget(); ok {
 		l.saveBindingsFor(t)
 	}
@@ -135,7 +135,7 @@ func (l *liveDaemon) saveBindingsOnce() {
 // the store is closed. Bumping the generation first retires the instance for
 // every periodic writer, and bindingsMu orders the final write after a
 // periodic write that is already in flight.
-func (l *liveDaemon) writeBindingsFinalLocked(inst coreInstance, store *stats.Store) {
+func (l *liveAngel) writeBindingsFinalLocked(inst coreInstance, store *stats.Store) {
 	if inst == nil || store == nil {
 		return
 	}
@@ -153,7 +153,7 @@ func (l *liveDaemon) writeBindingsFinalLocked(inst coreInstance, store *stats.St
 
 // writeBindingsFinal is writeBindingsFinalLocked for callers that do not
 // hold l.mu.
-func (l *liveDaemon) writeBindingsFinal(inst coreInstance, store *stats.Store) {
+func (l *liveAngel) writeBindingsFinal(inst coreInstance, store *stats.Store) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.writeBindingsFinalLocked(inst, store)
@@ -162,6 +162,6 @@ func (l *liveDaemon) writeBindingsFinal(inst coreInstance, store *stats.Store) {
 // noteBindingsRestored records how many persisted bindings the running
 // instance actually installed; l.mu must be held. It is the one code path
 // the start, restart and rollback paths use.
-func (l *liveDaemon) noteBindingsRestored(inst coreInstance) {
+func (l *liveAngel) noteBindingsRestored(inst coreInstance) {
 	l.bindingsRestored = inst.RestoredBindings()
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
-// Accounts with provider and country lists, end to end through the daemon:
+// Accounts with provider and country lists, end to end through the angel:
 // the first listed provider and country that has a node gets the traffic, and
 // a listed country without nodes is skipped instead of failing `up`.
 //

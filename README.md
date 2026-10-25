@@ -43,7 +43,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **See what is going on.** `netivri status` is short by default (`--full`
   for everything); `netivri status --watch` is a live view of who is active,
   through which nodes and countries; `netivri logs` reads or follows the
-  daemon log; `netivri doctor` checks the whole setup in one pass and exits 7
+  angel log; `netivri doctor` checks the whole setup in one pass and exits 7
   when something failed.
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
@@ -105,7 +105,7 @@ netivri sub add https://provider.example/sub/{TOKEN} --name main
 # 2. Create a login that exits through Germany
 netivri account add alice --provider main --country DE
 
-# 3. Start the background daemon
+# 3. Start the background angel
 netivri up --port 7890
 netivri status
 ```
@@ -118,7 +118,7 @@ a tool at `127.0.0.1:7890`; HTTP and SOCKS5 share the port:
 curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 ```
 
-`netivri down` stops the daemon. A running daemon picks up changes to
+`netivri down` stops the angel. A running angel picks up changes to
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
 
@@ -131,7 +131,7 @@ command.
 - **Core:** Mihomo (Clash.Meta) is embedded as a Go library and vendored in
   [`third_party/mihomo`](third_party/README.md) so that its adapters can be
   patched when measurements call for it.
-- **Daemon and CLI:** `netivri up` starts a background daemon; the other
+- **Angel and CLI:** `netivri up` starts a background angel; the other
   commands talk to it over a local control channel (a named pipe on Windows, a
   Unix socket elsewhere), never over TCP.
 - **Routing:** each account's providers and exit countries select a set of
@@ -163,8 +163,8 @@ Version 0.x: the CLI contract may still change between minor versions, and
 every change is listed in the [changelog](CHANGELOG.md). Command results are
 documents only, in Ktav or with `--json` in JSON (`netivri help`,
 `netivri logs --follow` and `netivri status --watch` are the text outputs).
-`netivri doctor` checks the whole setup in one pass (configuration, daemon,
-port, subscription snapshots, per-account routes, daemon log) and exits 7 when
+`netivri doctor` checks the whole setup in one pass (configuration, angel,
+port, subscription snapshots, per-account routes, angel log) and exits 7 when
 something failed. Described in [`docs/cli.md`](docs/cli.md) but not
 implemented yet: `use`, `node test` and `schema`.
 

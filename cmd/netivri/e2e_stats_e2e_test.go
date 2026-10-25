@@ -15,12 +15,12 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
-// TestE2EStatsAndAffinity runs the daemon with one account that may use two
+// TestE2EStatsAndAffinity runs the angel with one account that may use two
 // nodes of a country: every connection to one site leaves through the same
-// node, the daemon reports the binding, and after `down` (which flushes the
+// node, the angel reports the binding, and after `down` (which flushes the
 // store) `stats` shows the dials of exactly that node.
 func TestE2EStatsAndAffinity(t *testing.T) {
-	h := newDaemonHome(t)
+	h := newAngelHome(t)
 	pass := "stats-e2e-password"
 	hash, err := auth.Hash(pass)
 	if err != nil {
@@ -39,12 +39,12 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	n2.Name = "Second Node"
 	accountsSaveSnapshot(t, h.dir, "p1", []subscription.Node{n1, n2})
 
-	code, stdout, stderr := daemonRun(t, h.dir, "up", "--port", "0")
+	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	up := daemonData(t, stdout)
-	h.pid = daemonInt(t, up, "pid")
+	up := angelData(t, stdout)
+	h.pid = angelInt(t, up, "pid")
 	listen, _ := up["listen"].(string)
 	if listen == "" {
 		t.Fatalf("up data = %v", up)
@@ -76,9 +76,9 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	var bytesUp, bytesDown float64
 	for {
-		statsCode, statsOut, _ := daemonRun(t, h.dir, "stats", "--by", "account", "--account", "alice", "--since", "1h")
+		statsCode, statsOut, _ := angelRun(t, h.dir, "stats", "--by", "account", "--account", "alice", "--since", "1h")
 		if statsCode == 0 {
-			items, _ := daemonData(t, statsOut)["items"].([]any)
+			items, _ := angelData(t, statsOut)["items"].([]any)
 			if len(items) == 1 {
 				acc, _ := items[0].(map[string]any)
 				bytesUp, _ = acc["bytes_up"].(float64)
@@ -95,11 +95,11 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	}
 	_ = payloadConn.Close()
 
-	code, stdout, stderr = daemonRun(t, h.dir, "status", "--full")
+	code, stdout, stderr = angelRun(t, h.dir, "status", "--full")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	status := daemonData(t, stdout)
+	status := angelData(t, stdout)
 	affinity, _ := status["affinity"].(map[string]any)
 	if affinity == nil || affinity["bindings"] != float64(1) {
 		t.Fatalf("status affinity = %v, want one binding", status["affinity"])
@@ -110,16 +110,16 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	assertNoSecrets(t, stdout, stderr, pass, hash)
 
 	// down closes the core first and flushes the store before exiting.
-	code, stdout, stderr = daemonRun(t, h.dir, "down")
+	code, stdout, stderr = angelRun(t, h.dir, "down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 
-	code, stdout, stderr = daemonRun(t, h.dir, "stats", "--since", "1h")
+	code, stdout, stderr = angelRun(t, h.dir, "stats", "--since", "1h")
 	if code != 0 {
 		t.Fatalf("stats exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	items, _ := daemonData(t, stdout)["items"].([]any)
+	items, _ := angelData(t, stdout)["items"].([]any)
 	if len(items) != 2 {
 		t.Fatalf("stats items = %v, want both nodes", items)
 	}
@@ -147,11 +147,11 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	}
 	assertNoSecrets(t, stdout, stderr, pass, hash)
 
-	code, stdout, stderr = daemonRun(t, h.dir, "stats", "--by", "account", "--since", "1h")
+	code, stdout, stderr = angelRun(t, h.dir, "stats", "--by", "account", "--since", "1h")
 	if code != 0 {
 		t.Fatalf("stats --by account exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	items, _ = daemonData(t, stdout)["items"].([]any)
+	items, _ = angelData(t, stdout)["items"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("account items = %v, want only alice", items)
 	}

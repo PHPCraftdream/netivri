@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"encoding/json"
@@ -24,7 +24,7 @@ func ctlRequest(t *testing.T, s *Server, method, path, host, auth string) *httpt
 func newTestServer(t *testing.T) (*Server, *int32) {
 	t.Helper()
 	var calls int32
-	s := &Server{addr: "127.0.0.1:12345", token: "secret", status: func() Status { return Status{Daemon: "running", PID: 7, Listen: "127.0.0.1:7890"} }, stop: func() { atomic.AddInt32(&calls, 1) }}
+	s := &Server{addr: "127.0.0.1:12345", token: "secret", status: func() Status { return Status{Angel: "running", PID: 7, Listen: "127.0.0.1:7890"} }, stop: func() { atomic.AddInt32(&calls, 1) }}
 	t.Cleanup(func() { _ = s.Close() })
 	return s, &calls
 }
@@ -68,7 +68,7 @@ func TestControlRouting(t *testing.T) {
 func TestControlStatusBody(t *testing.T) {
 	s, _ := newTestServer(t)
 	s.status = func() Status {
-		return Status{Daemon: "running", PID: 7, Listen: "127.0.0.1:7890", Accounts: []AccountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}}
+		return Status{Angel: "running", PID: 7, Listen: "127.0.0.1:7890", Accounts: []AccountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}}
 	}
 	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
 	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"main","exit_country":"DE","allowed_clients":""}]`) || strings.Contains(rec.Body.String(), "password") {
@@ -78,7 +78,7 @@ func TestControlStatusBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Daemon != "running" || st.PID != 7 || st.Listen != "127.0.0.1:7890" {
+	if st.Angel != "running" || st.PID != 7 || st.Listen != "127.0.0.1:7890" {
 		t.Errorf("status=%+v", st)
 	}
 }

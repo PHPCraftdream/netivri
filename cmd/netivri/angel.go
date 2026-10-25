@@ -10,44 +10,44 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/daemon"
+	"github.com/PHPCraftdream/netivri/internal/angel"
 )
 
-// Seams over internal/daemon: the cmd-level decisions (idempotency,
+// Seams over internal/angel: the cmd-level decisions (idempotency,
 // ALREADY_RUNNING rules, not-running outputs) are unit-tested without
 // sockets or processes, following the subFetch pattern.
 var (
-	daemonProbe     = daemon.Probe
-	daemonProbeLive = daemon.ProbeLive
-	// daemonProbeLiveKeep is the status watch's poll: it never removes the
+	angelProbe     = angel.Probe
+	angelProbeLive = angel.ProbeLive
+	// angelProbeLiveKeep is the status watch's poll: it never removes the
 	// state file, so a transient control failure stays retryable.
-	daemonProbeLiveKeep = daemon.ProbeLiveKeep
-	daemonSpawn         = daemon.Spawn
-	daemonControlStop   = func(ctx context.Context, addr, token string) error {
-		return (daemon.Client{Addr: addr, Token: token}).Stop(ctx)
+	angelProbeLiveKeep = angel.ProbeLiveKeep
+	angelSpawn         = angel.Spawn
+	angelControlStop   = func(ctx context.Context, addr, token string) error {
+		return (angel.Client{Addr: addr, Token: token}).Stop(ctx)
 	}
 )
 
-// daemonLogf returns the writer of one level of the daemon log. It is used by
-// the daemon child only, whose stderr is the append-only run/netivri.log
+// angelLogf returns the writer of one level of the angel log. It is used by
+// the angel child only, whose stderr is the append-only run/netivri.log
 // (`netivri logs` reads it). It never carries credentials or tokens.
-func daemonLogf(level string) func(format string, args ...any) {
+func angelLogf(level string) func(format string, args ...any) {
 	return func(format string, args ...any) {
-		line := daemon.FormatLogLine(time.Now(), level, fmt.Sprintf(format, args...))
+		line := angel.FormatLogLine(time.Now(), level, fmt.Sprintf(format, args...))
 		_, _ = io.WriteString(os.Stderr, line+"\n")
 	}
 }
 
 var (
-	daemonInfo  = daemonLogf(daemon.LevelInfo)
-	daemonWarn  = daemonLogf(daemon.LevelWarn)
-	daemonError = daemonLogf(daemon.LevelError)
+	angelInfo  = angelLogf(angel.LevelInfo)
+	angelWarn  = angelLogf(angel.LevelWarn)
+	angelError = angelLogf(angel.LevelError)
 )
 
-// daemonProtocols are the protocols the mixed port speaks.
-var daemonProtocols = []string{"socks5", "socks4", "http"}
+// angelProtocols are the protocols the mixed port speaks.
+var angelProtocols = []string{"socks5", "socks4", "http"}
 
-// filterUpArgs builds the daemon child's command line: `up`, the user's
+// filterUpArgs builds the angel child's command line: `up`, the user's
 // arguments verbatim minus the global compatibility flags and any --home,
 // and the resolved --home so the child uses the same state directory.
 func filterUpArgs(args []string, home string) []string {
@@ -74,7 +74,7 @@ func filterUpArgs(args []string, home string) []string {
 }
 
 // conflictsWithRunning reports whether an explicitly requested port or
-// bind differs from the running daemon's listen address. An explicit
+// bind differs from the running angel's listen address. An explicit
 // `--port 0` means "don't care".
 func conflictsWithRunning(opts upOptions, listen string) bool {
 	host, port, err := net.SplitHostPort(listen)
@@ -92,11 +92,11 @@ func conflictsWithRunning(opts upOptions, listen string) bool {
 	return false
 }
 
-// alreadyRunningData is the success data of the daemon `up`: the keys of
+// alreadyRunningData is the success data of the angel `up`: the keys of
 // `up --foreground` plus the additive `foreground` and `already_running`.
-func alreadyRunningData(st daemon.Status, already bool) map[string]any {
+func alreadyRunningData(st angel.Status, already bool) map[string]any {
 	return map[string]any{
-		"daemon":          st.Daemon,
+		"angel":           st.Angel,
 		"pid":             st.PID,
 		"listen":          st.Listen,
 		"protocols":       st.Protocols,
@@ -107,9 +107,9 @@ func alreadyRunningData(st daemon.Status, already bool) map[string]any {
 }
 
 // statusOf is the status view of a state file written at startup.
-func statusOf(st daemon.State) daemon.Status {
-	return daemon.Status{
-		Daemon:     "running",
+func statusOf(st angel.State) angel.Status {
+	return angel.Status{
+		Angel:      "running",
 		Foreground: st.Foreground,
 		PID:        st.PID,
 		Listen:     st.Listen,
@@ -122,8 +122,8 @@ func statusOf(st daemon.State) daemon.Status {
 }
 
 // stateOf builds the state file content from a live status.
-func stateOf(s daemon.Status, control, token string) daemon.State {
-	return daemon.State{
+func stateOf(s angel.Status, control, token string) angel.State {
+	return angel.State{
 		PID:        s.PID,
 		Listen:     s.Listen,
 		Control:    control,
@@ -137,14 +137,14 @@ func stateOf(s daemon.Status, control, token string) daemon.State {
 	}
 }
 
-// failStartup reports a startup failure of the daemon child to its parent
+// failStartup reports a startup failure of the angel child to its parent
 // through the handshake file (no-op without a handshake) and returns err.
 func failStartup(handshake string, err error) error {
 	if handshake == "" {
 		return err
 	}
-	if werr := daemon.WriteHandshakeError(handshake, daemon.NewHandshakeError(err)); werr != nil {
-		daemonError("write handshake failed: %v", werr)
+	if werr := angel.WriteHandshakeError(handshake, angel.NewHandshakeError(err)); werr != nil {
+		angelError("write handshake failed: %v", werr)
 	}
 	return err
 }

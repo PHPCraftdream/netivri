@@ -477,7 +477,7 @@ func TestHelpErrorsMatchTheDocumentedContract(t *testing.T) {
 			}
 		}
 	}
-	want := []int{cli.ExitOK, cli.ExitInternal, cli.ExitUsage, cli.ExitNetwork, cli.ExitNoDaemon, cli.ExitNotFound, cli.ExitConflict, cli.ExitCheckFailed}
+	want := []int{cli.ExitOK, cli.ExitInternal, cli.ExitUsage, cli.ExitNetwork, cli.ExitNoAngel, cli.ExitNotFound, cli.ExitConflict, cli.ExitCheckFailed}
 	var got []int
 	for _, e := range helpExitCodes {
 		got = append(got, e.Code)

@@ -5,16 +5,16 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 // Variables only so that tests can shorten them.
 var (
-	// refreshStartDelay keeps the first refresh away from the daemon's start.
+	// refreshStartDelay keeps the first refresh away from the angel's start.
 	refreshStartDelay = 30 * time.Second
-	// refreshWake is how often the daemon checks which subscription is due.
+	// refreshWake is how often the angel checks which subscription is due.
 	refreshWake = 30 * time.Second
 )
 
@@ -80,8 +80,8 @@ func (s *refreshSchedule) done(name string, now time.Time, ok bool, interval tim
 }
 
 // refreshInfoLocked is the status view of the refresh; l.mu must be held.
-func (l *liveDaemon) refreshInfoLocked() *daemon.RefreshInfo {
-	info := &daemon.RefreshInfo{OK: l.refreshOK, Failed: l.refreshFail, LastError: l.refreshErr}
+func (l *liveAngel) refreshInfoLocked() *angel.RefreshInfo {
+	info := &angel.RefreshInfo{OK: l.refreshOK, Failed: l.refreshFail, LastError: l.refreshErr}
 	if l.latest != nil {
 		if d, on := l.latest.Fetch.Interval(); on {
 			info.IntervalSeconds = int64(d / time.Second)
@@ -93,7 +93,7 @@ func (l *liveDaemon) refreshInfoLocked() *daemon.RefreshInfo {
 	return info
 }
 
-func (l *liveDaemon) noteRefresh(ok bool, err error) {
+func (l *liveAngel) noteRefresh(ok bool, err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.lastRefresh = time.Now()
@@ -109,7 +109,7 @@ func (l *liveDaemon) noteRefresh(ok bool, err error) {
 // refreshLoop re-fetches every configured subscription once per interval
 // (fetch.update_interval, one hour by default). The snapshot is stored for
 // the file watcher to apply; a failed fetch keeps the old snapshot.
-func (l *liveDaemon) refreshLoop(ctx context.Context) {
+func (l *liveAngel) refreshLoop(ctx context.Context) {
 	sched := newRefreshSchedule(time.Now().Add(refreshStartDelay))
 	store := subscription.NewStore(filepath.Join(l.opts.Home, "subscriptions"))
 	fetchedAt := func(name string) (time.Time, bool) {
@@ -153,7 +153,7 @@ func (l *liveDaemon) refreshLoop(ctx context.Context) {
 // refreshOne fetches one subscription and stores it, unless storing it would
 // leave an account without nodes: an unattended refresh must not break a
 // working setup, so such a snapshot is rejected and the old one stays.
-func (l *liveDaemon) refreshOne(ctx context.Context, store *subscription.Store, cfg *config.Config, s config.Subscription) bool {
+func (l *liveAngel) refreshOne(ctx context.Context, store *subscription.Store, cfg *config.Config, s config.Subscription) bool {
 	snap, err := fetchSnapshot(ctx, subFetch, time.Now, cfg, s)
 	if err != nil {
 		l.noteRefresh(false, err)

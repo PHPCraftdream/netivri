@@ -443,7 +443,7 @@ after `executor.ApplyConfig`, retain the warmer, and call `Close` before
 `executor.Shutdown`; it is idempotent and bounds its waits. `core.Start`
 starts it when `Options.Warm` is set (after `ApplyConfig` and the listener, so
 a failed listen leaves nothing behind) and `Instance.Close` stops it before
-`executor.Shutdown`; `Instance.WarmStats` exposes the counters. The daemon sets
+`executor.Shutdown`; `Instance.WarmStats` exposes the counters. The angel sets
 `Options.Warm` (probes only, no pool) whenever accounts route through country
 nodes, and `status` prints the counters as `warm` (the full list with the
 counters and `warm.nodes` behind `--full`; the default short view shows only

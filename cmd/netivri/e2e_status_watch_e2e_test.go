@@ -13,12 +13,12 @@ import (
 	"time"
 )
 
-// TestE2EStatusWatchNDJSON runs a real daemon, starts `status --watch
+// TestE2EStatusWatchNDJSON runs a real angel, starts `status --watch
 // --interval 1s --json` as a subprocess, decodes two NDJSON frames (read
 // with a bounded deadline) and kills the subprocess by its own PID, then
 // waits for it with a deadline.
 func TestE2EStatusWatchNDJSON(t *testing.T) {
-	home := newDaemonHome(t)
+	home := newAngelHome(t)
 	up := startUp(t, home.dir, "--port", "0")
 	assertStatusSuccess(t, up.Status())
 

@@ -125,7 +125,7 @@ request, no API call, no rate limit).
 
 ## Upgrading while netivri is running
 
-The installer never stops a running daemon. Instead of overwriting files
+The installer never stops a running angel. Instead of overwriting files
 in place, it replaces them by renaming, which is safe while netivri runs:
 
 - **Linux / macOS:** the new file is copied to a temp name in the install
@@ -143,7 +143,7 @@ in place, it replaces them by renaming, which is safe while netivri runs:
   next to the target, renames the old file aside to
   `{NAME}.old-{TIMESTAMP}`, moves the new copy into place, and then tries
   to delete the renamed-aside file — a file still held open by the running
-  daemon simply stays. If the install directory would ever be left without
+  angel simply stays. If the install directory would ever be left without
   a working binary, the old file is renamed back and the install fails.
   Leftover `netivri.exe.old-*` files (and `ktav_cabi.dll.old-*` files of
   earlier builds) are cleaned up by the next install or uninstall; when
@@ -153,7 +153,7 @@ in place, it replaces them by renaming, which is safe while netivri runs:
   install or uninstall`.
 
 `--uninstall` / `-Uninstall` on Windows renames locked files aside too,
-so the uninstall never fails just because the daemon is running; the
+so the uninstall never fails just because the angel is running; the
 renamed-aside files disappear on a later install or uninstall.
 
 ## Installing from a local directory
@@ -175,7 +175,7 @@ The binary and the library must exist (the install fails otherwise);
 skipped otherwise. `--from-dir` cannot be combined with `--version` or
 `--base-url` (or their env variables) — that is a usage error. In this
 mode the final line is `installed netivri to {DIR}` (the version is
-unknown). Everything else — the running-daemon handling above, the share
+unknown). Everything else — the running-angel handling above, the share
 files, the PATH hints — is identical to download mode.
 
 Use `--quiet` / `-Quiet` when calling the installer from another tool

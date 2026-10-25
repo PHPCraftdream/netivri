@@ -8,14 +8,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
 func TestActivityInfoMapsNodesToProvidersAndCountries(t *testing.T) {
-	accounts := []daemon.AccountInfo{{Login: "alice"}, {Login: "bob"}, {Login: "carol"}}
+	accounts := []angel.AccountInfo{{Login: "alice"}, {Login: "bob"}, {Login: "carol"}}
 	infos := []stats.NodeInfo{
 		{Label: "main/a", Provider: "main", Country: "DE", Name: "Germany 1"},
 		{Label: "main/b", Provider: "main", Country: "NL"},
@@ -37,23 +37,23 @@ func TestActivityInfoMapsNodesToProvidersAndCountries(t *testing.T) {
 		{Login: "stranger", Connections: 9, Nodes: []core.NodeActivity{{Label: "main/a", Connections: 9}}},
 	}
 	got := activityInfo(accounts, live, infos)
-	want := []daemon.AccountActivity{
+	want := []angel.AccountActivity{
 		{
 			Login: "alice", Active: true, Connections: 6, UploadBytes: 60, DownloadBytes: 600,
 			// Busiest first, each once: main (3 + 1 connections) is met first, then alt.
 			Providers: []string{"main", "alt"},
 			Countries: []string{"DE", "NL"},
-			Nodes: []daemon.NodeUse{
+			Nodes: []angel.NodeUse{
 				{Node: "main/a", Name: "Germany 1", Provider: "main", Country: "DE", Connections: 3, UploadBytes: 30, DownloadBytes: 300},
 				{Node: "alt/c", Provider: "alt", Country: "DE", Connections: 2, UploadBytes: 20, DownloadBytes: 200},
 				{Node: "main/b", Provider: "main", Country: "NL", Connections: 1, UploadBytes: 10, DownloadBytes: 100},
 			},
 		},
-		{Login: "bob", Providers: []string{}, Countries: []string{}, Nodes: []daemon.NodeUse{}},
+		{Login: "bob", Providers: []string{}, Countries: []string{}, Nodes: []angel.NodeUse{}},
 		{
 			Login: "carol", Active: true, Connections: 1, UploadBytes: 1, DownloadBytes: 2,
 			Providers: []string{}, Countries: []string{},
-			Nodes: []daemon.NodeUse{{Node: "direct", Connections: 1, UploadBytes: 1, DownloadBytes: 2}},
+			Nodes: []angel.NodeUse{{Node: "direct", Connections: 1, UploadBytes: 1, DownloadBytes: 2}},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -98,11 +98,11 @@ func TestLiveStatusReportsActivity(t *testing.T) {
 }
 
 func TestRunStatusPrintsActivity(t *testing.T) {
-	old := daemonProbeLive
-	t.Cleanup(func() { daemonProbeLive = old })
-	run := func(st daemon.Status) map[string]any {
-		daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-			return daemon.State{}, st, nil
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
+	run := func(st angel.Status) map[string]any {
+		angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+			return angel.State{}, st, nil
 		}
 		var out bytes.Buffer
 		if err := runStatus([]string{"--home", t.TempDir()}, &out); err != nil {
@@ -111,10 +111,10 @@ func TestRunStatusPrintsActivity(t *testing.T) {
 		return decodeData(t, &out)
 	}
 
-	data := run(daemon.Status{Activity: []daemon.AccountActivity{
+	data := run(angel.Status{Activity: []angel.AccountActivity{
 		{Login: "alice", Active: true, Connections: 2, Providers: []string{"main"}, Countries: []string{"DE"},
-			Nodes: []daemon.NodeUse{{Node: "main/a", Provider: "main", Country: "DE", Connections: 2}}},
-		{Login: "bob", Providers: []string{}, Countries: []string{}, Nodes: []daemon.NodeUse{}},
+			Nodes: []angel.NodeUse{{Node: "main/a", Provider: "main", Country: "DE", Connections: 2}}},
+		{Login: "bob", Providers: []string{}, Countries: []string{}, Nodes: []angel.NodeUse{}},
 	}})
 	if data["active_accounts"] != float64(1) {
 		t.Errorf("active_accounts = %v, want 1", data["active_accounts"])
@@ -137,12 +137,12 @@ func TestRunStatusPrintsActivity(t *testing.T) {
 		t.Errorf("bob = %v", bob)
 	}
 
-	data = run(daemon.Status{})
+	data = run(angel.Status{})
 	if _, has := data["activity"]; has {
-		t.Error("activity is printed for a daemon that did not report it")
+		t.Error("activity is printed for an angel that did not report it")
 	}
 	if _, has := data["active_accounts"]; has {
-		t.Error("active_accounts is printed for a daemon that did not report activity")
+		t.Error("active_accounts is printed for an angel that did not report activity")
 	}
 }
 

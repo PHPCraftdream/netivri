@@ -57,12 +57,12 @@ func e2eDoctorFind(t *testing.T, doc e2eDoctorDoc, name string) e2eDoctorCheck {
 	return e2eDoctorCheck{}
 }
 
-// TestE2EDoctor runs `doctor` against a real daemon, after `down`, and in a
+// TestE2EDoctor runs `doctor` against a real angel, after `down`, and in a
 // home without a configuration. Only deterministic facts are asserted: warm
 // probe timing is not part of the contract, so the account check is only
 // required to be present with a detail and a decidable status.
 func TestE2EDoctor(t *testing.T) {
-	h := newDaemonHome(t)
+	h := newAngelHome(t)
 	home := h.dir
 	hash, err := auth.Hash(accountsDEPass)
 	if err != nil {
@@ -75,13 +75,13 @@ func TestE2EDoctor(t *testing.T) {
 	})
 	accountsSaveSnapshot(t, home, "p", []subscription.Node{accountsSocksNode("de-p", "DE", accountsServer(t))})
 
-	// With the daemon running: config, daemon and listen are ok, and the
+	// With the angel running: config, angel and listen are ok, and the
 	// account check exists with a non-empty detail.
-	code, stdout, stderr := daemonRun(t, home, "up", "--port", "0")
+	code, stdout, stderr := angelRun(t, home, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	h.pid = int(daemonData(t, stdout)["pid"].(float64))
+	h.pid = int(angelData(t, stdout)["pid"].(float64))
 	code, doc, dstderr := e2eDoctorRun(t, home)
 	// A completed warm probe that found no live node makes the account check
 	// fail, which is legitimate here; whether the probe completed before this
@@ -116,8 +116,8 @@ func TestE2EDoctor(t *testing.T) {
 	if c := e2eDoctorFind(t, doc, "config"); c.Status != "ok" {
 		t.Errorf("config = %+v", c)
 	}
-	if c := e2eDoctorFind(t, doc, "daemon"); c.Status != "ok" || !strings.Contains(c.Detail, "running, pid ") {
-		t.Errorf("daemon = %+v", c)
+	if c := e2eDoctorFind(t, doc, "angel"); c.Status != "ok" || !strings.Contains(c.Detail, "running, pid ") {
+		t.Errorf("angel = %+v", c)
 	}
 	if c := e2eDoctorFind(t, doc, "listen"); c.Status != "ok" || !strings.Contains(c.Detail, "listen 127.0.0.1:") {
 		t.Errorf("listen = %+v", c)
@@ -132,9 +132,9 @@ func TestE2EDoctor(t *testing.T) {
 		t.Error("account check has no detail")
 	}
 
-	// After `down`: the daemon check warns, the account still counts its
+	// After `down`: the angel check warns, the account still counts its
 	// stored nodes, and the command succeeds (nothing failed).
-	code, stdout, stderr = daemonRun(t, home, "down")
+	code, stdout, stderr = angelRun(t, home, "down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -142,8 +142,8 @@ func TestE2EDoctor(t *testing.T) {
 	if dcode != 0 {
 		t.Fatalf("doctor after down: exit %d (stderr %s)", dcode, dstderr)
 	}
-	if c := e2eDoctorFind(t, ddoc, "daemon"); c.Status != "warn" || c.Detail != "daemon is not running" {
-		t.Errorf("daemon = %+v", c)
+	if c := e2eDoctorFind(t, ddoc, "angel"); c.Status != "warn" || c.Detail != "angel is not running" {
+		t.Errorf("angel = %+v", c)
 	}
 	if c := e2eDoctorFind(t, ddoc, "account alice"); c.Status != "warn" || !strings.Contains(c.Detail, "1 stored node(s)") {
 		t.Errorf("account = %+v", c)
@@ -161,7 +161,7 @@ func TestE2EDoctor(t *testing.T) {
 	if c := e2eDoctorFind(t, edoc, "config"); c.Status != "ok" {
 		t.Errorf("config = %+v", c)
 	}
-	if c := e2eDoctorFind(t, edoc, "daemon"); c.Status != "warn" {
-		t.Errorf("daemon = %+v", c)
+	if c := e2eDoctorFind(t, edoc, "angel"); c.Status != "warn" {
+		t.Errorf("angel = %+v", c)
 	}
 }

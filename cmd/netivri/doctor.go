@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -57,7 +57,7 @@ var doctorListen = func(addr string) error {
 
 // runDoctor implements `doctor`: one pass of independent checks, one document
 // on stdout, and DOCTOR_FAILED (exit 7) when a check failed. It never talks
-// to anything but the local daemon and the local port, and never prints a
+// to anything but the local angel and the local port, and never prints a
 // subscription URL, a password or a hash.
 func runDoctor(args []string, stdout io.Writer) error {
 	home, rest, err := parseHomeArgs("doctor", args)
@@ -93,24 +93,24 @@ func runDoctor(args []string, stdout io.Writer) error {
 }
 
 // doctorContext carries what the checks share: the state directory, the
-// loaded configuration and the daemon probe result.
+// loaded configuration and the angel probe result.
 type doctorContext struct {
 	home     string
 	cfg      *config.Config
 	cfgIssue string // why the configuration could not be used, "" when fine
 	now      time.Time
-	daemonUp bool
-	status   daemon.Status
-	health   map[string]daemon.NodeHealth // live node health by label, when the daemon runs
+	angelUp  bool
+	status   angel.Status
+	health   map[string]angel.NodeHealth // live node health by label, when the angel runs
 }
 
 // doctorRun performs every check once, in document order.
 func doctorRun(home string) []doctorCheck {
 	d := &doctorContext{home: home, now: doctorNow()}
-	d.probeDaemon()
+	d.probeAngel()
 	checks := []doctorCheck{
 		d.checkConfig(),
-		d.checkDaemon(),
+		d.checkAngel(),
 		d.checkListen(),
 		d.checkSubscriptions(),
 	}
@@ -129,17 +129,17 @@ func (d *doctorContext) cfgAccounts() []config.Account {
 	return d.cfg.Accounts
 }
 
-// probeDaemon asks the local control channel once; any failure means down.
-func (d *doctorContext) probeDaemon() {
-	ctx, cancel := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
+// probeAngel asks the local control channel once; any failure means down.
+func (d *doctorContext) probeAngel() {
+	ctx, cancel := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	defer cancel()
-	_, st, err := daemonProbeLive(ctx, d.home)
+	_, st, err := angelProbeLive(ctx, d.home)
 	if err != nil {
 		return
 	}
-	d.daemonUp = true
+	d.angelUp = true
 	d.status = st
-	d.health = make(map[string]daemon.NodeHealth)
+	d.health = make(map[string]angel.NodeHealth)
 	if st.Warm != nil {
 		for _, n := range st.Warm.Nodes {
 			if n.Label != "" {
@@ -166,18 +166,18 @@ func (d *doctorContext) checkConfig() doctorCheck {
 	return doctorCheck{"config", doctorOK, "config.ktav loaded and valid"}
 }
 
-// checkDaemon reports the running daemon, or a plain warn.
-func (d *doctorContext) checkDaemon() doctorCheck {
-	if d.daemonUp {
-		return doctorCheck{"daemon", doctorOK, fmt.Sprintf("running, pid %d, uptime %ds", d.status.PID, uptimeSeconds(d.status.StartedAt))}
+// checkAngel reports the running angel, or a plain warn.
+func (d *doctorContext) checkAngel() doctorCheck {
+	if d.angelUp {
+		return doctorCheck{"angel", doctorOK, fmt.Sprintf("running, pid %d, uptime %ds", d.status.PID, uptimeSeconds(d.status.StartedAt))}
 	}
-	return doctorCheck{"daemon", doctorWarn, "daemon is not running"}
+	return doctorCheck{"angel", doctorWarn, "angel is not running"}
 }
 
-// checkListen reports the running daemon's listen address, or, when nothing
+// checkListen reports the running angel's listen address, or, when nothing
 // runs, whether the configured port is free (a local probe only).
 func (d *doctorContext) checkListen() doctorCheck {
-	if d.daemonUp {
+	if d.angelUp {
 		return doctorCheck{"listen", doctorOK, "listen " + d.status.Listen + ", allowed_clients " + allowedClientsLabel(d.status.AllowedClients)}
 	}
 	if d.cfgIssue != "" {
@@ -198,7 +198,7 @@ func (d *doctorContext) checkListen() doctorCheck {
 // configured subscription and not be older than twice the update interval
 // (skipped when the interval is "off"). It also fails when an account names
 // a subscription that is not configured; that part is config level and runs
-// even when the daemon is down.
+// even when the angel is down.
 func (d *doctorContext) checkSubscriptions() doctorCheck {
 	if d.cfgIssue != "" {
 		return doctorCheck{"subscriptions", doctorWarn, "not checked: the configuration is invalid"}
@@ -250,9 +250,9 @@ func (d *doctorContext) checkSubscriptions() doctorCheck {
 }
 
 // checkAccount checks one account's route: at least one stored node always,
-// and, with a running daemon, a live node in the first tier that has nodes
+// and, with a running angel, a live node in the first tier that has nodes
 // (a warn when only a later tier is alive, a fail when none is). Without a
-// daemon the node count stands and the liveness part is a warn.
+// angel the node count stands and the liveness part is a warn.
 func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 	name := "account " + a.Login
 	providers, countries := routeLists(*a)
@@ -284,11 +284,11 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 			break
 		}
 	}
-	if !d.daemonUp {
-		return doctorCheck{name, doctorWarn, fmt.Sprintf("%d stored node(s); liveness not checked (daemon is not running)", total)}
+	if !d.angelUp {
+		return doctorCheck{name, doctorWarn, fmt.Sprintf("%d stored node(s); liveness not checked (angel is not running)", total)}
 	}
 	if !d.routeProbed(tiers) {
-		return doctorCheck{name, doctorWarn, fmt.Sprintf("%d stored node(s); no probe data yet (the daemon has not probed the route)", total)}
+		return doctorCheck{name, doctorWarn, fmt.Sprintf("%d stored node(s); no probe data yet (the angel has not probed the route)", total)}
 	}
 	aliveIn := func(i int) int {
 		n := 0
@@ -317,7 +317,7 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 	return doctorCheck{name, doctorFail, "no live node on the route"}
 }
 
-// routeProbed reports whether the daemon's warm-up knows any node of the
+// routeProbed reports whether the angel's warm-up knows any node of the
 // route; before the first probe round a not-alive answer means nothing.
 func (d *doctorContext) routeProbed(tiers []accountShowTier) bool {
 	for _, t := range tiers {
@@ -330,12 +330,12 @@ func (d *doctorContext) routeProbed(tiers []accountShowTier) bool {
 	return false
 }
 
-// checkLog reads the daemon log for WARN and ERROR entries of the last hour.
-// It reads the file, so it works while the daemon runs and after it stopped;
+// checkLog reads the angel log for WARN and ERROR entries of the last hour.
+// It reads the file, so it works while the angel runs and after it stopped;
 // a missing log file is fine.
 func (d *doctorContext) checkLog() doctorCheck {
-	q := daemon.LogQuery{MinLevel: daemon.LevelWarn, Since: d.now.Add(-doctorLogWindow)}
-	entries, _, err := daemon.ReadLog(d.home, q)
+	q := angel.LogQuery{MinLevel: angel.LevelWarn, Since: d.now.Add(-doctorLogWindow)}
+	entries, _, err := angel.ReadLog(d.home, q)
 	if errors.Is(err, os.ErrNotExist) {
 		return doctorCheck{"log", doctorOK, "no log yet"}
 	}
