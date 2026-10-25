@@ -50,7 +50,7 @@ netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
 netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR}]
 netivri down
-netivri status
+netivri status [--full]
 
 netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
 netivri doctor
@@ -600,6 +600,14 @@ authentication is enabled in the configuration (`auth.login` and
 
 Reports the live status of the running instance.
 
+The default answer is **short**: enough for people and scripts that want to
+know the daemon is up and what it serves. The complete view — with the warm
+node list, the warm pool counters, `stats` and `affinity` — needs
+`netivri status --full`. Both forms accept `--home` and `--json`; unknown
+flags are usage errors.
+
+Short view:
+
 ```json
 {"schema_version": 1, "ok": true,
  "data": {"daemon": "running", "foreground": false, "pid": 12345,
@@ -607,16 +615,27 @@ Reports the live status of the running instance.
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
           "allowed_clients": "*",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
-          "uptime_seconds": 3721, "version": "0.1.0"}}
+          "uptime_seconds": 3721, "version": "0.1.0",
+          "active_accounts": 0, "activity": [],
+          "warm": {"alive": 4, "total": 5, "probes": 12, "probe_failures": 1},
+          "refresh": {"interval_seconds": 3600, "ok": 3, "failed": 0,
+                      "last_at": "2026-10-20T10:45:00Z", "last_error": ""},
+          "reload": {"count": 1, "last_at": "2026-10-20T10:02:00Z", "last_error": ""}}}
 ```
 
-Exactly these fields exist today: `daemon` (always `running` on success),
+Exactly these fields exist in the short view: `daemon` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
 `version` (the daemon binary's version), `allowed_clients` (which client
-addresses may connect; `*` when unrestricted), `accounts` (see `account`; each record is
-`{"login", "provider", "exit_country", "allowed_clients"}`, sorted by login), `active_accounts`, `activity`, `warm`, `stats`, `affinity`, `refresh` and `reload`. The selection fields of the planned shape below are not included
+addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
+record is `{"login", "provider", "exit_country", "allowed_clients"}`, sorted by
+login), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
+and `reload`. The full view (`--full`) adds, next to everything above: the full
+`warm` (the pool counters and `nodes[]`), `stats` and `affinity`. The selection
+fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+Scripts that read `warm.nodes`, `stats` or `affinity` must pass `--full`.
 
 `refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
 `reload` (`{"count", "last_at", "last_error"}`) describe how the daemon keeps
@@ -633,9 +652,10 @@ the latest such restart, and `last_error` why the newest files are not applied
 on disk are what runs. A refresh that brings the same nodes, or only different
 node names, changes nothing and does not count.
 
-`stats` (`{"path", "dropped"}`) is present while the statistics store is open;
+`stats` (`{"path", "dropped"}`) is full-only and present while the statistics
+store is open;
 `dropped` counts samples lost to a full write queue. `affinity`
-(`{"bindings", "rebinds", "hedges", "hedge_wins"}`) is present while an account has a route: the
+(`{"bindings", "rebinds", "hedges", "hedge_wins"}`) is also full-only and present while an account has a route: the
 number of site-to-node bindings held now, how many times a binding moved
 to another node because its node was down, how many second dial attempts
 (to the same node) were started for a slow handshake and how many dials such
@@ -677,11 +697,20 @@ provider and exit-country lists stay in `accounts`.
 exit country): background probes of every node proxy through the node itself,
 every 45 seconds (a node that stays down is probed less and less often:
 45 s, 90 s, 3 m, then every 10 minutes, until a probe or a real dial
-succeeds again), with the counters
+succeeds again). The short view carries only the summary
+`{"alive", "total", "probes", "probe_failures"}`: how many of the `total`
+nodes' last probe succeeded, and how many probes ran and failed. With
+`--full`, `warm` has the counters
 `{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
-"nodes": [{"name", "alive", "delay_ms"}]}`. `nodes[].name` is an internal proxy
+"nodes": [{"name", "alive", "delay_ms", "label", "provider", "country",
+"node_name"}]}`. `nodes[].name` is an internal proxy
 name (`netivri-r{R}-{N}`, the route and the node index), never a provider name; `delay_ms` is `0` until a
-probe succeeded. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
+probe succeeded. `label` is `{PROVIDER}/{NODE_ID}`, the label of `node list`
+and `stats`; `provider` and `country` name the node's subscription and exit
+country; `node_name` is the display name the subscription gives the node,
+cleaned of control characters and capped at 64 characters, and is omitted when
+the node has none. An instance without account routes has no labels, and
+`label` is omitted on every node. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
 The probes request `http://www.gstatic.com/generate_204` through each node.
 
 When no daemon is running: error `DAEMON_NOT_RUNNING` on stderr, exit 4

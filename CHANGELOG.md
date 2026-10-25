@@ -91,6 +91,16 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **`netivri status` is short by default.** The default answer keeps the
+  daemon, route, accounts, activity, refresh and reload fields and a reduced
+  `warm` summary (`alive`, `total`, `probes`, `probe_failures`). The complete
+  warm node list, the warm pool counters (`pool_hits`, `pool_misses`,
+  `pool_discards`), `stats` and `affinity` moved behind `netivri status
+  --full`; scripts that read those keys must pass `--full`. `warm` gained the
+  `alive` and `total` counts, and each `warm.nodes[]` entry (full view) gained
+  the additive `label` (`{PROVIDER}/{NODE_ID}`, omitted without account
+  routes), `provider`, `country` and `node_name` next to the existing `name`,
+  `alive` and `delay_ms`.
 - Background probes back off while a node stays down: the probe interval
   of a down node grows 45 s, 90 s, 3 m to a 10 minute cap (45 s for nodes
   that are not down); a successful probe or dial resets it. Down

@@ -9,6 +9,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
+	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
 func TestWarmOptionsOnlyWithCountryNodes(t *testing.T) {
@@ -31,13 +32,19 @@ func TestWarmInfoOf(t *testing.T) {
 			{Name: "netivri-r0-0", Alive: true, Delay: 48 * time.Millisecond},
 			{Name: "netivri-r1-0"},
 		},
-	}, map[string]string{"netivri-r0-0": "main/de", "netivri-r1-0": "main/nl"})
+	}, map[string]string{"netivri-r0-0": "main/de", "netivri-r1-0": "main/nl"}, []stats.NodeInfo{
+		{Label: "main/de", Provider: "main", Country: "DE", Name: "Germany 1"},
+		{Label: "main/nl", Provider: "main", Country: "NL"},
+	})
 	if info.Probes != 5 || info.ProbeFailures != 2 || info.PoolHits != 3 || info.PoolMisses != 1 || info.PoolDiscards != 4 {
 		t.Errorf("counters = %+v", info)
 	}
+	if info.Alive != 1 || info.Total != 2 {
+		t.Errorf("alive/total = %d/%d, want 1/2", info.Alive, info.Total)
+	}
 	want := []daemon.NodeHealth{
-		{Name: "netivri-r0-0", Alive: true, DelayMS: 48, Label: "main/de"},
-		{Name: "netivri-r1-0", Label: "main/nl"},
+		{Name: "netivri-r0-0", Alive: true, DelayMS: 48, Label: "main/de", Provider: "main", Country: "DE", NodeName: "Germany 1"},
+		{Name: "netivri-r1-0", Label: "main/nl", Provider: "main", Country: "NL"},
 	}
 	if len(info.Nodes) != len(want) || info.Nodes[0] != want[0] || info.Nodes[1] != want[1] {
 		t.Errorf("nodes = %+v, want %+v", info.Nodes, want)
@@ -48,12 +55,12 @@ func TestStatusPrintsWarmOnlyWhenPresent(t *testing.T) {
 	old := daemonProbeLive
 	t.Cleanup(func() { daemonProbeLive = old })
 
-	run := func(st daemon.Status) map[string]json.RawMessage {
+	run := func(st daemon.Status, extra ...string) map[string]json.RawMessage {
 		daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
 			return daemon.State{}, st, nil
 		}
 		var out bytes.Buffer
-		if err := runStatus([]string{"--home", t.TempDir()}, &out); err != nil {
+		if err := runStatus(append([]string{"--home", t.TempDir()}, extra...), &out); err != nil {
 			t.Fatalf("runStatus: %v", err)
 		}
 		var env struct {
@@ -69,18 +76,55 @@ func TestStatusPrintsWarmOnlyWhenPresent(t *testing.T) {
 		t.Error("status printed warm for an instance without warm-up")
 	}
 	data := run(daemon.Status{Warm: &daemon.WarmInfo{
-		Probes: 1,
-		Nodes:  []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
+		Alive: 1, Total: 1, Probes: 1,
+		Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
 	}})
 	raw, ok := data["warm"]
 	if !ok {
 		t.Fatal("status omitted warm")
 	}
-	var warm daemon.WarmInfo
+	var warm struct {
+		Alive         int    `json:"alive"`
+		Total         int    `json:"total"`
+		Probes        uint64 `json:"probes"`
+		ProbeFailures uint64 `json:"probe_failures"`
+	}
 	if err := json.Unmarshal(raw, &warm); err != nil {
 		t.Fatalf("decode warm: %v", err)
 	}
-	if warm.Probes != 1 || len(warm.Nodes) != 1 || warm.Nodes[0].DelayMS != 7 {
+	if warm.Probes != 1 || warm.Alive != 1 || warm.Total != 1 {
 		t.Errorf("warm = %+v", warm)
 	}
+	if _, ok := rawMap(data, "warm")["nodes"]; ok {
+		t.Error("short status printed warm.nodes")
+	}
+	data = run(daemon.Status{Warm: &daemon.WarmInfo{
+		Alive: 1, Total: 1, Probes: 1,
+		Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
+	}}, "--full")
+	raw, ok = data["warm"]
+	if !ok {
+		t.Fatal("status omitted warm")
+	}
+	var fullWarm daemon.WarmInfo
+	if err := json.Unmarshal(raw, &fullWarm); err != nil {
+		t.Fatalf("decode warm: %v", err)
+	}
+	if fullWarm.Probes != 1 || len(fullWarm.Nodes) != 1 || fullWarm.Nodes[0].DelayMS != 7 ||
+		fullWarm.Alive != 1 || fullWarm.Total != 1 {
+		t.Errorf("warm = %+v", fullWarm)
+	}
+}
+
+// rawMap decodes one raw JSON object of data into a map.
+func rawMap(data map[string]json.RawMessage, key string) map[string]json.RawMessage {
+	raw, ok := data[key]
+	if !ok {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
 }

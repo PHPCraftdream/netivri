@@ -66,10 +66,19 @@ type NodeHealth struct {
 	// Label is the node label ({PROVIDER}/{NODE_ID}); empty when the
 	// instance runs without account routes.
 	Label string `json:"label,omitempty"`
+	// Provider, Country and NodeName describe the node behind the label the
+	// way `stats` and `activity` do; empty when unknown.
+	Provider string `json:"provider,omitempty"`
+	Country  string `json:"country,omitempty"`
+	NodeName string `json:"node_name,omitempty"`
 }
 
 // WarmInfo is the warm-up state of the running instance.
 type WarmInfo struct {
+	// Alive counts the nodes whose last probe succeeded; Total is the
+	// number of nodes.
+	Alive         int          `json:"alive"`
+	Total         int          `json:"total"`
 	Probes        uint64       `json:"probes"`
 	ProbeFailures uint64       `json:"probe_failures"`
 	PoolHits      uint64       `json:"pool_hits"`

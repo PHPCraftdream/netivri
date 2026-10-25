@@ -179,7 +179,8 @@ handshake:
   target before the first payload are hedged (VLESS first; extend only after
   reading the source of the type). Eager types (trojan, socks5, http) are not
   hedged.
-- `AffinityStats` and `status.affinity` gain `hedges` and `hedge_wins`. If
+- `AffinityStats` and `status.affinity` gain `hedges` and `hedge_wins`
+  (`status.affinity` is part of the full view, `netivri status --full`). If
   the field shows no wins, the feature is removed.
 - With a transport pool the hedge takes a pooled transport first.
 
