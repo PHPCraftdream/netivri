@@ -43,11 +43,21 @@ Both ways attach a provenance statement to every package. The six platform
 packages go first and the main package last; a version that is already on the
 registry is skipped, so re-running a failed release finishes it.
 
-Creating several new packages within a minute can make npm refuse one with
-`E403 Package name triggered spam detection` (it happened on the first
-release). Wait a while and re-run the failed `publish to npm` job (`gh run
-rerun {RUN_ID} --failed`); if npm keeps refusing, ask npm support to release
-the name. A re-run uses the scripts of the tagged commit.
+npm can refuse a new package with `E403 Package name triggered spam
+detection`. A refusal that comes once, after several new packages within a
+minute, goes away: wait a while and re-run the failed `publish to npm` job
+(`gh run rerun {RUN_ID} --failed`; a re-run uses the scripts of the tagged
+commit). A refusal that repeats on every release is about the name itself:
+npm refused `netivri-win32-x64` on every attempt, which is why the Windows
+packages are called `netivri-w32-x64` and `netivri-w32-arm64`. Rename the
+package or ask npm support to release the name.
+
+A version number is used up on npm for good: "Once `package@version` has
+been used, you can never use it again", even after `npm unpublish`. After
+all versions of a package are unpublished, npm also refuses new versions of
+that package for 24 hours. A withdrawn release therefore comes back with a
+new version number (0.2.0 was withdrawn this way and its content shipped as
+0.3.0).
 
 **First release: token.** Trusted Publishing can only be configured for a
 package that already exists on npm, so the first publish of the seven packages

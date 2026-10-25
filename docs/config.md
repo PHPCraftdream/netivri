@@ -33,9 +33,9 @@ not preserved, so keep personal notes elsewhere.
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running daemon re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, so an `init` account cannot be claimed from a disallowed address). |
-| `selection.node` | string | *(empty)* | Preferred exit node name (set by `netivri use {NODE}`). |
-| `selection.country` | string | *(empty)* | Preferred exit country code (set by `netivri use --country {COUNTRY}`). |
-| `selection.mode` | string | `manual` | How the exit is chosen: `manual` (explicit node), `fastest` (lowest latency), `auto` (re-check periodically). |
+| `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
+| `selection.country` | string | *(empty)* | Reserved for the planned `netivri use --country {COUNTRY}`: validated, but nothing reads it yet. |
+| `selection.mode` | string | `manual` | Reserved for the planned `netivri use`: `manual`, `fastest` or `auto`; validated, but nothing reads it yet. Routing today comes from the accounts. |
 
 `accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters per code, not whether that code represents a real country. Config validation checks the provider's shape only; `up` and the `account` commands check that the named subscriptions exist.
 
@@ -114,6 +114,8 @@ for a non-loopback bind.
 
 listen.bind: 127.0.0.1
 listen.port: 7890
+## Who may connect: * (anyone), loopback, addresses, masks, CIDR.
+listen.allowed_clients: loopback
 
 auth.login:: init
 auth.password:: init
@@ -121,6 +123,8 @@ auth.allow_init_remote: false
 
 ## All subscription fetches go through this proxy.
 ## fetch.proxy:: socks5://user:secret@proxy.example:1080
+## Re-fetch every subscription this often (5m to 168h, or off).
+fetch.update_interval: 1h
 
 subscriptions: [
     {
@@ -135,6 +139,13 @@ accounts: [
         password:: init
         provider: main
         exit_country: DE
+    }
+    {
+        login: bob
+        password:: init
+        provider: main,backup
+        exit_country: DE,NL,*
+        allowed_clients: 10.0.0.0/8
     }
 ]
 

@@ -39,8 +39,12 @@ browser or a tool at `127.0.0.1:7890`:
 curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 ```
 
-`netivri help` lists every command. Results are written as Ktav by default;
-add `--json` (or set `NETIVRI_OUTPUT=json`) for JSON.
+`netivri help` lists every command; `netivri help config`, `netivri help routing`
+and `netivri help output` explain the configuration file, routing and the
+fields each command prints. `netivri doctor` checks the whole setup in one
+pass, and `netivri status --watch` shows who is active right now. Results are
+written as Ktav by default; add `--json` (or set `NETIVRI_OUTPUT=json`) for
+JSON.
 
 ## Platforms
 
@@ -52,6 +56,7 @@ builds are made for glibc; musl (Alpine) is not supported.
 ## Links
 
 - Documentation: <https://github.com/PHPCraftdream/netivri>
-- CLI contract, exit and error codes: `docs/cli.md`
-- Packaging details: `docs/npm.md`
+- CLI contract, exit and error codes: <https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md>
+- Configuration file: <https://github.com/PHPCraftdream/netivri/blob/main/docs/config.md>
+- Packaging details: <https://github.com/PHPCraftdream/netivri/blob/main/docs/npm.md>
 - License: GPL-3.0-only

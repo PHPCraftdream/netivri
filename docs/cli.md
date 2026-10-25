@@ -643,10 +643,11 @@ Default bind is `127.0.0.1:7890`. TCP only in v1: SOCKS5 `UDP ASSOCIATE` is
 accepted but no relay is set up, so UDP through the proxy does not work.
 
 A non-loopback `--bind` is rejected with `AUTH_REQUIRED` unless proxy
-authentication is enabled in the configuration (`auth.login` and
-`auth.password` set; a pending `init` counts only with
-`auth.allow_init_remote: true`). Loopback means `127.0.0.0/8`, `::1` and
-`localhost`.
+authentication is enabled in the configuration: `auth.login` and
+`auth.password` set, or at least one account. While any credential is still
+the `init` placeholder (the legacy `auth.login`/`auth.password` or the
+password of an account) it counts only with `auth.allow_init_remote: true`.
+Loopback means `127.0.0.0/8`, `::1` and `localhost`.
 
 ### `status`
 
@@ -1004,7 +1005,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
-| `CONFIG_INVALID` | 2 | An allowed-clients rule list is not valid (`account add --clients`, `account set-clients`, `account clone --clients`); the message names the bad item |
+| `CONFIG_INVALID` | 2 | `config.ktav` is not valid (for example a bad port, an account password that is neither `init` nor an argon2id hash, an empty `listen.allowed_clients`), or an allowed-clients rule list given to `account add --clients`, `account set-clients` or `account clone --clients` is not valid; the message names the bad item |
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings; `account clone` onto an existing login |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |
@@ -1012,6 +1013,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUB_UPDATE_FAILED` | 3 | At least one subscription failed to update (results still printed on stdout) |
 | `SUB_SNAPSHOT_INVALID` | 1 | A stored snapshot exists but is corrupt or unreadable (a missing one is not an error); `sub update` rewrites it |
 | `NODE_NOT_FOUND` | 5 | No node with that id or name |
+| `NODE_INVALID` | 2 | A stored node cannot be used by the core (unsupported type or a malformed mapping); the message names only the type and the server shape, never a secret |
 | `NO_NODES_FOR_COUNTRY` | 5 | `up`: an account has no route because no stored node matches its provider and/or country (a bound provider that is not configured or holds no snapshot counts too); the nodes need not be alive. `account set-country` and `account set-provider` return it, before writing anything, when an account would be left in that state |
 | `NO_ROUTE` | 5 | `diag dial`: the account has no route (neither provider nor exit country) |
 | `DIAG_FAILED` | 3 | `diag dial`: the run could not proceed (for example an unusable node mapping) |

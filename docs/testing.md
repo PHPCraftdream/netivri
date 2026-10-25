@@ -79,6 +79,9 @@ Each CI job selects its own tags:
   - `BenchmarkConnectRouted` — the same iteration through the sticky-group
     path (authenticator, route of two fake SOCKS5 upstreams), serial.
   - `BenchmarkConnectRoutedParallel` — the same, `b.RunParallel`.
+  - `BenchmarkConnectRoutedAccounts` — a routed connect with 1, 100 and
+    2000 accounts, the last login in rule order (the worst case of the
+    per-account rule scan).
   - `BenchmarkThroughputRouted` — 32 MiB each way over one routed
     connection in 64 KiB writes (`b.SetBytes`, MB/s).
   - `BenchmarkParallelConnects1000` — 1000 concurrent routed
@@ -86,6 +89,10 @@ Each CI job selects its own tags:
   - `BenchmarkStickyChooseHit` / `BenchmarkStickyChooseHitParallel` — the
     pre-bound hit path of the sticky group.
   - `BenchmarkStickyChooseMiss` — selection on a new key, 2 and 20 members.
+  - `BenchmarkStickyChooseMissTiered` — the same with the members split
+    into two priority tiers (the cost of the tier filter).
+  - `BenchmarkWarmNodeProbe` — one real HTTP probe through Mihomo and a
+    loopback SOCKS5 upstream whose target emulates network RTT.
   - `BenchmarkSiteKey` — the site-key reduction for a subdomain, a
     multi-label suffix and an IP literal.
   - `BenchmarkHealthRecordDial` — the health table dial recording.
