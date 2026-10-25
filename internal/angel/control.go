@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"context"
@@ -108,7 +108,7 @@ type AffinityInfo struct {
 	SavedAt  string `json:"saved_at,omitempty"`
 }
 
-// RefreshInfo reports the automatic subscription refresh of the daemon.
+// RefreshInfo reports the automatic subscription refresh of the angel.
 type RefreshInfo struct {
 	IntervalSeconds int64  `json:"interval_seconds"` // 0 when the refresh is off
 	OK              uint64 `json:"ok"`               // refreshes that stored a new snapshot
@@ -117,7 +117,7 @@ type RefreshInfo struct {
 	LastError       string `json:"last_error,omitempty"` // code and message, never a URL
 }
 
-// ReloadInfo reports how the daemon applied changed files to the running core.
+// ReloadInfo reports how the angel applied changed files to the running core.
 type ReloadInfo struct {
 	Count     uint64 `json:"count"` // restarts of the core caused by a changed configuration
 	LastAt    string `json:"last_at,omitempty"`
@@ -126,7 +126,7 @@ type ReloadInfo struct {
 
 // Status is the live answer of GET /v1/status.
 type Status struct {
-	Daemon     string   `json:"daemon"`
+	Angel      string   `json:"angel"`
 	Foreground bool     `json:"foreground"`
 	PID        int      `json:"pid"`
 	Listen     string   `json:"listen"`
@@ -212,7 +212,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.status())
 	case r.URL.Path == "/v1/stop" && r.Method == http.MethodPost:
 		writeJSON(w, http.StatusAccepted, map[string]bool{"stopping": true})
-		// The answer must reach the client before the daemon starts to stop.
+		// The answer must reach the client before the angel starts to stop.
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}

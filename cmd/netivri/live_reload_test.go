@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
@@ -109,7 +109,7 @@ func (s *coreScript) inst(i int) *fakeCore {
 type reloadFixture struct {
 	home    string
 	hash    string
-	l       *liveDaemon
+	l       *liveAngel
 	script  *coreScript
 	stopped atomic.Bool
 	mu      sync.Mutex
@@ -146,8 +146,8 @@ func (f *reloadFixture) saveNodes(t *testing.T, server, name string) {
 	}
 }
 
-// newReloadFixture starts a liveDaemon on a fake core. Without accounts the
-// daemon starts with no routes.
+// newReloadFixture starts a liveAngel on a fake core. Without accounts the
+// angel starts with no routes.
 func newReloadFixture(t *testing.T, opts upOptions, accounts ...config.Account) *reloadFixture {
 	t.Helper()
 	f := &reloadFixture{home: t.TempDir(), script: &coreScript{port: 43210}}
@@ -171,7 +171,7 @@ func newReloadFixture(t *testing.T, opts upOptions, accounts ...config.Account) 
 	coreStart = f.script.start
 	t.Cleanup(func() { coreStart = old })
 
-	f.l = newLiveDaemon(opts,
+	f.l = newLiveAngel(opts,
 		func(format string, args ...any) {
 			f.mu.Lock()
 			f.logs = append(f.logs, fmt.Sprintf(format, args...))
@@ -412,14 +412,14 @@ func TestReloadRollsBackWhenTheNewCoreDoesNotStart(t *testing.T) {
 	}
 }
 
-func TestReloadStopsTheDaemonWhenNoCoreStarts(t *testing.T) {
+func TestReloadStopsTheAngelWhenNoCoreStarts(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
 	f.script.fail = map[int]error{2: errors.New("first failure"), 3: errors.New("second failure")}
 	f.saveNodes(t, "192.0.2.2", "n1")
 
 	f.l.reload(t.Context())
 	if !f.stopped.Load() {
-		t.Fatal("the daemon kept running without a listener")
+		t.Fatal("the angel kept running without a listener")
 	}
 	if !strings.Contains(f.logText(), "stopping") {
 		t.Errorf("log does not say why: %q", f.logText())
@@ -464,7 +464,7 @@ func TestReloadKeepsTheCoreOnBadFiles(t *testing.T) {
 func TestReloadOpensTheStatsStoreWhenRoutesAppear(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Password: config.InitPlaceholder})
 	if f.l.currentStore() != nil {
-		t.Fatal("a daemon without routes opened the statistics store")
+		t.Fatal("an angel without routes opened the statistics store")
 	}
 	f.writeConfig(t, f.routed())
 	f.l.reload(t.Context())
@@ -566,14 +566,14 @@ func (c *fetchCounter) get(context.Context, string, fetch.Options) (*fetch.Resul
 	return &fetch.Result{Body: []byte(testBodyFI), Status: 200}, nil
 }
 
-func runRefreshLoop(t *testing.T, interval string, fc *fetchCounter) (*liveDaemon, *subscription.Store, func()) {
+func runRefreshLoop(t *testing.T, interval string, fc *fetchCounter) (*liveAngel, *subscription.Store, func()) {
 	t.Helper()
 	oldWake, oldDelay, oldFetch := refreshWake, refreshStartDelay, subFetch
 	refreshWake, refreshStartDelay, subFetch = 5*time.Millisecond, 0, fc.get
 	t.Cleanup(func() { refreshWake, refreshStartDelay, subFetch = oldWake, oldDelay, oldFetch })
 
 	home := t.TempDir()
-	l := newLiveDaemon(upOptions{Home: home}, func(string, ...any) {}, func() {})
+	l := newLiveAngel(upOptions{Home: home}, func(string, ...any) {}, func() {})
 	cfg := config.Default()
 	cfg.Fetch.UpdateInterval = interval
 	cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://main.invalid/sub"}}
@@ -663,7 +663,7 @@ func TestLiveStatusWithACore(t *testing.T) {
 	f.l.noteRefresh(true, nil)
 	f.l.noteRefresh(false, errors.New("boom"))
 	st := f.l.status("2026-10-22T09:00:00Z")
-	if st.Listen != "127.0.0.1:7890" || st.Route != "direct" || st.Daemon != "running" || st.StartedAt != "2026-10-22T09:00:00Z" {
+	if st.Listen != "127.0.0.1:7890" || st.Route != "direct" || st.Angel != "running" || st.StartedAt != "2026-10-22T09:00:00Z" {
 		t.Errorf("status = %+v", st)
 	}
 	if len(st.Accounts) != 1 || st.Accounts[0].Login != "alice" || st.Accounts[0].ExitCountry != "DE" {
@@ -676,7 +676,7 @@ func TestLiveStatusWithACore(t *testing.T) {
 		t.Errorf("reload = %+v", st.Reload)
 	}
 	if st.Affinity == nil {
-		t.Error("a daemon with routed accounts reports no affinity")
+		t.Error("an angel with routed accounts reports no affinity")
 	}
 	data, err := json.Marshal(st)
 	if err != nil {
@@ -690,11 +690,11 @@ func TestLiveStatusWithACore(t *testing.T) {
 }
 
 func TestRunStatusPassesRefreshAndReload(t *testing.T) {
-	old := daemonProbeLive
-	t.Cleanup(func() { daemonProbeLive = old })
-	run := func(st daemon.Status) map[string]any {
-		daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-			return daemon.State{}, st, nil
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
+	run := func(st angel.Status) map[string]any {
+		angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+			return angel.State{}, st, nil
 		}
 		var out bytes.Buffer
 		if err := runStatus([]string{"--home", t.TempDir()}, &out); err != nil {
@@ -703,9 +703,9 @@ func TestRunStatusPassesRefreshAndReload(t *testing.T) {
 		return decodeData(t, &out)
 	}
 
-	data := run(daemon.Status{
-		Refresh: &daemon.RefreshInfo{IntervalSeconds: 3600, OK: 2, Failed: 1, LastAt: "2026-10-22T09:00:00Z", LastError: "FETCH_HTTP_STATUS: 403"},
-		Reload:  &daemon.ReloadInfo{Count: 3, LastAt: "2026-10-22T09:01:00Z"},
+	data := run(angel.Status{
+		Refresh: &angel.RefreshInfo{IntervalSeconds: 3600, OK: 2, Failed: 1, LastAt: "2026-10-22T09:00:00Z", LastError: "FETCH_HTTP_STATUS: 403"},
+		Reload:  &angel.ReloadInfo{Count: 3, LastAt: "2026-10-22T09:01:00Z"},
 	})
 	refresh, _ := data["refresh"].(map[string]any)
 	reload, _ := data["reload"].(map[string]any)
@@ -720,11 +720,11 @@ func TestRunStatusPassesRefreshAndReload(t *testing.T) {
 		t.Error("an empty reload error is printed")
 	}
 
-	data = run(daemon.Status{})
+	data = run(angel.Status{})
 	if _, has := data["refresh"]; has {
-		t.Error("refresh is printed for a daemon that did not report it")
+		t.Error("refresh is printed for an angel that did not report it")
 	}
 	if _, has := data["reload"]; has {
-		t.Error("reload is printed for a daemon that did not report it")
+		t.Error("reload is printed for an angel that did not report it")
 	}
 }

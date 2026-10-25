@@ -76,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -FromDir {PLATFORM_PACKAGE_
 That copies the binary out of the npm tree into a stable directory
 (`--from-dir` verifies no checksum, because npm's own registry integrity
 check already covered the download). The launcher would run the stable
-copy, so replacing it is a rename that a running daemon never blocks —
+copy, so replacing it is a rename that a running angel never blocks —
 `npm update` stays safe even while netivri is up (see
 [install.md](install.md), "Upgrading while netivri is running").
 

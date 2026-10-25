@@ -154,7 +154,7 @@ func TestExitCodeConstants(t *testing.T) {
 		"ExitInternal": {ExitInternal, 1},
 		"ExitUsage":    {ExitUsage, 2},
 		"ExitNetwork":  {ExitNetwork, 3},
-		"ExitNoDaemon": {ExitNoDaemon, 4},
+		"ExitNoAngel":  {ExitNoAngel, 4},
 		"ExitNotFound": {ExitNotFound, 5},
 		"ExitConflict": {ExitConflict, 6},
 	}

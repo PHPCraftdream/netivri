@@ -1,8 +1,8 @@
 package main
 
 import (
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
@@ -11,7 +11,7 @@ import (
 // the nodes, providers and countries they use. infos tells which provider and
 // country a node label belongs to; the providers and countries are listed
 // busiest first, each once.
-func activityInfo(accounts []daemon.AccountInfo, live []core.AccountActivity, infos []stats.NodeInfo) []daemon.AccountActivity {
+func activityInfo(accounts []angel.AccountInfo, live []core.AccountActivity, infos []stats.NodeInfo) []angel.AccountActivity {
 	nodeInfo := make(map[string]stats.NodeInfo, len(infos))
 	for _, n := range infos {
 		nodeInfo[n.Label] = n
@@ -20,10 +20,10 @@ func activityInfo(accounts []daemon.AccountInfo, live []core.AccountActivity, in
 	for _, a := range live {
 		byLogin[a.Login] = a
 	}
-	out := make([]daemon.AccountActivity, 0, len(accounts))
+	out := make([]angel.AccountActivity, 0, len(accounts))
 	for _, acc := range accounts {
 		a := byLogin[acc.Login]
-		item := daemon.AccountActivity{
+		item := angel.AccountActivity{
 			Login:         acc.Login,
 			Active:        a.Connections > 0,
 			Connections:   a.Connections,
@@ -31,12 +31,12 @@ func activityInfo(accounts []daemon.AccountInfo, live []core.AccountActivity, in
 			DownloadBytes: a.Download,
 			Providers:     []string{},
 			Countries:     []string{},
-			Nodes:         make([]daemon.NodeUse, 0, len(a.Nodes)),
+			Nodes:         make([]angel.NodeUse, 0, len(a.Nodes)),
 		}
 		seenProvider := make(map[string]bool)
 		seenCountry := make(map[string]bool)
 		for _, n := range a.Nodes {
-			use := daemon.NodeUse{
+			use := angel.NodeUse{
 				Node:          n.Label,
 				Connections:   n.Connections,
 				UploadBytes:   n.Upload,

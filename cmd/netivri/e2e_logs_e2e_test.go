@@ -30,23 +30,23 @@ func e2eLogEntries(t *testing.T, stdout string) []e2eLogEntry {
 	return env.Data.Entries
 }
 
-// TestE2ELogsOfTheDaemon runs a real daemon and reads its log with `logs`:
+// TestE2ELogsOfTheAngel runs a real angel and reads its log with `logs`:
 // the start line while it runs, the stop line after `down`, the level filter
 // and the missing-log error of an untouched home.
-func TestE2ELogsOfTheDaemon(t *testing.T) {
-	code, _, stderr := daemonRun(t, t.TempDir(), "logs")
+func TestE2ELogsOfTheAngel(t *testing.T) {
+	code, _, stderr := angelRun(t, t.TempDir(), "logs")
 	if code != cli.ExitNotFound || decodeErrEnvelope(t, stderr).Error.Code != "LOG_NOT_FOUND" {
 		t.Fatalf("logs of an empty home: exit %d, stderr %q", code, stderr)
 	}
 
-	h := newDaemonHome(t)
-	code, stdout, stderr := daemonRun(t, h.dir, "up", "--port", "0")
+	h := newAngelHome(t)
+	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	h.pid = daemonInt(t, daemonData(t, stdout), "pid")
+	h.pid = angelInt(t, angelData(t, stdout), "pid")
 
-	code, stdout, stderr = daemonRun(t, h.dir, "logs")
+	code, stdout, stderr = angelRun(t, h.dir, "logs")
 	if code != 0 {
 		t.Fatalf("logs exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -61,10 +61,10 @@ func TestE2ELogsOfTheDaemon(t *testing.T) {
 		t.Fatalf("no start line in %+v", entries)
 	}
 
-	if code, stdout, stderr = daemonRun(t, h.dir, "down"); code != 0 {
+	if code, stdout, stderr = angelRun(t, h.dir, "down"); code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	code, stdout, stderr = daemonRun(t, h.dir, "logs", "--level", "info", "--tail", "1")
+	code, stdout, stderr = angelRun(t, h.dir, "logs", "--level", "info", "--tail", "1")
 	if code != 0 {
 		t.Fatalf("logs after down: exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -73,7 +73,7 @@ func TestE2ELogsOfTheDaemon(t *testing.T) {
 		t.Fatalf("last entry after down = %+v", entries)
 	}
 
-	code, stdout, stderr = daemonRun(t, h.dir, "logs", "--level", "warn")
+	code, stdout, stderr = angelRun(t, h.dir, "logs", "--level", "warn")
 	if code != 0 {
 		t.Fatalf("logs --level warn: exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}

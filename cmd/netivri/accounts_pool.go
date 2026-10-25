@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
@@ -267,7 +267,7 @@ func warmOptions(routes map[string][]map[string]any) *core.WarmOptions {
 
 // warmInfo converts the warm-up counters of the instance for the status
 // answer; nil when the instance runs without warm-up.
-func warmInfo(inst coreInstance, infos []stats.NodeInfo) *daemon.WarmInfo {
+func warmInfo(inst coreInstance, infos []stats.NodeInfo) *angel.WarmInfo {
 	ws, ok := inst.WarmStats()
 	if !ok {
 		return nil
@@ -275,21 +275,21 @@ func warmInfo(inst coreInstance, infos []stats.NodeInfo) *daemon.WarmInfo {
 	return warmInfoOf(ws, inst.MemberLabels(), infos)
 }
 
-func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeInfo) *daemon.WarmInfo {
-	info := &daemon.WarmInfo{
+func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeInfo) *angel.WarmInfo {
+	info := &angel.WarmInfo{
 		Probes:        ws.Probes,
 		ProbeFailures: ws.ProbeFailures,
 		PoolHits:      ws.PoolHits,
 		PoolMisses:    ws.PoolMisses,
 		PoolDiscards:  ws.PoolDiscards,
-		Nodes:         make([]daemon.NodeHealth, 0, len(ws.Nodes)),
+		Nodes:         make([]angel.NodeHealth, 0, len(ws.Nodes)),
 	}
 	byLabel := make(map[string]stats.NodeInfo, len(infos))
 	for _, n := range infos {
 		byLabel[n.Label] = n
 	}
 	for _, n := range ws.Nodes {
-		node := daemon.NodeHealth{
+		node := angel.NodeHealth{
 			Name:    n.Name,
 			Alive:   n.Alive,
 			DelayMS: n.Delay.Milliseconds(),
@@ -312,8 +312,8 @@ func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeI
 // accountStatus lists the configured accounts for the status answer,
 // sorted by login. The country comes from the live route key (the part
 // after "~"); a routed account always carries the route it was built for.
-func accountStatus(cfg *config.Config, routes map[string]string) []daemon.AccountInfo {
-	out := make([]daemon.AccountInfo, 0, len(cfg.Accounts))
+func accountStatus(cfg *config.Config, routes map[string]string) []angel.AccountInfo {
+	out := make([]angel.AccountInfo, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
 		country := ""
 		if key, routed := routes[a.Login]; routed {
@@ -323,7 +323,7 @@ func accountStatus(cfg *config.Config, routes map[string]string) []daemon.Accoun
 		}
 		// No normalization: an account without its own rule reports "" here, like
 		// in `account list`.
-		out = append(out, daemon.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients})
+		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out

@@ -19,7 +19,7 @@ const (
 	ExitInternal = 1
 	ExitUsage    = 2
 	ExitNetwork  = 3
-	ExitNoDaemon = 4
+	ExitNoAngel  = 4
 	ExitNotFound = 5
 	ExitConflict = 6
 	// ExitCheckFailed is the exit code of `doctor` when at least one check

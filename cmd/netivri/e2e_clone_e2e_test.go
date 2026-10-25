@@ -23,7 +23,7 @@ func e2eAuthStatus(t *testing.T, proxy, user, pass string) byte {
 }
 
 // TestE2EAccountClone clones an account three ways and signs in to a real
-// daemon with each: the copied password, a new one, and the init placeholder
+// angel with each: the copied password, a new one, and the init placeholder
 // whose first password sticks.
 func TestE2EAccountClone(t *testing.T) {
 	home := t.TempDir()

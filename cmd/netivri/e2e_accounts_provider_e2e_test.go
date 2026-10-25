@@ -116,7 +116,7 @@ func TestE2EAccountsProviderRouting(t *testing.T) {
 		t.Errorf("URL leaked: %s", stderr)
 	}
 
-	// Drop dave and start the daemon.
+	// Drop dave and start the angel.
 	code, out, stderr = accountsCommand(t, home, "rm", "dave")
 	if code != 0 {
 		t.Fatalf("account rm: %s%s", out, stderr)

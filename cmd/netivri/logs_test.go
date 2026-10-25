@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 func seedLog(t *testing.T, home, text string) {
 	t.Helper()
-	if err := os.MkdirAll(daemon.RunDir(home), 0o700); err != nil {
+	if err := os.MkdirAll(angel.RunDir(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(daemon.LogPath(home), []byte(text), 0o600); err != nil {
+	if err := os.WriteFile(angel.LogPath(home), []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -228,7 +228,7 @@ func followRun(t *testing.T, home string, out *syncBuffer, args ...string) (stop
 
 func appendLogFile(t *testing.T, home, text string) {
 	t.Helper()
-	f, err := os.OpenFile(daemon.LogPath(home), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(angel.LogPath(home), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,11 +294,11 @@ func TestLogsFollowWaitsForTheLog(t *testing.T) {
 	home := t.TempDir()
 	out := newSyncBuffer()
 	stop := followRun(t, home, out)
-	if err := os.MkdirAll(daemon.RunDir(home), 0o700); err != nil {
+	if err := os.MkdirAll(angel.RunDir(home), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	appendLogFile(t, home, "2026-10-24T10:00:00Z INFO the daemon started\n")
-	out.waitFor(t, "the daemon started")
+	appendLogFile(t, home, "2026-10-24T10:00:00Z INFO the angel started\n")
+	out.waitFor(t, "the angel started")
 	if err := stop(); err != nil {
 		t.Fatal(err)
 	}

@@ -13,11 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
-// runStatus reports the live daemon state; exit 4 (DAEMON_NOT_RUNNING)
+// runStatus reports the live angel state; exit 4 (ANGEL_NOT_RUNNING)
 // when nothing is running.
 func runStatus(args []string, stdout io.Writer) error {
 	home, rest, err := parseHomeArgs("status", args)
@@ -57,21 +57,21 @@ func runStatus(args []string, stdout io.Writer) error {
 		}
 		return runStatusWatch(home, interval, wantsJSON(args, os.Getenv))
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	defer cancel()
-	_, st, err := daemonProbeLive(ctx, home)
-	if errors.Is(err, daemon.ErrNotRunning) {
+	_, st, err := angelProbeLive(ctx, home)
+	if errors.Is(err, angel.ErrNotRunning) {
 		return &cli.Error{
-			Code:    "DAEMON_NOT_RUNNING",
-			Message: "daemon is not running",
+			Code:    "ANGEL_NOT_RUNNING",
+			Message: "angel is not running",
 			Hint:    "start it with: netivri up",
-			Exit:    cli.ExitNoDaemon,
+			Exit:    cli.ExitNoAngel,
 		}
 	}
 	if err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: err.Error(), Exit: cli.ExitInternal}
 	}
-	accounts := append([]daemon.AccountInfo{}, st.Accounts...)
+	accounts := append([]angel.AccountInfo{}, st.Accounts...)
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Login < accounts[j].Login })
 	raw, err := json.Marshal(st)
 	if err != nil {
@@ -89,7 +89,7 @@ func runStatus(args []string, stdout io.Writer) error {
 	if err := decodeUseNumber(accRaw, &accs); err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: err.Error(), Exit: cli.ExitInternal}
 	}
-	data["daemon"] = "running"
+	data["angel"] = "running"
 	data["allowed_clients"] = allowedClientsLabel(st.AllowedClients)
 	data["accounts"] = accs
 	data["uptime_seconds"] = uptimeSeconds(st.StartedAt)

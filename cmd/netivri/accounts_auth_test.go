@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 func TestAuthStatusAccounts(t *testing.T) {
@@ -108,11 +108,11 @@ func TestAccountPersistUpdatesOnlyMatchingPassword(t *testing.T) {
 }
 
 func TestAccountStatusJSONSortedAndRedacted(t *testing.T) {
-	old := daemonProbeLive
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{Accounts: []daemon.AccountInfo{{Login: "z", Provider: "main", ExitCountry: "DE"}, {Login: "alice"}}}, nil
+	old := angelProbeLive
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{Accounts: []angel.AccountInfo{{Login: "z", Provider: "main", ExitCountry: "DE"}, {Login: "alice"}}}, nil
 	}
-	t.Cleanup(func() { daemonProbeLive = old })
+	t.Cleanup(func() { angelProbeLive = old })
 	var out bytes.Buffer
 	if err := runStatus([]string{"--home", t.TempDir()}, &out); err != nil {
 		t.Fatal(err)
@@ -143,16 +143,16 @@ func TestUpMissingAccountCountryDoesNotSpawn(t *testing.T) {
 	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
 		t.Fatal(err)
 	}
-	oldProbe, oldSpawn := daemonProbeLive, daemonSpawn
+	oldProbe, oldSpawn := angelProbeLive, angelSpawn
 	spawns := 0
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, daemon.Status{}, errors.New("not running")
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{}, errors.New("not running")
 	}
-	daemonSpawn = func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
+	angelSpawn = func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		spawns++
-		return daemon.State{}, errors.New("unexpected spawn")
+		return angel.State{}, errors.New("unexpected spawn")
 	}
-	t.Cleanup(func() { daemonProbeLive, daemonSpawn = oldProbe, oldSpawn })
+	t.Cleanup(func() { angelProbeLive, angelSpawn = oldProbe, oldSpawn })
 	err := runUp([]string{"--home", home}, &bytes.Buffer{})
 	var ce *cli.Error
 	if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" || ce.Exit != cli.ExitNotFound || spawns != 0 {

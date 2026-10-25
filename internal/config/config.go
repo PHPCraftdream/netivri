@@ -122,7 +122,7 @@ type Auth struct {
 	AllowInitRemote bool   `json:"allow_init_remote,omitempty"`
 }
 
-// Automatic subscription refresh by the daemon (fetch.update_interval).
+// Automatic subscription refresh by the angel (fetch.update_interval).
 const (
 	DefaultUpdateInterval = time.Hour
 	MinUpdateInterval     = 5 * time.Minute
@@ -132,7 +132,7 @@ const (
 )
 
 // Fetch carries the proxy used for all outgoing subscription fetches and how
-// often the daemon refreshes the subscriptions.
+// often the angel refreshes the subscriptions.
 type Fetch struct {
 	Proxy string `json:"proxy,omitempty"`
 	// UpdateInterval is a Go duration ("30m", "1h"), "off", or empty for the

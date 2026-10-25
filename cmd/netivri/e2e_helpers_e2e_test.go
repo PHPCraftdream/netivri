@@ -80,7 +80,7 @@ type upStatus struct {
 }
 
 type upRespData struct {
-	Daemon    string   `json:"daemon"`
+	Angel     string   `json:"angel"`
 	PID       int      `json:"pid"`
 	Listen    string   `json:"listen"`
 	Protocols []string `json:"protocols"`
@@ -342,8 +342,8 @@ func assertStatusSuccess(t *testing.T, st upStatus) {
 	if st.SchemaVersion != cli.SchemaVersion {
 		t.Fatalf("schema_version = %d, want %d", st.SchemaVersion, cli.SchemaVersion)
 	}
-	if st.Data.Daemon != "running" {
-		t.Fatalf("daemon = %q, want running", st.Data.Daemon)
+	if st.Data.Angel != "running" {
+		t.Fatalf("angel = %q, want running", st.Data.Angel)
 	}
 	if st.Data.PID <= 0 {
 		t.Fatalf("pid = %d, want > 0", st.Data.PID)

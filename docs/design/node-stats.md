@@ -65,7 +65,7 @@ connection, polling the counters costs nothing per packet.
 SQLite through `modernc.org/sqlite` (pure Go: release builds use
 `CGO_ENABLED=0`; BSD-3-Clause, covered by the third-party licence collection).
 File `{HOME}/stats.db`. Pragmas: `journal_mode=WAL`, `synchronous=NORMAL`,
-`busy_timeout=5000`. One writer (the daemon) and any number of readers (the
+`busy_timeout=5000`. One writer (the angel) and any number of readers (the
 CLI, read-only).
 
 ```sql
@@ -309,7 +309,7 @@ both the sticky group's health table and `Observer.ObserveProbe`.
 - `routePool` also returns labels (`provider/{NODE_ID}`) in node order.
 - `up` opens `{HOME}/stats.db`, calls `SetNodes`, passes an adapter of the
   store as `core.Observer`, closes the store after the core. A store that
-  cannot be opened is logged and the daemon runs without statistics: the
+  cannot be opened is logged and the angel runs without statistics: the
   proxy never fails because of its bookkeeping.
 - The status answer gains `stats` (`path`, `dropped`) and `affinity`
   (`bindings`, `rebinds`), both in the full view only
@@ -327,7 +327,7 @@ None in the first version: retention (7 days raw) and the binding lifetime
 netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since 24h] [--by {node|country|provider|account}] [--account {ACCOUNT}]
 ```
 
-Reads the database read-only, works while the daemon runs and when it is
+Reads the database read-only, works while the angel runs and when it is
 stopped (`STATS_UNAVAILABLE`, exit 5, when no database exists). `data`:
 `{"since": "24h", "by": "node", "items": [{"label", "provider", "country",
 "probes", "uptime_pct", "delay_ms": {"avg","p50","p95"}, "dials",
@@ -363,7 +363,7 @@ binding TTL (24 hours) are deleted on every write and on every load. Sites
 are never printed or logged: not in `netivri stats` (which has no binding
 view), not in `netivri logs`, not in `status`.
 
-**Load.** When the daemon starts or restarts the core (a live reload, see
+**Load.** When the angel starts or restarts the core (a live reload, see
 [live-reload.md](live-reload.md)), it reads the stored bindings and passes
 them to the core as `Options.InitialBindings`. The core maps each record to
 the member whose label matches within the login's route (account, route key,
@@ -374,7 +374,7 @@ by `last_used + TTL` is ignored, as is a site the table already holds. A
 stored binding that points at a node that is currently down needs no special
 case: `acquire` re-picks for a down member.
 
-**Save.** While the daemon runs, a loop every 30 seconds (off the hot path)
+**Save.** While the angel runs, a loop every 30 seconds (off the hot path)
 takes `SnapshotBindings()` — the live, non-provisional, non-expired bindings
 with labels, at most 100 000, taken under the table's read locks without
 creating or refreshing bindings — and replaces the stored set in one
@@ -382,7 +382,7 @@ transaction: rows are upserted, rows no longer present are deleted, and rows
 older than the TTL are deleted. A final write runs before the core closes,
 both for a reload and for shutdown, after the loop has stopped and before
 the statistics store is closed. A write failure is logged at WARN and never
-stops the daemon; a store that cannot be opened leaves the daemon without
+stops the angel; a store that cannot be opened leaves the angel without
 persisted bindings, as it already leaves it without statistics.
 
 **Status.** `affinity` in `status` reports `restored` (how many bindings the

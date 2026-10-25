@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
-// HandshakeError is the wire form of a failed daemon start. Exit is
+// HandshakeError is the wire form of a failed angel start. Exit is
 // included so the parent can report the exact same exit code (e.g.
 // PORT_IN_USE keeps exit 6).
 type HandshakeError struct {

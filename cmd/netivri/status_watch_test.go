@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 var errPoll = errors.New("poll timed out")
@@ -67,7 +67,7 @@ func TestStatusWatchUsageErrors(t *testing.T) {
 // consecutive failure (INTERNAL), so the scenario ends by the loop
 // returning on its own and never by the test cancelling under its feet.
 type pollStep struct {
-	st  daemon.Status
+	st  angel.Status
 	err error
 }
 
@@ -91,17 +91,17 @@ func watchDriveCollect(t *testing.T, steps []pollStep, jsonOut, term bool) (stri
 	base := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
 	n := 0
 	now := func() time.Time { n++; return base.Add(time.Duration(n-1) * time.Second) }
-	poll := func() (daemon.Status, error) {
+	poll := func() (angel.Status, error) {
 		select {
 		case pollStarted <- struct{}{}:
 		case <-time.After(opTimeout):
-			return daemon.Status{}, errors.New("test driver: poll start was not collected")
+			return angel.Status{}, errors.New("test driver: poll start was not collected")
 		}
 		select {
 		case s := <-cmds:
 			return s.st, s.err
 		case <-time.After(opTimeout):
-			return daemon.Status{}, errors.New("test driver: poll step was not delivered")
+			return angel.Status{}, errors.New("test driver: poll step was not delivered")
 		}
 	}
 	done := make(chan error, 1)
@@ -154,14 +154,14 @@ func watchDriveCollect(t *testing.T, steps []pollStep, jsonOut, term bool) (stri
 }
 
 // watchOK is a successful status with alice (active) and zoe (idle).
-func watchOK(up, down int64) daemon.Status {
-	return daemon.Status{
+func watchOK(up, down int64) angel.Status {
+	return angel.Status{
 		Listen: "127.0.0.1:7890", StartedAt: "2026-10-25T11:59:00Z",
-		Activity: []daemon.AccountActivity{
-			{Login: "zoe", Active: false, Connections: 0, Nodes: []daemon.NodeUse{}},
+		Activity: []angel.AccountActivity{
+			{Login: "zoe", Active: false, Connections: 0, Nodes: []angel.NodeUse{}},
 			{Login: "alice", Active: true, Connections: 2, UploadBytes: up, DownloadBytes: down,
 				Countries: []string{"DE", "NL"},
-				Nodes: []daemon.NodeUse{
+				Nodes: []angel.NodeUse{
 					{Node: "main/a1", Name: "Germany 1", Provider: "main", Country: "DE", Connections: 2},
 					{Node: "main/b2", Connections: 1},
 					{Node: "main/c3", Connections: 0},
@@ -233,15 +233,15 @@ func TestStatusWatchTextFrames(t *testing.T) {
 	steps := []pollStep{
 		{st: watchOK(0, 0)},
 		{st: watchOK(4096, 1024)},
-		{err: daemon.ErrNotRunning}, // ends the watch; its final line is expected
+		{err: angel.ErrNotRunning}, // ends the watch; its final line is expected
 	}
 	out, err := watchDriveCollect(t, steps, false, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" || ce.Exit != cli.ExitNoDaemon {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
 		t.Fatalf("err = %#v", err)
 	}
 	frames := strings.Split(strings.Trim(out, "\n"), "\n\n")
-	if len(frames) != 3 || frames[2] != "daemon stopped" {
+	if len(frames) != 3 || frames[2] != "angel stopped" {
 		t.Fatalf("got %d segments, last %q: %q", len(frames), frames[len(frames)-1], out)
 	}
 	if !strings.Contains(frames[0], "listen=127.0.0.1:7890") ||
@@ -284,22 +284,22 @@ func TestStatusWatchNegativeDeltaShowsZero(t *testing.T) {
 	// go up: the zero must come from alice's own rate cells, not from
 	// elsewhere in the output.
 	withAlice := watchOK(4096, 1024)
-	withAlice.Activity = append(withAlice.Activity, daemon.AccountActivity{
-		Login: "carol", Active: true, Connections: 1, Nodes: []daemon.NodeUse{},
+	withAlice.Activity = append(withAlice.Activity, angel.AccountActivity{
+		Login: "carol", Active: true, Connections: 1, Nodes: []angel.NodeUse{},
 	})
 	steps := []pollStep{
 		{st: withAlice},
-		{st: daemon.Status{
+		{st: angel.Status{
 			Listen: "127.0.0.1:7890", StartedAt: "2026-10-25T11:59:00Z",
-			Activity: []daemon.AccountActivity{
-				{Login: "zoe", Active: false, Nodes: []daemon.NodeUse{}},
+			Activity: []angel.AccountActivity{
+				{Login: "zoe", Active: false, Nodes: []angel.NodeUse{}},
 				{Login: "alice", Active: true, Connections: 1,
-					UploadBytes: 0, DownloadBytes: 0, Nodes: []daemon.NodeUse{}},
+					UploadBytes: 0, DownloadBytes: 0, Nodes: []angel.NodeUse{}},
 				{Login: "carol", Active: true, Connections: 1,
-					UploadBytes: 4096, DownloadBytes: 2048, Nodes: []daemon.NodeUse{}},
+					UploadBytes: 4096, DownloadBytes: 2048, Nodes: []angel.NodeUse{}},
 			},
 		}},
-		{err: daemon.ErrNotRunning},
+		{err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, false, false)
 	if err == nil {
@@ -355,7 +355,7 @@ func TestStatusWatchNDJSON(t *testing.T) {
 	steps := []pollStep{
 		{st: watchOK(0, 0)},
 		{st: watchOK(4096, 1024)},
-		{err: daemon.ErrNotRunning},
+		{err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, true, false)
 	if err == nil {
@@ -392,18 +392,18 @@ func TestStatusWatchNDJSON(t *testing.T) {
 }
 
 // TestStatusWatchJSONOneObjectPerLine drives a watch through frames, a
-// warning and the daemon-stopped ending on a terminal: every line must be
+// warning and the angel-stopped ending on a terminal: every line must be
 // exactly one JSON object, never blank, never an ANSI sequence.
 func TestStatusWatchJSONOneObjectPerLine(t *testing.T) {
 	steps := []pollStep{
 		{st: watchOK(0, 0)},
 		{err: errPoll},
 		{st: watchOK(4096, 1024)},
-		{err: daemon.ErrNotRunning},
+		{err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, true, true)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" {
 		t.Fatalf("err = %#v", err)
 	}
 	lines := jsonLines(t, out)
@@ -418,24 +418,24 @@ func TestStatusWatchJSONOneObjectPerLine(t *testing.T) {
 	}
 }
 
-func TestStatusWatchDaemonStops(t *testing.T) {
-	steps := []pollStep{{st: watchOK(0, 0)}, {err: daemon.ErrNotRunning}}
+func TestStatusWatchAngelStops(t *testing.T) {
+	steps := []pollStep{{st: watchOK(0, 0)}, {err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, false, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" || ce.Exit != cli.ExitNoDaemon {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
 		t.Fatalf("err = %#v", err)
 	}
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if lines[len(lines)-1] != "daemon stopped" {
+	if lines[len(lines)-1] != "angel stopped" {
 		t.Errorf("missing final line: %q", out)
 	}
 }
 
-func TestStatusWatchDaemonStopsNDJSON(t *testing.T) {
-	steps := []pollStep{{st: watchOK(0, 0)}, {err: daemon.ErrNotRunning}}
+func TestStatusWatchAngelStopsNDJSON(t *testing.T) {
+	steps := []pollStep{{st: watchOK(0, 0)}, {err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, true, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" || ce.Exit != cli.ExitNoDaemon {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
 		t.Fatalf("err = %#v", err)
 	}
 	lines := jsonLines(t, out)
@@ -449,10 +449,10 @@ func TestStatusWatchDaemonStopsNDJSON(t *testing.T) {
 }
 
 func TestStatusWatchNotRunningAtStart(t *testing.T) {
-	steps := []pollStep{{err: daemon.ErrNotRunning}}
+	steps := []pollStep{{err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, false, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" || ce.Exit != cli.ExitNoDaemon {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
 		t.Fatalf("err = %#v", err)
 	}
 	if out != "" {
@@ -464,11 +464,11 @@ func TestStatusWatchRetriesThenInternal(t *testing.T) {
 	// two failures in a row are only warnings: the watch goes on; the
 	// scripted stop ends the scenario (the loop returns by itself)
 	steps := []pollStep{
-		{st: watchOK(0, 0)}, {err: errPoll}, {err: errPoll}, {err: daemon.ErrNotRunning},
+		{st: watchOK(0, 0)}, {err: errPoll}, {err: errPoll}, {err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, false, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" {
 		t.Fatalf("err = %#v", err)
 	}
 	if strings.Count(out, "warning: poll failed") != 2 {
@@ -490,11 +490,11 @@ func TestStatusWatchRetriesThenInternal(t *testing.T) {
 
 func TestStatusWatchRetriesOnFirstPollFailure(t *testing.T) {
 	steps := []pollStep{
-		{err: errPoll}, {err: errPoll}, {st: watchOK(0, 0)}, {err: daemon.ErrNotRunning},
+		{err: errPoll}, {err: errPoll}, {st: watchOK(0, 0)}, {err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, false, false)
 	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "DAEMON_NOT_RUNNING" {
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RUNNING" {
 		t.Fatalf("err = %#v", err)
 	}
 	if strings.Count(out, "warning: poll failed") != 2 {
@@ -506,7 +506,7 @@ func TestStatusWatchRetriesOnFirstPollFailure(t *testing.T) {
 }
 
 func TestStatusWatchWarnIsNDJSONToo(t *testing.T) {
-	steps := []pollStep{{st: watchOK(0, 0)}, {err: errPoll}, {err: daemon.ErrNotRunning}}
+	steps := []pollStep{{st: watchOK(0, 0)}, {err: errPoll}, {err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, true, false)
 	if err == nil {
 		t.Fatal("err = nil, want the scripted stop")
@@ -524,14 +524,14 @@ func TestStatusWatchTerminalClearsScreen(t *testing.T) {
 	steps := []pollStep{
 		{st: watchOK(0, 0)},
 		{st: watchOK(4096, 1024)},
-		{err: daemon.ErrNotRunning},
+		{err: angel.ErrNotRunning},
 	}
 	out, err := watchDriveCollect(t, steps, false, true)
 	if err == nil {
 		t.Fatal("err = nil, want the scripted stop")
 	}
 	// one clear per frame boundary: the two frames plus the final
-	// "daemon stopped" frame
+	// "angel stopped" frame
 	want := 0
 	for _, s := range steps {
 		if s.err == nil {
@@ -566,18 +566,18 @@ func TestStatusWatchCancelReturnsCleanly(t *testing.T) {
 	statusWatchContext = func() (context.Context, context.CancelFunc) { return watchCtx, watchCancel }
 	t.Cleanup(func() { statusWatchContext = oldCtxSeam; watchCancel() })
 
-	oldKeep := daemonProbeLiveKeep
+	oldKeep := angelProbeLiveKeep
 	calls := 0
-	daemonProbeLiveKeep = func(ctx context.Context, _ string) (daemon.State, daemon.Status, error) {
+	angelProbeLiveKeep = func(ctx context.Context, _ string) (angel.State, angel.Status, error) {
 		calls++
 		if calls == 1 {
-			return daemon.State{}, watchOK(0, 0), nil
+			return angel.State{}, watchOK(0, 0), nil
 		}
 		// In flight until the cancellation reaches it.
 		<-ctx.Done()
-		return daemon.State{}, daemon.Status{}, ctx.Err()
+		return angel.State{}, angel.Status{}, ctx.Err()
 	}
-	t.Cleanup(func() { daemonProbeLiveKeep = oldKeep })
+	t.Cleanup(func() { angelProbeLiveKeep = oldKeep })
 
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -637,7 +637,7 @@ func TestStatusWatchCancelReturnsCleanly(t *testing.T) {
 	if n := strings.Count(out, "netivri status --watch"); n != 1 {
 		t.Errorf("got %d headers after cancellation, want exactly the one frame: %q", n, out)
 	}
-	if strings.Contains(out, "daemon stopped") {
+	if strings.Contains(out, "angel stopped") {
 		t.Errorf("cancellation must not print the stopped line: %q", out)
 	}
 	if !strings.HasSuffix(out, "\n") {
@@ -654,7 +654,7 @@ func TestStatusWatchTextIsASCII(t *testing.T) {
 	st := watchOK(0, 0)
 	st.Activity[1].Nodes[0].Name = "ドイツ 1"
 	st.Activity[1].Nodes[1].Name = "\U0001F1E9\U0001F1EA Berlin"
-	steps := []pollStep{{st: st}, {err: daemon.ErrNotRunning}}
+	steps := []pollStep{{st: st}, {err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, false, false)
 	if err == nil {
 		t.Fatal("err = nil, want the scripted stop")
@@ -674,7 +674,7 @@ func TestStatusWatchTextIsASCII(t *testing.T) {
 func TestStatusWatchNDJSONKeepsUnicode(t *testing.T) {
 	st := watchOK(0, 0)
 	st.Activity[1].Nodes[0].Name = "ドイツ 1"
-	steps := []pollStep{{st: st}, {err: daemon.ErrNotRunning}}
+	steps := []pollStep{{st: st}, {err: angel.ErrNotRunning}}
 	out, err := watchDriveCollect(t, steps, true, false)
 	if err == nil {
 		t.Fatal("err = nil, want the scripted stop")
@@ -702,7 +702,7 @@ func TestHumanRate(t *testing.T) {
 }
 
 func TestWatchNodeLabels(t *testing.T) {
-	a := daemon.AccountActivity{Nodes: []daemon.NodeUse{
+	a := angel.AccountActivity{Nodes: []angel.NodeUse{
 		{Node: "main/a", Connections: 1},
 		{Node: "main/b", Name: "B", Connections: 3},
 		{Node: "main/c", Connections: 2},
@@ -712,7 +712,7 @@ func TestWatchNodeLabels(t *testing.T) {
 	if got != "B, main/c, main/a, +1 more" {
 		t.Errorf("watchNodeLabels = %q", got)
 	}
-	if got := strings.Join(watchNodeLabels(daemon.AccountActivity{}), ", "); got != "" {
+	if got := strings.Join(watchNodeLabels(angel.AccountActivity{}), ", "); got != "" {
 		t.Errorf("no nodes = %q", got)
 	}
 }

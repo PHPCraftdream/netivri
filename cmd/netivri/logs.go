@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 )
 
 // defaultLogTail is how many entries `logs` shows when --tail is not given.
@@ -24,8 +24,8 @@ var logsContext = func() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-// runLogs implements `logs`: the daemon log of the state directory. It reads
-// the file, so it works while the daemon runs and after it stopped.
+// runLogs implements `logs`: the angel log of the state directory. It reads
+// the file, so it works while the angel runs and after it stopped.
 func runLogs(args []string, stdout io.Writer) error {
 	home, rest, err := parseHomeArgs("logs", args)
 	if err != nil {
@@ -47,9 +47,9 @@ func runLogs(args []string, stdout io.Writer) error {
 	if *tail < 0 {
 		return cli.Usage("logs: --tail must not be negative")
 	}
-	q := daemon.LogQuery{Tail: *tail}
+	q := angel.LogQuery{Tail: *tail}
 	if *levelFlag != "" {
-		level, ok := daemon.NormalizeLevel(*levelFlag)
+		level, ok := angel.NormalizeLevel(*levelFlag)
 		if !ok {
 			return cli.Usage("logs: --level must be debug, info, warn or error")
 		}
@@ -63,16 +63,16 @@ func runLogs(args []string, stdout io.Writer) error {
 		q.Since = time.Now().Add(-window)
 	}
 
-	entries, offset, err := daemon.ReadLog(home, q)
+	entries, offset, err := angel.ReadLog(home, q)
 	if errors.Is(err, os.ErrNotExist) {
 		if *follow {
-			// The daemon may not have started yet: wait for its log.
+			// The angel may not have started yet: wait for its log.
 			offset = 0
 		} else {
 			return &cli.Error{
 				Code:    "LOG_NOT_FOUND",
-				Message: "there is no daemon log yet",
-				Hint:    "the daemon writes it once started with: netivri up",
+				Message: "there is no angel log yet",
+				Hint:    "the angel writes it once started with: netivri up",
 				Exit:    cli.ExitNotFound,
 			}
 		}
@@ -99,16 +99,16 @@ func runLogs(args []string, stdout io.Writer) error {
 	ctx, cancel := logsContext()
 	defer cancel()
 	q.Tail = 0 // the backlog is shown; everything new follows
-	daemon.FollowLog(ctx, home, offset, q, emit)
+	angel.FollowLog(ctx, home, offset, q, emit)
 	return nil
 }
 
 // logItem is the JSON/Ktav form of an entry.
-func logItem(e daemon.LogEntry) map[string]any {
+func logItem(e angel.LogEntry) map[string]any {
 	return map[string]any{"time": logTime(e), "level": e.Level, "message": e.Message}
 }
 
-func logTime(e daemon.LogEntry) string {
+func logTime(e angel.LogEntry) string {
 	if e.Time.IsZero() {
 		return ""
 	}
@@ -116,14 +116,14 @@ func logTime(e daemon.LogEntry) string {
 }
 
 // logLineWriter prints an entry as the line it has in the log file.
-func logLineWriter(w io.Writer) func(daemon.LogEntry) {
-	return func(e daemon.LogEntry) {
-		_, _ = fmt.Fprintln(w, daemon.FormatLogLine(e.Time, e.Level, e.Message))
+func logLineWriter(w io.Writer) func(angel.LogEntry) {
+	return func(e angel.LogEntry) {
+		_, _ = fmt.Fprintln(w, angel.FormatLogLine(e.Time, e.Level, e.Message))
 	}
 }
 
 // logJSONWriter prints an entry as one JSON object per line (NDJSON).
-func logJSONWriter(w io.Writer) func(daemon.LogEntry) {
+func logJSONWriter(w io.Writer) func(angel.LogEntry) {
 	enc := json.NewEncoder(w)
-	return func(e daemon.LogEntry) { _ = enc.Encode(logItem(e)) }
+	return func(e angel.LogEntry) { _ = enc.Encode(logItem(e)) }
 }

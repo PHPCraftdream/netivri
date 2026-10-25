@@ -1,6 +1,6 @@
 //go:build integration
 
-package daemon
+package angel
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 // TestProbeLiveKeepRunning reports the live answer like ProbeLive, but the
 // state file survives every probe.
 func TestProbeLiveKeepRunning(t *testing.T) {
-	live := Status{Daemon: "running", PID: 4321, Listen: "127.0.0.1:7891"}
+	live := Status{Angel: "running", PID: 4321, Listen: "127.0.0.1:7891"}
 	s, err := StartServer("secret", func() Status { return live }, func() {})
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestProbeLiveKeepControlTimeoutKeepsState(t *testing.T) {
 }
 
 // TestProbeLiveKeepConnRefusedKeepsState: nothing listens on the recorded
-// control port (the daemon crashed and left its state file). That is
+// control port (the angel crashed and left its state file). That is
 // ErrNotRunning for the watch, and the state file stays.
 func TestProbeLiveKeepConnRefusedKeepsState(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -148,11 +148,11 @@ func TestProbeLiveKeepConnRefusedKeepsState(t *testing.T) {
 }
 
 // TestProbeLiveKeepPidMismatchKeepsState: the control endpoint answers for
-// another daemon, so the daemon the state file names is gone. That is
+// another angel, so the angel the state file names is gone. That is
 // ErrNotRunning for the watch, and the state file stays (cleanup is
 // ProbeLive's job, not the watch's).
 func TestProbeLiveKeepPidMismatchKeepsState(t *testing.T) {
-	s, err := StartServer("secret", func() Status { return Status{Daemon: "running", PID: 9999} }, func() {})
+	s, err := StartServer("secret", func() Status { return Status{Angel: "running", PID: 9999} }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}

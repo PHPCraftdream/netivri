@@ -21,41 +21,41 @@ import (
 )
 
 const (
-	daemonE2ETimeout       = 30 * time.Second
-	daemonFirstLineTimeout = 20 * time.Second
-	daemonExitTimeout      = 15 * time.Second
+	angelE2ETimeout       = 30 * time.Second
+	angelFirstLineTimeout = 20 * time.Second
+	angelExitTimeout      = 15 * time.Second
 )
 
-// daemonStateRel is the state file path relative to the home directory.
-var daemonStateRel = filepath.Join("run", "netivri.json")
+// angelStateRel is the state file path relative to the home directory.
+var angelStateRel = filepath.Join("run", "netivri.json")
 
-// daemonStateFile is the part of run/netivri.json the tests need.
-type daemonStateFile struct {
+// angelStateFile is the part of run/netivri.json the tests need.
+type angelStateFile struct {
 	PID     int    `json:"pid"`
 	Listen  string `json:"listen"`
 	Control string `json:"control"`
 	Token   string `json:"token"`
 }
 
-func daemonReadState(home string) (daemonStateFile, error) {
-	var st daemonStateFile
-	data, err := os.ReadFile(filepath.Join(home, daemonStateRel))
+func angelReadState(home string) (angelStateFile, error) {
+	var st angelStateFile
+	data, err := os.ReadFile(filepath.Join(home, angelStateRel))
 	if err != nil {
 		return st, err
 	}
 	return st, json.Unmarshal(data, &st)
 }
 
-func daemonStateExists(home string) bool {
-	_, err := os.Stat(filepath.Join(home, daemonStateRel))
+func angelStateExists(home string) bool {
+	_, err := os.Stat(filepath.Join(home, angelStateRel))
 	return err == nil
 }
 
-// daemonExec runs the binary to completion. Problems that are not a non-zero
+// angelExec runs the binary to completion. Problems that are not a non-zero
 // exit are returned as errors instead of failing the test, so cleanups can use
 // it too.
-func daemonExec(home string, args ...string) (code int, stdout, stderr string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), daemonE2ETimeout)
+func angelExec(home string, args ...string) (code int, stdout, stderr string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), angelE2ETimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, netivriBin, args...)
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
@@ -76,35 +76,35 @@ func daemonExec(home string, args ...string) (code int, stdout, stderr string, e
 	return code, outBuf.String(), errBuf.String(), err
 }
 
-func daemonRun(t *testing.T, home string, args ...string) (int, string, string) {
+func angelRun(t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	code, stdout, stderr, err := daemonExec(home, args...)
+	code, stdout, stderr, err := angelExec(home, args...)
 	if err != nil {
 		t.Fatalf("netivri %v: %v (stdout %q, stderr %q)", args, err, stdout, stderr)
 	}
 	return code, stdout, stderr
 }
 
-// daemonHome is a temp state directory whose daemon, if any, is stopped at
+// angelHome is a temp state directory whose angel, if any, is stopped at
 // the end of the test.
-type daemonHome struct {
+type angelHome struct {
 	dir string
-	pid int // daemon pid taken from the `up` output, for the last-resort kill
+	pid int // angel pid taken from the `up` output, for the last-resort kill
 }
 
-func newDaemonHome(t *testing.T) *daemonHome {
+func newAngelHome(t *testing.T) *angelHome {
 	t.Helper()
-	h := &daemonHome{dir: t.TempDir()}
+	h := &angelHome{dir: t.TempDir()}
 	t.Cleanup(func() {
-		code, _, _, err := daemonExec(h.dir, "down")
+		code, _, _, err := angelExec(h.dir, "down")
 		downOK := err == nil && code == 0
 		pid := h.pid
-		if st, rerr := daemonReadState(h.dir); rerr == nil {
+		if st, rerr := angelReadState(h.dir); rerr == nil {
 			pid = st.PID
-			downOK = false // the state file survived: the daemon is still there
+			downOK = false // the state file survived: the angel is still there
 		}
 		if !downOK && pid > 0 {
-			// Last resort, own child only: the pid the daemon reported.
+			// Last resort, own child only: the pid the angel reported.
 			if p, ferr := os.FindProcess(pid); ferr == nil {
 				_ = p.Kill()
 			}
@@ -113,8 +113,8 @@ func newDaemonHome(t *testing.T) *daemonHome {
 	return h
 }
 
-// daemonData decodes the success data object of one stdout envelope.
-func daemonData(t *testing.T, stdout string) map[string]any {
+// angelData decodes the success data object of one stdout envelope.
+func angelData(t *testing.T, stdout string) map[string]any {
 	t.Helper()
 	var env struct {
 		OK   bool           `json:"ok"`
@@ -129,8 +129,8 @@ func daemonData(t *testing.T, stdout string) map[string]any {
 	return env.Data
 }
 
-// daemonInt reads a JSON number from a decoded data object.
-func daemonInt(t *testing.T, data map[string]any, key string) int {
+// angelInt reads a JSON number from a decoded data object.
+func angelInt(t *testing.T, data map[string]any, key string) int {
 	t.Helper()
 	v, ok := data[key].(float64)
 	if !ok {
@@ -139,37 +139,37 @@ func daemonInt(t *testing.T, data map[string]any, key string) int {
 	return int(v)
 }
 
-func TestE2EDaemonStatusNotRunning(t *testing.T) {
-	code, stdout, stderr := daemonRun(t, t.TempDir(), "status")
-	if code != cli.ExitNoDaemon {
-		t.Fatalf("exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoDaemon, stdout, stderr)
+func TestE2EAngelStatusNotRunning(t *testing.T) {
+	code, stdout, stderr := angelRun(t, t.TempDir(), "status")
+	if code != cli.ExitNoAngel {
+		t.Fatalf("exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoAngel, stdout, stderr)
 	}
-	if got := decodeErrEnvelope(t, stderr).Error.Code; got != "DAEMON_NOT_RUNNING" {
-		t.Errorf("code = %q, want DAEMON_NOT_RUNNING", got)
+	if got := decodeErrEnvelope(t, stderr).Error.Code; got != "ANGEL_NOT_RUNNING" {
+		t.Errorf("code = %q, want ANGEL_NOT_RUNNING", got)
 	}
 }
 
-func TestE2EDaemonDownNotRunning(t *testing.T) {
-	code, stdout, stderr := daemonRun(t, t.TempDir(), "down")
+func TestE2EAngelDownNotRunning(t *testing.T) {
+	code, stdout, stderr := angelRun(t, t.TempDir(), "down")
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0 (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	data := daemonData(t, stdout)
-	if data["daemon"] != "stopped" || data["was_running"] != false {
+	data := angelData(t, stdout)
+	if data["angel"] != "stopped" || data["was_running"] != false {
 		t.Errorf("data = %v", data)
 	}
 }
 
-// TestE2EDaemonLifecycle covers up, status, a proxied round trip, idempotent
+// TestE2EAngelLifecycle covers up, status, a proxied round trip, idempotent
 // up, the conflict on a different explicit port, and down.
-func TestE2EDaemonLifecycle(t *testing.T) {
-	h := newDaemonHome(t)
+func TestE2EAngelLifecycle(t *testing.T) {
+	h := newAngelHome(t)
 
 	// token is learned from the state file after the first up; from then on no
 	// command output may contain it, and a failure message never prints it.
 	var token string
 	run := func(args ...string) (int, string, string) {
-		code, stdout, stderr := daemonRun(t, h.dir, args...)
+		code, stdout, stderr := angelRun(t, h.dir, args...)
 		if token != "" {
 			if strings.Contains(stdout, token) || strings.Contains(stderr, token) {
 				t.Errorf("the control token leaked into the output of netivri %v", args)
@@ -180,19 +180,19 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 		return code, stdout, stderr
 	}
 
-	// up --port 0 returns promptly while the daemon keeps running.
+	// up --port 0 returns promptly while the angel keeps running.
 	code, stdout, stderr := run("up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	up := daemonData(t, stdout)
-	pid := daemonInt(t, up, "pid")
+	up := angelData(t, stdout)
+	pid := angelInt(t, up, "pid")
 	h.pid = pid
 	listen, _ := up["listen"].(string)
 	if up["already_running"] != false || up["foreground"] != false || listen == "" {
 		t.Fatalf("up data = %v", up)
 	}
-	st, err := daemonReadState(h.dir)
+	st, err := angelReadState(h.dir)
 	if err != nil {
 		t.Fatalf("read state file: %v", err)
 	}
@@ -206,8 +206,8 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	status := daemonData(t, stdout)
-	if daemonInt(t, status, "pid") != pid || status["listen"] != listen {
+	status := angelData(t, stdout)
+	if angelInt(t, status, "pid") != pid || status["listen"] != listen {
 		t.Errorf("status = %v, want pid %d and listen %q", status, pid, listen)
 	}
 	if status["foreground"] != false || status["auth"] != "none" || status["route"] != "direct" {
@@ -217,7 +217,7 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 		t.Error("status has no uptime_seconds")
 	}
 
-	// The proxy really works through the daemon.
+	// The proxy really works through the angel.
 	conn := socks5NoAuthConnect(t, listen, echoServer(t))
 	echoRoundTrip(t, conn, conn)
 
@@ -226,12 +226,12 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("second up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	again := daemonData(t, stdout)
-	if again["already_running"] != true || daemonInt(t, again, "pid") != pid {
+	again := angelData(t, stdout)
+	if again["already_running"] != true || angelInt(t, again, "pid") != pid {
 		t.Errorf("second up data = %v, want already_running with pid %d", again, pid)
 	}
 
-	// A different explicit port conflicts with the running daemon.
+	// A different explicit port conflicts with the running angel.
 	code, stdout, stderr = run("up", "--port", strconv.Itoa(freePort(t)))
 	if code != cli.ExitConflict {
 		t.Fatalf("conflicting up exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitConflict, stdout, stderr)
@@ -240,19 +240,19 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 		t.Errorf("code = %q, want ALREADY_RUNNING", got)
 	}
 
-	// down stops the daemon.
+	// down stops the angel.
 	code, stdout, stderr = run("down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	down := daemonData(t, stdout)
-	if down["was_running"] != true || daemonInt(t, down, "pid") != pid {
+	down := angelData(t, stdout)
+	if down["was_running"] != true || angelInt(t, down, "pid") != pid {
 		t.Errorf("down data = %v, want was_running with pid %d", down, pid)
 	}
 
 	// Afterwards: status exits 4, the proxy port is closed, the state is gone.
-	if code, stdout, stderr = run("status"); code != cli.ExitNoDaemon {
-		t.Errorf("status after down exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoDaemon, stdout, stderr)
+	if code, stdout, stderr = run("status"); code != cli.ExitNoAngel {
+		t.Errorf("status after down exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoAngel, stdout, stderr)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -261,25 +261,25 @@ func TestE2EDaemonLifecycle(t *testing.T) {
 		_ = c.Close()
 		t.Errorf("%s still accepts connections after down", listen)
 	}
-	if daemonStateExists(h.dir) {
+	if angelStateExists(h.dir) {
 		t.Error("the state file is still there after down")
 	}
 }
 
-// daemonLineWriter records its output and closes first once the first line
+// angelLineWriter records its output and closes first once the first line
 // is complete.
-type daemonLineWriter struct {
+type angelLineWriter struct {
 	mu    sync.Mutex
 	buf   bytes.Buffer
 	first chan struct{}
 	done  bool
 }
 
-func newDaemonLineWriter() *daemonLineWriter {
-	return &daemonLineWriter{first: make(chan struct{})}
+func newAngelLineWriter() *angelLineWriter {
+	return &angelLineWriter{first: make(chan struct{})}
 }
 
-func (w *daemonLineWriter) Write(p []byte) (int, error) {
+func (w *angelLineWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	n, err := w.buf.Write(p)
@@ -290,20 +290,20 @@ func (w *daemonLineWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (w *daemonLineWriter) String() string {
+func (w *angelLineWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buf.String()
 }
 
-// TestE2EDaemonForegroundRegisters checks that a foreground up is a full
+// TestE2EAngelForegroundRegisters checks that a foreground up is a full
 // instance: status sees it, down stops it, and it exits 0 on every OS.
-func TestE2EDaemonForegroundRegisters(t *testing.T) {
-	h := newDaemonHome(t)
+func TestE2EAngelForegroundRegisters(t *testing.T) {
+	h := newAngelHome(t)
 
 	cmd := exec.Command(netivriBin, "up", "--foreground", "--port", "0")
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+h.dir)
-	stdout, stderr := newDaemonLineWriter(), newDaemonLineWriter()
+	stdout, stderr := newAngelLineWriter(), newAngelLineWriter()
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -328,31 +328,31 @@ func TestE2EDaemonForegroundRegisters(t *testing.T) {
 	case <-stdout.first:
 	case <-done:
 		t.Fatalf("foreground up exited early: %v (stderr %q)", waitErr, stderr.String())
-	case <-time.After(daemonFirstLineTimeout):
-		t.Fatalf("no first line within %v (stderr %q)", daemonFirstLineTimeout, stderr.String())
+	case <-time.After(angelFirstLineTimeout):
+		t.Fatalf("no first line within %v (stderr %q)", angelFirstLineTimeout, stderr.String())
 	}
 	line, _, _ := strings.Cut(stdout.String(), "\n")
-	started := daemonData(t, line)
-	pid := daemonInt(t, started, "pid")
+	started := angelData(t, line)
+	pid := angelInt(t, started, "pid")
 	listen, _ := started["listen"].(string)
 	if started["foreground"] != true || listen == "" {
 		t.Fatalf("up data = %v", started)
 	}
 
-	code, out, errOut := daemonRun(t, h.dir, "status")
+	code, out, errOut := angelRun(t, h.dir, "status")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, out, errOut)
 	}
-	status := daemonData(t, out)
-	if daemonInt(t, status, "pid") != pid || status["listen"] != listen || status["foreground"] != true {
+	status := angelData(t, out)
+	if angelInt(t, status, "pid") != pid || status["listen"] != listen || status["foreground"] != true {
 		t.Errorf("status = %v, want pid %d, listen %q, foreground true", status, pid, listen)
 	}
 
-	code, out, errOut = daemonRun(t, h.dir, "down")
+	code, out, errOut = angelRun(t, h.dir, "down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, out, errOut)
 	}
-	if daemonData(t, out)["was_running"] != true {
+	if angelData(t, out)["was_running"] != true {
 		t.Errorf("down stdout = %q, want was_running true", out)
 	}
 
@@ -361,7 +361,7 @@ func TestE2EDaemonForegroundRegisters(t *testing.T) {
 		if waitErr != nil {
 			t.Errorf("foreground process exit = %v, want 0", waitErr)
 		}
-	case <-time.After(daemonExitTimeout):
+	case <-time.After(angelExitTimeout):
 		t.Fatal("the foreground process did not exit after down")
 	}
 	if got := stderr.String(); got != "" {
@@ -369,10 +369,10 @@ func TestE2EDaemonForegroundRegisters(t *testing.T) {
 	}
 }
 
-// TestE2EDaemonStaleState: a state file of a dead daemon gives exit 4, is
+// TestE2EAngelStaleState: a state file of a dead angel gives exit 4, is
 // removed, and does not block the next up.
-func TestE2EDaemonStaleState(t *testing.T) {
-	h := newDaemonHome(t)
+func TestE2EAngelStaleState(t *testing.T) {
+	h := newAngelHome(t)
 
 	// A port nothing listens on.
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -394,33 +394,33 @@ func TestE2EDaemonStaleState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(h.dir, "run"), 0o700); err != nil {
 		t.Fatalf("mkdir run: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(h.dir, daemonStateRel), stale, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(h.dir, angelStateRel), stale, 0o600); err != nil {
 		t.Fatalf("write stale state: %v", err)
 	}
 
-	code, stdout, stderr := daemonRun(t, h.dir, "status")
-	if code != cli.ExitNoDaemon {
-		t.Fatalf("status exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoDaemon, stdout, stderr)
+	code, stdout, stderr := angelRun(t, h.dir, "status")
+	if code != cli.ExitNoAngel {
+		t.Fatalf("status exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitNoAngel, stdout, stderr)
 	}
-	if daemonStateExists(h.dir) {
+	if angelStateExists(h.dir) {
 		t.Error("the stale state file was not removed")
 	}
 
-	code, stdout, stderr = daemonRun(t, h.dir, "up", "--port", "0")
+	code, stdout, stderr = angelRun(t, h.dir, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up after stale state exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	up := daemonData(t, stdout)
-	h.pid = daemonInt(t, up, "pid")
+	up := angelData(t, stdout)
+	h.pid = angelInt(t, up, "pid")
 	if up["already_running"] != false {
 		t.Errorf("up data = %v, want already_running false", up)
 	}
 }
 
-// TestE2EDaemonBusyPort: PORT_IN_USE reaches the parent through the handshake
-// and no daemon is left behind.
-func TestE2EDaemonBusyPort(t *testing.T) {
-	h := newDaemonHome(t)
+// TestE2EAngelBusyPort: PORT_IN_USE reaches the parent through the handshake
+// and no angel is left behind.
+func TestE2EAngelBusyPort(t *testing.T) {
+	h := newAngelHome(t)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("hold port: %v", err)
@@ -428,17 +428,17 @@ func TestE2EDaemonBusyPort(t *testing.T) {
 	defer l.Close()
 	busy := l.Addr().(*net.TCPAddr).Port
 
-	code, stdout, stderr := daemonRun(t, h.dir, "up", "--port", strconv.Itoa(busy))
+	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", strconv.Itoa(busy))
 	if code != cli.ExitConflict {
 		t.Fatalf("up exit = %d, want %d (stdout %q, stderr %q)", code, cli.ExitConflict, stdout, stderr)
 	}
 	if got := decodeErrEnvelope(t, stderr).Error.Code; got != "PORT_IN_USE" {
 		t.Errorf("code = %q, want PORT_IN_USE", got)
 	}
-	if daemonStateExists(h.dir) {
+	if angelStateExists(h.dir) {
 		t.Error("a state file was left behind")
 	}
-	if code, _, _ := daemonRun(t, h.dir, "status"); code != cli.ExitNoDaemon {
-		t.Errorf("status exit = %d, want %d", code, cli.ExitNoDaemon)
+	if code, _, _ := angelRun(t, h.dir, "status"); code != cli.ExitNoAngel {
+		t.Errorf("status exit = %d, want %d", code, cli.ExitNoAngel)
 	}
 }

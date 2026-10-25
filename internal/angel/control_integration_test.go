@@ -1,6 +1,6 @@
 //go:build integration
 
-package daemon
+package angel
 
 import (
 	"context"
@@ -24,13 +24,13 @@ func requireStatus(t *testing.T, _ *Server, c Client, wantPID int) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if st.Daemon != "running" || st.PID != wantPID {
-		t.Errorf("status daemon=%q pid=%d", st.Daemon, st.PID)
+	if st.Angel != "running" || st.PID != wantPID {
+		t.Errorf("status angel=%q pid=%d", st.Angel, st.PID)
 	}
 }
 
 func TestControlServerLive(t *testing.T) {
-	s, err := StartServer("secret", func() Status { return Status{Daemon: "running", PID: 99, Listen: "127.0.0.1:7890"} }, func() {})
+	s, err := StartServer("secret", func() Status { return Status{Angel: "running", PID: 99, Listen: "127.0.0.1:7890"} }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestProbeUnreachableRemovesStaleState(t *testing.T) {
 }
 
 func TestProbePidMismatch(t *testing.T) {
-	s, err := StartServer("secret", func() Status { return Status{Daemon: "running", PID: 12345} }, func() {})
+	s, err := StartServer("secret", func() Status { return Status{Angel: "running", PID: 12345} }, func() {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,10 +119,10 @@ func TestProbePidMismatch(t *testing.T) {
 	}
 }
 
-func TestProbeLiveDaemon(t *testing.T) {
+func TestProbeLiveAngel(t *testing.T) {
 	// The live answer differs from the state file in listen and auth: the
 	// caller must get both, unmixed.
-	live := Status{Daemon: "running", PID: 4321, Listen: "127.0.0.1:7891", Auth: "enabled"}
+	live := Status{Angel: "running", PID: 4321, Listen: "127.0.0.1:7891", Auth: "enabled"}
 	s, err := StartServer("secret", func() Status { return live }, func() {})
 	if err != nil {
 		t.Fatal(err)

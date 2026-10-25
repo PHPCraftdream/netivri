@@ -29,7 +29,7 @@ type e2eShowTier struct {
 	} `json:"nodes"`
 }
 
-// TestE2EAccountShow runs `account show` without and with a running daemon:
+// TestE2EAccountShow runs `account show` without and with a running angel:
 // first the static route with skipped tiers, then the live probe and traffic
 // state of the same nodes.
 func TestE2EAccountShow(t *testing.T) {
@@ -53,7 +53,7 @@ func TestE2EAccountShow(t *testing.T) {
 	accountsSaveSnapshot(t, home, "p1", []subscription.Node{accountsSocksNode("de-p1", "DE", up1)})
 	accountsSaveSnapshot(t, home, "p2", []subscription.Node{accountsSocksNode("de-p2", "DE", up2)})
 
-	// Without a daemon the static route stands, live fields stay null.
+	// Without an angel the static route stands, live fields stay null.
 	// JP has no node: both JP pairs are skipped and do not consume a tier
 	// index, so DE/p1 is tier 0 and DE/p2 is tier 1.
 	code, out, stderr := accountsCommand(t, home, "show", "alice")
@@ -101,7 +101,7 @@ func TestE2EAccountShow(t *testing.T) {
 	for i, tr := range d.Tiers {
 		for _, n := range tr.Nodes {
 			if n.Alive != nil || n.DelayMS != nil || n.Connections != nil {
-				t.Errorf("tier %d node %+v has live data without a daemon", i, n)
+				t.Errorf("tier %d node %+v has live data without an angel", i, n)
 			}
 		}
 	}
@@ -118,7 +118,7 @@ func TestE2EAccountShow(t *testing.T) {
 	}
 	assertNoSecrets(t, out, stderr, accountsDEPass, hash)
 
-	// With a running daemon the same command reports the live state.
+	// With a running angel the same command reports the live state.
 	p := startUp(t, home, "--port", "0")
 	assertStatusSuccess(t, p.Status())
 	listen := p.Status().Data.Listen
@@ -154,7 +154,7 @@ func TestE2EAccountShow(t *testing.T) {
 		t.Errorf("nodes with 1 connection = %d (in DE %d), want 1 each: %s", connected, inDE, out)
 	}
 
-	// The daemon probes asynchronously: wait until every node has a health
+	// The angel probes asynchronously: wait until every node has a health
 	// record.
 	deadline := time.Now().Add(5 * time.Second)
 	for {

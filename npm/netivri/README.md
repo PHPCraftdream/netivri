@@ -27,7 +27,7 @@ netivri sub add https://provider.example/sub/{TOKEN} --name main
 # 2. Create a login that exits through Germany
 netivri account add alice --provider main --country DE
 
-# 3. Start the background daemon
+# 3. Start the background angel
 netivri up --port 7890
 netivri status
 ```

@@ -1,4 +1,4 @@
-package daemon
+package angel
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Log levels of the daemon log, lowest first.
+// Log levels of the angel log, lowest first.
 const (
 	LevelDebug = "DEBUG"
 	LevelInfo  = "INFO"
@@ -31,7 +31,7 @@ const (
 	// MaxLogBytes is the size above which the log is moved aside at spawn.
 	MaxLogBytes = 8 << 20
 	// legacyLogPrefix and legacyLogLayout describe the lines of the plain
-	// log.Logger the daemon wrote before the leveled format.
+	// log.Logger the angel wrote before the leveled format.
 	legacyLogPrefix = "netivri-daemon "
 	legacyLogLayout = "2006/01/02 15:04:05"
 	// FollowEvery is how often a followed log is looked at.
@@ -133,7 +133,7 @@ func (p *logParser) entry(line string) (LogEntry, bool) {
 	return LogEntry{Time: p.prev.Time, Level: level, Message: line}, true
 }
 
-// ReadLog returns the entries of the daemon log that match q and the offset
+// ReadLog returns the entries of the angel log that match q and the offset
 // where the read stopped, to continue a follow from. A missing log is
 // os.ErrNotExist.
 func ReadLog(home string, q LogQuery) ([]LogEntry, int64, error) {
@@ -189,7 +189,7 @@ func readLogRange(path string, from int64) ([]byte, int64, error) {
 			start += int64(i + 1)
 		}
 	}
-	// A follow takes complete lines only: the daemon may be in the middle of a
+	// A follow takes complete lines only: the angel may be in the middle of a
 	// write. A one-shot read also takes a last line without its newline.
 	if i := bytes.LastIndexByte(data, '\n'); i >= 0 && from >= 0 {
 		data = data[:i+1]

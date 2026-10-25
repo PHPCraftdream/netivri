@@ -217,7 +217,7 @@ accounts that have a provider or an exit country, it records into
 `{HOME}/stats.db`: the background probes of the nodes, the dial time and
 outcome of every real connection, and the throughput of real traffic (bytes
 moved per 5-second window; there are no synthetic speed tests). `stats` reads
-that database read-only, so it works while the daemon runs and after it
+that database read-only, so it works while the angel runs and after it
 stopped.
 
 | Flag | Meaning |
@@ -291,12 +291,12 @@ When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
 ```
 
-The daemon log, `{HOME}/run/netivri.log`: start and stop, applied and rejected
+The angel log, `{HOME}/run/netivri.log`: start and stop, applied and rejected
 configuration changes, subscription refreshes, storage problems, and route nodes going
 down (`WARN`) or coming back (`INFO`), with the node label, its display name when one is known, the
 provider and the country, as in
 `node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down`. It reads the
-file, so it works while the daemon runs and after it stopped or failed to start.
+file, so it works while the angel runs and after it stopped or failed to start.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
@@ -305,7 +305,7 @@ bigger than 8 MiB; `logs` reads the current file only.
 
 | Flag | Meaning |
 |---|---|
-| `--follow` | Keep running and print new entries until interrupted; wait for the log when the daemon has not started yet. |
+| `--follow` | Keep running and print new entries until interrupted; wait for the log when the angel has not started yet. |
 | `--level L` | Only this level and above (default: all). |
 | `--since D` | Only the last period: `90m`, `24h`, `7d`, ... (at most `365d`). |
 | `--tail N` | At most the newest `N` entries (default `100`, `0` for all). With `--follow` it limits the backlog shown first. |
@@ -333,7 +333,7 @@ netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {L
 
 Measures the dial phases of nodes (design: [design/latency.md](design/latency.md),
 "per node takes N samples of `dns`, `tcp`, `tls`, `first_byte`"). It runs in
-its own process without the daemon; a running instance is not touched. Per
+its own process without the angel; a running instance is not touched. Per
 node it sends a handful of small HTTP requests (default 5 samples) through
 the node and reports per-phase timings and failures; then the idle survival
 test reuses the prepared transports after waiting 0.5 s, 1 s, 2 s, ... and
@@ -389,13 +389,13 @@ and a `detail`; `summary` counts them by status. stdout always carries the
 document; when a check failed the error envelope goes to stderr and the exit
 code is 7, so a script can branch on the exit code alone. A check that cannot
 run is a `warn` with the reason, never a failure of the whole command; no
-check contacts anything but the local daemon and the local port, and
+check contacts anything but the local angel and the local port, and
 subscription URLs, passwords and hashes are never printed.
 
 ```json
 {"checks": [
    {"name": "config", "status": "ok", "detail": "config.ktav loaded and valid"},
-   {"name": "daemon", "status": "ok", "detail": "running, pid 4242, uptime 3600s"},
+   {"name": "angel", "status": "ok", "detail": "running, pid 4242, uptime 3600s"},
    {"name": "listen", "status": "ok", "detail": "listen 127.0.0.1:7890, allowed_clients *"},
    {"name": "subscriptions", "status": "ok", "detail": "every configured subscription has a usable snapshot"},
    {"name": "account alice", "status": "ok", "detail": "tier 0 DE (main): 1/1 node(s) alive"},
@@ -408,11 +408,11 @@ The checks:
 | Name | What it covers |
 |---|---|
 | `config` | `config.ktav` loads and is valid (the message names the bad key, never a secret). |
-| `daemon` | A daemon runs for this state directory (pid, uptime). |
-| `listen` | The address the running daemon reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
-| `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the daemon is down). |
-| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running daemon, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without a daemon the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
-| `log` | No `WARN` or `ERROR` entries in the last hour of the daemon log (count and newest message otherwise). The log is read even when the daemon is down; a missing log file is `ok` ("no log yet"). |
+| `angel` | An angel runs for this state directory (pid, uptime). |
+| `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
+| `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
+| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
+| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
 on stdout says which.
@@ -464,15 +464,15 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   without a provider list every provider shares one tier per country). Per
   node it shows the label, the display name when the subscription gives one,
   provider, country and tier index (from 0) and, while the
-  daemon runs, live data: alive or down with the last probe delay and the
-  account's live connections through the node. Without a running daemon
+  angel runs, live data: alive or down with the last probe delay and the
+  account's live connections through the node. Without a running angel
   `live` is false and every live field is null. With one, `alive` and
-  `delay_ms` are null for a node the daemon's warm-up list does not hold, and
+  `delay_ms` are null for a node the angel's warm-up list does not hold, and
   `connections` is the account's live count (0 for a node it is not using)
-  when the daemon tracks the account, null when it does not. A (country,
+  when the angel tracks the account, null when it does not. A (country,
   provider) pair without nodes is listed as a skipped tier with a reason; it
   keeps the index it would have had and does not consume one, so the indexes
-  of the other tiers match the order the daemon actually tries. The document:
+  of the other tiers match the order the angel actually tries. The document:
 
   ```json
   {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
@@ -500,7 +500,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   narrows what the global `listen.allowed_clients` already allows; a client
   allowed by neither is refused before the password is verified, so an
   `init` account cannot be claimed from a disallowed address. A running
-  daemon applies the change within a few seconds.
+  angel applies the change within a few seconds.
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
@@ -571,7 +571,7 @@ recovers. A route is used only for the accounts that name it: there is no
 fallback to a direct connection or to a country or provider that is not in the
 lists. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.
-A running daemon applies a change to accounts by itself, within a few seconds
+A running angel applies a change to accounts by itself, within a few seconds
 (no `down` and `up` needed): it restarts its listener on the same port, which
 ends the open connections. A change it cannot apply, such as a route without
 nodes, leaves the running configuration in place and is reported as
@@ -579,22 +579,22 @@ nodes, leaves the running configuration in place and is reported as
 
 ### `up`
 
-Without `--foreground`, `up` starts the daemon: it validates the flags and
-the configuration, checks for an already running daemon, and otherwise
+Without `--foreground`, `up` starts the angel: it validates the flags and
+the configuration, checks for an already running angel, and otherwise
 spawns a detached background process and returns immediately. `up` is safe
 to repeat.
 
 ```json
 {"schema_version": 1, "ok": true,
- "data": {"daemon": "running", "pid": 12345, "listen": "127.0.0.1:7890",
+ "data": {"angel": "running", "pid": 12345, "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
           "foreground": false, "already_running": false}}
 ```
 
-`foreground` is `true` for `up --foreground`, `false` for the daemon.
+`foreground` is `true` for `up --foreground`, `false` for the angel.
 `already_running` is `true` when the command found and reused a running
-daemon (idempotent success, exit 0); these keys are additive and do not
-bump `schema_version`. When a daemon is already running and the caller
+angel (idempotent success, exit 0); these keys are additive and do not
+bump `schema_version`. When an angel is already running and the caller
 explicitly passed a `--port` / `--bind` that differs from the running
 listen address (an explicit `--port 0` means "don't care"), `up` fails with
 `ALREADY_RUNNING` (exit 6, hint: `run netivri down first`).
@@ -604,17 +604,17 @@ listen address (an explicit `--port 0` means "don't care"), `up` fails with
 Runs the proxy in the foreground: prints one document on stdout (the same
 shape as above, without `already_running`; one line with `--json`), then blocks until SIGINT /
 SIGTERM or `netivri down`, then exits 0. It writes nothing to stderr. A
-foreground `up` is not idempotent: with a daemon already running in the same
+foreground `up` is not idempotent: with an angel already running in the same
 home it fails with `ALREADY_RUNNING` (exit 6).
 
 `up` also accepts the hidden flag `--handshake {PATH}` (only together with
-`--foreground`). It is internal machinery of the daemon spawn, not part of
-this contract; see [design/daemon.md](design/daemon.md).
+`--foreground`). It is internal machinery of the angel spawn, not part of
+this contract; see [design/angel.md](design/angel.md).
 
 `listen` is the actual bound address: with `--port 0` it is the random free
 port that was picked. `netivri status` reports `allowed_clients`, the
 effective `listen.allowed_clients` value — which client addresses may
-connect; `*` when unrestricted. The daemon writes its state to `run/netivri.json` and
+connect; `*` when unrestricted. The angel writes its state to `run/netivri.json` and
 its log to `run/netivri.log` inside the state directory. The state file
 holds the local control token: mode `0600` on Unix, profile-directory ACL on
 Windows; never print it. `auth` is one of:
@@ -667,7 +667,7 @@ Loopback means `127.0.0.0/8`, `::1` and `localhost`.
 Reports the live status of the running instance.
 
 The default answer is **short**: enough for people and scripts that want to
-know the daemon is up and what it serves. The complete view — with the warm
+know the angel is up and what it serves. The complete view — with the warm
 node list, the warm pool counters, `stats` and `affinity` — needs
 `netivri status --full`. Both forms accept `--home` and `--json`; unknown
 flags are usage errors.
@@ -676,7 +676,7 @@ Short view:
 
 ```json
 {"schema_version": 1, "ok": true,
- "data": {"daemon": "running", "foreground": false, "pid": 12345,
+ "data": {"angel": "running", "foreground": false, "pid": 12345,
           "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
           "allowed_clients": "*",
@@ -689,10 +689,10 @@ Short view:
           "reload": {"count": 1, "last_at": "2026-10-20T10:02:00Z", "last_error": ""}}}
 ```
 
-Exactly these fields exist in the short view: `daemon` (always `running` on success),
+Exactly these fields exist in the short view: `angel` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
-`version` (the daemon binary's version), `allowed_clients` (which client
+`version` (the angel binary's version), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
 record is `{"login", "provider", "exit_country", "allowed_clients"}`, sorted by
 login), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
@@ -704,14 +704,14 @@ yet; they arrive with `netivri use`.
 Scripts that read `warm.nodes`, `stats` or `affinity` must pass `--full`.
 
 `refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
-`reload` (`{"count", "last_at", "last_error"}`) describe how the daemon keeps
-itself up to date. The daemon re-fetches every subscription once per
+`reload` (`{"count", "last_at", "last_error"}`) describe how the angel keeps
+itself up to date. The angel re-fetches every subscription once per
 `fetch.update_interval` (one hour by default, `interval_seconds` is `0` when
 it is `off`; see [config.md](config.md)); `ok` and `failed` count those
 refreshes, `last_at` is the time of the latest one (RFC3339 UTC) and
 `last_error` its failure (`CODE: message`, never a URL), empty after a success.
 A fetched list that would leave an account without nodes is rejected and the
-old list stays. `reload.count` is how many times the daemon applied changed
+old list stays. `reload.count` is how many times the angel applied changed
 files by restarting its listener (accounts, passwords, nodes, port), `last_at`
 the latest such restart, and `last_error` why the newest files are not applied
 (an invalid `config.ktav`, a route without nodes); it is empty when the files
@@ -727,7 +727,7 @@ site-to-node bindings held now, how many times a binding moved to another node
 because its node was down, how many second dial attempts (to the same node)
 were started for a slow handshake and how many dials such an attempt won.
 `restored` is how many persisted bindings were loaded when the core last
-started (a daemon start or a reload); the daemon stores the bindings in the
+started (an angel start or a reload); the angel stores the bindings in the
 statistics database by node label every 30 seconds and once more before it
 closes, so a site keeps its exit node across restarts and reloads. `saved_at`
 is the time of the last successful write (RFC3339 UTC), omitted until one
@@ -769,12 +769,12 @@ provider and exit-country lists stay in `accounts`.
 
 `netivri status --watch [--interval {DURATION}]` keeps running and prints one
 frame per tick (default every 2s, `--interval` between 1s and 60s, Go
-durations) until it is interrupted or the daemon stops. Each frame is the
+durations) until it is interrupted or the angel stops. Each frame is the
 activity view: one row per account, sorted by login, with the state
 (`active`/`idle`), the open connections, upload and download per second
 (the delta of the byte counters of two polls over the real elapsed time,
 `B/s`, `KiB/s` or `MiB/s`; blank on the first frame and `0` after a negative
-delta, which a daemon restart or closed connections causes), the busiest
+delta, which an angel restart or closed connections causes), the busiest
 nodes (at most 3, then `+N more`) and the countries. A header line carries
 the listen address, the uptime and `active_accounts`.
 
@@ -796,19 +796,19 @@ non-ASCII rune as `?` (`??? 1`); `--json` keeps the original name.
 
 `up_bytes_per_s` and `down_bytes_per_s` are `null` on the first frame.
 
-At the start a not-running daemon is the usual `DAEMON_NOT_RUNNING` error,
-exit 4. If the daemon stops while watching, the watch prints a final line
-(`daemon stopped`, or `{"stopped": true, "time": ...}` with `--json`) and
-ends with `DAEMON_NOT_RUNNING`, exit 4. "Stopped" means the state file is
+At the start a not-running angel is the usual `ANGEL_NOT_RUNNING` error,
+exit 4. If the angel stops while watching, the watch prints a final line
+(`angel stopped`, or `{"stopped": true, "time": ...}` with `--json`) and
+ends with `ANGEL_NOT_RUNNING`, exit 4. "Stopped" means the state file is
 gone, the control channel answers for another pid, or nothing listens on
-the control port (connection refused: a crashed daemon leaves its state
+the control port (connection refused: a crashed angel leaves its state
 file behind). Timeouts and every other error are only a warning line and
 are retried on the next tick, and three consecutive failures end the watch
 with `INTERNAL`, exit 1. The same retry rule covers a failed first poll;
 the watch never removes the state file. `--watch` cannot be combined with
 `--full`, and `--interval` without `--watch` is a usage error.
 
-`warm` is present while the daemon keeps country nodes warm (an account has an
+`warm` is present while the angel keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,
 every 45 seconds (a node that stays down is probed less and less often:
 45 s, 90 s, 3 m, then every 10 minutes, until a probe or a real dial
@@ -825,10 +825,10 @@ and `stats`; `provider` and `country` name the node's subscription and exit
 country; `node_name` is the display name the subscription gives the node,
 cleaned of control characters and capped at 64 characters, and is omitted when
 the node has none. An instance without account routes has no labels, and
-`label` is omitted on every node. The pre-dial pool is off in the daemon (`pool_*` stay `0`).
+`label` is omitted on every node. The pre-dial pool is off in the angel (`pool_*` stay `0`).
 The probes request `http://www.gstatic.com/generate_204` through each node.
 
-When no daemon is running: error `DAEMON_NOT_RUNNING` on stderr, exit 4
+When no angel is running: error `ANGEL_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control
 answer) counts as not running and is removed.
 
@@ -851,20 +851,20 @@ to the fields above):
 
 ### `down`
 
-Stops the daemon through its control channel and waits until it is gone.
+Stops the angel through its control channel and waits until it is gone.
 Idempotent.
 
 ```json
 {"schema_version": 1, "ok": true,
- "data": {"daemon": "stopped", "was_running": true, "pid": 12345}}
+ "data": {"angel": "stopped", "was_running": true, "pid": 12345}}
 ```
 
-With nothing running: `{"daemon": "stopped", "was_running": false}`, exit 0.
-`pid` is present only when something was running. If the daemon does not
-stop within 15 seconds: `DAEMON_STOP_TIMEOUT` (exit 1). `down` never kills
+With nothing running: `{"angel": "stopped", "was_running": false}`, exit 0.
+`pid` is present only when something was running. If the angel does not
+stop within 15 seconds: `ANGEL_STOP_TIMEOUT` (exit 1). `down` never kills
 by pid.
 
-### `node list` (after daemon integration)
+### `node list` (after angel integration)
 
 ```json
 {"nodes": [
@@ -874,7 +874,7 @@ by pid.
 ]}
 ```
 
-Until the daemon serves health checks, `node list` prints the stored-node
+Until the angel serves health checks, `node list` prints the stored-node
 shape documented below.
 
 `country_source` is one of `exit` (checked through the node), `geoip` (GeoIP
@@ -937,7 +937,7 @@ netivri sub update [{SUBSCRIPTION} | --all]
 
 Re-fetches and re-stores; with a name only that subscription, with
 `--all` or no argument all subscriptions in config order. A failed
-subscription keeps its old stored snapshot. A running daemon does the same by
+subscription keeps its old stored snapshot. A running angel does the same by
 itself once per `fetch.update_interval` and applies the stored result to its
 routes within a few seconds, so this command is for refreshing on demand.
 
@@ -997,9 +997,9 @@ Raw proxy mappings (credentials) are never printed.
 | 1 | Unexpected internal error |
 | 2 | Invalid arguments or usage |
 | 3 | Network error (subscription fetch, node test) |
-| 4 | Daemon not running (for commands that need it) |
+| 4 | Angel not running (for commands that need it) |
 | 5 | Not found (subscription, node, country with no nodes) |
-| 6 | Conflict (port in use, daemon already running with other settings) |
+| 6 | Conflict (port in use, angel already running with other settings) |
 | 7 | `doctor`: at least one check failed (the document on stdout says which) |
 
 ## Error codes
@@ -1031,13 +1031,13 @@ Raw proxy mappings (credentials) are never printed.
 | `NO_ROUTE` | 5 | `diag dial`: the account has no route (neither provider nor exit country) |
 | `DIAG_FAILED` | 3 | `diag dial`: the run could not proceed (for example an unusable node mapping) |
 | `NODE_UNREACHABLE` | 3 | Test through the node failed |
-| `DAEMON_NOT_RUNNING` | 4 | Run `netivri up` first |
+| `ANGEL_NOT_RUNNING` | 4 | Run `netivri up` first |
 | `STATS_UNAVAILABLE` | 5 | `stats`: no statistics database exists yet (nothing was recorded) |
-| `LOG_NOT_FOUND` | 5 | `logs`: the daemon has not written a log yet |
-| `ALREADY_RUNNING` | 6 | A daemon is already running; `up` requested conflicting settings (or was `--foreground`) |
-| `DAEMON_START_FAILED` | 1 | The daemon child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
-| `DAEMON_START_TIMEOUT` | 1 | The daemon did not report startup within 15 s |
-| `DAEMON_STOP_TIMEOUT` | 1 | The daemon did not stop within 15 s after `down` |
+| `LOG_NOT_FOUND` | 5 | `logs`: the angel has not written a log yet |
+| `ALREADY_RUNNING` | 6 | An angel is already running; `up` requested conflicting settings (or was `--foreground`) |
+| `ANGEL_START_FAILED` | 1 | The angel child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
+| `ANGEL_START_TIMEOUT` | 1 | The angel did not report startup within 15 s |
+| `ANGEL_STOP_TIMEOUT` | 1 | The angel did not stop within 15 s after `down` |
 | `PORT_IN_USE` | 6 | Listen port is taken |
 | `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |
 | `INTERNAL` | 1 | Bug; details in `netivri logs` |
@@ -1045,14 +1045,14 @@ Raw proxy mappings (credentials) are never printed.
 ## Idempotency
 
 - `sub add` with an existing URL returns the existing subscription, exit 0.
-- `up` when the daemon already runs is idempotent: it reports the running
+- `up` when the angel already runs is idempotent: it reports the running
   instance with `already_running: true`, exit 0. Explicit `--port` / `--bind`
   flags that differ from the running listen address are `ALREADY_RUNNING`
   (exit 6); `--port 0` explicitly means "don't care". `up --foreground` is
   not idempotent and always fails with `ALREADY_RUNNING` (exit 6) when a
-  daemon runs.
+  angel runs.
 - `down` when not running: exit 0.
-- `status` when not running: `DAEMON_NOT_RUNNING`, exit 4.
+- `status` when not running: `ANGEL_NOT_RUNNING`, exit 4.
 - `use` with the current selection: exit 0.
 - `account add` with the same login, provider and country, repeated `account
   set-country` with the same country and repeated `account set-provider` with
@@ -1075,7 +1075,7 @@ Raw proxy mappings (credentials) are never printed.
   port) guarded by a bearer token that lives only in
   `{HOME}/run/netivri.json` (mode `0600` on Unix). Every request must carry
   the token; the Host header must match the listener. No remote control API.
-- The daemon log (`{HOME}/run/netivri.log`, read with `netivri logs`) records
+- The angel log (`{HOME}/run/netivri.log`, read with `netivri logs`) records
   lifecycle and housekeeping lines only: start and stop with pid, listen
   address and reason, applied and rejected configuration changes, subscription
   refreshes. No tokens, no credentials, no subscription URLs.
@@ -1086,4 +1086,4 @@ Raw proxy mappings (credentials) are never printed.
   They stay in `{HOME}/stats.db` only, expire with the binding lifetime
   (24 hours idle; stale rows are deleted on every write and load) and are
   never printed or logged: `status` reports only counts and times,
-  `netivri stats` has no binding view, and the daemon log names no sites.
+  `netivri stats` has no binding view, and the angel log names no sites.

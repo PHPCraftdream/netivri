@@ -1,7 +1,7 @@
-// Package daemon implements netivri's background daemon: the state file
+// Package angel implements netivri's background angel: the state file
 // under <home>/run, the loopback control server and client, the spawn
-// handshake, and the detached child process. See docs/design/daemon.md.
-package daemon
+// handshake, and the detached child process. See docs/design/angel.md.
+package angel
 
 import (
 	"bytes"
@@ -19,10 +19,10 @@ import (
 // cannot exhaust memory.
 const maxStateSize = 64 << 10
 
-// ErrNotRunning reports that no usable daemon state exists: the state
-// file is missing, the daemon did not answer, or the answered pid did
+// ErrNotRunning reports that no usable angel state exists: the state
+// file is missing, the angel did not answer, or the answered pid did
 // not match the state file.
-var ErrNotRunning = errors.New("daemon not running")
+var ErrNotRunning = errors.New("angel not running")
 
 // State is the content of run/netivri.json. Token is a local secret and
 // must never appear in any output or log.
@@ -45,7 +45,7 @@ func RunDir(home string) string { return filepath.Join(home, "run") }
 // StatePath returns the state file path inside a home directory.
 func StatePath(home string) string { return filepath.Join(RunDir(home), "netivri.json") }
 
-// LogPath returns the daemon log file path inside a home directory.
+// LogPath returns the angel log file path inside a home directory.
 func LogPath(home string) string { return filepath.Join(RunDir(home), "netivri.log") }
 
 // WriteState writes st to the state file atomically (mode 0600, run dir
@@ -111,7 +111,7 @@ func readCapped(path string, max int64) ([]byte, error) {
 }
 
 // RemoveStateIf removes the state file only while it still records exactly
-// pid and token, so an exiting daemon never deletes a successor's state.
+// pid and token, so an exiting angel never deletes a successor's state.
 func RemoveStateIf(home string, pid int, token string) {
 	st, err := ReadState(home)
 	if err != nil || st.PID != pid || st.Token != token {

@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -348,7 +348,7 @@ func TestE2EAccountsMissingCountryFailsClosed(t *testing.T) {
 		t.Errorf("error code = %q, want NO_NODES_FOR_COUNTRY", got)
 	}
 	assertNoSecrets(t, "", stderr, accountsDEPass, hash)
-	if _, err := os.Stat(daemon.StatePath(home)); !os.IsNotExist(err) {
-		t.Fatalf("daemon state path exists or could not be checked: %v", err)
+	if _, err := os.Stat(angel.StatePath(home)); !os.IsNotExist(err) {
+		t.Fatalf("angel state path exists or could not be checked: %v", err)
 	}
 }

@@ -66,9 +66,9 @@ var helpExitCodes = []helpExit{
 	{cli.ExitInternal, "unexpected internal error"},
 	{cli.ExitUsage, "invalid arguments or usage"},
 	{cli.ExitNetwork, "network error (fetching a subscription, diagnosing a node)"},
-	{cli.ExitNoDaemon, "the daemon is not running (for commands that need it)"},
+	{cli.ExitNoAngel, "the angel is not running (for commands that need it)"},
 	{cli.ExitNotFound, "not found (subscription, account, node, nodes for a country)"},
-	{cli.ExitConflict, "conflict (port in use, daemon already running with other settings)"},
+	{cli.ExitConflict, "conflict (port in use, angel already running with other settings)"},
 	{cli.ExitCheckFailed, "doctor: at least one check failed (the document on stdout says which)"},
 }
 
@@ -83,11 +83,11 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "up",
 		Group:   groupService,
-		Summary: "Start the proxy (a background daemon by default)",
+		Summary: "Start the proxy (a background angel by default)",
 		Usage:   []string{"netivri up [--port {N}] [--bind {ADDR}] [--foreground] [--home {DIR}]"},
 		Description: "Starts the local proxy: SOCKS5, SOCKS4/4a and HTTP (plain requests and CONNECT) on one TCP port, " +
 			"told apart by the first byte of each connection. Without --foreground it starts a detached background " +
-			"daemon and returns at once; running it again is safe and reports the running instance.\n\n" +
+			"angel and returns at once; running it again is safe and reports the running instance.\n\n" +
 			"Settings come from config.ktav in the state directory; --port and --bind override listen.port and " +
 			"listen.bind. An account with a provider or an exit country is routed only through matching nodes, " +
 			"never directly. UDP is not relayed.\n\n" +
@@ -97,7 +97,7 @@ var helpTopics = []helpTopic{
 		Flags: []helpFlag{
 			{"--port {N}", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
 			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication (an account, or auth.login and auth.password in config.ktav; an init password also needs auth.allow_init_remote: true), otherwise up fails with AUTH_REQUIRED."},
-			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when a daemon is running."},
+			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when an angel is running."},
 			{"--home {DIR}", "State directory (see the global flags in 'netivri help')."},
 		},
 		Examples: []helpExample{
@@ -106,38 +106,38 @@ var helpTopics = []helpTopic{
 			{"Run in the foreground, for example under a service manager", "netivri up --foreground"},
 			{"Keep a separate profile with its own config, subscriptions and statistics", "netivri up --home ./work-profile"},
 			{"Listen on every interface (needs an account or auth.login and auth.password in config.ktav)", "netivri up --bind 0.0.0.0"},
-			{"Check that the daemon applied your latest account and subscription changes (see reload)", "netivri status"},
+			{"Check that the angel applied your latest account and subscription changes (see reload)", "netivri status"},
 		},
 		Errors: []helpError{
-			herr("ALREADY_RUNNING", cli.ExitConflict, "a daemon is running and --port or --bind differ, or --foreground was given"),
+			herr("ALREADY_RUNNING", cli.ExitConflict, "an angel is running and --port or --bind differ, or --foreground was given"),
 			herr("PORT_IN_USE", cli.ExitConflict, "the listen port is taken"),
 			herr("AUTH_REQUIRED", cli.ExitUsage, "non-loopback --bind without proxy authentication"),
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account's provider or country has no stored nodes; run 'netivri sub update'"),
-			herr("DAEMON_START_FAILED", cli.ExitInternal, "the daemon failed to start; see run/netivri.log in the state directory"),
+			herr("ANGEL_START_FAILED", cli.ExitInternal, "the angel failed to start; see run/netivri.log in the state directory"),
 		},
 		SeeAlso: []string{"down", "status", "account add"},
 	},
 	{
 		Name:    "down",
 		Group:   groupService,
-		Summary: "Stop the daemon",
+		Summary: "Stop the angel",
 		Usage:   []string{"netivri down [--home {DIR}]"},
-		Description: "Stops the daemon through its control channel and waits until it is gone, up to 15 seconds. " +
+		Description: "Stops the angel through its control channel and waits until it is gone, up to 15 seconds. " +
 			"It is safe to repeat: with nothing running it succeeds and reports was_running false. It never kills a " +
 			"process by pid.",
 		Examples: []helpExample{
-			{"Stop the daemon", "netivri down"},
-			{"Stop the daemon of another profile", "netivri down --home ./work-profile"},
+			{"Stop the angel", "netivri down"},
+			{"Stop the angel of another profile", "netivri down --home ./work-profile"},
 		},
-		Errors:  []helpError{herr("DAEMON_STOP_TIMEOUT", cli.ExitInternal, "the daemon did not stop within 15 seconds")},
+		Errors:  []helpError{herr("ANGEL_STOP_TIMEOUT", cli.ExitInternal, "the angel did not stop within 15 seconds")},
 		SeeAlso: []string{"up", "status"},
 	},
 	{
 		Name:    "status",
 		Group:   groupService,
-		Summary: "Show the running daemon",
+		Summary: "Show the running angel",
 		Usage:   []string{"netivri status [--home {DIR}] [--full] [--watch] [--interval {DURATION}]"},
-		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, the " +
+		Description: "Reports the live state of the angel: listen address and protocols, authentication mode, the " +
 			"allowed_clients rule, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
 			"probes, the statistics store and the sticky-routing counters.\n\n" +
@@ -145,24 +145,24 @@ var helpTopics = []helpTopic{
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
 			"'active_accounts' counts the active ones.\n\n" +
-			"It exits with 4 when no daemon is running, so it works as a check in scripts. By default the answer is " +
+			"It exits with 4 when no angel is running, so it works as a check in scripts. By default the answer is " +
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
 			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
-			"1s and 60s). With --json it prints one JSON object per line instead. It ends with 4 when the daemon " +
+			"1s and 60s). With --json it prints one JSON object per line instead. It ends with 4 when the angel " +
 			"stops; --watch cannot be combined with --full.",
 		Flags: []helpFlag{
 			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it."},
-			{"--watch", "Keep running and print who is active, one frame per --interval, until interrupted or the daemon stops (exit 4)."},
-			{"--interval {DURATION}", "How often --watch polls the daemon (default 2s, at least 1s, at most 60s). Without --watch it is a usage error."},
+			{"--watch", "Keep running and print who is active, one frame per --interval, until interrupted or the angel stops (exit 4)."},
+			{"--interval {DURATION}", "How often --watch polls the angel (default 2s, at least 1s, at most 60s). Without --watch it is a usage error."},
 		},
 		Examples: []helpExample{
-			{"Show the daemon and who is using it (see activity)", "netivri status"},
+			{"Show the angel and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
 			{"Watch who is active, refreshed every two seconds", "netivri status --watch"},
 			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
-			{"Start the daemon only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
+			{"Start the angel only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
 		},
-		Errors:  []helpError{herr("DAEMON_NOT_RUNNING", cli.ExitNoDaemon, "nothing is running; start it with 'netivri up'")},
+		Errors:  []helpError{herr("ANGEL_NOT_RUNNING", cli.ExitNoAngel, "nothing is running; start it with 'netivri up'")},
 		SeeAlso: []string{"up", "stats"},
 	},
 
@@ -228,7 +228,7 @@ var helpTopics = []helpTopic{
 			"with --all or no argument every one, in config order. Each result also reports the quota and expiry the " +
 			"provider sent in its subscription-userinfo header (null without one). A subscription that fails keeps its " +
 			"old nodes. When any fails, the results are still printed and the command ends with SUB_UPDATE_FAILED.\n\n" +
-			"A running daemon applies the new nodes to its accounts within a few seconds, and re-fetches every " +
+			"A running angel applies the new nodes to its accounts within a few seconds, and re-fetches every " +
 			"subscription by itself once an hour (fetch.update_interval in config.ktav), so this command is for " +
 			"refreshing on demand.",
 		Flags: []helpFlag{{"--all", "Update every subscription (the default without a {SUBSCRIPTION})."}},
@@ -329,7 +329,7 @@ var helpTopics = []helpTopic{
 			"quote it in shells that expand globs.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
-			"A running daemon applies account changes by itself within a few seconds. Its listener restarts on the " +
+			"A running angel applies account changes by itself within a few seconds. Its listener restarts on the " +
 			"same port, so open connections end; 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
 			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
@@ -347,7 +347,7 @@ var helpTopics = []helpTopic{
 			"Repeating the command with the same providers and countries, in the same order, succeeds and reports " +
 			"existing true; any difference for an existing login is ACCOUNT_EXISTS (use set-country or " +
 			"set-provider to change it). " +
-			"A running daemon applies the new account within a few seconds.",
+			"A running angel applies the new account within a few seconds.",
 		Flags: []helpFlag{
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
@@ -384,7 +384,7 @@ var helpTopics = []helpTopic{
 			"--password {PASSWORD} gives the new account a password of its own (1 to 1024 bytes, stored as an " +
 			"argon2id hash); --password init leaves it to the first client that connects. --provider and --country " +
 			"replace the copied route, each as in 'account add', and the new route must have stored nodes, otherwise " +
-			"nothing is created. {SOURCE} is never changed. A running daemon picks the new account up within a few " +
+			"nothing is created. {SOURCE} is never changed. A running angel picks the new account up within a few " +
 			"seconds.",
 		Flags: []helpFlag{
 			{"--password {PASSWORD}", "A new password for {ACCOUNT}. Default: copy the password of {SOURCE}."},
@@ -439,15 +439,15 @@ var helpTopics = []helpTopic{
 			"list every provider shares one tier per country.\n\n" +
 			"Per node the command shows its label ({PROVIDER}/{NODE_ID}), its display name when the subscription " +
 			"gives one, provider, country and tier index and, " +
-			"when the daemon runs, live data: alive or down with the last probe delay, and the account's live " +
+			"when the angel runs, live data: alive or down with the last probe delay, and the account's live " +
 			"connections through the node. A (country, provider) pair without nodes is listed as a skipped tier " +
-			"with a reason and does not consume a tier index, so the indexes match the order the daemon actually " +
+			"with a reason and does not consume a tier index, so the indexes match the order the angel actually " +
 			"tries.\n\n" +
-			"Without a running daemon the static part is still shown and live is false (the live fields are null). " +
+			"Without a running angel the static part is still shown and live is false (the live fields are null). " +
 			"Passwords, hashes and subscription URLs are never shown.",
 		Examples: []helpExample{
 			{"Show alice and her route tiers", "netivri account show alice"},
-			{"While the daemon runs: alive, delay and live connections per node", "netivri account show alice"},
+			{"While the angel runs: alive, delay and live connections per node", "netivri account show alice"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login"),
@@ -472,7 +472,7 @@ var helpTopics = []helpTopic{
 			"all subscriptions when it has none): when it would be left without a node in the new country, nothing is " +
 			"changed for any account and the command ends with NO_NODES_FOR_COUNTRY, naming the account. See what a " +
 			"subscription offers with 'netivri sub countries'. An account whose value does not change is not checked. " +
-			"A running daemon applies the change within a few seconds.\n\n" +
+			"A running angel applies the change within a few seconds.\n\n" +
 			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
 		Flags: []helpFlag{
 			{"--all", "Change every account instead of naming them."},
@@ -512,7 +512,7 @@ var helpTopics = []helpTopic{
 			"Before anything is written, every account is checked against the stored nodes of the new subscription and " +
 			"its own exit country: when it would be left without a node, nothing is changed for any account and the " +
 			"command ends with NO_NODES_FOR_COUNTRY, naming the account. Refresh the lists with 'netivri sub update'. " +
-			"An account whose value does not change is not checked. A running daemon applies the change within a few " +
+			"An account whose value does not change is not checked. A running angel applies the change within a few " +
 			"seconds.\n\n" +
 			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
 		Flags: []helpFlag{
@@ -550,7 +550,7 @@ var helpTopics = []helpTopic{
 			"and --all means every account.\n\n" +
 			"The account rule only narrows what the global listen.allowed_clients already allows; a client allowed by " +
 			"neither is refused before the password is verified, so an 'init' account cannot be claimed from a " +
-			"disallowed address. A running daemon applies the change within a few seconds.\n\n" +
+			"disallowed address. A running angel applies the change within a few seconds.\n\n" +
 			"With one login the result is {\"account\": ...}; with several logins or --all it is {\"accounts\": [...]}.",
 		Flags: []helpFlag{
 			{"--all", "Change every account instead of naming them."},
@@ -573,7 +573,7 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Remove an account",
 		Usage:   []string{"netivri account rm {ACCOUNT}"},
-		Description: "Removes the account. It is not idempotent. A running daemon applies the removal within a few " +
+		Description: "Removes the account. It is not idempotent. A running angel applies the removal within a few " +
 			"seconds and ends the account's open connections.",
 		Examples: []helpExample{{"Remove alice", "netivri account rm alice"}},
 		Errors:   []helpError{herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login")},
@@ -587,12 +587,12 @@ var helpTopics = []helpTopic{
 		Usage: []string{
 			"netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--account {ACCOUNT}] [--since {DURATION}] [--by {node|country|provider|account}]",
 		},
-		Description: "Shows what the daemon recorded about the exit nodes: the health and delay from the background " +
+		Description: "Shows what the angel recorded about the exit nodes: the health and delay from the background " +
 			"probes, the dial time and outcome of real connections, and the throughput of real traffic. It reads " +
-			"{DIR}/stats.db read-only, so it works while the daemon runs and after it stopped. Statistics exist " +
+			"{DIR}/stats.db read-only, so it works while the angel runs and after it stopped. Statistics exist " +
 			"only for accounts that have a provider or an exit country. The per-node view also shows the display " +
 			"name of each node, when the subscription gives one; grouped views do not.\n\n" +
-			"The daemon also records per account which nodes it used, the dial outcomes and the traffic " +
+			"The angel also records per account which nodes it used, the dial outcomes and the traffic " +
 			"(bytes up and down). With --by account the result has one row per login; with --account the " +
 			"node, country and provider rows come from that login's own samples (dials and bytes only).",
 		Flags: []helpFlag{
@@ -621,17 +621,17 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "logs",
 		Group:   groupDiag,
-		Summary: "Show the daemon log",
+		Summary: "Show the angel log",
 		Usage:   []string{"netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}] [--home {DIR}]"},
-		Description: "Shows what the daemon wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
+		Description: "Shows what the angel wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
 			"configuration changes, subscription refreshes, storage problems and route nodes going down or coming back, " +
 			"each with a time and a level. It " +
-			"reads the file, so it works while the daemon runs and after it stopped or failed to start. Passwords, " +
+			"reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
 			"tokens and subscription URLs are never logged.\n\n" +
 			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +
 			"running and prints new entries as lines until Ctrl+C; with --json each line is one JSON object (NDJSON).",
 		Flags: []helpFlag{
-			{"--follow", "Keep running and print new entries. Waits for the log when the daemon has not started yet."},
+			{"--follow", "Keep running and print new entries. Waits for the log when the angel has not started yet."},
 			{"--level {LEVEL}", "Only this level and above: debug, info, warn or error. Default: all."},
 			{"--since {DURATION}", "Only the last period: 90m, 24h, 7d and so on, at most 365d. Default: no limit."},
 			{"--tail {N}", "At most the newest N entries (default 100, 0 for all). With --follow it limits the backlog shown first."},
@@ -639,11 +639,11 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"The newest entries", "netivri logs"},
 			{"Problems of the last day", "netivri logs --level warn --since 24h"},
-			{"Watch the daemon live", "netivri logs --follow"},
+			{"Watch the angel live", "netivri logs --follow"},
 			{"Stream to a script, one JSON object per line", "netivri logs --follow --json"},
 		},
 		Errors: []helpError{
-			herr("LOG_NOT_FOUND", cli.ExitNotFound, "the daemon has not written a log yet"),
+			herr("LOG_NOT_FOUND", cli.ExitNotFound, "the angel has not written a log yet"),
 			herr("USAGE", cli.ExitUsage, "invalid --level, --since or --tail"),
 		},
 		Notes:   []string{"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only."},
@@ -666,7 +666,7 @@ var helpTopics = []helpTopic{
 			"(dns, tcp, tls for nodes that expose it, and first_byte; p50, p90 and max) and how many attempts failed. " +
 			"Then it tests whether a prepared connection survives sitting idle for 0.5 s, 1 s, 2 s and so on, and " +
 			"suggests a pool TTL. Use it to see whether DNS, the node or the handshake is the slow part.\n\n" +
-			"Give exactly one of --account and --node. It runs in its own process, without the daemon, and sends a " +
+			"Give exactly one of --account and --node. It runs in its own process, without the angel, and sends a " +
 			"few small HTTP requests through each node to the probe URL. The output contains node labels only, " +
 			"never addresses.",
 		Flags: []helpFlag{
@@ -702,18 +702,18 @@ var helpTopics = []helpTopic{
 			"name, a status (ok, warn or fail) and a detail, plus a summary count. When a check " +
 			"failed, the error envelope goes to stderr and the exit code is 7, so a script can run " +
 			"'netivri doctor' and branch on the exit code alone.\n\n" +
-			"The checks: config (config.ktav loads and is valid), daemon (a daemon runs for this " +
-			"state directory), listen (the address the running daemon reports, or, when nothing " +
+			"The checks: config (config.ktav loads and is valid), angel (an angel runs for this " +
+			"state directory), listen (the address the running angel reports, or, when nothing " +
 			"runs, whether the configured port is free), subscriptions (every configured " +
 			"subscription has a stored snapshot no older than twice fetch.update_interval, skipped " +
 			"when the interval is off, and every account names configured subscriptions only), one " +
-			"check per account (its route has stored nodes and, with a running daemon, a live node " +
-			"in the first tier that has nodes; without a daemon the stored nodes are counted and " +
+			"check per account (its route has stored nodes and, with a running angel, a live node " +
+			"in the first tier that has nodes; without an angel the stored nodes are counted and " +
 			"the liveness part is a warn) and log (no WARN or ERROR entries in the last hour of " +
-			"the daemon log; the log is read even when the daemon is down, and a missing log file " +
+			"the angel log; the log is read even when the angel is down, and a missing log file " +
 			"is fine).\n\n" +
 			"A check that cannot run is a warn with the reason, never a failure of the whole " +
-			"command. No check contacts anything but the local daemon and the local port; " +
+			"command. No check contacts anything but the local angel and the local port; " +
 			"subscription URLs, passwords and hashes are never printed.",
 		Examples: []helpExample{
 			{"Check the whole setup; the exit code says whether something failed", "netivri doctor"},
@@ -766,7 +766,7 @@ var helpTopics = []helpTopic{
 			"Windows, ~/.config/netivri on Linux, ~/Library/Application Support/netivri on macOS). A missing file " +
 			"is not an error: safe defaults apply (proxy on 127.0.0.1:7890, every client address allowed, no " +
 			"authentication, manual selection). Every command that changes settings writes this file; a running " +
-			"daemon notices and applies the change by itself within a few seconds.\n\n" +
+			"angel notices and applies the change by itself within a few seconds.\n\n" +
 			"The file is Ktav, a plain-text key/value format, and safe to edit by hand. But netivri rewrites the " +
 			"whole file whenever it persists a change, so hand-written comments are not preserved; keep notes in " +
 			"a separate file.\n\n" +
@@ -776,7 +776,7 @@ var helpTopics = []helpTopic{
 			"either the placeholder init or an argon2id hash (it starts with $argon2id$); a plain password is " +
 			"rejected. auth.allow_init_remote (default false) permits the init placeholder on a non-loopback bind. " +
 			"fetch.proxy is the proxy for all outgoing subscription fetches, a socks5://, socks5h://, http:// or " +
-			"https:// URL with a host. fetch.update_interval is how often the daemon re-fetches every " +
+			"https:// URL with a host. fetch.update_interval is how often the angel re-fetches every " +
 			"subscription: a duration from 5m to 168h, or off; the default is 1h.\n\n" +
 			"subscriptions is an array of provider subscriptions, each with subscriptions.name, subscriptions.url " +
 			"(a secret, never printed) and an optional subscriptions.via, a per-subscription fetch proxy with the " +
@@ -798,7 +798,7 @@ var helpTopics = []helpTopic{
 			"absent listen.allowed_clients means *; a value that is present but empty, including the raw-string " +
 			"spelling listen.allowed_clients::, is a CONFIG_INVALID error naming the key.\n\n" +
 			"The init placeholder means the first client that authenticates with that login sets the password: " +
-			"the daemon stores its argon2id hash in the file. init is accepted only when listen.bind is a " +
+			"the angel stores its argon2id hash in the file. init is accepted only when listen.bind is a " +
 			"loopback address, unless auth.allow_init_remote is true, and a client from an address the " +
 			"allowed_clients rules refuse can never claim it.",
 		Examples: []helpExample{
@@ -845,20 +845,20 @@ var helpTopics = []helpTopic{
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
-			"The binding between an account and a site is sticky: once the daemon picked an exit node for the " +
+			"The binding between an account and a site is sticky: once the angel picked an exit node for the " +
 			"(login, site) pair it keeps that node for later connections to the same site while the node is up, " +
 			"even after a better tier recovers. The bindings survive restarts and configuration reloads: the " +
-			"daemon stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
+			"angel stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
 			"describes the affinity counters.\n\n" +
-			"The daemon probes the route nodes in the background. A node is marked down after 2 consecutive " +
+			"The angel probes the route nodes in the background. A node is marked down after 2 consecutive " +
 			"failed probes or 3 consecutive failed dials. A single failed dial is returned to the client as an " +
 			"error and the client retries; the connection is not moved on the spot, unless the node just went " +
-			"down with that failure, in which case the daemon re-binds and retries once on the node it now " +
+			"down with that failure, in which case the angel re-binds and retries once on the node it now " +
 			"selects. Once a node is down, new connections skip it and existing bindings to it re-bind to the " +
 			"next up node or tier; the node comes back as soon as a probe or a dial succeeds. A down node is " +
 			"probed with growing pauses: the probe interval doubles twice (base, 2x, 4x) and then caps.\n\n" +
 			"An account is created with the password placeholder init: the first client that authenticates with " +
-			"that login claims it, and the daemon stores the argon2id hash of the password it sent. A client from " +
+			"that login claims it, and the angel stores the argon2id hash of the password it sent. A client from " +
 			"an address the allowed_clients rules refuse is turned away before the password is checked, so a " +
 			"disallowed address can never claim an init password.\n\n" +
 			"The client-address rules cascade: the global listen.allowed_clients is checked first, then the " +
@@ -885,7 +885,7 @@ var helpTopics = []helpTopic{
 			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
 		},
 		Notes: []string{
-			"status: daemon, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
+			"status: angel, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
 				"provider, exit_country, allowed_clients), route, started_at, uptime_seconds, version, " +
 				"active_accounts, activity[] (login, active, connections, upload_bytes, download_bytes - byte counts -, " +
 				"providers[], countries[], nodes[] with node, name, provider, country, connections and the byte " +
@@ -915,14 +915,14 @@ var helpTopics = []helpTopic{
 			"doctor: checks[] (name, status - ok, warn or fail - and detail, omitted when empty) plus " +
 				"summary (the ok, warn and fail counts). Exit code 7 when a check failed.",
 			"account show: login, provider, exit_country (the raw configured lists), providers and countries " +
-				"(the parsed lists in priority order, * included), tiers[] and live (true when the daemon " +
+				"(the parsed lists in priority order, * included), tiers[] and live (true when the angel " +
 				"answered). tiers[]: tier (the index; a tier without nodes is marked skipped true, carries a " +
 				"reason and keeps the index it would have had, so it consumes no tier number), country, " +
 				"providers[], nodes[] (label, name - only when the subscription gives a display name -, " +
-				"provider, country, tier, alive, delay_ms, connections). Without the daemon, alive, delay_ms " +
-				"and connections are null. With it, connections is the live connection count when the daemon tracks the " +
+				"provider, country, tier, alive, delay_ms, connections). Without the angel, alive, delay_ms " +
+				"and connections are null. With it, connections is the live connection count when the angel tracks the " +
 				"account (0 for an idle node) and null when it does not track it; alive and delay_ms are null unless " +
-				"the daemon's warm-up list contains the node's label.",
+				"the angel's warm-up list contains the node's label.",
 			"logs: entries[] (time - RFC3339 UTC -, level, message), oldest first. With --follow the output " +
 				"is a stream: log lines, or with --json one object per line (time, level, message).",
 			"sub list: subscriptions[] (name, host - of the URL; the URL itself is never printed -, via_set " +

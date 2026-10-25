@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
@@ -109,21 +109,21 @@ func closeStats(store *stats.Store) {
 }
 
 // statsInfo is the `stats` part of the status answer; nil without a store.
-func statsInfo(store *stats.Store, home string) *daemon.StatsInfo {
+func statsInfo(store *stats.Store, home string) *angel.StatsInfo {
 	if store == nil {
 		return nil
 	}
-	return &daemon.StatsInfo{Path: statsPath(home), Dropped: store.Dropped()}
+	return &angel.StatsInfo{Path: statsPath(home), Dropped: store.Dropped()}
 }
 
 // affinityInfo is the `affinity` part of the status answer; nil when no
 // account has a route.
-func affinityInfo(inst coreInstance, routed bool) *daemon.AffinityInfo {
+func affinityInfo(inst coreInstance, routed bool) *angel.AffinityInfo {
 	if !routed {
 		return nil
 	}
 	s := inst.AffinityStats()
-	return &daemon.AffinityInfo{
+	return &angel.AffinityInfo{
 		Bindings:  s.Bindings,
 		Rebinds:   s.Rebinds,
 		Hedges:    s.Hedges,

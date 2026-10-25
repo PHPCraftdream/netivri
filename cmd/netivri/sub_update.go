@@ -96,7 +96,7 @@ func (a *subApp) updateOne(store *subscription.Store, cfg *config.Config, s conf
 }
 
 // fetchSnapshot fetches and parses one subscription through its proxy. It
-// stores nothing; `sub update` and the daemon's refresh share it.
+// stores nothing; `sub update` and the angel's refresh share it.
 func fetchSnapshot(
 	ctx context.Context,
 	get func(ctx context.Context, rawURL string, o fetch.Options) (*fetch.Result, error),

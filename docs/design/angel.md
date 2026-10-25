@@ -1,4 +1,4 @@
-# Daemon mode and control channel
+# Angel mode and control channel
 
 Design of `netivri up` (background), `netivri down` and `netivri status`.
 
@@ -36,8 +36,8 @@ Under the resolved home:
   `foreground`, `started_at` (RFC3339 UTC), `version`, `auth`,
   `protocols`, `route`. The token is a secret: it never appears on stdout,
   stderr, errors, logs or test output.
-- `run/netivri.log` — daemon log, append-only, `0600`. The detached child's
-  stdout/stderr are redirected here; the daemon's own lines are logged only by
+- `run/netivri.log` — angel log, append-only, `0600`. The detached child's
+  stdout/stderr are redirected here; the angel's own lines are logged only by
   that child (foreground mode has no lifecycle stderr output). A line is
   `<RFC3339 UTC> <LEVEL> <message>` with the level INFO, WARN or ERROR, one
   line per message; `netivri logs` reads it (also the lines of the older
@@ -60,7 +60,7 @@ full-view only (`netivri status --full`) (docs/design/node-stats.md).
 
 ## The handshake
 
-The daemon parent spawns the same executable
+The angel parent spawns the same executable
 (`os.Executable()`) with the user's `up` arguments (verbatim, minus the
 compatibility flags, with `--home` normalized) plus
 `--foreground --handshake {PATH}`. The child:
@@ -83,7 +83,7 @@ stdout/stderr on the log file.
 
 `netivri down` sends `POST /v1/stop`; the 202 response is flushed before the
 once-only shutdown callback runs. It then polls `Probe` (up to 15 s) until
-the state is gone. The daemon stops the proxy listener, closes the tracked
+the state is gone. The angel stops the proxy listener, closes the tracked
 connections, gracefully shuts the control server down with a two-second
 context (forcing Close if shutdown fails), removes its state file only when
 still its own, and logs stop only in detached mode. Foreground mode emits no
@@ -104,11 +104,11 @@ lifecycle stderr output.
   race on the state file (last writer wins). The proxy port itself is the
   real mutex for equal ports. `netivri use`-driven reconfiguration will
   make the state file authoritative.
-- The daemon log is not rotated.
+- The angel log is not rotated.
 - Corrupt-state deletion is best-effort and can race an atomic successor
   replacement between the read and remove; callers cannot eliminate this
   pathname TOCTOU without stronger filesystem coordination.
-- On Windows the daemon receives no signals: it stops only via
+- On Windows the angel receives no signals: it stops only via
   `netivri down` (or process kill).
 - The foreground `--handshake` flag is internal and not part of the CLI
   contract (docs/cli.md).

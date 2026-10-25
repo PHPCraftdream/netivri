@@ -12,15 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
-func daemonTestState() daemon.State {
-	return daemon.State{
+func angelTestState() angel.State {
+	return angel.State{
 		PID:        111,
 		Listen:     "127.0.0.1:7890",
 		Control:    "127.0.0.1:54321",
@@ -32,24 +32,24 @@ func daemonTestState() daemon.State {
 	}
 }
 
-// stubDaemons swaps the daemon seams; restore is registered as cleanup.
-func stubDaemons(t *testing.T, probe func(context.Context, string) (daemon.State, error), spawn func(context.Context, daemon.SpawnOptions) (daemon.State, error)) *[]daemon.SpawnOptions {
+// stubAngels swaps the angel seams; restore is registered as cleanup.
+func stubAngels(t *testing.T, probe func(context.Context, string) (angel.State, error), spawn func(context.Context, angel.SpawnOptions) (angel.State, error)) *[]angel.SpawnOptions {
 	t.Helper()
-	oldProbe, oldLive, oldSpawn := daemonProbe, daemonProbeLive, daemonSpawn
-	daemonProbe, daemonProbeLive, daemonSpawn = probe, func(ctx context.Context, home string) (daemon.State, daemon.Status, error) {
+	oldProbe, oldLive, oldSpawn := angelProbe, angelProbeLive, angelSpawn
+	angelProbe, angelProbeLive, angelSpawn = probe, func(ctx context.Context, home string) (angel.State, angel.Status, error) {
 		x, err := probe(ctx, home)
-		return x, daemon.Status{Daemon: "running", PID: x.PID, Listen: x.Listen, Auth: x.Auth, Foreground: x.Foreground, Protocols: x.Protocols, Route: x.Route, StartedAt: x.StartedAt, Version: x.Version}, err
+		return x, angel.Status{Angel: "running", PID: x.PID, Listen: x.Listen, Auth: x.Auth, Foreground: x.Foreground, Protocols: x.Protocols, Route: x.Route, StartedAt: x.StartedAt, Version: x.Version}, err
 	}, spawn
-	t.Cleanup(func() { daemonProbe, daemonProbeLive, daemonSpawn = oldProbe, oldLive, oldSpawn })
-	return &[]daemon.SpawnOptions{}
+	t.Cleanup(func() { angelProbe, angelProbeLive, angelSpawn = oldProbe, oldLive, oldSpawn })
+	return &[]angel.SpawnOptions{}
 }
 
-func probeRunning(st daemon.State) func(context.Context, string) (daemon.State, error) {
-	return func(context.Context, string) (daemon.State, error) { return st, nil }
+func probeRunning(st angel.State) func(context.Context, string) (angel.State, error) {
+	return func(context.Context, string) (angel.State, error) { return st, nil }
 }
 
-func probeNotRunning(context.Context, string) (daemon.State, error) {
-	return daemon.State{}, daemon.ErrNotRunning
+func probeNotRunning(context.Context, string) (angel.State, error) {
+	return angel.State{}, angel.ErrNotRunning
 }
 
 func decodeUpData(t *testing.T, out bytes.Buffer) (map[string]any, bool) {
@@ -64,12 +64,12 @@ func decodeUpData(t *testing.T, out bytes.Buffer) (map[string]any, bool) {
 	return env.Data, env.OK
 }
 
-func TestRunUpDaemonAlreadyRunningIdentical(t *testing.T) {
-	st := daemonTestState()
-	var spawns []daemon.SpawnOptions
-	_ = stubDaemons(t, probeRunning(st), func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
-		spawns = append(spawns, daemon.SpawnOptions{})
-		return daemon.State{}, errors.New("must not spawn")
+func TestRunUpAngelAlreadyRunningIdentical(t *testing.T) {
+	st := angelTestState()
+	var spawns []angel.SpawnOptions
+	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+		spawns = append(spawns, angel.SpawnOptions{})
+		return angel.State{}, errors.New("must not spawn")
 	})
 	testutil.TempHome(t)
 	var out bytes.Buffer
@@ -77,7 +77,7 @@ func TestRunUpDaemonAlreadyRunningIdentical(t *testing.T) {
 		t.Fatalf("runUp: %v", err)
 	}
 	if len(spawns) != 0 {
-		t.Error("a spawn happened although a daemon was running")
+		t.Error("a spawn happened although an angel was running")
 	}
 	data, ok := decodeUpData(t, out)
 	if !ok {
@@ -88,10 +88,10 @@ func TestRunUpDaemonAlreadyRunningIdentical(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonAlreadyRunningDifferentPort(t *testing.T) {
-	st := daemonTestState()
-	_ = stubDaemons(t, probeRunning(st), func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
-		return daemon.State{}, errors.New("must not spawn")
+func TestRunUpAngelAlreadyRunningDifferentPort(t *testing.T) {
+	st := angelTestState()
+	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+		return angel.State{}, errors.New("must not spawn")
 	})
 	testutil.TempHome(t)
 	err := runUp([]string{"--port", "9999"}, &bytes.Buffer{})
@@ -104,11 +104,11 @@ func TestRunUpDaemonAlreadyRunningDifferentPort(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonAlreadyRunningPortZero(t *testing.T) {
+func TestRunUpAngelAlreadyRunningPortZero(t *testing.T) {
 	// Explicit --port 0 means "don't care": idempotent success.
-	st := daemonTestState()
-	_ = stubDaemons(t, probeRunning(st), func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
-		return daemon.State{}, errors.New("must not spawn")
+	st := angelTestState()
+	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+		return angel.State{}, errors.New("must not spawn")
 	})
 	testutil.TempHome(t)
 	var out bytes.Buffer
@@ -120,7 +120,7 @@ func TestRunUpDaemonAlreadyRunningPortZero(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonAlreadyRunningBindVariants(t *testing.T) {
+func TestRunUpAngelAlreadyRunningBindVariants(t *testing.T) {
 	cases := []struct {
 		name    string
 		args    []string
@@ -132,9 +132,9 @@ func TestRunUpDaemonAlreadyRunningBindVariants(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			st := daemonTestState()
-			_ = stubDaemons(t, probeRunning(st), func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
-				return daemon.State{}, errors.New("must not spawn")
+			st := angelTestState()
+			_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+				return angel.State{}, errors.New("must not spawn")
 			})
 			testutil.TempHome(t)
 			err := runUp(tc.args, &bytes.Buffer{})
@@ -148,11 +148,11 @@ func TestRunUpDaemonAlreadyRunningBindVariants(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonNotRunningSpawns(t *testing.T) {
+func TestRunUpAngelNotRunningSpawns(t *testing.T) {
 	home := t.TempDir()
-	spawned := daemon.State{}
-	_ = stubDaemons(t, probeNotRunning, func(ctx context.Context, o daemon.SpawnOptions) (daemon.State, error) {
-		st := daemonTestState()
+	spawned := angel.State{}
+	_ = stubAngels(t, probeNotRunning, func(ctx context.Context, o angel.SpawnOptions) (angel.State, error) {
+		st := angelTestState()
 		spawned = st
 		if len(o.Args) < 4 || o.Args[0] != "up" || o.Args[len(o.Args)-1] != home {
 			t.Errorf("child args = %v", o.Args)
@@ -160,8 +160,8 @@ func TestRunUpDaemonNotRunningSpawns(t *testing.T) {
 		return st, nil
 	})
 	var out bytes.Buffer
-	if err := runUpDaemon(upOptions{Home: home}, []string{"--port", "1234", "--json"}, &out); err != nil {
-		t.Fatalf("runUpDaemon: %v", err)
+	if err := runUpAngel(upOptions{Home: home}, []string{"--port", "1234", "--json"}, &out); err != nil {
+		t.Fatalf("runUpAngel: %v", err)
 	}
 	if spawned.PID != 111 {
 		t.Errorf("spawn did not report PID %d", spawned.PID)
@@ -219,7 +219,7 @@ func TestConflictsWithRunning(t *testing.T) {
 }
 
 func TestRunDownNotRunning(t *testing.T) {
-	_ = stubDaemons(t, probeNotRunning, nil)
+	_ = stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	var out bytes.Buffer
 	if err := runDown(nil, &out); err != nil {
@@ -229,33 +229,33 @@ func TestRunDownNotRunning(t *testing.T) {
 	if !ok {
 		t.Fatalf("stdout not ok: %s", out.String())
 	}
-	if data["daemon"] != "stopped" || data["was_running"] != false {
+	if data["angel"] != "stopped" || data["was_running"] != false {
 		t.Errorf("data = %v", data)
 	}
 }
 
-func TestRunDownStopsDaemon(t *testing.T) {
-	st := daemonTestState()
+func TestRunDownStopsAngel(t *testing.T) {
+	st := angelTestState()
 	stopped := make(chan struct{}, 1)
-	_ = stubDaemons(t, probeRunning(st), nil)
-	oldStop := daemonControlStop
+	_ = stubAngels(t, probeRunning(st), nil)
+	oldStop := angelControlStop
 	probeCalls := 0
-	daemonControlStop = func(ctx context.Context, addr, token string) error {
+	angelControlStop = func(ctx context.Context, addr, token string) error {
 		if addr != st.Control || token != st.Token {
 			t.Errorf("stop(addr=%s, token len %d)", addr, len(token))
 		}
 		stopped <- struct{}{}
 		return nil
 	}
-	// First probe sees the daemon, later probes see it gone.
-	daemonProbe = func(context.Context, string) (daemon.State, error) {
+	// First probe sees the angel, later probes see it gone.
+	angelProbe = func(context.Context, string) (angel.State, error) {
 		probeCalls++
 		if probeCalls == 1 {
 			return st, nil
 		}
-		return daemon.State{}, daemon.ErrNotRunning
+		return angel.State{}, angel.ErrNotRunning
 	}
-	t.Cleanup(func() { daemonControlStop = oldStop })
+	t.Cleanup(func() { angelControlStop = oldStop })
 	testutil.TempHome(t)
 	var out bytes.Buffer
 	if err := runDown(nil, &out); err != nil {
@@ -273,11 +273,11 @@ func TestRunDownStopsDaemon(t *testing.T) {
 }
 
 func TestRunDownStopRequestFails(t *testing.T) {
-	st := daemonTestState()
-	_ = stubDaemons(t, probeRunning(st), nil)
-	oldStop := daemonControlStop
-	daemonControlStop = func(context.Context, string, string) error { return errors.New("boom") }
-	t.Cleanup(func() { daemonControlStop = oldStop })
+	st := angelTestState()
+	_ = stubAngels(t, probeRunning(st), nil)
+	oldStop := angelControlStop
+	angelControlStop = func(context.Context, string, string) error { return errors.New("boom") }
+	t.Cleanup(func() { angelControlStop = oldStop })
 	testutil.TempHome(t)
 	err := runDown(nil, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
@@ -287,27 +287,27 @@ func TestRunDownStopRequestFails(t *testing.T) {
 }
 
 func TestRunDownTimeout(t *testing.T) {
-	st := daemonTestState()
+	st := angelTestState()
 	oldWait := downStopWait
 	downStopWait = 50 * time.Millisecond
 	t.Cleanup(func() { downStopWait = oldWait })
-	_ = stubDaemons(t, probeRunning(st), nil)
-	oldStop := daemonControlStop
-	daemonControlStop = func(context.Context, string, string) error { return nil }
-	t.Cleanup(func() { daemonControlStop = oldStop })
+	_ = stubAngels(t, probeRunning(st), nil)
+	oldStop := angelControlStop
+	angelControlStop = func(context.Context, string, string) error { return nil }
+	t.Cleanup(func() { angelControlStop = oldStop })
 	testutil.TempHome(t)
 	err := runDown(nil, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
 	if !ok {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
-	if ce.Code != "DAEMON_STOP_TIMEOUT" || ce.Exit != cli.ExitInternal {
-		t.Errorf("code/exit = %q/%d, want DAEMON_STOP_TIMEOUT/%d", ce.Code, ce.Exit, cli.ExitInternal)
+	if ce.Code != "ANGEL_STOP_TIMEOUT" || ce.Exit != cli.ExitInternal {
+		t.Errorf("code/exit = %q/%d, want ANGEL_STOP_TIMEOUT/%d", ce.Code, ce.Exit, cli.ExitInternal)
 	}
 }
 
 func TestRunDownUnexpectedArg(t *testing.T) {
-	_ = stubDaemons(t, probeNotRunning, nil)
+	_ = stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runDown([]string{"extra"}, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
@@ -317,15 +317,15 @@ func TestRunDownUnexpectedArg(t *testing.T) {
 }
 
 func TestRunStatusNotRunning(t *testing.T) {
-	_ = stubDaemons(t, probeNotRunning, nil)
+	_ = stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runStatus(nil, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
 	if !ok {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
-	if ce.Code != "DAEMON_NOT_RUNNING" || ce.Exit != cli.ExitNoDaemon {
-		t.Errorf("code/exit = %q/%d, want DAEMON_NOT_RUNNING/%d", ce.Code, ce.Exit, cli.ExitNoDaemon)
+	if ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
+		t.Errorf("code/exit = %q/%d, want ANGEL_NOT_RUNNING/%d", ce.Code, ce.Exit, cli.ExitNoAngel)
 	}
 	if ce.Hint == "" {
 		t.Error("empty hint")
@@ -338,10 +338,10 @@ func TestRunStatusNotRunning(t *testing.T) {
 }
 
 func TestRunStatusRunning(t *testing.T) {
-	st := daemonTestState()
+	st := angelTestState()
 	st.StartedAt = time.Now().UTC().Add(-90 * time.Second).Format(time.RFC3339)
 	st.Version = "1.2.3"
-	_ = stubDaemons(t, probeRunning(st), nil)
+	_ = stubAngels(t, probeRunning(st), nil)
 	testutil.TempHome(t)
 	var out bytes.Buffer
 	if err := runStatus(nil, &out); err != nil {
@@ -352,7 +352,7 @@ func TestRunStatusRunning(t *testing.T) {
 		t.Fatalf("stdout not ok: %s", out.String())
 	}
 	want := map[string]any{
-		"daemon":     "running",
+		"angel":      "running",
 		"foreground": false,
 		"pid":        float64(st.PID),
 		"listen":     st.Listen,
@@ -378,7 +378,7 @@ func TestRunStatusRunning(t *testing.T) {
 }
 
 func TestRunStatusUnexpectedArg(t *testing.T) {
-	_ = stubDaemons(t, probeNotRunning, nil)
+	_ = stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runStatus([]string{"--wat"}, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
@@ -438,9 +438,9 @@ func TestForegroundFailureWritesHandshake(t *testing.T) {
 }
 
 func TestAlreadyRunningDataShape(t *testing.T) {
-	st := daemonTestState()
-	data := alreadyRunningData(daemon.Status{Daemon: "running", PID: st.PID, Listen: st.Listen, Protocols: st.Protocols, Auth: st.Auth, Foreground: st.Foreground}, true)
-	for _, k := range []string{"daemon", "pid", "listen", "protocols", "auth", "foreground", "already_running"} {
+	st := angelTestState()
+	data := alreadyRunningData(angel.Status{Angel: "running", PID: st.PID, Listen: st.Listen, Protocols: st.Protocols, Auth: st.Auth, Foreground: st.Foreground}, true)
+	for _, k := range []string{"angel", "pid", "listen", "protocols", "auth", "foreground", "already_running"} {
 		if _, ok := data[k]; !ok {
 			t.Errorf("missing key %q", k)
 		}
@@ -450,21 +450,21 @@ func TestAlreadyRunningDataShape(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonUsesLiveStatus(t *testing.T) {
+func TestRunUpAngelUsesLiveStatus(t *testing.T) {
 	home := testutil.TempHome(t)
-	disk := daemonTestState()
+	disk := angelTestState()
 	disk.Listen = "127.0.0.1:7890"
-	live := daemon.Status{Daemon: "running", PID: 222, Listen: "127.0.0.1:7891", Auth: "enabled", Protocols: []string{"http"}, Foreground: true, Route: "proxy", StartedAt: time.Now().UTC().Format(time.RFC3339), Version: "live-version"}
-	oldProbe, oldLive, oldSpawn := daemonProbe, daemonProbeLive, daemonSpawn
-	daemonProbe = func(context.Context, string) (daemon.State, error) { return disk, nil }
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) { return disk, live, nil }
-	daemonSpawn = func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
+	live := angel.Status{Angel: "running", PID: 222, Listen: "127.0.0.1:7891", Auth: "enabled", Protocols: []string{"http"}, Foreground: true, Route: "proxy", StartedAt: time.Now().UTC().Format(time.RFC3339), Version: "live-version"}
+	oldProbe, oldLive, oldSpawn := angelProbe, angelProbeLive, angelSpawn
+	angelProbe = func(context.Context, string) (angel.State, error) { return disk, nil }
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) { return disk, live, nil }
+	angelSpawn = func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		t.Fatal("unexpected spawn")
-		return daemon.State{}, nil
+		return angel.State{}, nil
 	}
-	t.Cleanup(func() { daemonProbe, daemonProbeLive, daemonSpawn = oldProbe, oldLive, oldSpawn })
+	t.Cleanup(func() { angelProbe, angelProbeLive, angelSpawn = oldProbe, oldLive, oldSpawn })
 	var out bytes.Buffer
-	if err := runUpDaemon(upOptions{Home: home}, nil, &out); err != nil {
+	if err := runUpAngel(upOptions{Home: home}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	data, ok := decodeUpData(t, out)
@@ -482,19 +482,19 @@ func TestRunUpDaemonUsesLiveStatus(t *testing.T) {
 	}
 }
 
-func TestRunUpDaemonLiveStatusConflictUsesLiveListen(t *testing.T) {
+func TestRunUpAngelLiveStatusConflictUsesLiveListen(t *testing.T) {
 	home := testutil.TempHome(t)
-	disk := daemonTestState()
+	disk := angelTestState()
 	disk.Listen = "127.0.0.1:7890"
-	live := daemon.Status{Daemon: "running", PID: 222, Listen: "127.0.0.1:7891", Auth: "enabled"}
-	oldProbe, oldLive, oldSpawn := daemonProbe, daemonProbeLive, daemonSpawn
-	daemonProbe = func(context.Context, string) (daemon.State, error) { return disk, nil }
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) { return disk, live, nil }
-	daemonSpawn = func(context.Context, daemon.SpawnOptions) (daemon.State, error) {
+	live := angel.Status{Angel: "running", PID: 222, Listen: "127.0.0.1:7891", Auth: "enabled"}
+	oldProbe, oldLive, oldSpawn := angelProbe, angelProbeLive, angelSpawn
+	angelProbe = func(context.Context, string) (angel.State, error) { return disk, nil }
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) { return disk, live, nil }
+	angelSpawn = func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		t.Fatal("unexpected spawn")
-		return daemon.State{}, nil
+		return angel.State{}, nil
 	}
-	t.Cleanup(func() { daemonProbe, daemonProbeLive, daemonSpawn = oldProbe, oldLive, oldSpawn })
+	t.Cleanup(func() { angelProbe, angelProbeLive, angelSpawn = oldProbe, oldLive, oldSpawn })
 	err := runUp([]string{"--home", home, "--port", "7890"}, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
 	if !ok || ce.Code != "ALREADY_RUNNING" || ce.Exit != cli.ExitConflict {

@@ -93,7 +93,7 @@ func TestRefreshSchedule(t *testing.T) {
 }
 
 func TestRefreshInfoInterval(t *testing.T) {
-	l := newLiveDaemon(upOptions{}, func(string, ...any) {}, func() {})
+	l := newLiveAngel(upOptions{}, func(string, ...any) {}, func() {})
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cases := map[string]int64{"": 3600, "30m": 1800, "168h": 604800, config.UpdateOff: 0}
@@ -120,7 +120,7 @@ func TestRefreshOneKeepsWorkingRoutes(t *testing.T) {
 	t.Cleanup(func() { subFetch = old })
 
 	var logs []string
-	l := newLiveDaemon(upOptions{Home: home}, func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }, func() {})
+	l := newLiveAngel(upOptions{Home: home}, func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }, func() {})
 	sub := config.Subscription{Name: "main", URL: "https://main.invalid/sub"}
 	cfg := config.Default()
 	cfg.Subscriptions = []config.Subscription{sub}

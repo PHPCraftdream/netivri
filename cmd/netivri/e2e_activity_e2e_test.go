@@ -33,10 +33,10 @@ type e2eActivity struct {
 	} `json:"nodes"`
 }
 
-// e2eStatusActivity runs `status` against the daemon of home.
+// e2eStatusActivity runs `status` against the angel of home.
 func e2eStatusActivity(t *testing.T, home string) (int, map[string]e2eActivity) {
 	t.Helper()
-	code, stdout, stderr := daemonRun(t, home, "status")
+	code, stdout, stderr := angelRun(t, home, "status")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -56,7 +56,7 @@ func e2eStatusActivity(t *testing.T, home string) (int, map[string]e2eActivity) 
 	return env.Data.ActiveAccounts, byLogin
 }
 
-// TestE2EStatusShowsWhoIsActive runs a daemon with a routed account (alice,
+// TestE2EStatusShowsWhoIsActive runs an angel with a routed account (alice,
 // DE, provider fixture) and a direct one (bob), opens connections and reads
 // who is active, through which node, provider and country.
 func TestE2EStatusShowsWhoIsActive(t *testing.T) {
@@ -92,7 +92,7 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 
 	active, who := e2eStatusActivity(t, home)
 	if active != 0 || len(who) != 2 || who["alice"].Active || who["bob"].Active {
-		t.Fatalf("idle daemon: active=%d who=%+v", active, who)
+		t.Fatalf("idle angel: active=%d who=%+v", active, who)
 	}
 
 	alice := socks5AuthConnect(t, listen, "alice", accountsDEPass, backend)

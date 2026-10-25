@@ -282,7 +282,7 @@ function Invoke-Install([string]$Src, [string]$Ver, [string]$LicRoot) {
   New-Item -ItemType Directory -Path (Join-Path $share 'THIRD_PARTY_LICENSES') -Force | Out-Null
 
   Install-File (Join-Path $Src 'netivri.exe') (Join-Path $InstallDir 'netivri.exe')
-  # A library left by an earlier version; the daemon of that version may still hold it.
+  # A library left by an earlier version; the angel of that version may still hold it.
   Remove-Item -LiteralPath (Join-Path $InstallDir $LegacyLib) -Force -ErrorAction SilentlyContinue
 
   $license = Join-Path $LicRoot 'LICENSE'

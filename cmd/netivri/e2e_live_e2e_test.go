@@ -15,7 +15,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
-// The daemon applies changes made to its files while it runs: no down and up.
+// The angel applies changes made to its files while it runs: no down and up.
 
 const liveSettle = 7 * time.Second // more than the watcher's two polls
 
@@ -77,7 +77,7 @@ type liveFixture struct {
 	writeCfg                          func()
 }
 
-// startLive runs a foreground daemon with alice (provider p1, exit DE) and one
+// startLive runs a foreground angel with alice (provider p1, exit DE) and one
 // stored DE node that leads to the upstream p1.
 func startLive(t *testing.T, more ...string) *liveFixture {
 	t.Helper()
@@ -117,7 +117,7 @@ func TestE2ELiveAccountAddedByCLI(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("account add: %s%s", out, stderr)
 	}
-	st := waitLive(t, f.home, "bob appears in the running daemon", func(s liveStatus) bool {
+	st := waitLive(t, f.home, "bob appears in the running angel", func(s liveStatus) bool {
 		return s.hasAccount("bob") && s.Data.Reload.Count >= 1
 	})
 	if st.Data.Refresh.IntervalSeconds != 3600 {
@@ -154,7 +154,7 @@ func TestE2ELiveAccountRemoved(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("account rm: %s%s", out, stderr)
 	}
-	waitLive(t, f.home, "bob is gone from the running daemon", func(s liveStatus) bool {
+	waitLive(t, f.home, "bob is gone from the running angel", func(s liveStatus) bool {
 		return !s.hasAccount("bob") && s.Data.Reload.Count >= 1
 	})
 
@@ -175,7 +175,7 @@ func TestE2ELiveAccountRemoved(t *testing.T) {
 }
 
 // `account set-provider` moves an account to another subscription in a
-// running daemon, and a change that would leave the account without nodes is
+// running angel, and a change that would leave the account without nodes is
 // refused before anything is written.
 func TestE2ELiveSwitchSubscription(t *testing.T) {
 	f := startLive(t)
@@ -200,7 +200,7 @@ func TestE2ELiveSwitchSubscription(t *testing.T) {
 		t.Errorf("reloads after a refused command = %d, want 0", got)
 	}
 
-	// p2 has a German node: accepted and applied to the running daemon.
+	// p2 has a German node: accepted and applied to the running angel.
 	code, out, stderr = accountsCommand(t, f.home, "set-provider", "alice", "p2")
 	if code != 0 {
 		t.Fatalf("set-provider: %s%s", out, stderr)
@@ -265,9 +265,9 @@ func TestE2ELiveBadConfigKeepsRunning(t *testing.T) {
 	}
 }
 
-// Changing the order of an account's provider list while the daemon runs
+// Changing the order of an account's provider list while the angel runs
 // moves the traffic to the other provider: the tiers are part of what the
-// daemon rebuilds on a reload.
+// angel rebuilds on a reload.
 func TestE2ELiveProviderListOrderApplied(t *testing.T) {
 	f := startLive(t)
 

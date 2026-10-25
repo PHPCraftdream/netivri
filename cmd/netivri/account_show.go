@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 // accountShowTier is one (country, provider group) pair of an account's
-// route, in the order the daemon tries them. A pair without nodes is shown
+// route, in the order the angel tries them. A pair without nodes is shown
 // as skipped, with a reason, and does not consume a tier index.
 type accountShowTier struct {
 	Tier      int               `json:"tier"`
@@ -28,7 +28,7 @@ type accountShowTier struct {
 }
 
 // accountShowNode is one node of a tier: its static identity and, when the
-// daemon runs, its live probe and traffic state (null otherwise).
+// angel runs, its live probe and traffic state (null otherwise).
 type accountShowNode struct {
 	Label       string `json:"label"`
 	Name        string `json:"name,omitempty"` // display name from the subscription
@@ -41,7 +41,7 @@ type accountShowNode struct {
 }
 
 // accountShow implements `account show`: the configured lists, the route as
-// ordered tiers, and, with a running daemon, the live probe and traffic state
+// ordered tiers, and, with a running angel, the live probe and traffic state
 // of every node. It never prints a password, a hash or an address.
 func accountShow(home string, cfg *config.Config, rest []string, stdout io.Writer) error {
 	if len(rest) != 1 {
@@ -192,16 +192,16 @@ func buildShowTiers(known map[string]bool, snapshots map[string]*subscription.Sn
 }
 
 // accountShowLive fills the live fields of the tiers from the running
-// daemon's status and reports whether it could. Without a daemon the static
+// angel's status and reports whether it could. Without an angel the static
 // part stands and the live fields stay null.
 func accountShowLive(ctx context.Context, home, login string, tiers []accountShowTier) bool {
-	ctx, cancel := context.WithTimeout(ctx, daemon.ProbeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, angel.ProbeTimeout)
 	defer cancel()
-	_, st, err := daemonProbeLive(ctx, home)
+	_, st, err := angelProbeLive(ctx, home)
 	if err != nil {
 		return false
 	}
-	health := make(map[string]daemon.NodeHealth)
+	health := make(map[string]angel.NodeHealth)
 	if st.Warm != nil {
 		for _, n := range st.Warm.Nodes {
 			if n.Label != "" {
@@ -230,7 +230,7 @@ func accountShowLive(ctx context.Context, home, login string, tiers []accountSho
 			if c, ok := uses[n.Label]; ok {
 				n.Connections = &c
 			} else if tracked {
-				// The daemon lists every configured account: an idle node
+				// The angel lists every configured account: an idle node
 				// reports 0, not null.
 				zero := 0
 				n.Connections = &zero

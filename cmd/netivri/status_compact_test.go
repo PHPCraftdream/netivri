@@ -10,20 +10,20 @@ import (
 
 	ktav "github.com/ktav-lang/golang"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
-// stubStatus installs a daemonProbeLive stub that always answers with st.
-func stubStatus(t *testing.T, st daemon.Status) {
+// stubStatus installs an angelProbeLive stub that always answers with st.
+func stubStatus(t *testing.T, st angel.Status) {
 	t.Helper()
-	old := daemonProbeLive
-	daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-		return daemon.State{}, st, nil
+	old := angelProbeLive
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, st, nil
 	}
-	t.Cleanup(func() { daemonProbeLive = old })
+	t.Cleanup(func() { angelProbeLive = old })
 }
 
 // runStatusData runs `status` with args and decodes the answer envelope.
@@ -37,15 +37,15 @@ func runStatusData(t *testing.T, args ...string) map[string]any {
 }
 
 func TestStatusShortOmitsFullWarmStatsAffinity(t *testing.T) {
-	full := daemon.Status{
-		Warm: &daemon.WarmInfo{
+	full := angel.Status{
+		Warm: &angel.WarmInfo{
 			Alive: 1, Total: 1, Probes: 3, ProbeFailures: 1,
-			Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7, Label: "main/de"}},
+			Nodes: []angel.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7, Label: "main/de"}},
 		},
-		Stats:    &daemon.StatsInfo{Path: "stats.db"},
-		Affinity: &daemon.AffinityInfo{Bindings: 2},
-		Activity: []daemon.AccountActivity{{Login: "alice", Active: true}},
-		Accounts: []daemon.AccountInfo{{Login: "alice"}},
+		Stats:    &angel.StatsInfo{Path: "stats.db"},
+		Affinity: &angel.AffinityInfo{Bindings: 2},
+		Activity: []angel.AccountActivity{{Login: "alice", Active: true}},
+		Accounts: []angel.AccountInfo{{Login: "alice"}},
 	}
 	stubStatus(t, full)
 	data := runStatusData(t)
@@ -122,7 +122,7 @@ func TestWarmInfoOfNodeDescriptors(t *testing.T) {
 }
 
 func TestStatusUnknownFlagIsUsage(t *testing.T) {
-	stubStatus(t, daemon.Status{})
+	stubStatus(t, angel.Status{})
 	err := runStatus([]string{"--home", t.TempDir(), "--wat"}, &bytes.Buffer{})
 	ce, ok := err.(*cli.Error)
 	if !ok || ce.Code != "USAGE" {
@@ -131,12 +131,12 @@ func TestStatusUnknownFlagIsUsage(t *testing.T) {
 }
 
 func TestStatusShortKeepsEveryOtherTopLevelKey(t *testing.T) {
-	st := daemon.Status{
-		Warm:     &daemon.WarmInfo{Probes: 1},
-		Stats:    &daemon.StatsInfo{Path: "stats.db"},
-		Affinity: &daemon.AffinityInfo{Bindings: 1},
-		Refresh:  &daemon.RefreshInfo{IntervalSeconds: 3600},
-		Reload:   &daemon.ReloadInfo{Count: 1},
+	st := angel.Status{
+		Warm:     &angel.WarmInfo{Probes: 1},
+		Stats:    &angel.StatsInfo{Path: "stats.db"},
+		Affinity: &angel.AffinityInfo{Bindings: 1},
+		Refresh:  &angel.RefreshInfo{IntervalSeconds: 3600},
+		Reload:   &angel.ReloadInfo{Count: 1},
 	}
 	stubStatus(t, st)
 	raw, err := json.Marshal(st)
@@ -160,12 +160,12 @@ func TestStatusShortKeepsEveryOtherTopLevelKey(t *testing.T) {
 }
 
 func TestStatusFullMatchesShortKeySetPlusFullKeys(t *testing.T) {
-	st := daemon.Status{
+	st := angel.Status{
 		Listen:   "127.0.0.1:7890",
 		Route:    "direct",
-		Warm:     &daemon.WarmInfo{Probes: 1},
-		Stats:    &daemon.StatsInfo{Path: "stats.db"},
-		Affinity: &daemon.AffinityInfo{Bindings: 1},
+		Warm:     &angel.WarmInfo{Probes: 1},
+		Stats:    &angel.StatsInfo{Path: "stats.db"},
+		Affinity: &angel.AffinityInfo{Bindings: 1},
 	}
 	stubStatus(t, st)
 	short := runStatusData(t)
@@ -192,15 +192,15 @@ func runStatusKtavDoc(t *testing.T, args ...string) map[string]any {
 	return got.(map[string]any)
 }
 
-// ktavStatus is the stubbed daemon status shared by the Ktav status tests.
-func ktavStatus() daemon.Status {
-	return daemon.Status{
-		Warm: &daemon.WarmInfo{
+// ktavStatus is the stubbed angel status shared by the Ktav status tests.
+func ktavStatus() angel.Status {
+	return angel.Status{
+		Warm: &angel.WarmInfo{
 			Alive: 2, Total: 3, Probes: 9, ProbeFailures: 1,
-			Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7, Label: "main/de"}},
+			Nodes: []angel.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7, Label: "main/de"}},
 		},
-		Stats:    &daemon.StatsInfo{Path: "stats.db"},
-		Affinity: &daemon.AffinityInfo{Bindings: 2},
+		Stats:    &angel.StatsInfo{Path: "stats.db"},
+		Affinity: &angel.AffinityInfo{Bindings: 2},
 	}
 }
 
@@ -267,7 +267,7 @@ func TestStatusKtavFullKeepsStatsAffinityWarmNodes(t *testing.T) {
 
 func TestStatusKeepsCountersAbove53Bits(t *testing.T) {
 	const probes = uint64(9007199254740993) // 2^53 + 1
-	stubStatus(t, daemon.Status{Warm: &daemon.WarmInfo{Probes: probes}})
+	stubStatus(t, angel.Status{Warm: &angel.WarmInfo{Probes: probes}})
 
 	var out bytes.Buffer
 	if err := runStatus([]string{"--home", t.TempDir()}, &out); err != nil {

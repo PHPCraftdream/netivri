@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/daemon"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
@@ -42,7 +42,7 @@ func TestWarmInfoOf(t *testing.T) {
 	if info.Alive != 1 || info.Total != 2 {
 		t.Errorf("alive/total = %d/%d, want 1/2", info.Alive, info.Total)
 	}
-	want := []daemon.NodeHealth{
+	want := []angel.NodeHealth{
 		{Name: "netivri-r0-0", Alive: true, DelayMS: 48, Label: "main/de", Provider: "main", Country: "DE", NodeName: "Germany 1"},
 		{Name: "netivri-r1-0", Label: "main/nl", Provider: "main", Country: "NL"},
 	}
@@ -52,12 +52,12 @@ func TestWarmInfoOf(t *testing.T) {
 }
 
 func TestStatusPrintsWarmOnlyWhenPresent(t *testing.T) {
-	old := daemonProbeLive
-	t.Cleanup(func() { daemonProbeLive = old })
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
 
-	run := func(st daemon.Status, extra ...string) map[string]json.RawMessage {
-		daemonProbeLive = func(context.Context, string) (daemon.State, daemon.Status, error) {
-			return daemon.State{}, st, nil
+	run := func(st angel.Status, extra ...string) map[string]json.RawMessage {
+		angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+			return angel.State{}, st, nil
 		}
 		var out bytes.Buffer
 		if err := runStatus(append([]string{"--home", t.TempDir()}, extra...), &out); err != nil {
@@ -72,12 +72,12 @@ func TestStatusPrintsWarmOnlyWhenPresent(t *testing.T) {
 		return env.Data
 	}
 
-	if _, ok := run(daemon.Status{})["warm"]; ok {
+	if _, ok := run(angel.Status{})["warm"]; ok {
 		t.Error("status printed warm for an instance without warm-up")
 	}
-	data := run(daemon.Status{Warm: &daemon.WarmInfo{
+	data := run(angel.Status{Warm: &angel.WarmInfo{
 		Alive: 1, Total: 1, Probes: 1,
-		Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
+		Nodes: []angel.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
 	}})
 	raw, ok := data["warm"]
 	if !ok {
@@ -98,15 +98,15 @@ func TestStatusPrintsWarmOnlyWhenPresent(t *testing.T) {
 	if _, ok := rawMap(data, "warm")["nodes"]; ok {
 		t.Error("short status printed warm.nodes")
 	}
-	data = run(daemon.Status{Warm: &daemon.WarmInfo{
+	data = run(angel.Status{Warm: &angel.WarmInfo{
 		Alive: 1, Total: 1, Probes: 1,
-		Nodes: []daemon.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
+		Nodes: []angel.NodeHealth{{Name: "netivri-DE-0", Alive: true, DelayMS: 7}},
 	}}, "--full")
 	raw, ok = data["warm"]
 	if !ok {
 		t.Fatal("status omitted warm")
 	}
-	var fullWarm daemon.WarmInfo
+	var fullWarm angel.WarmInfo
 	if err := json.Unmarshal(raw, &fullWarm); err != nil {
 		t.Fatalf("decode warm: %v", err)
 	}

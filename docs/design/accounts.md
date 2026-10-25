@@ -151,7 +151,7 @@ Consequences:
   route has a node. There is never a fallback to direct and never to a country
   or provider outside the account's lists.
 - Accounts without a country, and `auth`'s account, take the default route.
-- A running daemon applies changes by itself (see [live-reload.md](live-reload.md));
+- A running angel applies changes by itself (see [live-reload.md](live-reload.md));
   the listener restarts, so open connections end.
 - `set-country` and `set-provider` ask the question `up` asks before they
   write: would every account addressed still have a stored node on its route?
@@ -222,7 +222,7 @@ type Options struct {
 }
 // func (i *Instance) AccountRoutes() map[string]string // login -> route key
 
-// internal/daemon
+// internal/angel
 type AccountInfo struct { // Status.Accounts element
 	Login       string `json:"login"`
 	Provider    string `json:"provider"`

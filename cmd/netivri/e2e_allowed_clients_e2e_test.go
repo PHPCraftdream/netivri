@@ -14,7 +14,7 @@ import (
 )
 
 // allowedClientsDial dials the proxy and bounds every later IO on the
-// connection to ~5s, so a daemon that never answers fails fast instead of
+// connection to ~5s, so an angel that never answers fails fast instead of
 // hanging for the full e2eIOTimeout.
 func allowedClientsDial(t *testing.T, addr string) net.Conn {
 	t.Helper()
@@ -53,7 +53,7 @@ func TestE2EAllowedClientsGlobalRefusesLoopback(t *testing.T) {
 	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
-		t.Fatalf("the daemon did not close the connection promptly: %v", err)
+		t.Fatalf("the angel did not close the connection promptly: %v", err)
 	}
 	if lower := strings.ToLower(err.Error()); !errors.Is(err, io.EOF) && !strings.Contains(lower, "reset") && !strings.Contains(lower, "forcibly closed") && !strings.Contains(lower, "aborted") {
 		t.Fatalf("refused client error = %v, want EOF or a connection reset", err)
@@ -80,11 +80,11 @@ func TestE2EAllowedClientsGlobalAllowsLoopback(t *testing.T) {
 	echoRoundTrip(t, c, c)
 	_ = c.Close()
 
-	code, stdout, stderr := daemonRun(t, home, "status", "--json")
+	code, stdout, stderr := angelRun(t, home, "status", "--json")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	data := daemonData(t, stdout)
+	data := angelData(t, stdout)
 	if data["allowed_clients"] != "loopback" {
 		t.Fatalf("status allowed_clients = %v, want loopback", data["allowed_clients"])
 	}
