@@ -141,6 +141,13 @@ shows one command: usage, description, flags, examples with comments, the
 errors it can return with their exit codes, and related commands. A command
 with subcommands (`sub`, `node`, `account`, `diag`) lists them.
 
+Besides commands, `netivri help` has three concept topics, listed in the
+overview under the group "Concepts" and available as `netivri help
+{config|routing|output}` and with `--json`: `config` (the `config.ktav`
+file, where it lives and every key it accepts), `routing` (route tiers,
+the `*` country, sticky bindings, the `init` claim and the
+`allowed_clients` cascade) and `output` (the fields each command prints).
+
 Help is text for people unless `--json` is given, whatever `NETIVRI_OUTPUT`
 says, so `netivri help | less` works. The text is ASCII only and not part of
 the contract; the JSON is.

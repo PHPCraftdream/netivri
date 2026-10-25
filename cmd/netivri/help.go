@@ -279,11 +279,13 @@ func renderOverview() string {
 	}
 	writeRows(&b, rows, 2, helpWidth)
 	section(&b, "NOT IMPLEMENTED YET")
-	for _, l := range wrap("Described in docs/cli.md, but not available yet: "+strings.Join(helpPlanned, ", ")+".", 2, helpWidth) {
+	for _, l := range wrap("Described in the CLI contract, but not available yet: "+strings.Join(helpPlanned, ", ")+".", 2, helpWidth) {
 		b.WriteString(l + "\n")
 	}
 	section(&b, "MORE")
-	b.WriteString("  CLI contract:   docs/cli.md\n")
+	b.WriteString("  Concept topics: netivri help config | routing | output\n")
+	b.WriteString("  Full reference (the CLI contract):\n")
+	b.WriteString("    https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md\n")
 	b.WriteString("  Project:        https://github.com/PHPCraftdream/netivri\n")
 	return b.String()
 }

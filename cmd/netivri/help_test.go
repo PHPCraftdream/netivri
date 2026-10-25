@@ -79,6 +79,10 @@ func TestHelpOverviewListsEveryCommandAndExample(t *testing.T) {
 	}
 }
 
+// conceptTopics are the help topics that are not commands: concepts about
+// configuring and operating netivri.
+var conceptTopics = []string{"config", "routing", "output"}
+
 func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	seen := map[string]bool{}
 	for _, tp := range helpTopics {
@@ -87,7 +91,7 @@ func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 		}
 		seen[tp.Name] = true
 		first := strings.Fields(tp.Name)[0]
-		if _, ok := commands[first]; !ok && tp.Name != "help" {
+		if _, ok := commands[first]; !ok && tp.Name != "help" && !contains(conceptTopics, tp.Name) {
 			t.Errorf("topic %q names no command", tp.Name)
 		}
 		if tp.Summary == "" || len(tp.Usage) == 0 {
@@ -131,6 +135,9 @@ func TestHelpSubcommandForms(t *testing.T) {
 		{[]string{"up", "--port", "0", "--help"}, "netivri up - "},
 		{[]string{"help", "sub", "add"}, "netivri sub add - "},
 		{[]string{"help", "help"}, "netivri help - "},
+		{[]string{"help", "config"}, "netivri config - "},
+		{[]string{"help", "routing"}, "netivri routing - "},
+		{[]string{"help", "output"}, "netivri output - "},
 		{[]string{"sub", "--help"}, "netivri sub - "},
 		{[]string{"account", "--help"}, "netivri account - "},
 	}
@@ -557,5 +564,191 @@ func TestHelpPlaceholdersAreBraced(t *testing.T) {
 	}
 	for _, q := range helpQuickStart {
 		angle("quick start", q)
+	}
+}
+
+// conceptText joins the free-text fields of a topic into one string, so a
+// test can assert on what the rendered help will say.
+func conceptText(tp *helpTopic) string {
+	var b strings.Builder
+	b.WriteString(tp.Summary + "\n" + tp.Description)
+	for _, f := range tp.Flags {
+		b.WriteString("\n" + f.Name + " " + f.Meaning)
+	}
+	for _, e := range tp.Examples {
+		b.WriteString("\n" + e.Comment + "\n" + e.Command)
+	}
+	for _, n := range tp.Notes {
+		b.WriteString("\n" + n)
+	}
+	return b.String()
+}
+
+// Every key the configuration loader accepts (internal/config/config.go,
+// allowed_clients.go and load.go; documented in docs/config.md) must be
+// named by the config topic, so the binary alone explains its own file.
+func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
+	keys := []string{
+		"listen.bind",
+		"listen.port",
+		"listen.allowed_clients",
+		"auth.login",
+		"auth.password",
+		"auth.allow_init_remote",
+		"fetch.proxy",
+		"fetch.update_interval",
+		"subscriptions",
+		"subscriptions.name",
+		"subscriptions.url",
+		"subscriptions.via",
+		"accounts",
+		"accounts.login",
+		"accounts.password",
+		"accounts.provider",
+		"accounts.exit_country",
+		"accounts.allowed_clients",
+		"selection.node",
+		"selection.country",
+		"selection.mode",
+	}
+	tp := findHelpTopic("config")
+	if tp == nil {
+		t.Fatal("no help topic for config")
+	}
+	text := conceptText(tp)
+	var missing []string
+	for _, k := range keys {
+		if !strings.Contains(text, k) {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("the config topic does not name these keys: %s", strings.Join(missing, ", "))
+	}
+}
+
+func TestConceptTopicsAreListed(t *testing.T) {
+	overview := renderOverview()
+	if !strings.Contains(overview, "Concepts") {
+		t.Error("the overview has no Concepts group")
+	}
+	for _, name := range conceptTopics {
+		tp := findHelpTopic(name)
+		if tp == nil {
+			t.Fatalf("no help topic for %q", name)
+		}
+		if tp.Group != "Concepts" {
+			t.Errorf("topic %q has group %q, want Concepts", name, tp.Group)
+		}
+		out := mustDispatch(t, "help", name)
+		if !strings.HasPrefix(out, "netivri "+name+" - ") {
+			t.Errorf("help %s starts with %q", name, firstLine(out))
+		}
+	}
+	help := decodeHelp(t, mustDispatch(t, "help", "--json"))
+	cmds, _ := help["commands"].([]any)
+	names := map[string]bool{}
+	for _, c := range cmds {
+		names[c.(map[string]any)["name"].(string)] = true
+	}
+	for _, name := range conceptTopics {
+		if !names[name] {
+			t.Errorf("help --json overview lacks the concept topic %q", name)
+		}
+	}
+}
+
+// The concept topics are not commands, but help NAME --json must give the
+// same machine-readable document as any other topic.
+func TestConceptTopicsJSONForms(t *testing.T) {
+	for _, name := range conceptTopics {
+		tp := findHelpTopic(name)
+		if tp == nil {
+			t.Fatalf("no help topic for %q", name)
+		}
+		help := decodeHelp(t, mustDispatch(t, "help", name, "--json"))
+		if help["kind"] != "topic" {
+			t.Errorf("help %s --json: kind = %v, want topic", name, help["kind"])
+		}
+		if help["name"] != tp.Name {
+			t.Errorf("help %s --json: name = %v, want %q", name, help["name"], tp.Name)
+		}
+		if help["summary"] != tp.Summary {
+			t.Errorf("help %s --json: summary = %v, want %q", name, help["summary"], tp.Summary)
+		}
+	}
+}
+
+// docRefPrefix turns a repository path in the docs into a URL that works
+// for someone with only the binary.
+const docRefPrefix = "https://github.com/PHPCraftdream/netivri/blob/main/"
+
+// noBareDocsRef fails when s names a file under docs/ by path instead of
+// the full URL: after cutting the URL-prefixed references away, no
+// "docs/" may remain.
+func noBareDocsRef(t *testing.T, where, s string) {
+	t.Helper()
+	stripped := strings.ReplaceAll(s, docRefPrefix+"docs", "")
+	if strings.Contains(stripped, "docs/") {
+		t.Errorf("%s: help text names docs/ by path instead of the full URL: %q", where, s)
+	}
+}
+
+func TestHelpUsesAbsoluteDocURLs(t *testing.T) {
+	for i, line := range strings.Split(renderOverview(), "\n") {
+		noBareDocsRef(t, "overview:"+strconv.Itoa(i+1), line)
+	}
+	for i := range helpTopics {
+		tp := &helpTopics[i]
+		where := tp.Name
+		noBareDocsRef(t, where+" summary", tp.Summary)
+		for _, u := range tp.Usage {
+			noBareDocsRef(t, where+" usage", u)
+		}
+		noBareDocsRef(t, where+" description", tp.Description)
+		for _, f := range tp.Flags {
+			noBareDocsRef(t, where+" flag", f.Name)
+			noBareDocsRef(t, where+" flag meaning", f.Meaning)
+		}
+		for _, e := range tp.Examples {
+			noBareDocsRef(t, where+" example comment", e.Comment)
+			noBareDocsRef(t, where+" example command", e.Command)
+		}
+		for _, e := range tp.Errors {
+			noBareDocsRef(t, where+" error meaning", e.Meaning)
+		}
+		for _, n := range tp.Notes {
+			noBareDocsRef(t, where+" note", n)
+		}
+		for _, s := range tp.SeeAlso {
+			noBareDocsRef(t, where+" see also", s)
+		}
+	}
+}
+
+// Facts that were once misdescribed in the concept topics; a regression here
+// would mislead an agent that has only the binary.
+func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
+	text := func(name string) string {
+		tp := findHelpTopic(name)
+		if tp == nil {
+			t.Fatalf("no help topic for %q", name)
+		}
+		return renderTopic(tp)
+	}
+	routing := text("routing")
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials"} {
+		if !strings.Contains(strings.Join(strings.Fields(routing), " "), want) {
+			t.Errorf("routing topic lacks %q", want)
+		}
+	}
+	output := strings.Join(strings.Fields(text("output")), " ")
+	for _, bad := range []string{"password_set", "account (login"} {
+		if strings.Contains(output, bad) {
+			t.Errorf("output topic still has %q, which account show does not print", bad)
+		}
+	}
+	if strings.Contains(output, "internal proxy name -, type") {
+		t.Error("node list name is the provider's node name, not the internal proxy name")
 	}
 }
