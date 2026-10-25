@@ -162,7 +162,7 @@ type bindingsStatus struct {
 
 func bindingsStatusOf(t *testing.T, home string) bindingsStatus {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "status")
+	code, out, stderr := accountsRun(t, home, "status", "--full")
 	if code != 0 {
 		t.Fatalf("status exit %d: %s%s", code, out, stderr)
 	}
