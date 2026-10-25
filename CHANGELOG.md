@@ -10,6 +10,11 @@ versions; every such change is listed here.
 
 ### Added
 
+- **`netivri account clone {SOURCE} {ACCOUNT}`.** A new account from an existing
+  one: the provider, the exit country and, by default, the password (the hash is
+  copied) are taken over. `--password {PASSWORD}` sets a password of its own,
+  `--password init` leaves it to the first client that connects, and
+  `--provider` / `--country` replace the copied route.
 - **Who is active, in `netivri status`.** The new `activity` list has one record
   per account: whether it is active (has open connections), the number of
   connections and bytes, and the nodes, providers and countries they use right
