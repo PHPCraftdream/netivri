@@ -14,8 +14,8 @@ npm) is the only network path.
   resolves the binary with `require.resolve`, and spawns it with
   `stdio: 'inherit'`, forwarding SIGINT/SIGTERM/SIGHUP and the exit code.
 - `netivri-{OS}-{CPU}` — six platform packages (`linux-x64`,
-  `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`,
-  `win32-arm64`) installed as `optionalDependencies` of the main package.
+  `linux-arm64`, `darwin-x64`, `darwin-arm64`, `w32-x64`,
+  `w32-arm64`) installed as `optionalDependencies` of the main package.
   Each declares `os`, `cpu` and (on Linux) `libc: ["glibc"]`, so npm
   downloads exactly one. Each contains `bin/netivri[.exe]` (a single static
   file), `LICENSE` and `THIRD_PARTY_LICENSES/`.

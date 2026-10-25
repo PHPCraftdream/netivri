@@ -62,7 +62,8 @@ them listed there and covered by the build provenance):
 - `netivri-{VERSION}.tgz` and `netivri-{PLATFORM}-{VERSION}.tgz` — the npm
   packages, for an install without the registry:
   `npm i -g netivri-{PLATFORM}-{VERSION}.tgz netivri-{VERSION}.tgz` (the first
-  file is the package of your platform, for example `netivri-linux-x64`).
+  file is the package of your platform, for example `netivri-linux-x64`; the
+  Windows ones are `netivri-w32-x64` and `netivri-w32-arm64`).
 
 The Scoop manifest and the Homebrew formula are written from the archives of
 the release and checked for syntax; they are not installed by the workflow.

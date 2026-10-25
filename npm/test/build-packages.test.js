@@ -76,8 +76,8 @@ test('buildPackages generates the main package with substituted version', (t) =>
     'netivri-darwin-x64',
     'netivri-linux-arm64',
     'netivri-linux-x64',
-    'netivri-win32-arm64',
-    'netivri-win32-x64',
+    'netivri-w32-arm64',
+    'netivri-w32-x64',
   ]);
 
   const main = JSON.parse(fs.readFileSync(path.join(out, 'netivri', 'package.json'), 'utf8'));
@@ -92,8 +92,8 @@ test('buildPackages generates the main package with substituted version', (t) =>
     'netivri-darwin-x64',
     'netivri-linux-arm64',
     'netivri-linux-x64',
-    'netivri-win32-arm64',
-    'netivri-win32-x64',
+    'netivri-w32-arm64',
+    'netivri-w32-x64',
   ]);
   for (const version of Object.values(main.optionalDependencies)) {
     assert.equal(version, VERSION);
