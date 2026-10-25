@@ -17,10 +17,13 @@ import (
 // ALREADY_RUNNING rules, not-running outputs) are unit-tested without
 // sockets or processes, following the subFetch pattern.
 var (
-	daemonProbe       = daemon.Probe
-	daemonProbeLive   = daemon.ProbeLive
-	daemonSpawn       = daemon.Spawn
-	daemonControlStop = func(ctx context.Context, addr, token string) error {
+	daemonProbe     = daemon.Probe
+	daemonProbeLive = daemon.ProbeLive
+	// daemonProbeLiveKeep is the status watch's poll: it never removes the
+	// state file, so a transient control failure stays retryable.
+	daemonProbeLiveKeep = daemon.ProbeLiveKeep
+	daemonSpawn         = daemon.Spawn
+	daemonControlStop   = func(ctx context.Context, addr, token string) error {
 		return (daemon.Client{Addr: addr, Token: token}).Stop(ctx)
 	}
 )

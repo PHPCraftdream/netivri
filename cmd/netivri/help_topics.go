@@ -133,7 +133,7 @@ var helpTopics = []helpTopic{
 		Name:    "status",
 		Group:   groupService,
 		Summary: "Show the running daemon",
-		Usage:   []string{"netivri status [--home {DIR}] [--full]"},
+		Usage:   []string{"netivri status [--home {DIR}] [--full] [--watch] [--interval {DURATION}]"},
 		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, the " +
 			"allowed_clients rule, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
@@ -143,13 +143,20 @@ var helpTopics = []helpTopic{
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
 			"'active_accounts' counts the active ones.\n\n" +
 			"It exits with 4 when no daemon is running, so it works as a check in scripts. By default the answer is " +
-			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.",
+			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
+			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
+			"1s and 60s). With --json it prints one JSON object per line instead. It ends with 4 when the daemon " +
+			"stops; --watch cannot be combined with --full.",
 		Flags: []helpFlag{
 			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it."},
+			{"--watch", "Keep running and print who is active, one frame per --interval, until interrupted or the daemon stops (exit 4)."},
+			{"--interval {DURATION}", "How often --watch polls the daemon (default 2s, at least 1s, at most 60s). Without --watch it is a usage error."},
 		},
 		Examples: []helpExample{
 			{"Show the daemon and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
+			{"Watch who is active, refreshed every two seconds", "netivri status --watch"},
+			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
 			{"Start the daemon only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
 		},
 		Errors:  []helpError{herr("DAEMON_NOT_RUNNING", cli.ExitNoDaemon, "nothing is running; start it with 'netivri up'")},

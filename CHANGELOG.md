@@ -31,6 +31,7 @@ versions; every such change is listed here.
   core start) and `saved_at` (RFC3339 UTC of the last successful write).
   The table holds the visited sites (hostnames) per account; it is never
   printed or logged and expires with the binding.
+- **`netivri status --watch`.** A live view of who is active: `netivri status --watch [--interval {DURATION}]` polls the daemon every interval (default 2s, between 1s and 60s) and prints one frame per tick until interrupted: one row per account with state, connections, up and down per second, the busiest nodes and the countries, under a header with the listen address, uptime and `active_accounts`; the text frame is ASCII (a display name that is not ASCII shows `?` per non-ASCII rune). On a terminal each frame clears the screen; `--json` prints one JSON object per line instead (rates `null` on the first frame). When the daemon stops the watch ends with `DAEMON_NOT_RUNNING` (exit 4) after a final line; a control timeout or any other poll error is a warning and retried (the watch polls without ever removing the state file), three in a row end the watch with `INTERNAL`; a state file that is gone, a foreign pid behind the control channel or a refused control port end the watch with `DAEMON_NOT_RUNNING`. `--watch` cannot be combined with `--full`; `--interval` without `--watch` is a usage error.
 - **Node display names.** Subscriptions carry a display name per node
   (`Finland 1`); the statistics store (schema version 3, additive migration)
   records it and the per-node output shows it next to the hash-like label:

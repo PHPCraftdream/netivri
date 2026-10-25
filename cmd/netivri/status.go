@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,12 +27,35 @@ func runStatus(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	full := fs.Bool("full", false, "print the full status with warm nodes, stats and affinity")
+	watch := fs.Bool("watch", false, "keep running and print who is active every interval")
+	var intervalFlag watchIntervalFlag
+	fs.Var(&intervalFlag, "interval", "how often --watch polls, e.g. 2s (default 2s)")
 	pos, err := parseFlags(fs, rest)
 	if err != nil {
 		return cli.Usage("status: %v", err)
 	}
 	if len(pos) > 0 {
 		return cli.Usage("status: unexpected argument %q", pos[0])
+	}
+	if *watch && *full {
+		return cli.Usage("status: --watch and --full cannot be combined; --full is for the one-shot answer")
+	}
+	if intervalFlag.set && !*watch {
+		return cli.Usage("status: --interval needs --watch")
+	}
+	if *watch {
+		interval := statusWatchDefault
+		if intervalFlag.set {
+			if intervalFlag.value == "" {
+				return cli.Usage("status: --interval must not be empty")
+			}
+			var err error
+			interval, err = parseWatchInterval(intervalFlag.value)
+			if err != nil {
+				return cli.Usage("status: %v", err)
+			}
+		}
+		return runStatusWatch(home, interval, wantsJSON(args, os.Getenv))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), daemon.ProbeTimeout)
 	defer cancel()

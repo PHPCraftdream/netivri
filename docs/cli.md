@@ -50,7 +50,7 @@ netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
 netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR}]
 netivri down
-netivri status [--full]
+netivri status [--full] [--watch] [--interval {DURATION}]
 
 netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}]
 netivri doctor
@@ -119,8 +119,9 @@ so that an error is never lost.
 Subscription URLs are credentials and are never printed: not on stdout,
 not on stderr, not in error messages. The same holds for `--via` proxies.
 
-`netivri logs --follow --json` is the only streaming command: one JSON object
-per line (NDJSON).
+`netivri logs --follow` and `netivri status --watch` are the streaming commands;
+with `--json` they print one JSON object per line (NDJSON) instead of frames
+or log lines.
 
 ### `help`
 
@@ -738,6 +739,49 @@ the node has none. Traffic of an account without a route is `direct`
 (or `node` when the whole instance goes through one node), with no provider
 and country. `activity` is present while the listener runs. The configured
 provider and exit-country lists stay in `accounts`.
+
+#### `status --watch`
+
+`netivri status --watch [--interval {DURATION}]` keeps running and prints one
+frame per tick (default every 2s, `--interval` between 1s and 60s, Go
+durations) until it is interrupted or the daemon stops. Each frame is the
+activity view: one row per account, sorted by login, with the state
+(`active`/`idle`), the open connections, upload and download per second
+(the delta of the byte counters of two polls over the real elapsed time,
+`B/s`, `KiB/s` or `MiB/s`; blank on the first frame and `0` after a negative
+delta, which a daemon restart or closed connections causes), the busiest
+nodes (at most 3, then `+N more`) and the countries. A header line carries
+the listen address, the uptime and `active_accounts`.
+
+On a terminal every frame clears the screen first; otherwise frames are plain
+text separated by a blank line, so a redirect keeps every frame. The text
+frame is ASCII: a node display name that is not ASCII shows with every
+non-ASCII rune as `?` (`??? 1`); `--json` keeps the original name.
+
+`netivri status --watch --json` prints one JSON object per line instead:
+
+```json
+{"time": "2026-10-25T12:00:02Z", "active_accounts": 1,
+ "accounts": [{"login": "alice", "active": true, "connections": 2,
+               "up_bytes_per_s": 2048.0, "down_bytes_per_s": 524288.0,
+               "nodes": [{"node": "main/a1b2c3", "name": "Germany 1",
+                          "provider": "main", "country": "DE", "connections": 2,
+                          "upload_bytes": 4096, "download_bytes": 1048576}]}]}
+```
+
+`up_bytes_per_s` and `down_bytes_per_s` are `null` on the first frame.
+
+At the start a not-running daemon is the usual `DAEMON_NOT_RUNNING` error,
+exit 4. If the daemon stops while watching, the watch prints a final line
+(`daemon stopped`, or `{"stopped": true, "time": ...}` with `--json`) and
+ends with `DAEMON_NOT_RUNNING`, exit 4. "Stopped" means the state file is
+gone, the control channel answers for another pid, or nothing listens on
+the control port (connection refused: a crashed daemon leaves its state
+file behind). Timeouts and every other error are only a warning line and
+are retried on the next tick, and three consecutive failures end the watch
+with `INTERNAL`, exit 1. The same retry rule covers a failed first poll;
+the watch never removes the state file. `--watch` cannot be combined with
+`--full`, and `--interval` without `--watch` is a usage error.
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,
