@@ -36,7 +36,8 @@ func runStats(args []string, stdout io.Writer) error {
 	country := fs.String("country", "", "only the nodes of this country")
 	node := fs.String("node", "", "only this node label")
 	since := fs.String("since", "24h", "window, e.g. 90m, 24h or 7d")
-	by := fs.String("by", "node", "group by node, country or provider")
+	by := fs.String("by", "node", "group by node, country, provider or account")
+	account := fs.String("account", "", "only this account (all --by modes)")
 	pos, err := parseFlags(fs, rest)
 	if err != nil {
 		return cli.Usage("stats: %v", err)
@@ -49,9 +50,9 @@ func runStats(args []string, stdout io.Writer) error {
 		return err
 	}
 	switch *by {
-	case "node", "country", "provider":
+	case "node", "country", "provider", "account":
 	default:
-		return cli.Usage("stats: --by must be node, country or provider")
+		return cli.Usage("stats: --by must be node, country, provider or account")
 	}
 	cc := ""
 	if *country != "" {
@@ -76,16 +77,55 @@ func runStats(args []string, stdout io.Writer) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	nodes, err := store.Nodes(stats.Query{Since: window, Provider: *sub, Country: cc, Label: *node})
-	if err != nil {
-		return &cli.Error{Code: "INTERNAL", Message: "read statistics: " + err.Error(), Exit: cli.ExitInternal}
+	var items []map[string]any
+	q := stats.Query{Since: window, Account: *account, Provider: *sub, Country: cc, Label: *node}
+	switch {
+	case *by == "account":
+		accounts, err := store.Accounts(q)
+		if err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "read statistics: " + err.Error(), Exit: cli.ExitInternal}
+		}
+		items = accountItems(accounts)
+	case *account != "":
+		// The rows come from the account samples of that login only: a
+		// documented subset (dials and bytes, no probes or rates).
+		nodes, err := store.AccountNodes(q)
+		if err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "read statistics: " + err.Error(), Exit: cli.ExitInternal}
+		}
+		items = statsItems(nodes, *by)
+	default:
+		nodes, err := store.Nodes(stats.Query{Since: window, Provider: *sub, Country: cc, Label: *node})
+		if err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "read statistics: " + err.Error(), Exit: cli.ExitInternal}
+		}
+		items = statsItems(nodes, *by)
 	}
 	cli.Success(stdout, map[string]any{
 		"since": window.String(),
 		"by":    *by,
-		"items": statsItems(nodes, *by),
+		"items": items,
 	})
 	return nil
+}
+
+// accountItems renders the per-account rows: one per login, sorted by
+// login (the store already does that).
+func accountItems(accounts []stats.AccountStats) []map[string]any {
+	items := make([]map[string]any, 0, len(accounts))
+	for _, a := range accounts {
+		items = append(items, map[string]any{
+			"login":       a.Login,
+			"bytes_up":    a.BytesUp,
+			"bytes_down":  a.BytesDown,
+			"dials":       a.Dials,
+			"dial_ok_pct": percent(a.DialsOK, a.Dials),
+			"nodes":       a.Nodes,
+			"countries":   strings.Join(a.Countries, ", "),
+			"providers":   strings.Join(a.Providers, ", "),
+		})
+	}
+	return items
 }
 
 // parseWindow reads a duration with an extra "d" (days) suffix, bounded to

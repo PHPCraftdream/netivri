@@ -147,7 +147,7 @@ func TestNewerSchemaRejected(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	raw := openRaw(t, opts.Path)
-	if _, err := raw.Exec("PRAGMA user_version = 2"); err != nil {
+	if _, err := raw.Exec("PRAGMA user_version = 99"); err != nil {
 		t.Fatalf("bump user_version: %v", err)
 	}
 	if _, err := Open(Options{Path: opts.Path, Now: clock(0)}); err == nil {

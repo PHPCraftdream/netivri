@@ -519,20 +519,24 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "stats",
 		Group:   groupDiag,
-		Summary: "Show recorded node health, delay and throughput",
+		Summary: "Show recorded node health, delay and throughput, per node or per account",
 		Usage: []string{
-			"netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider}]",
+			"netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--account {ACCOUNT}] [--since {DURATION}] [--by {node|country|provider|account}]",
 		},
 		Description: "Shows what the daemon recorded about the exit nodes: the health and delay from the background " +
 			"probes, the dial time and outcome of real connections, and the throughput of real traffic. It reads " +
 			"{DIR}/stats.db read-only, so it works while the daemon runs and after it stopped. Statistics exist " +
-			"only for accounts that have a provider or an exit country.",
+			"only for accounts that have a provider or an exit country.\n\n" +
+			"The daemon also records per account which nodes it used, the dial outcomes and the traffic " +
+			"(bytes up and down). With --by account the result has one row per login; with --account the " +
+			"node, country and provider rows come from that login's own samples (dials and bytes only).",
 		Flags: []helpFlag{
 			{"--sub {SUBSCRIPTION}", "Only the nodes of this subscription (provider)."},
 			{"--country {COUNTRY}", "Only the nodes of this country."},
 			{"--node {NODE}", "Only this node. A label is {PROVIDER}/{NODE_ID}, as in 'netivri node list' (sub and id)."},
 			{"--since {DURATION}", "Window: 90m, 24h, 7d and so on. Default 24h, at most 365d."},
-			{"--by {GROUP}", "node (default), country or provider. Grouped output sums counters and leaves percentiles out."},
+			{"--by {GROUP}", "node (default), country, provider or account. Grouped output sums counters and leaves percentiles out."},
+			{"--account {ACCOUNT}", "Only this account. Works with every --by mode; with node, country and provider the rows come from the account's own samples: dials and bytes only."},
 		},
 		Examples: []helpExample{
 			{"Every node over the last day", "netivri stats"},
@@ -540,6 +544,8 @@ var helpTopics = []helpTopic{
 			{"Compare providers over a week", "netivri stats --by provider --since 7d"},
 			{"German nodes of one subscription over the last 90 minutes", "netivri stats --sub main --country DE --since 90m"},
 			{"One node", "netivri stats --node main/a1b2c3"},
+			{"Traffic per account", "netivri stats --by account"},
+			{"One account", "netivri stats --by account --account alice"},
 		},
 		Errors: []helpError{
 			herr("STATS_UNAVAILABLE", cli.ExitNotFound, "no statistics database yet: nothing was recorded"),

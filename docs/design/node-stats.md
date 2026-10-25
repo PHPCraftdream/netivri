@@ -49,8 +49,14 @@ strings; they are the key of the statistics and of persisted bindings.
 | probe | the warm-up probe of a node (`WarmOptions.OnProbe`) | ok, delay |
 | dial | the sticky group times `member.DialContext` of every real connection | ok, dial time |
 | throughput | every 5 s the sticky group reads Mihomo's active connection trackers (`statistic.DefaultManager`), attributes each tracker to the node in its chain and sums the bytes moved since the previous read per node | bytes, window |
+| account dial | the sticky group times `member.DialContext` of every real connection; the login is the authenticated connection user (`metadata.InUser`) | ok, dial time per (login, node) |
+| account throughput | from the same connection trackers, which carry the login; the bytes moved in the window are split into bytes up and down per (login, node) | bytes up, bytes down, window |
 
-Throughput samples are written only for windows that moved at least 16 KiB.
+Throughput samples are written only for windows that moved at least 16 KiB;
+the same threshold applies to the per-account windows. Account samples are
+written separately from node samples and folded into `account_hourly` like
+the node samples into `hourly`; the same retention applies (7 days raw, 90
+days hourly).
 The data path itself gets no wrapper: Mihomo already counts bytes per
 connection, polling the counters costs nothing per packet.
 
@@ -78,9 +84,28 @@ CREATE TABLE hourly (
   n INTEGER NOT NULL, ok INTEGER NOT NULL, ms_sum INTEGER NOT NULL,
   ms_max INTEGER NOT NULL, bytes INTEGER NOT NULL,
   PRIMARY KEY (hour, node, kind)) WITHOUT ROWID;                  -- unix hour
+CREATE TABLE account (
+  id INTEGER PRIMARY KEY, login TEXT NOT NULL UNIQUE,
+  first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);       -- unix ms
+CREATE TABLE account_sample (
+  ts INTEGER NOT NULL, account INTEGER NOT NULL, node INTEGER NOT NULL,
+  kind INTEGER NOT NULL, ok INTEGER NOT NULL, ms INTEGER NOT NULL,
+  bytes INTEGER NOT NULL, up INTEGER NOT NULL, down INTEGER NOT NULL);
+CREATE INDEX account_sample_account_ts ON account_sample(account, ts);
+CREATE INDEX account_sample_node_ts ON account_sample(node, ts);
+CREATE INDEX account_sample_ts ON account_sample(ts);
+CREATE TABLE account_hourly (
+  hour INTEGER NOT NULL, account INTEGER NOT NULL, node INTEGER NOT NULL,
+  kind INTEGER NOT NULL, n INTEGER NOT NULL, ok INTEGER NOT NULL,
+  ms_sum INTEGER NOT NULL, ms_max INTEGER NOT NULL, bytes INTEGER NOT NULL,
+  up INTEGER NOT NULL, down INTEGER NOT NULL,
+  PRIMARY KEY (hour, account, node, kind)) WITHOUT ROWID;         -- unix hour
 ```
 
-`PRAGMA user_version` carries the schema version (1). Writes are batched: a
+`PRAGMA user_version` carries the schema version (2). The account tables are
+new in schema version 2 and the migration from version 1 is additive: a v1
+database keeps its data and opens read-only; a `stats` query on it simply
+has no account data. Account samples are separate from the node samples. Writes are batched: a
 bounded queue, flushed every second or at 256 samples in one transaction;
 `Record` never blocks (a full queue drops the sample and counts it).
 Retention: raw samples older than `retention` (default 7 days) are folded
@@ -291,7 +316,7 @@ None in the first version: retention (7 days raw) and the binding lifetime
 ### `netivri stats`
 
 ```
-netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since 24h] [--by {node|country|provider}]
+netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since 24h] [--by {node|country|provider|account}] [--account {ACCOUNT}]
 ```
 
 Reads the database read-only, works while the daemon runs and when it is
@@ -300,7 +325,14 @@ stopped (`STATS_UNAVAILABLE`, exit 5, when no database exists). `data`:
 "probes", "uptime_pct", "delay_ms": {"avg","p50","p95"}, "dials",
 "dial_ok_pct", "dial_ms_avg", "throughput_kbps": {"p50","max"}, "bytes",
 "last_seen", "last_ok"}]}`; grouped forms sum counters and average the rest
-weighted by counts.
+weighted by counts. `--by account` reports one item per login: `login`,
+`bytes_up`, `bytes_down`, `dials`, `dial_ok_pct`, `nodes`, `countries`,
+`providers`, sorted by login. `--account {ACCOUNT}` works with every `--by`
+mode; with `--by account` it selects one login and combines with
+`--sub`/`--country`/`--node` (which restrict the account rows to samples on
+matching nodes). With the node, country and provider views the rows are a
+subset built from that login's account samples (dials, dial_ok_pct,
+dial_ms_avg, bytes up+down; no probes or rates).
 
 ## Persisting bindings
 

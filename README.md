@@ -35,7 +35,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
-  database (`netivri stats`), and `netivri diag dial` shows where a connection
+  database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
 - **Small and self-contained.** One binary with [Mihomo](https://github.com/MetaCubeX/mihomo)
   embedded as a library; no external core process and no native libraries
