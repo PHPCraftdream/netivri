@@ -17,6 +17,10 @@ import (
 const (
 	defaultProbeInterval = 45 * time.Second
 	defaultProbeTimeout  = 5 * time.Second
+
+	// probeDownMaxInterval caps the probe interval of a node that stays
+	// down (45 s, 90 s, 3 m, then this cap).
+	probeDownMaxInterval = 10 * time.Minute
 	defaultProbeURL      = "http://www.gstatic.com/generate_204"
 	defaultPoolTTL       = 30 * time.Second
 
@@ -40,6 +44,11 @@ type WarmOptions struct {
 	// name, alive reports probe success and delay is the measured
 	// delay (0 on failure).
 	OnProbe func(name string, alive bool, delay time.Duration)
+	// Down, when set, reports whether the node behind an internal proxy
+	// name is down (see nodeHealth.Down); down nodes are probed with a
+	// lengthened interval (probeBackoffInterval). Start sets it from the
+	// sticky health table.
+	Down func(name string) bool
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -78,12 +87,29 @@ func (realWarmClock) NewTicker(d time.Duration) warmTicker { return realWarmTick
 func (t realWarmTicker) Chan() <-chan time.Time            { return t.ticker.C }
 func (t realWarmTicker) Stop()                             { t.ticker.Stop() }
 
-// probeBackoff tracks consecutive probe failures of one node so dead
-// nodes are skipped in some rounds (no randomness, recovered nodes
-// reset).
-type probeBackoff struct {
-	failures int
-	skipped  int
+// probeBackoffInterval maps how many times a down node has been probed
+// to its probe interval: base (45 s), 2*base (90 s), 4*base (3 m), then
+// the 10 minute cap. A node that is not down is always probed every base.
+func probeBackoffInterval(base time.Duration, downRounds int) time.Duration {
+	interval := base
+	switch downRounds {
+	case 2:
+		interval = 2 * base
+	case 3:
+		interval = 4 * base
+	}
+	if downRounds > 3 || interval > probeDownMaxInterval {
+		return probeDownMaxInterval
+	}
+	return interval
+}
+
+// probeSchedule is the backoff state of one node: how many consecutive
+// probes found it down and when it is next due. The zero value is due
+// immediately and is used for every node that is not down.
+type probeSchedule struct {
+	downRounds int
+	nextDue    time.Time
 }
 
 type warmer struct {
@@ -93,10 +119,11 @@ type warmer struct {
 	mu            sync.RWMutex
 	stats         WarmStats
 	proxies       []C.Proxy
-	backoff       []probeBackoff
+	backoff       []probeSchedule
 	options       WarmOptions
 	clock         warmClock
 	probe         warmProbe
+	down          func(name string) bool
 	pool          *poolDialer
 	probeCount    atomic.Uint64
 	probeFailures atomic.Uint64
@@ -146,7 +173,7 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 	if clock == nil || probe == nil {
 		return nil, errors.New("core: warm clock and probe are required")
 	}
-	w := &warmer{done: make(chan struct{}), options: o, clock: clock, probe: probe}
+	w := &warmer{done: make(chan struct{}), options: o, clock: clock, probe: probe, down: o.Down}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	// Replace first so the initial probe observes the dialer-hook adapter.
@@ -205,8 +232,8 @@ func (w *warmer) run(ctx context.Context) {
 	}
 }
 
-// probeAll runs one probe round: every node that is due (dead nodes are
-// skipped in some rounds, see probeBackoff) is probed concurrently with
+// probeAll runs one probe round: every node that is due (down nodes are
+// skipped until their backoff interval has passed, see probeSchedule) is probed concurrently with
 // at most ProbeConcurrency probes in flight. The round returns when all
 // probes are done or the context ends (each probe inherits its
 // cancellation through its timeout context).
@@ -222,18 +249,24 @@ func (w *warmer) probeAll(parent context.Context) {
 		proxy C.Proxy
 		index int
 	}
+	now := w.clock.Now()
 	w.mu.Lock()
 	if len(w.backoff) != len(w.proxies) {
-		w.backoff = make([]probeBackoff, len(w.proxies))
+		w.backoff = make([]probeSchedule, len(w.proxies))
 	}
 	var due []scheduled
 	for i, p := range w.proxies {
 		st := &w.backoff[i]
-		if st.failures >= 2 && st.skipped < min(st.failures-1, 3) {
-			st.skipped++
+		if !w.isDown(p.Name()) {
+			*st = probeSchedule{}
+			due = append(due, scheduled{proxy: p, index: i})
 			continue
 		}
-		st.skipped = 0
+		if now.Before(st.nextDue) {
+			continue
+		}
+		st.downRounds++
+		st.nextDue = now.Add(probeBackoffInterval(w.options.ProbeInterval, st.downRounds))
 		due = append(due, scheduled{proxy: p, index: i})
 	}
 	w.mu.Unlock()
@@ -287,13 +320,9 @@ func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
 	if err == nil {
 		h.Delay = measured
 	}
-	if index >= 0 && index < len(w.backoff) {
-		if err == nil {
-			w.backoff[index] = probeBackoff{}
-		} else {
-			w.backoff[index].failures++
-			w.backoff[index].skipped = 0
-		}
+	if index >= 0 && index < len(w.backoff) && err == nil {
+		// Success: back to the base interval (probeSchedule zero value).
+		w.backoff[index] = probeSchedule{}
 	}
 	w.mu.Unlock()
 	if w.options.OnProbe != nil {
@@ -338,6 +367,12 @@ func (w *warmer) Close() {
 			w.pool.wait(5 * time.Second)
 		}
 	})
+}
+
+// isDown reports whether the node behind an internal proxy name is down;
+// without a Down hook (standalone warmer) no node is ever down.
+func (w *warmer) isDown(name string) bool {
+	return w.down != nil && w.down(name)
 }
 
 func (w *warmer) addPoolMetric(kind string) {

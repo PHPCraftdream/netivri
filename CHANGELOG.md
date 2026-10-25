@@ -47,6 +47,10 @@ versions; every such change is listed here.
 
 ### Changed
 
+- Background probes back off while a node stays down: the probe interval
+  of a down node grows 45 s, 90 s, 3 m to a 10 minute cap (45 s for nodes
+  that are not down); a successful probe or dial resets it. Down
+  detection, selection and hedging are unchanged.
 - `scripts/npm-publish.sh` treats the answer "cannot publish over a previously
   staged version" (npm's registry view can lag a minute) as a version that is
   already published, so a re-run of a failed release goes on to the packages
