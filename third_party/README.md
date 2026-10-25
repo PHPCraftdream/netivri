@@ -38,3 +38,29 @@
    can pre-dial the TCP + TLS/Reality transport and measure the `tcp` and
    `tls` phases of a dial (`docs/design/latency.md`, "VLESS seam"). Without a
    source and an observer, behaviour is unchanged from upstream.
+2. **Allowed-client address gate** (`listener/mixed/mixed.go`): the accept
+   loop applies Mihomo's remote-address filter (`inbound.IsRemoteAddrDisAllowed`)
+   to listeners with a custom auth store too, so netivri's
+   `listen.allowed_clients` rule closes a refused connection before any
+   SOCKS/HTTP handshake. Skip-auth (`SkipAuthRemoteAddr`) stays
+   default-listener-only, so proxy authentication is never skipped. The
+   filter is process-global state; netivri sets it after `executor.ApplyConfig`
+   and resets it to allow-all when an instance closes.
+3. **VerifyFrom authentication seam** (`component/auth/netivri_remote.go`,
+   `transport/socks5/socks5.go`, `listener/http/proxy.go`): adds the optional
+   `auth.RemoteVerifier` interface. When netivri's authenticator implements
+   `VerifyFrom(user, pass, remote)`, the SOCKS5 user/pass handshake and the
+   HTTP Proxy-Authorization check call it instead of `Verify`, so a
+   per-account client-address rule is enforced before the password is
+   verified and before an `init` account can be claimed. Without the
+   interface the behaviour is unchanged from upstream. A failed
+   re-authentication on a keep-alive HTTP connection revokes trust and clears
+   the recorded user, so a request naming an account whose rule rejects the
+   peer is answered exactly like a wrong password (403; 407 only when no
+   credentials were sent) and never routed.
+4. **Atomic address filter lists** (`adapter/inbound/ipfilter.go`): the
+   allowed and disallowed prefix lists are `atomic.Pointer` values instead of
+   plain slices. The accept loops read them while netivri sets them when an
+   instance starts and resets them when it closes; upstream never changes
+   them after start, so it had no synchronization (the race detector found
+   the race in `TestMixedPortLifecycle`). Behaviour is otherwise unchanged.

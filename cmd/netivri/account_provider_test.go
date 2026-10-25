@@ -46,7 +46,7 @@ func runAccountErr(t *testing.T, home string, args ...string) *cli.Error {
 func TestAccountAddWithProvider(t *testing.T) {
 	home := accountProviderHome(t)
 	out := runAccountOK(t, home, "add", "alice", "--provider", "p1", "--country", "de")
-	if !bytes.Contains(out, []byte(`"login":"alice","provider":"p1","exit_country":"DE","password_set":false`)) {
+	if !bytes.Contains(out, []byte(`"login":"alice","provider":"p1","exit_country":"DE","allowed_clients":"","password_set":false`)) {
 		t.Fatalf("add output %s", out)
 	}
 	// Persisted, and reloaded from disk.

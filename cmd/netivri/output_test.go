@@ -57,7 +57,7 @@ func TestKtavOutputRoundTrips(t *testing.T) {
 	var out bytes.Buffer
 	cli.Success(&out, map[string]any{
 		"version":  "0.1.0",
-		"accounts": []accountInfo{{Login: "123456", Provider: "main", ExitCountry: "DE", PasswordSet: true}, {Login: "bob"}},
+		"accounts": []accountInfo{{Login: "123456", Provider: "main", ExitCountry: "DE", AllowedClients: "10.0.0.0/8", PasswordSet: true}, {Login: "bob"}},
 		"empty":    []any{},
 		"none":     nil,
 		"count":    3,

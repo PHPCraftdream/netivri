@@ -3,27 +3,37 @@ package inbound
 import (
 	"net"
 	"net/netip"
+	"sync/atomic"
 
 	C "github.com/metacubex/mihomo/constant"
 )
 
-var lanAllowedIPs []netip.Prefix
-var lanDisAllowedIPs []netip.Prefix
+// The prefix lists are read by the accept loops while netivri sets and
+// resets them when an instance starts or closes, so they are atomic
+// pointers (netivri patch 4).
+var lanAllowedIPs atomic.Pointer[[]netip.Prefix]
+var lanDisAllowedIPs atomic.Pointer[[]netip.Prefix]
 
 func SetAllowedIPs(prefixes []netip.Prefix) {
-	lanAllowedIPs = prefixes
+	lanAllowedIPs.Store(&prefixes)
 }
 
 func SetDisAllowedIPs(prefixes []netip.Prefix) {
-	lanDisAllowedIPs = prefixes
+	lanDisAllowedIPs.Store(&prefixes)
 }
 
 func AllowedIPs() []netip.Prefix {
-	return lanAllowedIPs
+	if p := lanAllowedIPs.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 func DisAllowedIPs() []netip.Prefix {
-	return lanDisAllowedIPs
+	if p := lanDisAllowedIPs.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 func IsRemoteAddrDisAllowed(addr net.Addr) bool {
@@ -39,9 +49,9 @@ func IsRemoteAddrDisAllowed(addr net.Addr) bool {
 }
 
 func isAllowed(addr netip.Addr) bool {
-	return prefixesContains(lanAllowedIPs, addr)
+	return prefixesContains(AllowedIPs(), addr)
 }
 
 func isDisAllowed(addr netip.Addr) bool {
-	return prefixesContains(lanDisAllowedIPs, addr)
+	return prefixesContains(DisAllowedIPs(), addr)
 }

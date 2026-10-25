@@ -131,17 +131,18 @@ func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store 
 		observer = statsObserver{store: store}
 	}
 	return core.Options{
-		HomeDir:       l.opts.Home,
-		Bind:          d.bind,
-		Port:          d.port,
-		Authenticator: a,
-		RouteNodes:    d.pool.nodes,
-		AccountRoute:  d.pool.accountRoutes,
-		NodeLabels:    d.pool.labels,
-		NodeTiers:     d.pool.tiers,
-		OnNodeHealth:  nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
-		Observer:      observer,
-		Warm:          warmOptions(d.pool.nodes),
+		HomeDir:        l.opts.Home,
+		Bind:           d.bind,
+		Port:           d.port,
+		Authenticator:  a,
+		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
+		RouteNodes:     d.pool.nodes,
+		AccountRoute:   d.pool.accountRoutes,
+		NodeLabels:     d.pool.labels,
+		NodeTiers:      d.pool.tiers,
+		OnNodeHealth:   nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
+		Observer:       observer,
+		Warm:           warmOptions(d.pool.nodes),
 	}
 }
 
@@ -207,21 +208,22 @@ func nodesWithoutNames(routes map[string][]map[string]any) map[string][]map[stri
 // Settings the core does not read (subscription URLs, the refresh interval)
 // are left out, so changing them never restarts the listener.
 func fingerprint(d desiredState) string {
-	type acct struct{ Login, Password string }
+	type acct struct{ Login, Password, Clients string }
 	v := struct {
 		Bind, AuthLogin, AuthPassword string
 		Port                          int
+		AllowedClients                string
 		Accounts                      []acct
 		Nodes                         map[string][]map[string]any
 		Labels                        map[string][]string
 		Tiers                         map[string][]int
 		Routes                        map[string]string
-	}{Bind: d.bind, Port: d.port, Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers, Routes: d.pool.accountRoutes}
+	}{Bind: d.bind, Port: d.port, AllowedClients: config.NormalizeAllowedClients(d.cfg.Listen.AllowedClients), Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers, Routes: d.pool.accountRoutes}
 	// The persist callbacks rewrite credentials of this config in place.
 	persistMu.Lock()
 	v.AuthLogin, v.AuthPassword = d.cfg.Auth.Login, d.cfg.Auth.Password
 	for _, a := range d.cfg.Accounts {
-		v.Accounts = append(v.Accounts, acct{a.Login, a.Password})
+		v.Accounts = append(v.Accounts, acct{a.Login, a.Password, config.NormalizeAllowedClients(a.AllowedClients)})
 	}
 	persistMu.Unlock()
 	sort.Slice(v.Accounts, func(i, j int) bool { return v.Accounts[i].Login < v.Accounts[j].Login })
@@ -433,16 +435,17 @@ func (l *liveDaemon) status(startedAt string) daemon.Status {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	st := daemon.Status{
-		Daemon:     "running",
-		Foreground: l.opts.Handshake == "",
-		PID:        os.Getpid(),
-		Protocols:  daemonProtocols,
-		Auth:       liveAuth(l.applied.cfg),
-		StartedAt:  startedAt,
-		Version:    version,
-		Stats:      statsInfo(l.store, l.opts.Home),
-		Reload:     &daemon.ReloadInfo{Count: l.reloads, LastError: l.reloadErr},
-		Refresh:    l.refreshInfoLocked(),
+		Daemon:         "running",
+		Foreground:     l.opts.Handshake == "",
+		PID:            os.Getpid(),
+		Protocols:      daemonProtocols,
+		Auth:           liveAuth(l.applied.cfg),
+		StartedAt:      startedAt,
+		Version:        version,
+		Stats:          statsInfo(l.store, l.opts.Home),
+		Reload:         &daemon.ReloadInfo{Count: l.reloads, LastError: l.reloadErr},
+		Refresh:        l.refreshInfoLocked(),
+		AllowedClients: config.NormalizeAllowedClients(l.applied.cfg.Listen.AllowedClients),
 	}
 	if !l.lastReload.IsZero() {
 		st.Reload.LastAt = l.lastReload.UTC().Format(time.RFC3339)

@@ -307,7 +307,9 @@ func accountStatus(cfg *config.Config, routes map[string]string) []daemon.Accoun
 				country = key[i+1:]
 			}
 		}
-		out = append(out, daemon.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country})
+		// No normalization: an account without its own rule reports "" here, like
+		// in `account list`.
+		out = append(out, daemon.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out

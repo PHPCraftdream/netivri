@@ -1,3 +1,5 @@
+// Modified by the netivri authors: user/pass verification receives the client address (VerifyFrom).
+
 package socks5
 
 import (
@@ -163,7 +165,7 @@ func ServerHandshake(rw net.Conn, authenticator auth.Authenticator) (addr Addr, 
 		pass := string(authBuf[:passLen])
 
 		// Verify
-		if ok := authenticator.Verify(string(user), string(pass)); !ok {
+		if ok := auth.VerifyWithRemote(authenticator, string(user), string(pass), rw.RemoteAddr()); !ok {
 			rw.Write([]byte{1, 1})
 			err = ErrAuth
 			return

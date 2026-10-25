@@ -273,8 +273,9 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 	accounts := make([]auth.AccountSpec, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
 		accounts = append(accounts, auth.AccountSpec{
-			Login:    a.Login,
-			Password: a.Password,
+			Login:          a.Login,
+			Password:       a.Password,
+			AllowedClients: config.AllowedClientPrefixes(a.AllowedClients),
 		})
 	}
 	a, err := auth.NewMulti(auth.MultiOptions{

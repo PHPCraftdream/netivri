@@ -1,3 +1,5 @@
+// Modified by the netivri authors: the accept loop applies the address filter to custom auth stores as well.
+
 package mixed
 
 import (
@@ -129,11 +131,13 @@ func NewWithConfig(config LC.AuthServer, lc C.InboundListenConfig, tunnel C.Tunn
 				continue
 			}
 			store := config.AuthStore
-			if isDefault || store == authStore.Default { // only apply on default listener
-				if !inbound.IsRemoteAddrDisAllowed(c.RemoteAddr()) {
-					_ = c.Close()
-					continue
-				}
+			// Modified by the netivri authors: the address filter also guards
+			// listeners with a custom auth store; skip-auth stays default-only.
+			if !inbound.IsRemoteAddrDisAllowed(c.RemoteAddr()) {
+				_ = c.Close()
+				continue
+			}
+			if isDefault || store == authStore.Default {
 				if inbound.SkipAuthRemoteAddr(c.RemoteAddr()) {
 					store = authStore.Nil
 				}

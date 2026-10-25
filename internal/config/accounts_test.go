@@ -154,8 +154,12 @@ func TestMarshalAccountsBackwardCompatibility(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			listen := cfg.Listen
+			if listen.AllowedClients == AllowedClientsAny {
+				listen.AllowedClients = "" // the default is never rendered
+			}
 			body, err := ktavDumps(previousConfig{
-				Listen: cfg.Listen, Auth: cfg.Auth, Fetch: cfg.Fetch,
+				Listen: listen, Auth: cfg.Auth, Fetch: cfg.Fetch,
 				Subscriptions: cfg.Subscriptions, Selection: cfg.Selection,
 			})
 			if err != nil {

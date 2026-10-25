@@ -2,11 +2,13 @@ package auth
 
 import (
 	"crypto/subtle"
+	"net"
 	"runtime"
 	"sort"
 	"sync"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/config"
 	mihauth "github.com/metacubex/mihomo/component/auth"
 	"golang.org/x/sync/singleflight"
 )
@@ -16,6 +18,10 @@ import (
 type AccountSpec struct {
 	Login    string
 	Password string
+	// AllowedClients optionally restricts the client addresses this account
+	// may authenticate from (allowed_clients.go in internal/config). nil
+	// means no account restriction.
+	AllowedClients config.AllowedClients
 }
 
 // MultiOptions configures named accounts and the optional legacy credential.
@@ -37,6 +43,7 @@ type accountState struct {
 	login   string
 	hash    string
 	init    bool
+	clients config.AllowedClients
 	cached  string
 	persist func(string, string) error
 }
@@ -79,6 +86,7 @@ func NewMulti(o MultiOptions) (mihauth.Authenticator, error) {
 			m.accounts[spec.Login] = &accountState{
 				login:   spec.Login,
 				init:    true,
+				clients: spec.AllowedClients,
 				persist: o.PersistAccount,
 			}
 		} else {
@@ -86,8 +94,9 @@ func NewMulti(o MultiOptions) (mihauth.Authenticator, error) {
 				return invalid()
 			}
 			m.accounts[spec.Login] = &accountState{
-				login: spec.Login,
-				hash:  spec.Password,
+				login:   spec.Login,
+				hash:    spec.Password,
+				clients: spec.AllowedClients,
 			}
 		}
 	}
@@ -119,7 +128,23 @@ func validAccountLogin(s string) bool {
 	return true
 }
 
+// VerifyFrom is Verify with the client address: an account with an
+// allowed-clients rule that does not match remote is refused before the
+// password is verified and before an init account can be claimed; the
+// caller sees the same failure as a wrong password. The legacy credential
+// has no per-account rule.
+func (m *multiAuthenticator) VerifyFrom(user, pass string, remote net.Addr) bool {
+	if a := m.accounts[user]; a != nil && ctEqual(user, a.login) && !a.clients.AllowsAddr(remote) {
+		return false
+	}
+	return m.verify(user, pass)
+}
+
 func (m *multiAuthenticator) Verify(user, pass string) bool {
+	return m.verify(user, pass)
+}
+
+func (m *multiAuthenticator) verify(user, pass string) bool {
 	if user == "" || pass == "" || len(pass) > maxPasswordLen {
 		return false
 	}
@@ -189,4 +214,7 @@ func (m *multiAuthenticator) Users() []string {
 	return users
 }
 
-var _ mihauth.Authenticator = (*multiAuthenticator)(nil)
+var (
+	_ mihauth.Authenticator  = (*multiAuthenticator)(nil)
+	_ mihauth.RemoteVerifier = (*multiAuthenticator)(nil)
+)

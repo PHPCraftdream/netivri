@@ -1,3 +1,5 @@
+// Modified by the netivri authors: proxy authentication receives the client address (VerifyFrom).
+
 package http
 
 import (
@@ -44,6 +46,9 @@ func HandleConn(c net.Conn, tunnel C.Tunnel, store auth.AuthStore, additions ...
 
 	authenticator := store.Authenticator()
 	trusted := authenticator == nil // disable authenticate if lru is nil
+	// Verified by the netivri authors: SOCKS5 negotiates user/password once per
+	// connection (transport/socks5 ServerHandshake), so there is no per-request
+	// account switch on that path; HTTP re-evaluates every request.
 	lastUser := ""
 
 	for {
@@ -58,9 +63,20 @@ func HandleConn(c net.Conn, tunnel C.Tunnel, store auth.AuthStore, additions ...
 
 		keepAlive := strings.TrimSpace(strings.ToLower(request.Header.Get("Proxy-Connection"))) == "keep-alive"
 
-		resp, user := authenticate(request, authenticator) // always call authenticate function to get user
+		resp, user := authenticate(request, authenticator, conn.RemoteAddr()) // always call authenticate function to get user
 		if resp == nil {
 			trusted = true
+		} else {
+			// Modified by the netivri authors: a failed re-authentication on a
+			// keep-alive connection revokes the trust of earlier requests and
+			// the unauthenticated user must not reach the tunnel.
+			//
+			// 403 is the stock answer for a request that CARRIES credentials
+			// but fails verification (wrong password or VerifyFrom refusal);
+			// 407 is answered only when no credentials were sent, so a
+			// disallowed address is indistinguishable from a wrong password.
+			trusted = false
+			user = ""
 		}
 		additions[inUserIdx] = inbound.WithInUser(user)
 
@@ -150,7 +166,7 @@ func HandleConn(c net.Conn, tunnel C.Tunnel, store auth.AuthStore, additions ...
 	_ = conn.Close()
 }
 
-func authenticate(request *http.Request, authenticator auth.Authenticator) (resp *http.Response, user string) {
+func authenticate(request *http.Request, authenticator auth.Authenticator, remote net.Addr) (resp *http.Response, user string) {
 	credential := parseBasicProxyAuthorization(request)
 	if credential == "" && authenticator != nil {
 		resp = responseWith(request, http.StatusProxyAuthRequired)
@@ -158,7 +174,7 @@ func authenticate(request *http.Request, authenticator auth.Authenticator) (resp
 		return
 	}
 	user, pass, err := decodeBasicProxyAuthorization(credential)
-	authed := authenticator == nil || (err == nil && authenticator.Verify(user, pass))
+	authed := authenticator == nil || (err == nil && auth.VerifyWithRemote(authenticator, user, pass, remote))
 	if !authed {
 		log.Infoln("Auth failed from %s", request.RemoteAddr)
 		return responseWith(request, http.StatusForbidden), user
