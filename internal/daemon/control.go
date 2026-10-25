@@ -61,6 +61,9 @@ type NodeHealth struct {
 	Name    string `json:"name"` // internal proxy name, never the provider name
 	Alive   bool   `json:"alive"`
 	DelayMS int64  `json:"delay_ms"` // 0 until a probe succeeded
+	// Label is the node label ({PROVIDER}/{NODE_ID}); empty when the
+	// instance runs without account routes.
+	Label string `json:"label,omitempty"`
 }
 
 // WarmInfo is the warm-up state of the running instance.

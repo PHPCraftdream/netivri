@@ -28,16 +28,16 @@ func TestWarmInfoOf(t *testing.T) {
 	info := warmInfoOf(core.WarmStats{
 		Probes: 5, ProbeFailures: 2, PoolHits: 3, PoolMisses: 1, PoolDiscards: 4,
 		Nodes: []core.NodeHealth{
-			{Name: "netivri-DE-0", Alive: true, Delay: 48 * time.Millisecond},
-			{Name: "netivri-NL-0"},
+			{Name: "netivri-r0-0", Alive: true, Delay: 48 * time.Millisecond},
+			{Name: "netivri-r1-0"},
 		},
-	})
+	}, map[string]string{"netivri-r0-0": "main/de", "netivri-r1-0": "main/nl"})
 	if info.Probes != 5 || info.ProbeFailures != 2 || info.PoolHits != 3 || info.PoolMisses != 1 || info.PoolDiscards != 4 {
 		t.Errorf("counters = %+v", info)
 	}
 	want := []daemon.NodeHealth{
-		{Name: "netivri-DE-0", Alive: true, DelayMS: 48},
-		{Name: "netivri-NL-0"},
+		{Name: "netivri-r0-0", Alive: true, DelayMS: 48, Label: "main/de"},
+		{Name: "netivri-r1-0", Label: "main/nl"},
 	}
 	if len(info.Nodes) != len(want) || info.Nodes[0] != want[0] || info.Nodes[1] != want[1] {
 		t.Errorf("nodes = %+v, want %+v", info.Nodes, want)

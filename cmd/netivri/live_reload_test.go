@@ -25,10 +25,11 @@ import (
 
 // fakeCore stands in for a running core.
 type fakeCore struct {
-	addr     string
-	activity []core.AccountActivity // answer of Activity
-	mu       sync.Mutex
-	closed   bool
+	addr         string
+	activity     []core.AccountActivity // answer of Activity
+	memberLabels map[string]string
+	mu           sync.Mutex
+	closed       bool
 }
 
 func (f *fakeCore) Addr() string                      { return f.addr }
@@ -37,6 +38,7 @@ func (f *fakeCore) AccountRoutes() map[string]string  { return map[string]string
 func (f *fakeCore) WarmStats() (core.WarmStats, bool) { return core.WarmStats{}, false }
 func (f *fakeCore) AffinityStats() core.AffinityStats { return core.AffinityStats{} }
 func (f *fakeCore) Activity() []core.AccountActivity  { return f.activity }
+func (f *fakeCore) MemberLabels() map[string]string   { return f.memberLabels }
 func (f *fakeCore) Close() error                      { f.mu.Lock(); f.closed = true; f.mu.Unlock(); return nil }
 func (f *fakeCore) isClosed() bool                    { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
 

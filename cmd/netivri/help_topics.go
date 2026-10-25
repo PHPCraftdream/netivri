@@ -294,7 +294,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account {add|clone|list|set-country|set-provider|rm} [arguments]"},
+		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
@@ -310,6 +310,7 @@ var helpTopics = []helpTopic{
 			"same port, so open connections end; 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
 			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
+			{"Show one account and its route", "netivri account show alice"},
 		},
 		SeeAlso: []string{"up", "sub countries"},
 	},
@@ -394,6 +395,33 @@ var helpTopics = []helpTopic{
 			"first client claims the 'init' placeholder. Passwords and hashes are never shown.",
 		Examples: []helpExample{{"List the accounts", "netivri account list"}},
 		SeeAlso:  []string{"account add", "status"},
+	},
+	{
+		Name:    "account show",
+		Group:   groupAccount,
+		Summary: "Show an account and its route tiers",
+		Usage:   []string{"netivri account show {ACCOUNT} [--home {DIR}]"},
+		Description: "Shows one account: its login, its configured provider and exit_country lists, and its route " +
+			"as ordered tiers. The countries come first in their list order, and inside a country the providers " +
+			"in their list order, so a tier is the nodes of one (country, provider) pair. A * in the country list " +
+			"is the nodes of every country the list does not name, at its place in the order. Without a provider " +
+			"list every provider shares one tier per country.\n\n" +
+			"Per node the command shows its label ({PROVIDER}/{NODE_ID}), provider, country and tier index and, " +
+			"when the daemon runs, live data: alive or down with the last probe delay, and the account's live " +
+			"connections through the node. A (country, provider) pair without nodes is listed as a skipped tier " +
+			"with a reason and does not consume a tier index, so the indexes match the order the daemon actually " +
+			"tries.\n\n" +
+			"Without a running daemon the static part is still shown and live is false (the live fields are null). " +
+			"Passwords, hashes and subscription URLs are never shown.",
+		Examples: []helpExample{
+			{"Show alice and her route tiers", "netivri account show alice"},
+			{"While the daemon runs: alive, delay and live connections per node", "netivri account show alice"},
+		},
+		Errors: []helpError{
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "no account with that login"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
+		},
+		SeeAlso: []string{"account list", "status", "stats"},
 	},
 	{
 		Name:    "account set-country",

@@ -33,6 +33,7 @@ netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]
 netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
 netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]
 netivri account list
+netivri account show {ACCOUNT}
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...] | --all {COUNTRY}[,{COUNTRY}...]
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...] | --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]
@@ -365,6 +366,24 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 - `list` reports `login`, `provider`, `exit_country` and `password_set`
   (`false` until the placeholder is claimed); it never returns a password or
   a hash.
+- `show {ACCOUNT}` reports one account: its login, its configured provider
+  and `exit_country` lists, and its route as ordered tiers (countries in
+  list order, inside a country the providers in list order, so a tier is the
+  nodes of one (country, provider) pair; a `*` in the country list is the
+  nodes of every country the list does not name, at its place in the order;
+  without a provider list every provider shares one tier per country). Per
+  node it shows the label, provider, country and tier index and, while the
+  daemon runs, live data: alive or down with the last probe delay and the
+  account's live connections through the node. The live fields are null only
+  when there is no live data (no running daemon); with a daemon running,
+  `connections` is 0 for a node the account is not using. A (country,
+  provider) pair
+  without nodes is listed as a skipped tier with a reason and does not
+  consume a tier index, so the indexes match the order the daemon actually
+  tries. Without a daemon the static part is still shown and `live` is false
+  (the live fields are null). Unknown login: `ACCOUNT_NOT_FOUND` (exit 5);
+  malformed login or not exactly one argument: exit 2. Passwords, hashes and
+  subscription URLs are never shown.
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
@@ -402,11 +421,13 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 {"account": {"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}, "existing": false}
 {"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "password_set": false}]}
 {"account": {"login": "alice", "provider": "", "exit_country": "NL", "password_set": false}}
+{"login": "alice", "provider": "main,backup", "exit_country": "DE,NL", "providers": ["main", "backup"], "countries": ["DE", "NL"], "live": false, "tiers": [{"tier": 0, "country": "DE", "providers": ["main"], "nodes": [{"label": "main/de-1", "provider": "main", "country": "DE", "tier": 0, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 1, "country": "DE", "providers": ["backup"], "nodes": [{"label": "backup/de-2", "provider": "backup", "country": "DE", "tier": 1, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 2, "country": "NL", "providers": ["main"], "nodes": [{"label": "main/nl-1", "provider": "main", "country": "NL", "tier": 2, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 3, "country": "NL", "providers": ["backup"], "skipped": true, "reason": "no nodes for this country and provider", "nodes": []}]}
 {"removed": "alice"}
 ```
 
 These are the `data` values, respectively, for add, list, set-country/
-set-provider with one login, and rm. `set-country` and `set-provider` with
+set-provider with one login, show, and rm. `set-country` and `set-provider`
+with
 several logins or `--all` print the `{"accounts": [...]}` form of `list` with
 the accounts that were addressed, in the order given (`--all`: config order).
 

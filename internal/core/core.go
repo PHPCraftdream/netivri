@@ -331,6 +331,16 @@ func (i *Instance) AccountRoutes() map[string]string {
 	return copyAccountRoutes(i.accountRoutes)
 }
 
+// MemberLabels returns a copy of the route member proxy name to node label
+// mapping used for Activity; empty when the instance runs without routes.
+func (i *Instance) MemberLabels() map[string]string {
+	out := make(map[string]string, len(i.memberLabels))
+	for name, label := range i.memberLabels {
+		out[name] = label
+	}
+	return out
+}
+
 // Close stops the listener and the embedded core. Idempotent.
 func (i *Instance) Close() error {
 	i.mu.Lock()

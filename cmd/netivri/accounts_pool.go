@@ -271,10 +271,10 @@ func warmInfo(inst coreInstance) *daemon.WarmInfo {
 	if !ok {
 		return nil
 	}
-	return warmInfoOf(stats)
+	return warmInfoOf(stats, inst.MemberLabels())
 }
 
-func warmInfoOf(stats core.WarmStats) *daemon.WarmInfo {
+func warmInfoOf(stats core.WarmStats, labels map[string]string) *daemon.WarmInfo {
 	info := &daemon.WarmInfo{
 		Probes:        stats.Probes,
 		ProbeFailures: stats.ProbeFailures,
@@ -288,6 +288,7 @@ func warmInfoOf(stats core.WarmStats) *daemon.WarmInfo {
 			Name:    n.Name,
 			Alive:   n.Alive,
 			DelayMS: n.Delay.Milliseconds(),
+			Label:   labels[n.Name],
 		})
 	}
 	return info
