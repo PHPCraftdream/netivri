@@ -243,7 +243,11 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		if len(plans) > 0 {
 			// Feed the probe results to the sticky health table and the
 			// observer; the caller's own OnProbe, if any, still runs.
-			wo.OnProbe = probeHook(memberNameLabels(plans), health, o.Observer, o.Warm.OnProbe)
+			// Down feeds the down state back so probed nodes that stay
+			// down are probed with a lengthened interval.
+			nameToLabel := memberNameLabels(plans)
+			wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
+			wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
 		}
 		warm, err = startWarm(wo, o.Node)
 		if err != nil {

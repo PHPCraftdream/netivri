@@ -118,31 +118,87 @@ func TestRunLoopAndClose(t *testing.T) {
 	}
 }
 
-// An always-failing node is skipped in more and more rounds: with the
-// documented backoff (failures f >= 2 skips until min(f-1, 3) rounds
-// have passed since the last probe) 12 consecutive failing rounds
-// probe at rounds 1, 2, 4, 7 and 11 only.
-func TestProbeBackoffSkipsDeadNodeInRounds(t *testing.T) {
-	w := &warmer{options: WarmOptions{ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: testWarmClock{now: time.Unix(1, 0)}}
-	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-dead"}}
-	calls := 0
-	w.probe = func(context.Context, C.Proxy, string) (uint16, error) {
-		calls++
-		return 0, net.ErrClosed
+func TestProbeBackoffIntervalSchedule(t *testing.T) {
+	base := 45 * time.Second
+	for _, c := range []struct {
+		rounds int
+		want   time.Duration
+	}{
+		{0, base}, {1, base}, {2, 2 * base}, {3, 4 * base}, {4, probeDownMaxInterval}, {100, probeDownMaxInterval},
+	} {
+		if got := probeBackoffInterval(base, c.rounds); got != c.want {
+			t.Errorf("probeBackoffInterval(45s, %d) = %v, want %v", c.rounds, got, c.want)
+		}
 	}
-	for i := 0; i < 12; i++ {
-		w.probeAll(context.Background())
-	}
-	if calls != 5 {
-		t.Fatalf("dead node probed %d times in 12 rounds, want 5", calls)
+	// A non-default base is capped too.
+	if got := probeBackoffInterval(4*time.Minute, 3); got != probeDownMaxInterval {
+		t.Errorf("probeBackoffInterval(4m, 3) = %v, want %v", got, probeDownMaxInterval)
 	}
 }
 
-// One successful probe resets the failure counter: the node is probed
-// again in every following round.
+// A node that stays down is probed at 45 s, 90 s, 3 m and then every
+// 10 minutes: with rounds every 45 s it is probed in rounds 1, 2, 4, 8
+// and 22 only (round 8 probes at t=315 s, round 22 at t=945 s >= 915 s).
+func TestProbeBackoffSkipsDownNodeInRounds(t *testing.T) {
+	w := &warmer{options: WarmOptions{ProbeInterval: 45 * time.Second, ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: testWarmClock{now: time.Unix(1, 0)}}
+	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-dead"}}
+	w.down = func(string) bool { return true }
+	round := 0
+	var probed []int
+	w.probe = func(context.Context, C.Proxy, string) (uint16, error) {
+		probed = append(probed, round)
+		return 0, net.ErrClosed
+	}
+	for i := 0; i < 22; i++ {
+		round = i + 1
+		w.probeAll(context.Background())
+		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
+	}
+	want := []int{1, 2, 4, 8, 22}
+	if len(probed) != len(want) {
+		t.Fatalf("down node probed in rounds %v, want %v", probed, want)
+	}
+	for i, r := range want {
+		if probed[i] != r {
+			t.Fatalf("down node probed in rounds %v, want %v", probed, want)
+		}
+	}
+}
+
+// A node that is not down any more (for example a successful dial
+// cleared the health counters) is probed every round again.
 func TestProbeBackoffResetsOnRecovery(t *testing.T) {
-	w := &warmer{options: WarmOptions{ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: testWarmClock{now: time.Unix(1, 0)}}
+	w := &warmer{options: WarmOptions{ProbeInterval: 45 * time.Second, ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: testWarmClock{now: time.Unix(1, 0)}}
 	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-flap"}}
+	down := true
+	w.down = func(string) bool { return down }
+	w.probe = func(context.Context, C.Proxy, string) (uint16, error) {
+		if down {
+			return 0, net.ErrClosed
+		}
+		return 10, nil
+	}
+	for i := 0; i < 3; i++ { // rounds 1 and 2 probe, round 3 is skipped
+		w.probeAll(context.Background())
+		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
+	}
+	down = false             // recovery from outside the warmer (a real dial)
+	for i := 0; i < 4; i++ { // rounds 4-7 probe every round again
+		w.probeAll(context.Background())
+		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+4) * 45 * time.Second)}
+	}
+	s := w.Stats()
+	if s.Probes != 6 || s.ProbeFailures != 2 {
+		t.Fatalf("recovered node probed %d times (failures %d) in 7 rounds, want 6 and 2", s.Probes, s.ProbeFailures)
+	}
+}
+
+// A successful probe also resets the schedule: the node keeps the base
+// interval even while the Down hook still reports it down.
+func TestProbeBackoffResetsOnProbeSuccess(t *testing.T) {
+	w := &warmer{options: WarmOptions{ProbeInterval: 45 * time.Second, ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: testWarmClock{now: time.Unix(1, 0)}}
+	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-back"}}
+	w.down = func(string) bool { return true }
 	calls := 0
 	w.probe = func(context.Context, C.Proxy, string) (uint16, error) {
 		calls++
@@ -151,17 +207,19 @@ func TestProbeBackoffResetsOnRecovery(t *testing.T) {
 		}
 		return 10, nil
 	}
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 7; i++ {
 		w.probeAll(context.Background())
+		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
 	}
-	// Rounds 1 and 2 fail (f reaches 2), round 3 is skipped, round 4
-	// probes and succeeds, round 5 probes again.
-	if calls != 4 {
-		t.Fatalf("probed %d times in 5 rounds, want 4", calls)
+	// Rounds 1 and 2 fail (next due 45 s, then 90 s later), round 3 is
+	// skipped, round 4 probes and succeeds (reset), rounds 5-7 probe
+	// every round again.
+	if calls != 6 {
+		t.Fatalf("probed %d times in 7 rounds, want 6", calls)
 	}
 	s := w.Stats()
-	if s.Probes != 4 || s.ProbeFailures != 2 || !s.Nodes[0].Alive || s.Nodes[0].Delay != 10*time.Millisecond {
-		t.Fatalf("recovered node stats: probed=%d failures=%d alive=%v delay=%v", s.Probes, s.ProbeFailures, s.Nodes[0].Alive, s.Nodes[0].Delay)
+	if s.Probes != 6 || s.ProbeFailures != 2 || !s.Nodes[0].Alive {
+		t.Fatalf("stats: probed=%d failures=%d alive=%v", s.Probes, s.ProbeFailures, s.Nodes[0].Alive)
 	}
 }
 

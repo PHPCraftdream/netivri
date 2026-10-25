@@ -186,6 +186,11 @@ down   = 2 consecutive probe failures or 3 consecutive dial failures;
 score  = delay * (1 + 4*failRate) / (1 + min(throughputMiBps, 20) / 20)   lower is better
 ```
 
+Background probes back off while a node stays down: the probe interval
+of a node is 45 s while it is not down, then 45 s, 90 s, 3 m and every
+10 minutes (cap) over its consecutive down probes. The first success of
+any kind (probe or real dial) resets it to 45 s.
+
 Selection for a new binding: candidates are the members that are not down
 and have a delay; if there are none, the members that are not down; if there
 are none, all members (the route is never left, and nothing falls back to
@@ -261,6 +266,7 @@ type AffinityStats struct {
 // WarmOptions gains (warm.go):
 ProbeConcurrency int // 0 = 8; probes of one round run this many at a time
 OnProbe func(name string, alive bool, delay time.Duration) // after every probe, from probe goroutines; name is the internal proxy name netivri-r{R}-{N}
+Down func(name string) bool // reports the down state of a node proxy; down nodes are probed with the backoff interval above
 ```
 
 The core maps the internal name to its label and forwards probe results to

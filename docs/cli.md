@@ -595,7 +595,9 @@ provider and exit-country lists stay in `accounts`.
 
 `warm` is present while the daemon keeps country nodes warm (an account has an
 exit country): background probes of every node proxy through the node itself,
-every 45 seconds, with the counters
+every 45 seconds (a node that stays down is probed less and less often:
+45 s, 90 s, 3 m, then every 10 minutes, until a probe or a real dial
+succeeds again), with the counters
 `{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
 "nodes": [{"name", "alive", "delay_ms"}]}`. `nodes[].name` is an internal proxy
 name (`netivri-r{R}-{N}`, the route and the node index), never a provider name; `delay_ms` is `0` until a
