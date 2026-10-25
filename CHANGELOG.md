@@ -8,15 +8,11 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
-### Changed
+## [0.3.0] - 2026-10-25
 
-- **npm: the Windows packages are `netivri-w32-x64` and `netivri-w32-arm64`.**
-  npm refused the name `netivri-win32-x64` as spam on every publish, so the two
-  Windows platform packages are renamed; the launcher still picks them by
-  `process.platform` (`win32`), and the packages keep `os: win32`. Release
-  archives, the installers and the CLI are not affected.
-
-## [0.2.0] - 2026-10-25
+Release 0.2.0 was withdrawn before all its npm packages were published,
+and npm never accepts a used version number again; everything listed for
+it ships in 0.3.0.
 
 ### Added
 
@@ -146,6 +142,11 @@ versions; every such change is listed here.
   staged version" (npm's registry view can lag a minute) as a version that is
   already published, so a re-run of a failed release goes on to the packages
   that are still missing.
+- **npm: the Windows packages are `netivri-w32-x64` and `netivri-w32-arm64`.**
+  npm refused the name `netivri-win32-x64` as spam on every publish, so the two
+  Windows platform packages are renamed; the launcher still picks them by
+  `process.platform` (`win32`), and the packages keep `os: win32`. Release
+  archives, the installers and the CLI are not affected.
 
 ## [0.1.0] - 2026-10-22
 

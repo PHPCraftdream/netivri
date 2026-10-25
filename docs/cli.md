@@ -82,7 +82,7 @@ Success: one document on stdout.
 schema_version: 1
 ok: true
 data: {
-    version: 0.1.0
+    version: 0.3.0
 }
 ```
 
@@ -663,7 +663,7 @@ Short view:
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
           "allowed_clients": "*",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
-          "uptime_seconds": 3721, "version": "0.1.0",
+          "uptime_seconds": 3721, "version": "0.3.0",
           "active_accounts": 0, "activity": [],
           "warm": {"alive": 4, "total": 5, "probes": 12, "probe_failures": 1},
           "refresh": {"interval_seconds": 3600, "ok": 3, "failed": 0,

@@ -34,9 +34,24 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
+- **Client address rules.** `listen.allowed_clients` limits which client
+  addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
+  an account can narrow it with its own rule, checked before its password.
+- **Accounts you can copy and inspect.** `netivri account clone` makes a new
+  login from an existing one (same password, a new one, or `init`), and
+  `netivri account show` prints its route tier by tier with live node state.
+- **See what is going on.** `netivri status` is short by default (`--full`
+  for everything); `netivri status --watch` is a live view of who is active,
+  through which nodes and countries; `netivri logs` reads or follows the
+  daemon log; `netivri doctor` checks the whole setup in one pass and exits 7
+  when something failed.
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
+- **Help that stands on its own.** `netivri help` covers every command, the
+  configuration file (`netivri help config`), routing (`netivri help routing`)
+  and the fields each command prints (`netivri help output`); `--json` gives
+  the same for scripts and agents.
 - **Small and self-contained.** One binary with [Mihomo](https://github.com/MetaCubeX/mihomo)
   embedded as a library; no external core process and no native libraries
   next to it.
@@ -54,6 +69,13 @@ curl -fsSL https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.
 ```powershell
 # Windows PowerShell
 iwr -useb https://raw.githubusercontent.com/PHPCraftdream/netivri/main/install.ps1 | iex
+```
+
+With Node.js 18 or newer, npm installs the same prebuilt binary (no build and
+no download scripts at install time; see [`docs/npm.md`](docs/npm.md)):
+
+```sh
+npm i -g netivri
 ```
 
 You can also download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
