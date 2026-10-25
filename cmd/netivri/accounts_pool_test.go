@@ -96,6 +96,52 @@ func TestBuildAccountRoutePoolIDTieBrokenByProviderName(t *testing.T) {
 	}
 }
 
+func TestBuildAccountRoutePoolInfosCarryFirstName(t *testing.T) {
+	// One provider yields one snapshot, so a node id has exactly one name
+	// and a shared label with two different names cannot be constructed.
+	// What can happen: the same node is reached by two routes (here the
+	// country route of account b and the country-scoped route of account a
+	// both contain main/1), and it yields exactly one info with its name.
+	withName := func(id, country, name string) subscription.Node {
+		n := node(id, country)
+		n.Name = name
+		return n
+	}
+	snapshots := map[string]*subscription.Snapshot{
+		"main": snap(withName("1", "DE", "  Germany  1 ")),
+	}
+	accounts := []config.Account{
+		{Login: "a", Provider: "main", ExitCountry: "DE"},
+		{Login: "b", Provider: "main"},
+	}
+	got, err := buildAccountRoutePool(accounts, snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.accountRoutes["a"] != "main~DE" || got.accountRoutes["b"] != "main~" {
+		t.Fatalf("routes = %v, want main~DE and main~", got.accountRoutes)
+	}
+	if len(got.infos) != 1 {
+		t.Fatalf("infos = %+v", got.infos)
+	}
+	info := got.infos[0]
+	if info.Label != "main/1" || info.Name != "Germany 1" || info.Provider != "main" || info.Country != "DE" {
+		t.Fatalf("info = %+v", info)
+	}
+
+	// A control character in the name is sanitized away.
+	snapshots = map[string]*subscription.Snapshot{
+		"main": snap(withName("1", "DE", "bad\nname")),
+	}
+	got, err = buildAccountRoutePool([]config.Account{{Login: "a", Provider: "main", ExitCountry: "DE"}}, snapshots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.infos[0].Name != "bad name" {
+		t.Fatalf("name = %q, want %q", got.infos[0].Name, "bad name")
+	}
+}
+
 func TestBuildAccountRoutePoolEachKeyBuiltOnce(t *testing.T) {
 	accounts := []config.Account{
 		{Login: "a", Provider: "p", ExitCountry: "DE"},

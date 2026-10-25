@@ -17,7 +17,7 @@ import (
 func TestActivityInfoMapsNodesToProvidersAndCountries(t *testing.T) {
 	accounts := []daemon.AccountInfo{{Login: "alice"}, {Login: "bob"}, {Login: "carol"}}
 	infos := []stats.NodeInfo{
-		{Label: "main/a", Provider: "main", Country: "DE"},
+		{Label: "main/a", Provider: "main", Country: "DE", Name: "Germany 1"},
 		{Label: "main/b", Provider: "main", Country: "NL"},
 		{Label: "alt/c", Provider: "alt", Country: "DE"},
 	}
@@ -44,7 +44,7 @@ func TestActivityInfoMapsNodesToProvidersAndCountries(t *testing.T) {
 			Providers: []string{"main", "alt"},
 			Countries: []string{"DE", "NL"},
 			Nodes: []daemon.NodeUse{
-				{Node: "main/a", Provider: "main", Country: "DE", Connections: 3, UploadBytes: 30, DownloadBytes: 300},
+				{Node: "main/a", Name: "Germany 1", Provider: "main", Country: "DE", Connections: 3, UploadBytes: 30, DownloadBytes: 300},
 				{Node: "alt/c", Provider: "alt", Country: "DE", Connections: 2, UploadBytes: 20, DownloadBytes: 200},
 				{Node: "main/b", Provider: "main", Country: "NL", Connections: 1, UploadBytes: 10, DownloadBytes: 100},
 			},
@@ -168,6 +168,26 @@ func TestNodeHealthLoggerWritesDownAndBack(t *testing.T) {
 		t.Errorf("warnings = %q, want %q", warnLines, wantWarn)
 	}
 	if !reflect.DeepEqual(infoLines, []string{"node main/a (provider main, country US) is back"}) {
+		t.Errorf("info = %q", infoLines)
+	}
+}
+
+func TestNodeHealthLoggerIncludesTheName(t *testing.T) {
+	var infoLines, warnLines []string
+	info := func(format string, args ...any) { infoLines = append(infoLines, fmt.Sprintf(format, args...)) }
+	warn := func(format string, args ...any) { warnLines = append(warnLines, fmt.Sprintf(format, args...)) }
+	hook := nodeHealthLogger([]stats.NodeInfo{
+		{Label: "own/a970e0d9fef1", Provider: "own", Country: "FI", Name: "Finland 1"},
+	}, info, warn)
+	if hook == nil {
+		t.Fatal("no hook for a route with nodes")
+	}
+	hook("own/a970e0d9fef1", true)
+	hook("own/a970e0d9fef1", false)
+	if !reflect.DeepEqual(warnLines, []string{"node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down"}) {
+		t.Errorf("warnings = %q", warnLines)
+	}
+	if !reflect.DeepEqual(infoLines, []string{"node own/a970e0d9fef1 (Finland 1, provider own, country FI) is back"}) {
 		t.Errorf("info = %q", infoLines)
 	}
 }

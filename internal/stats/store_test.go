@@ -97,6 +97,42 @@ func TestOpenCreatesSchema(t *testing.T) {
 	}
 }
 
+func TestSetNodesStoresName(t *testing.T) {
+	opts := Options{Path: filepath.Join(t.TempDir(), "stats.db"), Now: clock(0)}
+	s, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := s.SetNodes([]NodeInfo{
+		{Label: "p1/a", Provider: "prov1", Country: "DE", Name: SanitizeName("  Fin\nland  1 ")},
+		{Label: "p2/b", Provider: "prov2", Country: "US"},
+	}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	// Nodes without window data are omitted, so each node needs a sample.
+	s.Record(Sample{At: base, Label: "p1/a", Kind: KindProbe, OK: true})
+	s.Record(Sample{At: base, Label: "p2/b", Kind: KindProbe, OK: true})
+	mustFlush(t, s)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ro, err := OpenReadOnly(opts.Path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	t.Cleanup(func() { ro.Close() })
+	got, err := ro.Nodes(Query{})
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	// Rows sort by label: p1/a first.
+	if len(got) != 2 || got[0].Label != "p1/a" || got[0].Name != "Fin land 1" ||
+		got[1].Label != "p2/b" || got[1].Name != "" {
+		t.Fatalf("Nodes = %+v, want p1/a with name and p2/b without", got)
+	}
+}
+
 func TestReopenKeepsData(t *testing.T) {
 	opts := Options{Path: filepath.Join(t.TempDir(), "stats.db"), Now: clock(0)}
 	s, err := Open(opts)

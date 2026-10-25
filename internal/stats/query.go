@@ -17,7 +17,7 @@ type Query struct {
 
 // NodeStats is the aggregated view of one node over the query window.
 type NodeStats struct {
-	Label, Provider, Country             string
+	Label, Provider, Country, Name       string
 	Probes, ProbesOK                     int
 	DelayAvgMS, DelayP50MS, DelayP95MS   int64
 	Dials, DialsOK                       int
@@ -29,9 +29,9 @@ type NodeStats struct {
 
 // nodeMeta is the identity of a node row passing the query filters.
 type nodeMeta struct {
-	id                       int64
-	label, provider, country string
-	lastSeen                 time.Time
+	id                             int64
+	label, provider, country, name string
+	lastSeen                       time.Time
 }
 
 // Nodes aggregates the samples of the window per node, sorted by label.
@@ -63,7 +63,7 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 		}
 		st, ok := acc[id]
 		if !ok {
-			st = &NodeStats{Label: m.label, Provider: m.provider, Country: m.country}
+			st = &NodeStats{Label: m.label, Provider: m.provider, Country: m.country, Name: m.name}
 			acc[id] = st
 		}
 		return st
@@ -88,7 +88,13 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 
 // filteredNodes loads the node rows passing the query filters.
 func (s *Store) filteredNodes(q Query) ([]*nodeMeta, error) {
-	query := "SELECT id, label, provider, country, last_seen FROM node WHERE 1=1"
+	// A v1 or v2 database opened read-only has no name column.
+	nameCol := s.hasName
+	query := "SELECT id, label, provider, country, last_seen"
+	if nameCol {
+		query += ", name"
+	}
+	query += " FROM node WHERE 1=1"
 	var args []any
 	if q.Provider != "" {
 		query += " AND provider = ?"
@@ -111,7 +117,13 @@ func (s *Store) filteredNodes(q Query) ([]*nodeMeta, error) {
 	for rows.Next() {
 		m := &nodeMeta{}
 		var seen int64
-		if err := rows.Scan(&m.id, &m.label, &m.provider, &m.country, &seen); err != nil {
+		var err error
+		if nameCol {
+			err = rows.Scan(&m.id, &m.label, &m.provider, &m.country, &seen, &m.name)
+		} else {
+			err = rows.Scan(&m.id, &m.label, &m.provider, &m.country, &seen)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("stats: scan node: %w", err)
 		}
 		m.lastSeen = time.UnixMilli(seen).UTC()
@@ -233,7 +245,7 @@ func (s *Store) queryHourly(fromHour int64, byID map[int64]*nodeMeta, acc map[in
 		st, ok := acc[id]
 		if !ok {
 			m := byID[id]
-			st = &NodeStats{Label: m.label, Provider: m.provider, Country: m.country}
+			st = &NodeStats{Label: m.label, Provider: m.provider, Country: m.country, Name: m.name}
 			acc[id] = st
 		}
 		return st

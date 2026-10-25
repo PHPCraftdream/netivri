@@ -72,6 +72,7 @@ CLI, read-only).
 CREATE TABLE node (
   id INTEGER PRIMARY KEY, label TEXT NOT NULL UNIQUE,
   provider TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',        -- display name, new in schema v3
   first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);       -- unix ms
 CREATE TABLE sample (
   ts INTEGER NOT NULL, node INTEGER NOT NULL, kind INTEGER NOT NULL,
@@ -102,10 +103,13 @@ CREATE TABLE account_hourly (
   PRIMARY KEY (hour, account, node, kind)) WITHOUT ROWID;         -- unix hour
 ```
 
-`PRAGMA user_version` carries the schema version (2). The account tables are
+`PRAGMA user_version` carries the schema version (3). The account tables are
 new in schema version 2 and the migration from version 1 is additive: a v1
 database keeps its data and opens read-only; a `stats` query on it simply
-has no account data. Account samples are separate from the node samples. Writes are batched: a
+has no account data. Schema version 3 adds the `node.name` display-name
+column (`ALTER TABLE node ADD COLUMN name TEXT NOT NULL DEFAULT ''`); the
+migration from v1 or v2 is additive too, and a read-only open of a v1 or v2
+database (which does not migrate) reads the node rows without a name. Account samples are separate from the node samples. Writes are batched: a
 bounded queue, flushed every second or at 256 samples in one transaction;
 `Record` never blocks (a full queue drops the sample and counts it).
 Retention: raw samples older than `retention` (default 7 days) are folded
@@ -134,7 +138,7 @@ type Sample struct {
 	Bytes int64         // KindThroughput only
 }
 
-type NodeInfo struct{ Label, Provider, Country string }
+type NodeInfo struct{ Label, Provider, Country, Name string } // Name: sanitized display name
 
 type Options struct {
 	Path        string
@@ -149,7 +153,7 @@ func Open(o Options) (*Store, error)           // creates the directory, migrate
 func OpenReadOnly(path string) (*Store, error) // os.ErrNotExist when absent
 func (s *Store) Record(Sample)                 // non-blocking, concurrency-safe
 func (s *Store) Dropped() uint64
-func (s *Store) SetNodes(infos []NodeInfo) error // upsert provider/country
+func (s *Store) SetNodes(infos []NodeInfo) error // upsert provider/country/name
 func (s *Store) Flush(ctx context.Context) error // queued samples are on disk
 func (s *Store) Close() error                    // flush, stop the writer, close
 
@@ -161,7 +165,7 @@ type Query struct {
 }
 
 type NodeStats struct {
-	Label, Provider, Country string
+	Label, Provider, Country, Name string // Name empty when unknown
 	Probes, ProbesOK         int
 	DelayAvgMS, DelayP50MS, DelayP95MS int64
 	Dials, DialsOK           int

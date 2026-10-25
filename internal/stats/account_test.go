@@ -40,6 +40,104 @@ func makeV1DB(t *testing.T, path string) {
 	}
 }
 
+// makeV2DB creates a schema version 2 database: the v1 layout plus the
+// account tables, with one node row, two raw samples, one account sample and
+// user_version = 2.
+func makeV2DB(t *testing.T, path string) {
+	t.Helper()
+	db := openRaw(t, path)
+	for _, stmt := range []string{schemaV1, schemaV2, "PRAGMA user_version = 2"} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec %q: %v", stmt, err)
+		}
+	}
+	if _, err := db.Exec(
+		"INSERT INTO node (id, label, provider, country, first_seen, last_seen) VALUES (1, 'p1/a', 'prov1', 'DE', 100, 100)"); err != nil {
+		t.Fatalf("insert node: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := db.Exec(
+			"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)", t0.UnixMilli()+int64(i)); err != nil {
+			t.Fatalf("insert sample: %v", err)
+		}
+	}
+	if _, err := db.Exec(
+		"INSERT INTO account (id, login, first_seen, last_seen) VALUES (1, 'alice', 100, 100)"); err != nil {
+		t.Fatalf("insert account: %v", err)
+	}
+	if _, err := db.Exec(
+		"INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down) VALUES (?, 1, 1, 2, 1, 100, 0, 0, 0)",
+		t0.UnixMilli()); err != nil {
+		t.Fatalf("insert account_sample: %v", err)
+	}
+}
+
+func TestMigrateV2ToV3KeepsData(t *testing.T) {
+	path := dbPath(t)
+	makeV2DB(t, path)
+
+	s, err := Open(Options{Path: path, Now: clock(0)})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	if s.version != 3 {
+		t.Fatalf("version = %d, want 3", s.version)
+	}
+	raw := openRaw(t, path)
+	var version int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version != 3 {
+		t.Fatalf("user_version = %d, want 3", version)
+	}
+	if n := countRows(t, raw, "node"); n != 1 {
+		t.Fatalf("node rows = %d, want 1 (v2 data kept)", n)
+	}
+	if n := countRows(t, raw, "sample"); n != 2 {
+		t.Fatalf("sample rows = %d, want 2 (v2 data kept)", n)
+	}
+	if n := countRows(t, raw, "account_sample"); n != 1 {
+		t.Fatalf("account_sample rows = %d, want 1 (v2 data kept)", n)
+	}
+	// The migrated node row answers with an empty name.
+	nodes, err := s.Nodes(Query{})
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].Label != "p1/a" || nodes[0].Name != "" {
+		t.Fatalf("Nodes on migrated db = %+v", nodes)
+	}
+}
+
+func TestReadOnlyV2NoNameColumn(t *testing.T) {
+	path := dbPath(t)
+	makeV2DB(t, path)
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	defer ro.Close()
+	if ro.version != 2 {
+		t.Fatalf("version = %d, want 2", ro.version)
+	}
+	nodes, err := ro.Nodes(Query{})
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if len(nodes) != 1 || nodes[0].Name != "" {
+		t.Fatalf("Nodes on v2 = %+v", nodes)
+	}
+	an, err := ro.AccountNodes(Query{})
+	if err != nil {
+		t.Fatalf("AccountNodes: %v", err)
+	}
+	if len(an) != 1 || an[0].Label != "p1/a" || an[0].Name != "" || an[0].Dials != 1 {
+		t.Fatalf("AccountNodes on v2 = %+v", an)
+	}
+}
+
 func TestMigrateV1KeepsData(t *testing.T) {
 	path := dbPath(t)
 	makeV1DB(t, path)
@@ -49,16 +147,16 @@ func TestMigrateV1KeepsData(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
-	if s.version != 2 {
-		t.Fatalf("version = %d, want 2", s.version)
+	if s.version != 3 {
+		t.Fatalf("version = %d, want 3", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 2 {
-		t.Fatalf("user_version = %d, want 2", version)
+	if version != 3 {
+		t.Fatalf("user_version = %d, want 3", version)
 	}
 	if n := countRows(t, raw, "node"); n != 1 {
 		t.Fatalf("node rows = %d, want 1 (v1 data kept)", n)
@@ -454,5 +552,60 @@ func TestAccountNodesHourlyPath(t *testing.T) {
 	}
 	if a.LastSeen.IsZero() {
 		t.Fatalf("hourly LastSeen zero: %+v", a)
+	}
+}
+
+// A writable store runs on a single connection: AccountNodes and Accounts
+// begin a read transaction and must answer every nested query through it or
+// from the cached name-column flag, never through the busy connection.
+func TestAccountQueriesOnWritableStoreNoDeadlock(t *testing.T) {
+	s := newTestStore(t, nil)
+	if err := s.SetNodes([]NodeInfo{
+		{Label: "p1/a", Provider: "prov1", Country: "DE", Name: "Fin land 1"},
+		{Label: "p2/b", Provider: "prov2", Country: "US"},
+	}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	for _, sm := range []AccountSample{
+		acct(t0, "alice", "p1/a", KindDial, true, 100),
+		acct(t0.Add(time.Second), "bob", "p2/b", KindDial, true, 200),
+	} {
+		s.RecordAccount(sm)
+	}
+	mustFlush(t, s)
+
+	// runWithTimeout fails loudly instead of hanging the test run.
+	runWithTimeout := func(name string, fn func() error) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() { done <- fn() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: deadlock: no result within 5s on a writable store", name)
+		}
+	}
+	runWithTimeout("AccountNodes", func() error { _, err := s.AccountNodes(Query{}); return err })
+	runWithTimeout("Accounts", func() error { _, err := s.Accounts(Query{}); return err })
+
+	got, err := s.AccountNodes(Query{})
+	if err != nil {
+		t.Fatalf("AccountNodes: %v", err)
+	}
+	if len(got) != 2 || got[0].Label != "p1/a" || got[1].Label != "p2/b" {
+		t.Fatalf("AccountNodes = %+v, want p1/a then p2/b", got)
+	}
+	if got[0].Name != "Fin land 1" || got[1].Name != "" {
+		t.Fatalf("AccountNodes names = %q/%q, want \"Fin land 1\"/\"\"", got[0].Name, got[1].Name)
+	}
+	accounts, err := s.Accounts(Query{})
+	if err != nil {
+		t.Fatalf("Accounts: %v", err)
+	}
+	if len(accounts) != 2 || accounts[0].Login != "alice" || accounts[1].Login != "bob" {
+		t.Fatalf("Accounts = %+v, want alice then bob", accounts)
 	}
 }

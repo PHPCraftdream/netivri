@@ -167,6 +167,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 			provider string
 			id       string
 			country  string
+			name     string
 			raw      map[string]any
 		}
 		key := routeKey(config.JoinList(d.providers), config.JoinList(d.countries))
@@ -187,7 +188,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 						} else if n.Country != country {
 							continue
 						}
-						nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, raw: n.Raw})
+						nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, name: stats.SanitizeName(n.Name), raw: n.Raw})
 					}
 				}
 				if len(nodes) == 0 {
@@ -206,7 +207,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 					pool.tiers[key] = append(pool.tiers[key], tier)
 					if !infoSeen[label] {
 						infoSeen[label] = true
-						pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country})
+						pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country, Name: n.name})
 					}
 				}
 				tier++

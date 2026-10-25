@@ -33,10 +33,11 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: hash, Provider: "p1", ExitCountry: "DE"}}
 		cfg.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://p1.invalid/sub"}}
 	})
-	accountsSaveSnapshot(t, h.dir, "p1", []subscription.Node{
-		accountsSocksNode("n1", "DE", first),
-		accountsSocksNode("n2", "DE", second),
-	})
+	n1 := accountsSocksNode("n1", "DE", first)
+	n1.Name = "First Node"
+	n2 := accountsSocksNode("n2", "DE", second)
+	n2.Name = "Second Node"
+	accountsSaveSnapshot(t, h.dir, "p1", []subscription.Node{n1, n2})
 
 	code, stdout, stderr := daemonRun(t, h.dir, "up", "--port", "0")
 	if code != 0 {
@@ -122,9 +123,13 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("stats items = %v, want both nodes", items)
 	}
+	wantNames := map[string]string{"p1/n1": "First Node", "p1/n2": "Second Node"}
 	var dialsOfBound float64
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
+		if item["name"] != wantNames[item["label"].(string)] {
+			t.Errorf("name of %v = %v, want %v", item["label"], item["name"], wantNames[item["label"].(string)])
+		}
 		dials, _ := item["dials"].(float64)
 		if item["label"] == bound {
 			dialsOfBound = dials

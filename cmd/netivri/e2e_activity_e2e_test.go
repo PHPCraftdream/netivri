@@ -26,6 +26,7 @@ type e2eActivity struct {
 	Countries     []string `json:"countries"`
 	Nodes         []struct {
 		Node        string `json:"node"`
+		Name        string `json:"name"`
 		Provider    string `json:"provider"`
 		Country     string `json:"country"`
 		Connections int    `json:"connections"`
@@ -79,8 +80,8 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 	}
 	var port int
 	_, _ = fmt.Sscanf(portText, "%d", &port)
-	node := subscription.Node{ID: "de-node", Name: "de-node", Type: "socks5", Server: host, Port: port, Country: "DE",
-		Raw: map[string]any{"name": "de-node", "type": "socks5", "server": host, "port": port}}
+	node := subscription.Node{ID: "de-node", Name: "DE Fixture 1", Type: "socks5", Server: host, Port: port, Country: "DE",
+		Raw: map[string]any{"name": "DE Fixture 1", "type": "socks5", "server": host, "port": port}}
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	if err := store.Save("fixture", subscription.Snapshot{FetchedAt: time.Now(), Nodes: []subscription.Node{node}}); err != nil {
 		t.Fatal(err)
@@ -103,6 +104,7 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 		t.Fatalf("alice connected: active=%d who=%+v", active, who)
 	}
 	if len(a.Nodes) != 1 || !strings.HasPrefix(a.Nodes[0].Node, "fixture/") ||
+		a.Nodes[0].Name != "DE Fixture 1" ||
 		a.Nodes[0].Provider != "fixture" || a.Nodes[0].Country != "DE" || a.Nodes[0].Connections != 1 {
 		t.Errorf("alice nodes = %+v", a.Nodes)
 	}

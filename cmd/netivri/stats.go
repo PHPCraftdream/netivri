@@ -237,7 +237,7 @@ func statsItems(nodes []stats.NodeStats, by string) []map[string]any {
 
 // nodeItem renders one node's statistics.
 func nodeItem(n stats.NodeStats) map[string]any {
-	return map[string]any{
+	item := map[string]any{
 		"label":      n.Label,
 		"provider":   n.Provider,
 		"country":    n.Country,
@@ -259,6 +259,10 @@ func nodeItem(n stats.NodeStats) map[string]any {
 		"last_seen": timeOrNil(n.LastSeen),
 		"last_ok":   timeOrNil(n.LastOK),
 	}
+	if n.Name != "" {
+		item["name"] = n.Name
+	}
+	return item
 }
 
 // percent is part/total in percent with one decimal; nil when total is 0.
