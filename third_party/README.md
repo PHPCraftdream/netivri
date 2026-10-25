@@ -58,3 +58,9 @@
    the recorded user, so a request naming an account whose rule rejects the
    peer is answered exactly like a wrong password (403; 407 only when no
    credentials were sent) and never routed.
+4. **Atomic address filter lists** (`adapter/inbound/ipfilter.go`): the
+   allowed and disallowed prefix lists are `atomic.Pointer` values instead of
+   plain slices. The accept loops read them while netivri sets them when an
+   instance starts and resets them when it closes; upstream never changes
+   them after start, so it had no synchronization (the race detector found
+   the race in `TestMixedPortLifecycle`). Behaviour is otherwise unchanged.
