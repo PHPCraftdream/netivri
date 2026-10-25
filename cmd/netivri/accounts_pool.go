@@ -267,31 +267,45 @@ func warmOptions(routes map[string][]map[string]any) *core.WarmOptions {
 
 // warmInfo converts the warm-up counters of the instance for the status
 // answer; nil when the instance runs without warm-up.
-func warmInfo(inst coreInstance) *daemon.WarmInfo {
-	stats, ok := inst.WarmStats()
+func warmInfo(inst coreInstance, infos []stats.NodeInfo) *daemon.WarmInfo {
+	ws, ok := inst.WarmStats()
 	if !ok {
 		return nil
 	}
-	return warmInfoOf(stats, inst.MemberLabels())
+	return warmInfoOf(ws, inst.MemberLabels(), infos)
 }
 
-func warmInfoOf(stats core.WarmStats, labels map[string]string) *daemon.WarmInfo {
+func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeInfo) *daemon.WarmInfo {
 	info := &daemon.WarmInfo{
-		Probes:        stats.Probes,
-		ProbeFailures: stats.ProbeFailures,
-		PoolHits:      stats.PoolHits,
-		PoolMisses:    stats.PoolMisses,
-		PoolDiscards:  stats.PoolDiscards,
-		Nodes:         make([]daemon.NodeHealth, 0, len(stats.Nodes)),
+		Probes:        ws.Probes,
+		ProbeFailures: ws.ProbeFailures,
+		PoolHits:      ws.PoolHits,
+		PoolMisses:    ws.PoolMisses,
+		PoolDiscards:  ws.PoolDiscards,
+		Nodes:         make([]daemon.NodeHealth, 0, len(ws.Nodes)),
 	}
-	for _, n := range stats.Nodes {
-		info.Nodes = append(info.Nodes, daemon.NodeHealth{
+	byLabel := make(map[string]stats.NodeInfo, len(infos))
+	for _, n := range infos {
+		byLabel[n.Label] = n
+	}
+	for _, n := range ws.Nodes {
+		node := daemon.NodeHealth{
 			Name:    n.Name,
 			Alive:   n.Alive,
 			DelayMS: n.Delay.Milliseconds(),
 			Label:   labels[n.Name],
-		})
+		}
+		if ni, ok := byLabel[node.Label]; ok {
+			node.Provider = ni.Provider
+			node.Country = ni.Country
+			node.NodeName = ni.Name
+		}
+		if n.Alive {
+			info.Alive++
+		}
+		info.Nodes = append(info.Nodes, node)
 	}
+	info.Total = len(ws.Nodes)
 	return info
 }
 

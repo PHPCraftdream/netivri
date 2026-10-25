@@ -95,7 +95,7 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	}
 	_ = payloadConn.Close()
 
-	code, stdout, stderr = daemonRun(t, h.dir, "status")
+	code, stdout, stderr = daemonRun(t, h.dir, "status", "--full")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}

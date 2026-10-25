@@ -309,7 +309,8 @@ both the sticky group's health table and `Observer.ObserveProbe`.
   cannot be opened is logged and the daemon runs without statistics: the
   proxy never fails because of its bookkeeping.
 - The status answer gains `stats` (`path`, `dropped`) and `affinity`
-  (`bindings`, `rebinds`).
+  (`bindings`, `rebinds`), both in the full view only
+  (`netivri status --full`).
 
 ### Configuration
 

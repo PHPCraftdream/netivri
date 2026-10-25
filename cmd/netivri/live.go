@@ -458,7 +458,7 @@ func (l *liveDaemon) status(startedAt string) daemon.Status {
 	st.Route = l.inst.Route()
 	st.Accounts = accountStatus(l.applied.cfg, l.inst.AccountRoutes())
 	st.Activity = activityInfo(st.Accounts, l.inst.Activity(), l.applied.pool.infos)
-	st.Warm = warmInfo(l.inst)
+	st.Warm = warmInfo(l.inst, l.applied.pool.infos)
 	st.Affinity = affinityInfo(l.inst, len(l.applied.pool.accountRoutes) > 0)
 	return st
 }

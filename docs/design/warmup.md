@@ -445,7 +445,9 @@ starts it when `Options.Warm` is set (after `ApplyConfig` and the listener, so
 a failed listen leaves nothing behind) and `Instance.Close` stops it before
 `executor.Shutdown`; `Instance.WarmStats` exposes the counters. The daemon sets
 `Options.Warm` (probes only, no pool) whenever accounts route through country
-nodes, and `status` prints the counters as `warm`.
+nodes, and `status` prints the counters as `warm` (the full list with the
+counters and `warm.nodes` behind `--full`; the default short view shows only
+the `alive`/`total`/`probes`/`probe_failures` summary).
 
 A round probes its nodes concurrently, at most `ProbeConcurrency` at a time
 (default 8). A node that failed twice in a row is skipped in the following

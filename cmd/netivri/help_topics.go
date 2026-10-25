@@ -132,7 +132,7 @@ var helpTopics = []helpTopic{
 		Name:    "status",
 		Group:   groupService,
 		Summary: "Show the running daemon",
-		Usage:   []string{"netivri status [--home {DIR}]"},
+		Usage:   []string{"netivri status [--home {DIR}] [--full]"},
 		Description: "Reports the live state of the daemon: listen address and protocols, authentication mode, the " +
 			"allowed_clients rule, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
@@ -141,9 +141,14 @@ var helpTopics = []helpTopic{
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
 			"'active_accounts' counts the active ones.\n\n" +
-			"It exits with 4 when no daemon is running, so it works as a check in scripts.",
+			"It exits with 4 when no daemon is running, so it works as a check in scripts. By default the answer is " +
+			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.",
+		Flags: []helpFlag{
+			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it."},
+		},
 		Examples: []helpExample{
 			{"Show the daemon and who is using it (see activity)", "netivri status"},
+			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
 			{"Start the daemon only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
 		},
 		Errors:  []helpError{herr("DAEMON_NOT_RUNNING", cli.ExitNoDaemon, "nothing is running; start it with 'netivri up'")},
