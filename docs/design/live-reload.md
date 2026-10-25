@@ -28,8 +28,9 @@ if it differs from what runs, replaces the core.
 - **No hot swap.** The core takes its routes and accounts when it starts
   (`core.Start`; see the header of `internal/core/core.go`). Replacing a route
   means closing the listener and starting a new one on the same port, so the
-  open connections end and the affinity bindings and warm-up counters start
-  from zero. Swapping the members of a sticky group in place is a separate,
+  open connections end and the affinity counters and warm-up counters start
+  from zero. The site bindings themselves are persisted in the statistics
+  store and restored on the new core (see [node-stats.md](node-stats.md)). Swapping the members of a sticky group in place is a separate,
   larger change.
 - No notification channel from the CLI to the daemon: see "Why polling".
 - No per-subscription interval, no refresh at an exact wall-clock time.
@@ -81,9 +82,12 @@ rest.
 1. A new authenticator is built from the new configuration.
 2. The statistics store is opened if routes appeared and there was none, and
    told about the new nodes (`SetNodes` adds them; old history stays).
-3. The old instance is closed (this ends its connections) and a new one starts
-   on the same port. A port that is still being released is retried for about
-   a second.
+3. The old instance's site bindings are written to the store (a last snapshot
+   while it still runs) and it is closed (this ends its connections); a new
+   one starts on the same port with the stored bindings as
+   `Options.InitialBindings`, so a site keeps its exit node across the reload
+   (see [node-stats.md](node-stats.md)). A port that is still being released
+   is retried for about a second.
 4. If the new core does not start, the previous options start again. If that
    fails too, the daemon stops: a daemon without a listener would only look
    alive.

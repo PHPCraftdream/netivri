@@ -100,6 +100,12 @@ type AffinityInfo struct {
 	Rebinds   uint64 `json:"rebinds"`
 	Hedges    uint64 `json:"hedges"`     // hedge attempts started
 	HedgeWins uint64 `json:"hedge_wins"` // dials won by the hedge attempt
+	// Restored is how many persisted bindings were loaded at the latest
+	// start or reload of the core. SavedAt is the last successful write of
+	// the bindings to the statistics store (RFC3339 UTC), omitted when
+	// none.
+	Restored int    `json:"restored"`
+	SavedAt  string `json:"saved_at,omitempty"`
 }
 
 // RefreshInfo reports the automatic subscription refresh of the daemon.

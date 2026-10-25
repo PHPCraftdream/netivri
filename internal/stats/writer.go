@@ -58,9 +58,12 @@ func (s *Store) writerLoop() {
 				return
 			}
 			if it.ack != nil {
-				if len(it.nodes) > 0 {
+				switch {
+				case len(it.nodes) > 0:
 					it.ack <- s.writeNodes(it.nodes)
-				} else {
+				case it.bindings != nil:
+					it.ack <- s.writeBindings(it.bindings)
+				default:
 					// Flush request: everything queued before it has been
 					// attempted; the samples are kept on failure.
 					it.ack <- tryFlush()

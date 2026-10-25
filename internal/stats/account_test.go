@@ -81,16 +81,16 @@ func TestMigrateV2ToV3KeepsData(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
-	if s.version != 3 {
-		t.Fatalf("version = %d, want 3", s.version)
+	if s.version != 4 {
+		t.Fatalf("version = %d, want 4", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 3 {
-		t.Fatalf("user_version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("user_version = %d, want 4", version)
 	}
 	if n := countRows(t, raw, "node"); n != 1 {
 		t.Fatalf("node rows = %d, want 1 (v2 data kept)", n)
@@ -147,16 +147,16 @@ func TestMigrateV1KeepsData(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	defer s.Close()
-	if s.version != 3 {
-		t.Fatalf("version = %d, want 3", s.version)
+	if s.version != 4 {
+		t.Fatalf("version = %d, want 4", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
 	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 3 {
-		t.Fatalf("user_version = %d, want 3", version)
+	if version != 4 {
+		t.Fatalf("user_version = %d, want 4", version)
 	}
 	if n := countRows(t, raw, "node"); n != 1 {
 		t.Fatalf("node rows = %d, want 1 (v1 data kept)", n)

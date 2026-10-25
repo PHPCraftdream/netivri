@@ -29,6 +29,9 @@ type fakeCore struct {
 	addr         string
 	activity     []core.AccountActivity // answer of Activity
 	memberLabels map[string]string
+	snap         []core.BindingRecord // answer of SnapshotBindings
+	restored     int                  // answer of RestoredBindings
+	snapAtClose  bool                 // set when SnapshotBindings saw the core closed
 	mu           sync.Mutex
 	closed       bool
 }
@@ -40,18 +43,27 @@ func (f *fakeCore) WarmStats() (core.WarmStats, bool) { return core.WarmStats{},
 func (f *fakeCore) AffinityStats() core.AffinityStats { return core.AffinityStats{} }
 func (f *fakeCore) Activity() []core.AccountActivity  { return f.activity }
 func (f *fakeCore) MemberLabels() map[string]string   { return f.memberLabels }
-func (f *fakeCore) Close() error                      { f.mu.Lock(); f.closed = true; f.mu.Unlock(); return nil }
-func (f *fakeCore) isClosed() bool                    { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
+func (f *fakeCore) SnapshotBindings() []core.BindingRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snapAtClose = f.closed
+	return f.snap
+}
+func (f *fakeCore) sawClosedSnapshot() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.snapAtClose }
+func (f *fakeCore) RestoredBindings() int   { return f.restored }
+func (f *fakeCore) Close() error            { f.mu.Lock(); f.closed = true; f.mu.Unlock(); return nil }
+func (f *fakeCore) isClosed() bool          { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
 
 // coreScript replaces coreStart: it records every call and fails the ones
 // listed in fail (1-based, counting failed calls too).
 type coreScript struct {
-	mu      sync.Mutex
-	opts    []core.Options
-	insts   []*fakeCore
-	fail    map[int]error
-	port    int           // what a start with port 0 gets
-	started chan struct{} // one signal per successful start, when set
+	mu       sync.Mutex
+	opts     []core.Options
+	insts    []*fakeCore
+	fail     map[int]error
+	port     int           // what a start with port 0 gets
+	restored int           // what every created fake core reports as installed
+	started  chan struct{} // one signal per successful start, when set
 }
 
 func (s *coreScript) start(_ context.Context, o core.Options) (coreInstance, error) {
@@ -65,7 +77,7 @@ func (s *coreScript) start(_ context.Context, o core.Options) (coreInstance, err
 	if port == 0 {
 		port = s.port
 	}
-	f := &fakeCore{addr: fmt.Sprintf("127.0.0.1:%d", port)}
+	f := &fakeCore{addr: fmt.Sprintf("127.0.0.1:%d", port), restored: s.restored}
 	s.insts = append(s.insts, f)
 	if s.started != nil {
 		select {

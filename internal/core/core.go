@@ -84,6 +84,12 @@ type Options struct {
 	// AffinityTTL is how long an idle site binding is kept before it is
 	// dropped. 0 means 24 hours; a negative value is invalid.
 	AffinityTTL time.Duration
+	// InitialBindings optionally loads persisted bindings into the affinity
+	// table after the sticky groups are installed: a record is bound to the
+	// member whose label matches within the login's route, keeping bound_at
+	// and last_used so the idle TTL continues. Records with an unknown
+	// login, an unknown label or an already expired binding are ignored.
+	InitialBindings []BindingRecord
 }
 
 // Instance is one running proxy listener.
@@ -102,6 +108,12 @@ type Instance struct {
 	stickyHealth *healthTable
 	poller       *throughputPoller
 	memberLabels map[string]string // route member proxy name -> node label, for Activity
+	// routeLabels maps a route key to the statistics label per member, for
+	// SnapshotBindings; immutable after Start publishes the instance.
+	routeLabels map[string][]string
+	// restoredBindings is how many of Options.InitialBindings Start actually
+	// installed; immutable after Start publishes the instance.
+	restoredBindings int
 }
 
 var (
@@ -220,6 +232,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	inbound.SetAllowedIPs(allowed)
 
+	restored := 0
 	if len(plans) > 0 {
 		// The replaced select groups become garbage; their finalizers are
 		// drained by the next Start through drainFinalizers.
@@ -229,6 +242,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			resetAllowedClients()
 			return nil, err
 		}
+		restored = loadInitialBindings(table, plans, o.AccountRoute, o.InitialBindings)
 	}
 
 	bind := o.Bind
@@ -281,16 +295,18 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 
 	inst := &Instance{
-		ln:            ln,
-		done:          make(chan struct{}),
-		route:         route,
-		tt:            tt,
-		accountRoutes: copyAccountRoutes(o.AccountRoute),
-		warm:          warm,
-		stickyTable:   table,
-		stickyHealth:  health,
-		poller:        poller,
-		memberLabels:  memberNameLabels(plans),
+		ln:               ln,
+		done:             make(chan struct{}),
+		route:            route,
+		tt:               tt,
+		accountRoutes:    copyAccountRoutes(o.AccountRoute),
+		warm:             warm,
+		stickyTable:      table,
+		stickyHealth:     health,
+		poller:           poller,
+		memberLabels:     memberNameLabels(plans),
+		routeLabels:      routeLabels(plans),
+		restoredBindings: restored,
 	}
 	current = inst
 
@@ -343,6 +359,13 @@ func (i *Instance) AffinityStats() AffinityStats {
 		Hedges:    i.stickyTable.hedgeCount(),
 		HedgeWins: i.stickyTable.hedgeWinCount(),
 	}
+}
+
+// RestoredBindings reports how many persisted bindings Start loaded into
+// the affinity table: records with an unknown login or label, an expired
+// binding or a duplicate key are not counted.
+func (i *Instance) RestoredBindings() int {
+	return i.restoredBindings
 }
 
 // AccountRoutes returns a copy of the configured login-to-route-key routes.

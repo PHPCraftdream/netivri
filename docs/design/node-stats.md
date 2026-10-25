@@ -103,13 +103,16 @@ CREATE TABLE account_hourly (
   PRIMARY KEY (hour, account, node, kind)) WITHOUT ROWID;         -- unix hour
 ```
 
-`PRAGMA user_version` carries the schema version (3). The account tables are
+`PRAGMA user_version` carries the schema version (4). The account tables are
 new in schema version 2 and the migration from version 1 is additive: a v1
 database keeps its data and opens read-only; a `stats` query on it simply
 has no account data. Schema version 3 adds the `node.name` display-name
 column (`ALTER TABLE node ADD COLUMN name TEXT NOT NULL DEFAULT ''`); the
 migration from v1 or v2 is additive too, and a read-only open of a v1 or v2
-database (which does not migrate) reads the node rows without a name. Account samples are separate from the node samples. Writes are batched: a
+database (which does not migrate) reads the node rows without a name. Schema
+version 4 adds the `binding` table (below); the migration from every older
+version is additive, and a read-only open of an older database simply has no
+bindings. Account samples are separate from the node samples. Writes are batched: a
 bounded queue, flushed every second or at 256 samples in one transaction;
 `Record` never blocks (a full queue drops the sample and counts it).
 Retention: raw samples older than `retention` (default 7 days) are folded
@@ -341,9 +344,50 @@ dial_ms_avg, bytes up+down; no probes or rates).
 
 ## Persisting bindings
 
-A later step: `bindings(login, site, label, bound_at, last_used)` in the same
-database, loaded at start, written in batches, so a restart keeps the node a
-site was bound to. Not part of the first contract.
+Schema version 4 adds, in the same database:
+
+```sql
+CREATE TABLE binding (
+  login TEXT NOT NULL, site TEXT NOT NULL, label TEXT NOT NULL,
+  bound_at INTEGER NOT NULL, last_used INTEGER NOT NULL,
+  PRIMARY KEY (login, site));                                     -- unix ms
+```
+
+A binding is stored **by node label** (`{PROVIDER}/{NODE_ID}`), never by
+member index: labels are stable across a route change, indexes are not.
+Provisional bindings (the 2-minute startup bindings) are never stored.
+
+**Privacy.** The table holds the logins and the sites (hostnames) the user
+visited; its retention is the binding lifetime. Rows idle longer than the
+binding TTL (24 hours) are deleted on every write and on every load. Sites
+are never printed or logged: not in `netivri stats` (which has no binding
+view), not in `netivri logs`, not in `status`.
+
+**Load.** When the daemon starts or restarts the core (a live reload, see
+[live-reload.md](live-reload.md)), it reads the stored bindings and passes
+them to the core as `Options.InitialBindings`. The core maps each record to
+the member whose label matches within the login's route (account, route key,
+plan labels) and installs it with the stored `bound_at` and `last_used`, so
+the idle TTL continues from the stored value. A record whose login has no
+route, whose label is not a member of that route, or that is already expired
+by `last_used + TTL` is ignored, as is a site the table already holds. A
+stored binding that points at a node that is currently down needs no special
+case: `acquire` re-picks for a down member.
+
+**Save.** While the daemon runs, a loop every 30 seconds (off the hot path)
+takes `SnapshotBindings()` — the live, non-provisional, non-expired bindings
+with labels, at most 100 000, taken under the table's read locks without
+creating or refreshing bindings — and replaces the stored set in one
+transaction: rows are upserted, rows no longer present are deleted, and rows
+older than the TTL are deleted. A final write runs before the core closes,
+both for a reload and for shutdown, after the loop has stopped and before
+the statistics store is closed. A write failure is logged at WARN and never
+stops the daemon; a store that cannot be opened leaves the daemon without
+persisted bindings, as it already leaves it without statistics.
+
+**Status.** `affinity` in `status` reports `restored` (how many bindings the
+latest core start loaded) and `saved_at` (RFC3339 UTC of the last successful
+write, omitted when none) next to the existing counters.
 
 ## Data-path tuning
 

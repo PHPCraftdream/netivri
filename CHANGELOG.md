@@ -20,6 +20,17 @@ versions; every such change is listed here.
   ends with the new exit code 7 and `DOCTOR_FAILED` on stderr when a check
   failed. A check that cannot run is a `warn`, never a crash; subscription
   URLs, passwords and hashes are never printed.
+- **Site bindings survive a restart or reload.** The statistics store (schema
+  version 4, additive migration; the migration keeps existing data) records
+  the site-to-node bindings by node label, so the daemon reloads them when it
+  starts or applies a configuration change: a site keeps its exit node across
+  restarts instead of moving to a fresh pick. The daemon writes the live
+  bindings every 30 seconds and once more before the core closes; rows idle
+  longer than the binding lifetime (24 hours) are deleted on every write and
+  load. `status` `affinity` reports `restored` (bindings loaded at the latest
+  core start) and `saved_at` (RFC3339 UTC of the last successful write).
+  The table holds the visited sites (hostnames) per account; it is never
+  printed or logged and expires with the binding.
 - **Node display names.** Subscriptions carry a display name per node
   (`Finland 1`); the statistics store (schema version 3, additive migration)
   records it and the per-node output shows it next to the hash-like label:
