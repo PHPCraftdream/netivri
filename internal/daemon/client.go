@@ -90,6 +90,34 @@ func (c Client) Stop(ctx context.Context) error {
 	return nil
 }
 
+// ProbeLiveKeep is ProbeLive without any cleanup: a failed control request
+// leaves the state file alone and is reported as the request error, a pid
+// mismatch is a wrapped ErrNotRunning (the daemon the state file names is
+// gone), and a missing state file is ErrNotRunning. The status watch polls
+// through it, so a transient control timeout stays a retryable failure
+// instead of ending the watch and deleting the state.
+func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
+	st, err := ReadState(home)
+	if err != nil {
+		return State{}, Status{}, err
+	}
+	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
+	if err != nil {
+		if isConnRefused(err) {
+			// Nothing listens on the recorded control port: the daemon
+			// the state file names is gone (a crash leaves the file).
+			return st, Status{}, fmt.Errorf("%w: nothing listens on %s: %v",
+				ErrNotRunning, st.Control, err)
+		}
+		return st, Status{}, err
+	}
+	if status.PID != st.PID {
+		return st, Status{}, fmt.Errorf("%w: control answers for pid %d, the state file names pid %d",
+			ErrNotRunning, status.PID, st.PID)
+	}
+	return st, status, nil
+}
+
 // Probe reports the state file of a running daemon, or ErrNotRunning.
 func Probe(ctx context.Context, home string) (State, error) {
 	st, _, err := ProbeLive(ctx, home)
