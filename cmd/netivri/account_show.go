@@ -11,6 +11,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/daemon"
+	"github.com/PHPCraftdream/netivri/internal/stats"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -30,6 +31,7 @@ type accountShowTier struct {
 // daemon runs, its live probe and traffic state (null otherwise).
 type accountShowNode struct {
 	Label       string `json:"label"`
+	Name        string `json:"name,omitempty"` // display name from the subscription
 	Provider    string `json:"provider"`
 	Country     string `json:"country"`
 	Tier        int    `json:"tier"`
@@ -136,7 +138,7 @@ func buildShowTiers(known map[string]bool, snapshots map[string]*subscription.Sn
 		for _, names := range groups {
 			t := accountShowTier{Tier: tier, Country: country, Providers: names, Nodes: []accountShowNode{}}
 			reason := ""
-			type pair struct{ provider, id, country string }
+			type pair struct{ provider, id, country, name string }
 			var nodes []pair
 			for _, name := range names {
 				if !known[name] {
@@ -156,7 +158,7 @@ func buildShowTiers(known map[string]bool, snapshots map[string]*subscription.Sn
 					} else if n.Country != country {
 						continue
 					}
-					nodes = append(nodes, pair{name, n.ID, n.Country})
+					nodes = append(nodes, pair{name, n.ID, n.Country, stats.SanitizeName(n.Name)})
 				}
 			}
 			sort.Slice(nodes, func(i, j int) bool {
@@ -176,6 +178,7 @@ func buildShowTiers(known map[string]bool, snapshots map[string]*subscription.Sn
 			for _, n := range nodes {
 				t.Nodes = append(t.Nodes, accountShowNode{
 					Label:    nodeLabel(n.provider, n.id),
+					Name:     n.name,
 					Provider: n.provider,
 					Country:  n.country,
 					Tier:     tier,

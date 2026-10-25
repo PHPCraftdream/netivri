@@ -592,12 +592,22 @@ func (s *Store) AccountNodes(q Query) ([]NodeStats, error) {
 	}
 
 	out := make([]NodeStats, 0, len(acc))
+	// A v1 or v2 database opened read-only has no name column.
+	nameCol := s.hasName
 	for id, agg := range acc {
-		var label, provider, country string
+		var label, provider, country, name string
 		var nodeSeen int64
-		err := tx.QueryRow(
-			"SELECT label, provider, country, last_seen FROM node WHERE id = ?", id,
-		).Scan(&label, &provider, &country, &nodeSeen)
+		sel := "SELECT label, provider, country, last_seen"
+		if nameCol {
+			sel += ", name"
+		}
+		sel += " FROM node WHERE id = ?"
+		var err error
+		if nameCol {
+			err = tx.QueryRow(sel, id).Scan(&label, &provider, &country, &nodeSeen, &name)
+		} else {
+			err = tx.QueryRow(sel, id).Scan(&label, &provider, &country, &nodeSeen)
+		}
 		if err == sql.ErrNoRows {
 			continue
 		}
@@ -605,7 +615,7 @@ func (s *Store) AccountNodes(q Query) ([]NodeStats, error) {
 			return nil, fmt.Errorf("stats: query node %d: %w", id, err)
 		}
 		st := NodeStats{
-			Label: label, Provider: provider, Country: country,
+			Label: label, Provider: provider, Country: country, Name: name,
 			Dials: agg.dials, DialsOK: agg.dialsOK,
 			Bytes:    agg.bytes,
 			LastSeen: agg.lastSeen,

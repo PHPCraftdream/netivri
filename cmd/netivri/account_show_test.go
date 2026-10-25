@@ -12,6 +12,25 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
+func TestBuildShowTiersNodesCarryName(t *testing.T) {
+	withName := func(id, country, name string) subscription.Node {
+		n := node(id, country)
+		n.Name = name
+		return n
+	}
+	known := map[string]bool{"main": true}
+	snapshots := map[string]*subscription.Snapshot{
+		"main": snap(withName("m-de", "DE", "  Germany  1 "), withName("plain", "DE", "")),
+	}
+	tiers := buildShowTiers(known, snapshots, [][]string{{"main"}}, []string{"DE"})
+	if len(tiers) != 1 || len(tiers[0].Nodes) != 2 {
+		t.Fatalf("tiers = %+v", tiers)
+	}
+	if tiers[0].Nodes[0].Name != "Germany 1" || tiers[0].Nodes[1].Name != "" {
+		t.Fatalf("names = %q, %q", tiers[0].Nodes[0].Name, tiers[0].Nodes[1].Name)
+	}
+}
+
 func TestBuildShowTiersTiersInOrder(t *testing.T) {
 	known := map[string]bool{"main": true, "backup": true}
 	snapshots := map[string]*subscription.Snapshot{

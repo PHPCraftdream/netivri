@@ -135,7 +135,8 @@ var helpTopics = []helpTopic{
 			"probes, the statistics store and the sticky-routing counters.\n\n" +
 			"The 'activity' list shows who is using the proxy now: for every account whether it is active (has open " +
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
-			"busiest first. 'active_accounts' counts the active ones.\n\n" +
+			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
+			"'active_accounts' counts the active ones.\n\n" +
 			"It exits with 4 when no daemon is running, so it works as a check in scripts.",
 		Examples: []helpExample{
 			{"Show the daemon and who is using it (see activity)", "netivri status"},
@@ -408,7 +409,8 @@ var helpTopics = []helpTopic{
 			"in their list order, so a tier is the nodes of one (country, provider) pair. A * in the country list " +
 			"is the nodes of every country the list does not name, at its place in the order. Without a provider " +
 			"list every provider shares one tier per country.\n\n" +
-			"Per node the command shows its label ({PROVIDER}/{NODE_ID}), provider, country and tier index and, " +
+			"Per node the command shows its label ({PROVIDER}/{NODE_ID}), its display name when the subscription " +
+			"gives one, provider, country and tier index and, " +
 			"when the daemon runs, live data: alive or down with the last probe delay, and the account's live " +
 			"connections through the node. A (country, provider) pair without nodes is listed as a skipped tier " +
 			"with a reason and does not consume a tier index, so the indexes match the order the daemon actually " +
@@ -526,7 +528,8 @@ var helpTopics = []helpTopic{
 		Description: "Shows what the daemon recorded about the exit nodes: the health and delay from the background " +
 			"probes, the dial time and outcome of real connections, and the throughput of real traffic. It reads " +
 			"{DIR}/stats.db read-only, so it works while the daemon runs and after it stopped. Statistics exist " +
-			"only for accounts that have a provider or an exit country.\n\n" +
+			"only for accounts that have a provider or an exit country. The per-node view also shows the display " +
+			"name of each node, when the subscription gives one; grouped views do not.\n\n" +
 			"The daemon also records per account which nodes it used, the dial outcomes and the traffic " +
 			"(bytes up and down). With --by account the result has one row per login; with --account the " +
 			"node, country and provider rows come from that login's own samples (dials and bytes only).",

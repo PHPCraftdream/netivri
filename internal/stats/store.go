@@ -38,8 +38,9 @@ type Sample struct {
 	Bytes int64         // KindThroughput only
 }
 
-// NodeInfo carries the provider/country metadata of a node label.
-type NodeInfo struct{ Label, Provider, Country string }
+// NodeInfo carries the provider/country metadata of a node label. Name is
+// the display name from the subscription, sanitized and optional.
+type NodeInfo struct{ Label, Provider, Country, Name string }
 
 // Options configures Open. Zero values select the defaults.
 type Options struct {
@@ -51,7 +52,7 @@ type Options struct {
 
 const (
 	driverName        = "sqlite"
-	schemaVersion     = 2
+	schemaVersion     = 3
 	flushBatchSize    = 256
 	flushInterval     = time.Second
 	pruneInterval     = time.Hour
@@ -102,6 +103,14 @@ CREATE TABLE IF NOT EXISTS account_hourly (
   PRIMARY KEY (hour, account, node, kind)) WITHOUT ROWID;
 `
 
+// schemaV3 is the version 3 migration. It is purely additive: the version
+// 2 tables are untouched, so a version 1 or 2 database keeps all of its
+// data on migration. A read-only open of a v1 or v2 database has no name
+// column; the read queries handle that.
+const schemaV3 = `
+ALTER TABLE node ADD COLUMN name TEXT NOT NULL DEFAULT '';
+`
+
 // Store is a SQLite-backed sample store. Create with Open or OpenReadOnly.
 type Store struct {
 	db   *sql.DB
@@ -110,6 +119,10 @@ type Store struct {
 	now  func() time.Time
 	// version is the schema version of the opened database.
 	version int
+	// hasName reports whether the node table has the schema v3 name column.
+	// Probed once at open, immutable afterwards: read-only opens of a v1 or
+	// v2 database see false, fresh or migrated stores true.
+	hasName bool
 
 	// queue carries samples, flush requests and SetNodes requests to the
 	// writer goroutine, in order.
@@ -185,6 +198,7 @@ func openStore(o Options) (*Store, error) {
 	}
 	s := newStore(db, o, false)
 	s.version = schemaVersion
+	s.hasName = probeHasName(db)
 	// The contract prunes at open. A failure here (for example a busy
 	// database) is not fatal: the data stays and the hourly ticker retries.
 	_ = s.prune(s.now())
@@ -228,6 +242,7 @@ func OpenReadOnly(path string) (*Store, error) {
 	}
 	s := newStore(db, Options{Path: path, Retention: defaultRetention}, true)
 	s.version = version
+	s.hasName = version >= 3 && probeHasName(db)
 	return s, nil
 }
 
@@ -286,6 +301,31 @@ func fileURI(slashAbs string, readOnly bool) string {
 	return u.String()
 }
 
+// probeHasName reports whether the node table has the schema v3 name
+// column. Run once at store creation, before any transaction is open, so a
+// writable store's single connection is free and no query inside a
+// transaction can deadlock waiting for a second one.
+func probeHasName(db *sql.DB) bool {
+	rows, err := db.Query("PRAGMA table_info(node)")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return false
+		}
+		if name == "name" {
+			return true
+		}
+	}
+	return false
+}
+
 func migrate(db *sql.DB) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -309,6 +349,9 @@ func migrate(db *sql.DB) error {
 		}
 	}
 	if _, err := db.Exec(schemaV2); err != nil {
+		return fmt.Errorf("stats: migrate: %w", err)
+	}
+	if _, err := db.Exec(schemaV3); err != nil {
 		return fmt.Errorf("stats: migrate: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {

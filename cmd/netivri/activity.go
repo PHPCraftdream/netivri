@@ -43,7 +43,7 @@ func activityInfo(accounts []daemon.AccountInfo, live []core.AccountActivity, in
 				DownloadBytes: n.Download,
 			}
 			if info, ok := nodeInfo[n.Label]; ok {
-				use.Provider, use.Country = info.Provider, info.Country
+				use.Provider, use.Country, use.Name = info.Provider, info.Country, info.Name
 			}
 			if use.Provider != "" && !seenProvider[use.Provider] {
 				seenProvider[use.Provider] = true
@@ -77,6 +77,14 @@ func nodeHealthLogger(infos []stats.NodeInfo, info, warn func(format string, arg
 		country := n.Country
 		if country == "" {
 			country = unknownCountry
+		}
+		if n.Name != "" {
+			if down {
+				warn("node %s (%s, provider %s, country %s) is down", label, n.Name, n.Provider, country)
+				return
+			}
+			info("node %s (%s, provider %s, country %s) is back", label, n.Name, n.Provider, country)
+			return
 		}
 		if down {
 			warn("node %s (provider %s, country %s) is down", label, n.Provider, country)

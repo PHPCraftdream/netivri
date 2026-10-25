@@ -10,6 +10,14 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Node display names.** Subscriptions carry a display name per node
+  (`Finland 1`); the statistics store (schema version 3, additive migration)
+  records it and the per-node output shows it next to the hash-like label:
+  `name` in `stats`, `account show` and `status` `activity[].nodes[]`, and in
+  the log line when a route node goes down or comes back
+  (`node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down`).
+  Names are cleaned of control characters and capped at 64 characters and are
+  display only; without a name the field is omitted.
 - **`netivri account clone {SOURCE} {ACCOUNT}`.** A new account from an existing
   one: the provider, the exit country and, by default, the password (the hash is
   copied) are taken over. `--password {PASSWORD}` sets a password of its own,

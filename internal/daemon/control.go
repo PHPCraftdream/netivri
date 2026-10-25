@@ -35,6 +35,7 @@ type AccountInfo struct {
 // or "node" for traffic that used no route node.
 type NodeUse struct {
 	Node          string `json:"node"`
+	Name          string `json:"name,omitempty"` // display name from the subscription
 	Provider      string `json:"provider,omitempty"`
 	Country       string `json:"country,omitempty"`
 	Connections   int    `json:"connections"`

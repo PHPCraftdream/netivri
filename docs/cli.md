@@ -219,7 +219,7 @@ stopped.
 
 ```json
 {"since": "24h0m0s", "by": "node", "items": [
-  {"label": "main/a1b2c3", "provider": "main", "country": "DE",
+  {"label": "main/a1b2c3", "name": "Germany 1", "provider": "main", "country": "DE",
    "probes": 120, "uptime_pct": 99.2,
    "delay_ms": {"avg": 84, "p50": 80, "p95": 140},
    "dials": 340, "dial_ok_pct": 99.1, "dial_ms_avg": 96,
@@ -228,6 +228,9 @@ stopped.
    "last_seen": "2026-10-20T10:00:00Z", "last_ok": "2026-10-20T10:00:00Z"}]}
 ```
 
+`name` is the display name the subscription gives the node (cleaned of control
+characters, at most 64 characters), present only when there is one; the grouped
+views (`--by country`, `--by provider`, `--by account`) have no names.
 `uptime_pct` is the share of successful probes and `dial_ok_pct` the share of
 successful dials of real connections; both are `null` without samples.
 `delay_ms` covers successful probes, `dial_ms_avg` successful dials, and
@@ -277,7 +280,9 @@ netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [
 
 The daemon log, `{HOME}/run/netivri.log`: start and stop, applied and rejected
 configuration changes, subscription refreshes, storage problems, and route nodes going
-down (`WARN`) or coming back (`INFO`), with the node label, provider and country. It reads the
+down (`WARN`) or coming back (`INFO`), with the node label, its display name when one is known, the
+provider and the country, as in
+`node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down`. It reads the
 file, so it works while the daemon runs and after it stopped or failed to start.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
@@ -398,7 +403,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   nodes of one (country, provider) pair; a `*` in the country list is the
   nodes of every country the list does not name, at its place in the order;
   without a provider list every provider shares one tier per country). Per
-  node it shows the label, provider, country and tier index and, while the
+  node it shows the label, the display name when the subscription gives one,
+  provider, country and tier index and, while the
   daemon runs, live data: alive or down with the last probe delay and the
   account's live connections through the node. The live fields are null only
   when there is no live data (no running daemon); with a daemon running,
@@ -621,7 +627,7 @@ through what". `activity` has one record per account, sorted by login, and
    "upload_bytes": 20480, "download_bytes": 1048576,
    "providers": ["main"], "countries": ["DE", "NL"],
    "nodes": [
-     {"node": "main/a1b2c3", "provider": "main", "country": "DE",
+     {"node": "main/a1b2c3", "name": "Germany 1", "provider": "main", "country": "DE",
       "connections": 2, "upload_bytes": 16384, "download_bytes": 917504},
      {"node": "main/d4e5f6", "provider": "main", "country": "NL",
       "connections": 1, "upload_bytes": 4096, "download_bytes": 131072}]},
@@ -635,7 +641,9 @@ An account is `active` while it has open connections. `nodes`, `providers`
 the busiest node first, each provider and country once, in the order of the
 nodes; they are empty for an idle account, and the byte counts are those of the
 open connections, not totals. `node` is the label of `node list` and `stats`
-(`{PROVIDER}/{NODE_ID}`); traffic of an account without a route is `direct`
+(`{PROVIDER}/{NODE_ID}`); `name` is the display name the subscription gives the node,
+cleaned of control characters and capped at 64 characters, and is omitted when
+the node has none. Traffic of an account without a route is `direct`
 (or `node` when the whole instance goes through one node), with no provider
 and country. `activity` is present while the listener runs. The configured
 provider and exit-country lists stay in `accounts`.

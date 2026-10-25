@@ -195,16 +195,16 @@ func (s *Store) writeNodes(infos []NodeInfo) (err error) {
 	defer tx.Rollback()
 	now := s.now().UTC().UnixMilli()
 	upsert, err := tx.Prepare(`
-INSERT INTO node (label, provider, country, first_seen, last_seen)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(label) DO UPDATE SET provider = excluded.provider, country = excluded.country`)
+INSERT INTO node (label, provider, country, name, first_seen, last_seen)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(label) DO UPDATE SET provider = excluded.provider, country = excluded.country, name = excluded.name`)
 	if err != nil {
 		return fmt.Errorf("stats: prepare upsert node: %w", err)
 	}
 	defer upsert.Close()
 
 	for _, info := range infos {
-		if _, err := upsert.Exec(info.Label, info.Provider, info.Country, now, now); err != nil {
+		if _, err := upsert.Exec(info.Label, info.Provider, info.Country, info.Name, now, now); err != nil {
 			return fmt.Errorf("stats: upsert node %s: %w", info.Label, err)
 		}
 		var id int64

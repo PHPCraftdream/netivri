@@ -27,7 +27,7 @@ func seedStats(t *testing.T, home string) {
 		}
 	}()
 	if err := store.SetNodes([]stats.NodeInfo{
-		{Label: "main/a", Provider: "main", Country: "DE"},
+		{Label: "main/a", Provider: "main", Country: "DE", Name: "Germany 1"},
 		{Label: "alt/b", Provider: "alt", Country: "NL"},
 	}); err != nil {
 		t.Fatal(err)
@@ -107,6 +107,12 @@ func TestStatsPerNodeValues(t *testing.T) {
 	a := items[1]
 	if a["provider"] != "main" || a["country"] != "DE" || a["probes"] != float64(4) || a["uptime_pct"] != 75.0 {
 		t.Fatalf("main/a = %v", a)
+	}
+	if a["name"] != "Germany 1" {
+		t.Fatalf("main/a name = %v, want Germany 1", a["name"])
+	}
+	if _, has := items[0]["name"]; has {
+		t.Fatalf("alt/b must not carry a name: %v", items[0])
 	}
 	delay := a["delay_ms"].(map[string]any)
 	if delay["avg"] != float64(200) || delay["p50"] != float64(200) || delay["p95"] != float64(300) {
