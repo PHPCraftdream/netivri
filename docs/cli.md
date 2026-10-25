@@ -245,6 +245,7 @@ characters, at most 64 characters), present only when there is one; the grouped
 views (`--by country`, `--by provider`, `--by account`) have no names.
 `uptime_pct` is the share of successful probes and `dial_ok_pct` the share of
 successful dials of real connections; both are `null` without samples.
+`last_seen` and `last_ok` (RFC3339 UTC) are `null` when there was none.
 `delay_ms` covers successful probes, `dial_ms_avg` successful dials, and
 `throughput_kbps` the per-window rates in KiB/s. Windows longer than the raw
 retention (7 days) are answered from hourly summaries: percentiles and
@@ -462,16 +463,28 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   nodes of every country the list does not name, at its place in the order;
   without a provider list every provider shares one tier per country). Per
   node it shows the label, the display name when the subscription gives one,
-  provider, country and tier index and, while the
+  provider, country and tier index (from 0) and, while the
   daemon runs, live data: alive or down with the last probe delay and the
-  account's live connections through the node. The live fields are null only
-  when there is no live data (no running daemon); with a daemon running,
-  `connections` is 0 for a node the account is not using. A (country,
-  provider) pair
-  without nodes is listed as a skipped tier with a reason and does not
-  consume a tier index, so the indexes match the order the daemon actually
-  tries. Without a daemon the static part is still shown and `live` is false
-  (the live fields are null). Unknown login: `ACCOUNT_NOT_FOUND` (exit 5);
+  account's live connections through the node. Without a running daemon
+  `live` is false and every live field is null. With one, `alive` and
+  `delay_ms` are null for a node the daemon's warm-up list does not hold, and
+  `connections` is the account's live count (0 for a node it is not using)
+  when the daemon tracks the account, null when it does not. A (country,
+  provider) pair without nodes is listed as a skipped tier with a reason; it
+  keeps the index it would have had and does not consume one, so the indexes
+  of the other tiers match the order the daemon actually tries. The document:
+
+  ```json
+  {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
+   "providers": ["main", "backup"], "countries": ["DE", "*"], "live": true,
+   "tiers": [
+     {"tier": 0, "country": "DE", "providers": ["main"],
+      "nodes": [{"label": "main/a1b2c3d4e5f6", "name": "Germany 1",
+                 "provider": "main", "country": "DE", "tier": 0,
+                 "alive": true, "delay_ms": 84, "connections": 2}]},
+     {"tier": 1, "country": "DE", "providers": ["backup"], "skipped": true,
+      "reason": "no nodes for this country and provider", "nodes": []}]}
+  ``` Unknown login: `ACCOUNT_NOT_FOUND` (exit 5);
   malformed login or not exactly one argument: exit 2. Passwords, hashes and
   subscription URLs are never shown.
 - `set-clients` takes one comma-separated allowed-clients rule list (same
