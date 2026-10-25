@@ -143,6 +143,9 @@ var helpTopics = []helpTopic{
 			"'active_accounts' counts the active ones.\n\n" +
 			"It exits with 4 when no daemon is running, so it works as a check in scripts. By default the answer is " +
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.",
+		Flags: []helpFlag{
+			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it."},
+		},
 		Examples: []helpExample{
 			{"Show the daemon and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
