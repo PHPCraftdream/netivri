@@ -405,6 +405,6 @@ func invalid(format string, args ...any) *cli.Error {
 		Code:    CodeConfigInvalid,
 		Exit:    cli.ExitUsage,
 		Message: fmt.Sprintf(format, args...),
-		Hint:    "fix the value in config.ktav; see docs/config.md",
+		Hint:    "fix the value in config.ktav; see netivri help config",
 	}
 }

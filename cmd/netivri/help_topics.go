@@ -96,7 +96,7 @@ var helpTopics = []helpTopic{
 			"for authentication, and each account's own allowed_clients can only narrow it.",
 		Flags: []helpFlag{
 			{"--port {N}", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
-			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication in config.ktav, otherwise up fails with AUTH_REQUIRED."},
+			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication (an account, or auth.login and auth.password in config.ktav; an init password also needs auth.allow_init_remote: true), otherwise up fails with AUTH_REQUIRED."},
 			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when a daemon is running."},
 			{"--home {DIR}", "State directory (see the global flags in 'netivri help')."},
 		},
@@ -105,7 +105,7 @@ var helpTopics = []helpTopic{
 			{"Take any free port and read it from the output", "netivri up --port 0"},
 			{"Run in the foreground, for example under a service manager", "netivri up --foreground"},
 			{"Keep a separate profile with its own config, subscriptions and statistics", "netivri up --home ./work-profile"},
-			{"Listen on every interface (needs auth.login and auth.password in config.ktav)", "netivri up --bind 0.0.0.0"},
+			{"Listen on every interface (needs an account or auth.login and auth.password in config.ktav)", "netivri up --bind 0.0.0.0"},
 			{"Check that the daemon applied your latest account and subscription changes (see reload)", "netivri status"},
 		},
 		Errors: []helpError{

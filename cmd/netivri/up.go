@@ -131,7 +131,7 @@ func mergeUp(opts upOptions, cfg *config.Config) (string, int, error) {
 		return "", 0, &cli.Error{
 			Code:    "AUTH_REQUIRED",
 			Message: "non-loopback bind requires proxy authentication",
-			Hint:    "set auth.login and auth.password in config.ktav (password may be \"init\"); see docs/config.md",
+			Hint:    "add an account (netivri account add) or set auth.login and auth.password in config.ktav; an init password also needs auth.allow_init_remote: true; see netivri help config",
 			Exit:    cli.ExitUsage,
 		}
 	}
@@ -292,7 +292,7 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 			Code:    config.CodeConfigInvalid,
 			Exit:    cli.ExitUsage,
 			Message: err.Error(),
-			Hint:    "fix auth.login / auth.password in config.ktav; see docs/config.md",
+			Hint:    "fix auth.login / auth.password in config.ktav; see netivri help config",
 		}
 	}
 	return a, nil
