@@ -21,7 +21,9 @@ mode="${3:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 # absolute path is always a file.
 dist="$(cd "${dist}" && pwd)"
 
-platforms=(linux-x64 linux-arm64 darwin-x64 darwin-arm64 w32-x64 w32-arm64)
+# The Windows packages go first: their names are the newest on npm, so a
+# refusal there stops the run before any other package moves on.
+platforms=(w32-x64 w32-arm64 linux-x64 linux-arm64 darwin-x64 darwin-arm64)
 
 args=(--access public)
 case "${mode}" in
