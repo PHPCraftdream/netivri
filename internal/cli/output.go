@@ -22,6 +22,9 @@ const (
 	ExitNoDaemon = 4
 	ExitNotFound = 5
 	ExitConflict = 6
+	// ExitCheckFailed is the exit code of `doctor` when at least one check
+	// failed; the document on stdout says which.
+	ExitCheckFailed = 7
 )
 
 // Error is a machine-readable failure with a stable Code.

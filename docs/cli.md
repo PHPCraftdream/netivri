@@ -146,7 +146,7 @@ the contract; the JSON is.
 
 ```json
 {"kind": "overview", "summary": "...", "description": "...", "usage": ["..."],
- "quick_start": ["..."], "planned": ["use", "node test", "doctor", "schema"],
+ "quick_start": ["..."], "planned": ["use", "node test", "schema"],
  "commands": [{"name": "up", "group": "Proxy service", "summary": "...", "usage": ["..."]}],
  "global_flags": [{"name": "--home {DIR}", "meaning": "..."}],
  "exit_codes": [{"code": 0, "meaning": "success"}]}
@@ -363,6 +363,46 @@ an account with neither provider nor exit country `NO_ROUTE`; unknown node
 `NO_NODES_FOR_COUNTRY` (exit 5); `DIAG_FAILED` (exit 3) when the run itself
 cannot proceed (for example a stored node mapping the proxy library rejects).
 Failed requests are not errors: they are counted in `failures`.
+
+### `doctor`
+
+```
+netivri doctor [--home {DIR}]
+```
+
+Runs every check once and prints one document on stdout, in Ktav or with
+`--json` in JSON. Each check has a `name`, a `status` (`ok`, `warn` or `fail`)
+and a `detail`; `summary` counts them by status. stdout always carries the
+document; when a check failed the error envelope goes to stderr and the exit
+code is 7, so a script can branch on the exit code alone. A check that cannot
+run is a `warn` with the reason, never a failure of the whole command; no
+check contacts anything but the local daemon and the local port, and
+subscription URLs, passwords and hashes are never printed.
+
+```json
+{"checks": [
+   {"name": "config", "status": "ok", "detail": "config.ktav loaded and valid"},
+   {"name": "daemon", "status": "ok", "detail": "running, pid 4242, uptime 3600s"},
+   {"name": "listen", "status": "ok", "detail": "listen 127.0.0.1:7890, allowed_clients *"},
+   {"name": "subscriptions", "status": "ok", "detail": "every configured subscription has a usable snapshot"},
+   {"name": "account alice", "status": "ok", "detail": "tier 0 DE (main): 1/1 node(s) alive"},
+   {"name": "log", "status": "ok", "detail": "no warn or error entries in the last hour"}],
+ "summary": {"ok": 6, "warn": 0, "fail": 0}}
+```
+
+The checks:
+
+| Name | What it covers |
+|---|---|
+| `config` | `config.ktav` loads and is valid (the message names the bad key, never a secret). |
+| `daemon` | A daemon runs for this state directory (pid, uptime). |
+| `listen` | The address the running daemon reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
+| `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the daemon is down). |
+| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running daemon, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without a daemon the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
+| `log` | No `WARN` or `ERROR` entries in the last hour of the daemon log (count and newest message otherwise). The log is read even when the daemon is down; a missing log file is `ok` ("no log yet"). |
+
+Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
+on stdout says which.
 
 ### `account`
 
@@ -885,6 +925,7 @@ Raw proxy mappings (credentials) are never printed.
 | 4 | Daemon not running (for commands that need it) |
 | 5 | Not found (subscription, node, country with no nodes) |
 | 6 | Conflict (port in use, daemon already running with other settings) |
+| 7 | `doctor`: at least one check failed (the document on stdout says which) |
 
 ## Error codes
 
@@ -922,6 +963,7 @@ Raw proxy mappings (credentials) are never printed.
 | `DAEMON_START_TIMEOUT` | 1 | The daemon did not report startup within 15 s |
 | `DAEMON_STOP_TIMEOUT` | 1 | The daemon did not stop within 15 s after `down` |
 | `PORT_IN_USE` | 6 | Listen port is taken |
+| `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |
 | `INTERNAL` | 1 | Bug; details in `netivri logs` |
 
 ## Idempotency

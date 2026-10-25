@@ -25,6 +25,7 @@ var commands = map[string]func(args []string, stdout io.Writer) error{
 	"stats":   runStats,
 	"logs":    runLogs,
 	"diag":    runDiag,
+	"doctor":  runDoctor,
 	"version": runVersion,
 }
 
