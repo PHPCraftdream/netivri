@@ -52,7 +52,7 @@ type Options struct {
 
 const (
 	driverName        = "sqlite"
-	schemaVersion     = 3
+	schemaVersion     = 4
 	flushBatchSize    = 256
 	flushInterval     = time.Second
 	pruneInterval     = time.Hour
@@ -111,6 +111,18 @@ const schemaV3 = `
 ALTER TABLE node ADD COLUMN name TEXT NOT NULL DEFAULT '';
 `
 
+// schemaV4 is the version 4 migration. It is purely additive: the version 3
+// tables are untouched, so a version 1, 2 or 3 database keeps all of its
+// data on migration. A read-only open of an older database (which does not
+// migrate) simply has no bindings; LoadBindings and ReplaceBindings treat
+// such a database as empty.
+const schemaV4 = `
+CREATE TABLE IF NOT EXISTS binding (
+  login TEXT NOT NULL, site TEXT NOT NULL, label TEXT NOT NULL,
+  bound_at INTEGER NOT NULL, last_used INTEGER NOT NULL,
+  PRIMARY KEY (login, site));
+`
+
 // Store is a SQLite-backed sample store. Create with Open or OpenReadOnly.
 type Store struct {
 	db   *sql.DB
@@ -146,10 +158,11 @@ type Store struct {
 
 // item is one unit of work for the writer goroutine.
 type item struct {
-	sample Sample
-	acct   *AccountSample
-	nodes  []NodeInfo
-	ack    chan error // flush and SetNodes requests carry an ack
+	sample   Sample
+	acct     *AccountSample
+	nodes    []NodeInfo
+	bindings *bindingWrite
+	ack      chan error // flush, SetNodes and ReplaceBindings requests carry an ack
 }
 
 // Open prepares the store and starts the writer and retention goroutines.
@@ -337,22 +350,26 @@ func migrate(db *sql.DB) error {
 	if version == schemaVersion {
 		return nil
 	}
-	// Version 2 is additive: a fresh database needs both DDLs, a version 1
-	// database only the new tables, and its data survives untouched.
-	steps := []string{schemaV1}
-	if version == 1 {
-		steps = nil
-	}
-	for _, ddl := range steps {
-		if _, err := db.Exec(ddl); err != nil {
+	// Every step is gated by the current version, so an upgrade from any
+	// version runs only the DDL it has not applied yet: schemaV3's ALTER
+	// fails if the name column already exists, and the other DDLs are
+	// CREATE ... IF NOT EXISTS. A fresh database (version 0) runs all four;
+	// a version 1, 2 or 3 database keeps all of its data.
+	for _, step := range []struct {
+		version int
+		ddl     string
+	}{
+		{1, schemaV1},
+		{2, schemaV2},
+		{3, schemaV3},
+		{4, schemaV4},
+	} {
+		if version >= step.version {
+			continue
+		}
+		if _, err := db.Exec(step.ddl); err != nil {
 			return fmt.Errorf("stats: migrate: %w", err)
 		}
-	}
-	if _, err := db.Exec(schemaV2); err != nil {
-		return fmt.Errorf("stats: migrate: %w", err)
-	}
-	if _, err := db.Exec(schemaV3); err != nil {
-		return fmt.Errorf("stats: migrate: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("stats: set schema version: %w", err)

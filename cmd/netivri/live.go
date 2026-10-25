@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mihauth "github.com/metacubex/mihomo/component/auth"
@@ -38,6 +39,8 @@ type coreInstance interface {
 	AffinityStats() core.AffinityStats
 	Activity() []core.AccountActivity
 	MemberLabels() map[string]string
+	SnapshotBindings() []core.BindingRecord
+	RestoredBindings() int
 	Close() error
 }
 
@@ -97,10 +100,30 @@ type liveDaemon struct {
 	refreshErr   string
 	loopsCancel  context.CancelFunc
 	loopsRunning sync.WaitGroup
+
+	// Persisted site bindings: when the stored set was last written, how
+	// many bindings the latest core start loaded, and the test seams of the
+	// writer loop (an injectable interval, tick channel and write call).
+	// bindingsGen is bumped under l.mu whenever an instance is finally
+	// written (a reload or shutdown), which retires every periodic writer
+	// that captured an earlier (instance, generation) pair; bindingsMu
+	// orders the final write after one that is already in flight. Lock
+	// order: l.mu, then bindingsMu; the periodic writer never holds both.
+	bindingsSavedAt  time.Time
+	bindingsRestored int
+	bindingInterval  time.Duration
+	bindingTickerC   <-chan time.Time
+	bindingsMu       sync.Mutex
+	bindingsGen      atomic.Uint64
+	writeBindings    func(*stats.Store, []stats.Binding) error
 }
 
 func newLiveDaemon(opts upOptions, logf func(format string, args ...any), stop func()) *liveDaemon {
-	return &liveDaemon{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
+	l := &liveDaemon{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
+	l.writeBindings = func(store *stats.Store, rows []stats.Binding) error {
+		return store.ReplaceBindings(rows)
+	}
+	return l
 }
 
 // errText is the one-line form of an error kept in the status answer and the
@@ -131,18 +154,20 @@ func (l *liveDaemon) coreOptions(d desiredState, a mihauth.Authenticator, store 
 		observer = statsObserver{store: store}
 	}
 	return core.Options{
-		HomeDir:        l.opts.Home,
-		Bind:           d.bind,
-		Port:           d.port,
-		Authenticator:  a,
-		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
-		RouteNodes:     d.pool.nodes,
-		AccountRoute:   d.pool.accountRoutes,
-		NodeLabels:     d.pool.labels,
-		NodeTiers:      d.pool.tiers,
-		OnNodeHealth:   nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
-		Observer:       observer,
-		Warm:           warmOptions(d.pool.nodes),
+		HomeDir:         l.opts.Home,
+		Bind:            d.bind,
+		Port:            d.port,
+		Authenticator:   a,
+		AllowedClients:  config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
+		RouteNodes:      d.pool.nodes,
+		AccountRoute:    d.pool.accountRoutes,
+		NodeLabels:      d.pool.labels,
+		NodeTiers:       d.pool.tiers,
+		OnNodeHealth:    nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
+		Observer:        observer,
+		Warm:            warmOptions(d.pool.nodes),
+		AffinityTTL:     stats.BindingTTL,
+		InitialBindings: initialBindings(store, l.warnf),
 	}
 }
 
@@ -160,6 +185,7 @@ func (l *liveDaemon) start(ctx context.Context, d desiredState, a mihauth.Authen
 	l.mu.Lock()
 	l.inst, l.applied, l.latest, l.startOpts, l.store = inst, d, d.cfg, o, store
 	l.actualPort = port
+	l.noteBindingsRestored(inst)
 	l.mu.Unlock()
 	return nil
 }
@@ -313,6 +339,9 @@ func (l *liveDaemon) restart(ctx context.Context, d desiredState) {
 	}
 	prev := l.startOpts
 	if l.inst != nil {
+		// The last snapshot is taken while the instance still runs and is
+		// on disk before it closes; the new core loads it as InitialBindings.
+		l.writeBindingsFinalLocked(l.inst, store)
 		_ = l.inst.Close()
 		l.inst = nil
 	}
@@ -321,16 +350,23 @@ func (l *liveDaemon) restart(ctx context.Context, d desiredState) {
 	if err != nil {
 		l.reloadErr = errText(err)
 		l.warnf("new configuration not applied, restoring the previous one: %s", l.reloadErr)
-		back, err2 := startCore(ctx, prev)
+		// The rollback restarts the previous configuration with the bindings
+		// that were just saved from the old instance, not with the ones it
+		// was originally started with.
+		back := prev
+		back.InitialBindings = initialBindings(store, l.warnf)
+		backInst, err2 := startCore(ctx, back)
 		if err2 != nil {
 			l.errorf("the previous configuration did not start either, stopping: %s", errText(err2))
 			l.stop()
 			return
 		}
-		l.inst = back
+		l.inst = backInst
+		l.noteBindingsRestored(backInst)
 		return
 	}
 	l.inst, l.applied, l.latest, l.startOpts = inst, d, d.cfg, o
+	l.noteBindingsRestored(inst)
 	l.actualPort = portOf(inst.Addr())
 	l.startOpts.Port, l.applied.port = l.actualPort, l.actualPort
 	l.reloads++
@@ -395,7 +431,7 @@ func (l *liveDaemon) watch(ctx context.Context, every time.Duration) {
 func (l *liveDaemon) startLoops() {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.loopsCancel = cancel
-	l.loopsRunning.Add(2)
+	l.loopsRunning.Add(3)
 	go func() {
 		defer l.loopsRunning.Done()
 		l.watch(ctx, watchEvery)
@@ -403,6 +439,10 @@ func (l *liveDaemon) startLoops() {
 	go func() {
 		defer l.loopsRunning.Done()
 		l.refreshLoop(ctx)
+	}()
+	go func() {
+		defer l.loopsRunning.Done()
+		l.bindingWriterLoop(ctx)
 	}()
 }
 
@@ -417,6 +457,9 @@ func (l *liveDaemon) close() {
 	inst, store := l.inst, l.store
 	l.inst = nil
 	l.mu.Unlock()
+	// The last snapshot is taken while the instance still runs and is on
+	// disk before the store is closed (the shutdown order in up.go).
+	l.writeBindingsFinal(inst, store)
 	if inst != nil {
 		_ = inst.Close()
 	}
@@ -460,5 +503,11 @@ func (l *liveDaemon) status(startedAt string) daemon.Status {
 	st.Activity = activityInfo(st.Accounts, l.inst.Activity(), l.applied.pool.infos)
 	st.Warm = warmInfo(l.inst, l.applied.pool.infos)
 	st.Affinity = affinityInfo(l.inst, len(l.applied.pool.accountRoutes) > 0)
+	if st.Affinity != nil {
+		st.Affinity.Restored = l.bindingsRestored
+		if !l.bindingsSavedAt.IsZero() {
+			st.Affinity.SavedAt = l.bindingsSavedAt.UTC().Format(time.RFC3339)
+		}
+	}
 	return st
 }

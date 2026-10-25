@@ -695,11 +695,17 @@ node names, changes nothing and does not count.
 `stats` (`{"path", "dropped"}`) is full-only and present while the statistics
 store is open;
 `dropped` counts samples lost to a full write queue. `affinity`
-(`{"bindings", "rebinds", "hedges", "hedge_wins"}`) is also full-only and present while an account has a route: the
-number of site-to-node bindings held now, how many times a binding moved
-to another node because its node was down, how many second dial attempts
-(to the same node) were started for a slow handshake and how many dials such
-an attempt won (see [design/node-stats.md](design/node-stats.md)).
+(`{"bindings", "rebinds", "hedges", "hedge_wins", "restored", "saved_at"}`) is
+also full-only and present while an account has a route: the number of
+site-to-node bindings held now, how many times a binding moved to another node
+because its node was down, how many second dial attempts (to the same node)
+were started for a slow handshake and how many dials such an attempt won.
+`restored` is how many persisted bindings were loaded when the core last
+started (a daemon start or a reload); the daemon stores the bindings in the
+statistics database by node label every 30 seconds and once more before it
+closes, so a site keeps its exit node across restarts and reloads. `saved_at`
+is the time of the last successful write (RFC3339 UTC), omitted until one
+succeeds (see [design/node-stats.md](design/node-stats.md)).
 
 `activity` and `active_accounts` answer "who is using the proxy now, and
 through what". `activity` has one record per account, sorted by login, and
@@ -1005,3 +1011,9 @@ Raw proxy mappings (credentials) are never printed.
   refreshes. No tokens, no credentials, no subscription URLs.
 - Subscription URLs contain secrets: they are stored in the state directory
   only and are redacted in all output (`https://provider.example/sub/****`).
+- The statistics database holds, besides traffic counters, the persisted
+  site bindings: which sites (hostnames) each account visited and when.
+  They stay in `{HOME}/stats.db` only, expire with the binding lifetime
+  (24 hours idle; stale rows are deleted on every write and load) and are
+  never printed or logged: `status` reports only counts and times,
+  `netivri stats` has no binding view, and the daemon log names no sites.

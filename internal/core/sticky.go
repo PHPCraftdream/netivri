@@ -273,6 +273,7 @@ var _ C.ProxyAdapter = (*stickyGroup)(nil)
 // routePlan is one account route prepared for sticky-group installation.
 type routePlan struct {
 	index  int
+	key    string   // route key the plan was built from
 	names  []string // internal proxy names, member order
 	labels []string // statistics labels, member order
 	tiers  []int    // priority tier per member, lower first; nil = one tier
@@ -341,7 +342,7 @@ func buildRoutePlans(o Options) ([]routePlan, error) {
 				Exit:    cli.ExitNotFound,
 			}
 		}
-		plan := routePlan{index: index}
+		plan := routePlan{index: index, key: key}
 		for node := range nodes {
 			plan.names = append(plan.names, fmt.Sprintf("netivri-r%d-%d", index, node))
 			plan.labels = append(plan.labels, fmt.Sprintf("r%d-%d", index, node))
