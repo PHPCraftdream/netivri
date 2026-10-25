@@ -14,22 +14,39 @@ func (s *Store) writerLoop() {
 	ticker := time.NewTicker(flushInterval)
 	defer ticker.Stop()
 	batch := make([]Sample, 0, flushBatchSize)
+	acctBatch := make([]AccountSample, 0, flushBatchSize)
 
-	// tryFlush writes the pending batch. On failure the whole batch is kept
-	// for the next attempt (the transaction is atomic, so retrying it is
-	// safe) and the label cache is reset because it may hold ids of
-	// rolled-back inserts.
+	// resetCaches drops both id caches: ids read inside a rolled back
+	// transaction may collide with rows other labels or logins insert later.
+	resetCaches := func() {
+		s.ids = map[string]int64{}
+		s.accIDs = map[string]int64{}
+	}
+
+	// tryFlush writes the pending node and account batches. On failure the
+	// failed batch is kept for the next attempt (the transaction is atomic,
+	// so retrying it is safe), the succeeded one is cleared and both caches
+	// are reset.
 	tryFlush := func() error {
-		if len(batch) == 0 {
-			return nil
+		if len(batch) > 0 {
+			if err := s.writeBatch(batch); err != nil {
+				resetCaches()
+				batch = s.trimPending(batch)
+				// The other batch is trimmed too: it would otherwise grow
+				// without bound under a persistent node-write failure.
+				acctBatch = s.trimPendingAcct(acctBatch)
+				return err
+			}
+			batch = batch[:0]
 		}
-		err := s.writeBatch(batch)
-		if err != nil {
-			s.ids = map[string]int64{}
-			batch = s.trimPending(batch)
-			return err
+		if len(acctBatch) > 0 {
+			if err := s.writeAccountBatch(acctBatch); err != nil {
+				resetCaches()
+				acctBatch = s.trimPendingAcct(acctBatch)
+				return err
+			}
+			acctBatch = acctBatch[:0]
 		}
-		batch = batch[:0]
 		return nil
 	}
 
@@ -50,8 +67,12 @@ func (s *Store) writerLoop() {
 				}
 				continue
 			}
-			batch = append(batch, it.sample)
-			if len(batch) >= flushBatchSize {
+			if it.acct != nil {
+				acctBatch = append(acctBatch, *it.acct)
+			} else {
+				batch = append(batch, it.sample)
+			}
+			if len(batch) >= flushBatchSize || len(acctBatch) >= flushBatchSize {
 				// Timer and batch flushes retry through the kept batch.
 				_ = tryFlush()
 			}
@@ -164,6 +185,7 @@ func (s *Store) writeNodes(infos []NodeInfo) (err error) {
 	defer func() {
 		if err != nil {
 			s.ids = map[string]int64{}
+			s.accIDs = map[string]int64{}
 		}
 	}()
 	tx, err := s.db.Begin()

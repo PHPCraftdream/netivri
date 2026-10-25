@@ -12,6 +12,7 @@ type Query struct {
 	Provider string        // empty = any
 	Country  string
 	Label    string
+	Account  string // empty = any; only used by the account query
 }
 
 // NodeStats is the aggregated view of one node over the query window.

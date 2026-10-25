@@ -40,7 +40,7 @@ netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPT
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account rm {ACCOUNT}
 
-netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider}]
+netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--since {DURATION}] [--by {node|country|provider|account}] [--account {ACCOUNT}]
 
 netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
@@ -214,7 +214,8 @@ stopped.
 | `--country {COUNTRY}` | Only the nodes of this country. |
 | `--node {NODE}` | Only this node. A label is `{PROVIDER}/{NODE_ID}`, like the `sub` and `id` of `node list`. |
 | `--since D` | Window: `90m`, `24h`, `7d`, ... (default `24h`, at most `365d`). |
-| `--by G` | `node` (default), `country` or `provider`. |
+| `--by G` | `node` (default), `country`, `provider` or `account`. |
+| `--account {ACCOUNT}` | Only this account. Works with every `--by` mode. |
 
 ```json
 {"since": "24h0m0s", "by": "node", "items": [
@@ -239,6 +240,31 @@ with `unknown` for nodes without one, or `provider`) with the number of
 `nodes`, summed counters and averages weighted by the number of successful
 samples; percentiles do not merge and are left out, `throughput_kbps` carries
 only `max`. Items are sorted by label or group name.
+
+With `--by account` each item is one login (the authenticated user of the
+connection). Per account the store records the dials of real connections
+per node with outcome and duration, and the throughput of real traffic as
+bytes up and down per 5-second window, attributed by the login and the node
+it used; the same 16 KiB window threshold as for node throughput applies.
+Each item has `login`, `bytes_up`, `bytes_down`, `dials`, `dial_ok_pct`,
+`nodes` (distinct node count), `countries` and `providers` (comma-joined
+sorted lists). Items are sorted by login. `dial_ok_pct` is `null` without
+dials; `countries` and `providers` are empty strings when unknown.
+`--account` selects one login; with `--by account` the other node filters
+(`--sub`, `--country`, `--node`) restrict the account rows to samples on
+matching nodes. With `--by node`, `--by country` or `--by provider` the rows
+are computed from the account samples of that login only and are a documented
+subset: dials, `dial_ok_pct`, `dial_ms_avg`, bytes (up plus down combined)
+and the nodes; `probes`, `uptime_pct`, `delay_ms` and `throughput_kbps` are
+`0` or null because account samples carry no probes or rates. A database
+created before this version (schema v1) has no account data.
+
+```json
+{"since": "24h0m0s", "by": "account", "items": [
+  {"login": "alice", "bytes_up": 123456789, "bytes_down": 987654321,
+   "dials": 340, "dial_ok_pct": 99.1, "nodes": 2,
+   "countries": "DE", "providers": "main"}]}
+```
 
 When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 `--by` or `--country`: usage error, exit 2.

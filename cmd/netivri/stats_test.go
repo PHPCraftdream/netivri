@@ -44,6 +44,12 @@ func seedStats(t *testing.T, home string) {
 	// 1 MiB in one second is 1024 KiB/s.
 	store.Record(stats.Sample{At: at, Label: "main/a", Kind: stats.KindThroughput, OK: true, Delay: time.Second, Bytes: 1 << 20})
 	store.Record(stats.Sample{At: at, Label: "alt/b", Kind: stats.KindProbe, OK: true, Delay: 50 * time.Millisecond})
+	// Per-account samples: alice on main/a, bob on alt/b.
+	for _, ok := range []bool{true, true, false} {
+		store.RecordAccount(stats.AccountSample{At: at, Login: "alice", Label: "main/a", Kind: stats.KindDial, OK: ok, Delay: 100 * time.Millisecond})
+	}
+	store.RecordAccount(stats.AccountSample{At: at, Login: "alice", Label: "main/a", Kind: stats.KindThroughput, OK: true, Delay: 5 * time.Second, Bytes: 3 << 20, Up: 1 << 20, Down: 2 << 20})
+	store.RecordAccount(stats.AccountSample{At: at, Login: "bob", Label: "alt/b", Kind: stats.KindDial, OK: true, Delay: 50 * time.Millisecond})
 	if err := store.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +215,66 @@ func TestParseWindowDays(t *testing.T) {
 	}
 }
 
+func TestStatsByAccount(t *testing.T) {
+	home := t.TempDir()
+	seedStats(t, home)
+	data, err := statsRun(t, home, "--by", "account", "--since", "1h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data["by"] != "account" || data["since"] != "1h0m0s" {
+		t.Fatalf("header = %v %v", data["since"], data["by"])
+	}
+	items := statsItemsOf(t, data)
+	if len(items) != 2 || items[0]["login"] != "alice" || items[1]["login"] != "bob" {
+		t.Fatalf("items = %v", items)
+	}
+	a := items[0]
+	if a["bytes_up"] != float64(1<<20) || a["bytes_down"] != float64(2<<20) ||
+		a["dials"] != float64(3) || a["dial_ok_pct"] != 66.7 || a["nodes"] != float64(1) {
+		t.Fatalf("alice = %v", a)
+	}
+	if a["countries"] != "DE" || a["providers"] != "main" {
+		t.Fatalf("alice countries/providers = %v %v", a["countries"], a["providers"])
+	}
+	b := items[1]
+	if b["nodes"] != float64(1) || b["countries"] != "NL" {
+		t.Fatalf("bob = %v", b)
+	}
+}
+
+func TestStatsByAccountFilter(t *testing.T) {
+	home := t.TempDir()
+	seedStats(t, home)
+	for _, login := range []string{"alice", "bob"} {
+		data, err := statsRun(t, home, "--by", "account", "--account", login)
+		if err != nil {
+			t.Fatal(err)
+		}
+		items := statsItemsOf(t, data)
+		if len(items) != 1 || items[0]["login"] != login {
+			t.Fatalf("--account %s items = %v", login, items)
+		}
+	}
+}
+
+func TestStatsAccountUsageErrors(t *testing.T) {
+	home := t.TempDir()
+	seedStats(t, home)
+	cases := map[string][]string{
+		"bad since": {"--by", "account", "--since", "soon"},
+	}
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := statsRun(t, home, args...)
+			var ce *cli.Error
+			if !errors.As(err, &ce) || ce.Exit != cli.ExitUsage {
+				t.Fatalf("not a usage error: %#v", err)
+			}
+		})
+	}
+}
+
 func TestStatsObserverRecordsAllKinds(t *testing.T) {
 	home := t.TempDir()
 	store, err := stats.Open(stats.Options{Path: statsPath(home)})
@@ -265,5 +331,59 @@ func TestOpenStatsFailureIsLoggedNotFatal(t *testing.T) {
 	}
 	if logged == 0 {
 		t.Fatal("the failure was not logged")
+	}
+}
+
+func TestStatsAccountFilters(t *testing.T) {
+	home := t.TempDir()
+	seedStats(t, home)
+
+	// The node filters restrict the account rows to samples on matching nodes.
+	data, err := statsRun(t, home, "--by", "account", "--country", "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := statsItemsOf(t, data)
+	if len(items) != 1 || items[0]["login"] != "alice" {
+		t.Fatalf("--country DE account items = %v, want only alice", items)
+	}
+
+	data, err = statsRun(t, home, "--by", "account", "--node", "alt/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = statsItemsOf(t, data)
+	if len(items) != 1 || items[0]["login"] != "bob" {
+		t.Fatalf("--node alt/b account items = %v, want only bob", items)
+	}
+
+	// The account view of node grouping: a subset built from account samples.
+	data, err = statsRun(t, home, "--by", "country", "--account", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = statsItemsOf(t, data)
+	if len(items) != 1 {
+		t.Fatalf("--by country --account alice items = %v, want one DE group", items)
+	}
+	g := items[0]
+	if g["country"] != "DE" || g["dials"] != float64(3) || g["dial_ok_pct"] != 66.7 ||
+		g["bytes"] != float64(3<<20) || g["nodes"] != float64(1) || g["probes"] != float64(0) ||
+		g["uptime_pct"] != nil {
+		t.Fatalf("DE group from account samples = %v", g)
+	}
+
+	data, err = statsRun(t, home, "--by", "node", "--account", "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	items = statsItemsOf(t, data)
+	if len(items) != 1 || items[0]["label"] != "alt/b" {
+		t.Fatalf("--by node --account bob items = %v, want only alt/b", items)
+	}
+	n := items[0]
+	if n["dials"] != float64(1) || n["dial_ok_pct"] != 100.0 ||
+		n["bytes"] != float64(0) || n["probes"] != float64(0) {
+		t.Fatalf("alt/b from bob's samples = %v", n)
 	}
 }

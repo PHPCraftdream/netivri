@@ -89,10 +89,27 @@ type throughputSample struct {
 
 // recordedObserver collects full observer calls for assertions.
 type recordedObserver struct {
-	mu          sync.Mutex
-	probes      []probeSample
-	dials       []dialSample
-	throughputs []throughputSample
+	mu             sync.Mutex
+	probes         []probeSample
+	dials          []dialSample
+	throughputs    []throughputSample
+	accountDials   []accountDialSample
+	accountTraffic []accountTrafficSample
+}
+
+type accountDialSample struct {
+	login string
+	label string
+	ok    bool
+	took  time.Duration
+}
+
+type accountTrafficSample struct {
+	login  string
+	label  string
+	up     int64
+	down   int64
+	window time.Duration
 }
 
 func (o *recordedObserver) ObserveProbe(label string, alive bool, delay time.Duration) {
@@ -113,6 +130,20 @@ func (o *recordedObserver) ObserveThroughput(label string, bytes int64, window t
 	o.throughputs = append(o.throughputs, throughputSample{label: label, bytes: bytes, window: window})
 }
 
+func (o *recordedObserver) ObserveAccountDial(login, label string, ok bool, took time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.accountDials = append(o.accountDials, accountDialSample{login: login, label: label, ok: ok, took: took})
+}
+
+func (o *recordedObserver) ObserveAccountThroughput(login, label string, up, down int64, window time.Duration) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.accountTraffic = append(o.accountTraffic, accountTrafficSample{login: login, label: label, up: up, down: down, window: window})
+}
+
+var _ AccountObserver = (*recordedObserver)(nil)
+
 func (o *recordedObserver) dialSamples() []dialSample {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -123,6 +154,18 @@ func (o *recordedObserver) throughputSamples() []throughputSample {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return append([]throughputSample(nil), o.throughputs...)
+}
+
+func (o *recordedObserver) accountDialSamples() []accountDialSample {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]accountDialSample(nil), o.accountDials...)
+}
+
+func (o *recordedObserver) accountTrafficSamples() []accountTrafficSample {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]accountTrafficSample(nil), o.accountTraffic...)
 }
 
 func newTestGroup(t *testing.T, members []*fakeMember, observer Observer) (*stickyGroup, *affinityTable, *healthTable) {

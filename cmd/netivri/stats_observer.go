@@ -21,7 +21,10 @@ type statsObserver struct {
 	store *stats.Store
 }
 
-var _ core.Observer = statsObserver{}
+var (
+	_ core.Observer        = statsObserver{}
+	_ core.AccountObserver = statsObserver{}
+)
 
 func (o statsObserver) ObserveProbe(label string, alive bool, delay time.Duration) {
 	o.store.Record(stats.Sample{
@@ -51,6 +54,31 @@ func (o statsObserver) ObserveThroughput(label string, bytes int64, window time.
 		OK:    true,
 		Delay: window,
 		Bytes: bytes,
+	})
+}
+
+func (o statsObserver) ObserveAccountDial(login, label string, ok bool, took time.Duration) {
+	o.store.RecordAccount(stats.AccountSample{
+		At:    time.Now(),
+		Login: login,
+		Label: label,
+		Kind:  stats.KindDial,
+		OK:    ok,
+		Delay: took,
+	})
+}
+
+func (o statsObserver) ObserveAccountThroughput(login, label string, up, down int64, window time.Duration) {
+	o.store.RecordAccount(stats.AccountSample{
+		At:    time.Now(),
+		Login: login,
+		Label: label,
+		Kind:  stats.KindThroughput,
+		OK:    true,
+		Delay: window,
+		Bytes: up + down,
+		Up:    up,
+		Down:  down,
 	})
 }
 

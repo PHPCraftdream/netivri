@@ -25,6 +25,14 @@ type Observer interface {
 	ObserveThroughput(label string, bytes int64, window time.Duration)
 }
 
+// AccountObserver is the optional per-account extension of Observer. An
+// Observer may implement it; the core checks with a type assertion so
+// existing implementations keep compiling.
+type AccountObserver interface {
+	ObserveAccountDial(login, label string, ok bool, took time.Duration)
+	ObserveAccountThroughput(login, label string, up, down int64, window time.Duration)
+}
+
 // AffinityStats is a snapshot of the binding table.
 type AffinityStats struct {
 	Bindings  int
@@ -146,6 +154,15 @@ func (g *stickyGroup) observeDial(label string, ok bool, took time.Duration) {
 	}
 }
 
+func (g *stickyGroup) observeAccountDial(login, label string, ok bool, took time.Duration) {
+	if g.observer == nil || login == "" {
+		return
+	}
+	if ao, ok := g.observer.(AccountObserver); ok {
+		ao.ObserveAccountDial(login, label, ok, took)
+	}
+}
+
 // DialContext implements C.ProxyAdapter. It times the logical dial (hedged
 // when the member is hedgeable, see hedge.go), feeds the health table and
 // the observer once per logical dial, and retries once on the re-selected
@@ -159,6 +176,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	if recorded {
 		g.health.recordDial(label, err == nil, took)
 		g.observeDial(label, err == nil, took)
+		g.observeAccountDial(login, label, err == nil, took)
 		if h := g.healths[index]; h != nil {
 			h.hedgeRefillDial()
 		}
@@ -181,6 +199,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	if retryRecorded {
 		g.health.recordDial(retryLabel, retryErr == nil, retryTook)
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
+		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
 	}
 	if retryErr != nil {
 		return nil, retryErr
@@ -453,6 +472,16 @@ func (s managerSource) Range(f func(throughputTracker) bool) {
 
 type trackerTotals struct {
 	label string
+	login string
+	up    int64
+	down  int64
+}
+
+// accountTraffic accumulates the up/down deltas of one (login, label) pair
+// during a window.
+type accountTraffic struct {
+	login string
+	label string
 	up    int64
 	down  int64
 }
@@ -536,7 +565,9 @@ func (p *throughputPoller) run() {
 // that already existed before the previous tick is only baselined. Trackers
 // that disappeared are pruned.
 func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Duration) {
-	moved := make(map[string]int64)
+	type accountKey struct{ login, label string }
+	nodeMoved := make(map[string]*accountTraffic)
+	acctMoved := make(map[accountKey]*accountTraffic)
 	seen := make(map[string]struct{}, len(p.last))
 	p.source.Range(func(t throughputTracker) bool {
 		info := t.Info()
@@ -547,20 +578,41 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 		if label == "" {
 			return true
 		}
+		login := ""
+		if info.Metadata != nil {
+			login = info.Metadata.InUser
+		}
 		id := t.ID()
 		seen[id] = struct{}{}
 		up := info.UploadTotal.Load()
 		down := info.DownloadTotal.Load()
-		if prev, ok := p.last[id]; ok && prev.label == label {
+		key := accountKey{login: login, label: label}
+		node := nodeMoved[label]
+		if node == nil {
+			node = &accountTraffic{label: label}
+			nodeMoved[label] = node
+		}
+		entry := acctMoved[key]
+		if entry == nil {
+			entry = &accountTraffic{login: login, label: label}
+			acctMoved[key] = entry
+		}
+		if prev, ok := p.last[id]; ok && prev.label == label && prev.login == login {
 			if delta := (up - prev.up) + (down - prev.down); delta > 0 {
-				moved[label] += delta
+				node.up += up - prev.up
+				node.down += down - prev.down
+				entry.up += up - prev.up
+				entry.down += down - prev.down
 			}
 		} else if _, ok := p.last[id]; !ok && info.Start.After(prevTick) {
 			if total := up + down; total > 0 {
-				moved[label] += total
+				node.up += up
+				node.down += down
+				entry.up += up
+				entry.down += down
 			}
 		}
-		p.last[id] = trackerTotals{label: label, up: up, down: down}
+		p.last[id] = trackerTotals{label: label, login: login, up: up, down: down}
 		return true
 	})
 	for id := range p.last {
@@ -571,7 +623,11 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 	if window <= 0 {
 		window = p.window
 	}
-	for label, bytes := range moved {
+	// Two independent gates apply: the node gate is throughputSampleMin on
+	// the combined per-node total of all logins, while the account gate is
+	// the same threshold applied to each individual per-(login, label) entry.
+	for label, node := range nodeMoved {
+		bytes := node.up + node.down
 		if bytes < throughputSampleMin {
 			continue
 		}
@@ -579,6 +635,17 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 			p.observer.ObserveThroughput(label, bytes, window)
 		}
 		p.health.recordThroughput(label, bytes, window)
+	}
+	for key, acc := range acctMoved {
+		if acc.up+acc.down < throughputSampleMin {
+			continue
+		}
+		if key.login == "" || p.observer == nil {
+			continue
+		}
+		if ao, ok := p.observer.(AccountObserver); ok {
+			ao.ObserveAccountThroughput(key.login, key.label, acc.up, acc.down, window)
+		}
 	}
 }
 

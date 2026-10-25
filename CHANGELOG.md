@@ -26,6 +26,14 @@ versions; every such change is listed here.
   `quota` parsed from the provider's `subscription-userinfo` header: `used`
   (upload plus download bytes), `total` and `expire` (RFC3339 UTC), all
   `null` when the provider sends no such header.
+- **Per-account statistics.** The statistics store (schema version 2; the
+  migration keeps existing data) records the dials and the traffic (bytes up
+  and down per 5-second window) per account and node. `netivri stats --by
+  account` reports per login: traffic, dial success rate, node count,
+  countries and providers, sorted by login; `--account {ACCOUNT}` selects one
+  login and its filters apply in every mode; with the node, country and
+  provider views the rows come from that login's own samples as a dial/bytes
+  subset.
 - **Who is active, in `netivri status`.** The new `activity` list has one record
   per account: whether it is active (has open connections), the number of
   connections and bytes, and the nodes, providers and countries they use right

@@ -51,7 +51,7 @@ type Options struct {
 
 const (
 	driverName        = "sqlite"
-	schemaVersion     = 1
+	schemaVersion     = 2
 	flushBatchSize    = 256
 	flushInterval     = time.Second
 	pruneInterval     = time.Hour
@@ -61,8 +61,8 @@ const (
 	maxPendingSamples = 16384 // retry buffer bound; the oldest excess is dropped
 )
 
-// schema is the version 1 DDL.
-const schema = `
+// schemaV1 is the version 1 DDL.
+const schemaV1 = `
 CREATE TABLE IF NOT EXISTS node (
   id INTEGER PRIMARY KEY, label TEXT NOT NULL UNIQUE,
   provider TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '',
@@ -80,17 +80,42 @@ CREATE TABLE IF NOT EXISTS hourly (
   PRIMARY KEY (hour, node, kind)) WITHOUT ROWID;
 `
 
+// schemaV2 is the version 2 DDL. It is purely additive: the version 1
+// tables are untouched, so a version 1 database keeps all of its data on
+// migration.
+const schemaV2 = `
+CREATE TABLE IF NOT EXISTS account (
+  id INTEGER PRIMARY KEY, login TEXT NOT NULL UNIQUE,
+  first_seen INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS account_sample (
+  ts INTEGER NOT NULL, account INTEGER NOT NULL, node INTEGER NOT NULL, kind INTEGER NOT NULL,
+  ok INTEGER NOT NULL, ms INTEGER NOT NULL DEFAULT 0,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS account_sample_account_ts ON account_sample(account, ts);
+CREATE INDEX IF NOT EXISTS account_sample_node_ts ON account_sample(node, ts);
+CREATE INDEX IF NOT EXISTS account_sample_ts ON account_sample(ts);
+CREATE TABLE IF NOT EXISTS account_hourly (
+  hour INTEGER NOT NULL, account INTEGER NOT NULL, node INTEGER NOT NULL, kind INTEGER NOT NULL,
+  n INTEGER NOT NULL, ok INTEGER NOT NULL, ms_sum INTEGER NOT NULL, ms_max INTEGER NOT NULL,
+  bytes INTEGER NOT NULL, up INTEGER NOT NULL DEFAULT 0, down INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (hour, account, node, kind)) WITHOUT ROWID;
+`
+
 // Store is a SQLite-backed sample store. Create with Open or OpenReadOnly.
 type Store struct {
 	db   *sql.DB
 	ro   bool
 	opts Options
 	now  func() time.Time
+	// version is the schema version of the opened database.
+	version int
 
 	// queue carries samples, flush requests and SetNodes requests to the
 	// writer goroutine, in order.
 	queue   chan item
 	ids     map[string]int64 // label -> node id, writer goroutine only
+	accIDs  map[string]int64 // login -> account id, writer goroutine only
 	dropped atomic.Uint64
 	done    chan struct{}
 	wg      sync.WaitGroup
@@ -109,6 +134,7 @@ type Store struct {
 // item is one unit of work for the writer goroutine.
 type item struct {
 	sample Sample
+	acct   *AccountSample
 	nodes  []NodeInfo
 	ack    chan error // flush and SetNodes requests carry an ack
 }
@@ -158,6 +184,7 @@ func openStore(o Options) (*Store, error) {
 		return nil, err
 	}
 	s := newStore(db, o, false)
+	s.version = schemaVersion
 	// The contract prunes at open. A failure here (for example a busy
 	// database) is not fatal: the data stays and the hourly ticker retries.
 	_ = s.prune(s.now())
@@ -199,14 +226,16 @@ func OpenReadOnly(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("stats: schema version %d is newer than supported %d", version, schemaVersion)
 	}
-	return newStore(db, Options{Path: path, Retention: defaultRetention}, true), nil
+	s := newStore(db, Options{Path: path, Retention: defaultRetention}, true)
+	s.version = version
+	return s, nil
 }
 
 func newStore(db *sql.DB, o Options, ro bool) *Store {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &Store{db: db, ro: ro, opts: o, now: o.Now, ids: map[string]int64{}}
+	s := &Store{db: db, ro: ro, opts: o, now: o.Now, ids: map[string]int64{}, accIDs: map[string]int64{}}
 	if !ro {
 		s.queue = make(chan item, o.QueueSize)
 		s.done = make(chan struct{})
@@ -268,7 +297,18 @@ func migrate(db *sql.DB) error {
 	if version == schemaVersion {
 		return nil
 	}
-	if _, err := db.Exec(schema); err != nil {
+	// Version 2 is additive: a fresh database needs both DDLs, a version 1
+	// database only the new tables, and its data survives untouched.
+	steps := []string{schemaV1}
+	if version == 1 {
+		steps = nil
+	}
+	for _, ddl := range steps {
+		if _, err := db.Exec(ddl); err != nil {
+			return fmt.Errorf("stats: migrate: %w", err)
+		}
+	}
+	if _, err := db.Exec(schemaV2); err != nil {
 		return fmt.Errorf("stats: migrate: %w", err)
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
@@ -290,6 +330,25 @@ func (s *Store) Record(sm Sample) {
 	}
 	select {
 	case s.queue <- item{sample: sm}:
+	default:
+		s.dropped.Add(1)
+	}
+}
+
+// RecordAccount queues a per-account sample without blocking. When the
+// queue is full the sample is dropped and counted; on a read-only store or
+// after Close it is a no-op.
+func (s *Store) RecordAccount(sm AccountSample) {
+	if s.ro {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.queue <- item{acct: &sm}:
 	default:
 		s.dropped.Add(1)
 	}
