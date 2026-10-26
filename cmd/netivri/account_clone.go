@@ -60,7 +60,7 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists: " + newLogin, Exit: cli.ExitConflict}
 	}
 
-	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, AllowedClients: src.AllowedClients}
+	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
 	mode := clonePasswordCopied
 	if src.Password == config.InitPlaceholder {
 		mode = clonePasswordInit
@@ -111,7 +111,7 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		return err
 	}
 	cli.Success(stdout, map[string]any{
-		"account":     accountInfo{next.Login, next.Provider, next.ExitCountry, next.AllowedClients, accountHasPassword(&next)},
+		"account":     infoForAccount(cfg, &next),
 		"cloned_from": srcLogin,
 		"password":    mode,
 	})

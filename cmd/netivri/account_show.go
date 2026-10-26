@@ -40,7 +40,17 @@ type accountShowNode struct {
 	Connections *int   `json:"connections"`
 }
 
-// accountShow implements `account show`: the configured lists, the route as
+type accountShowChainInfo struct {
+	Value  string  `json:"value"`
+	Source string  `json:"source"`
+	Auth   bool    `json:"auth"`
+	Own    *string `json:"own"`
+}
+
+func showChainInfoForAccount(info accountChainInfo) accountShowChainInfo {
+	return accountShowChainInfo{Value: info.Value, Source: info.Source, Auth: info.Auth, Own: info.Own}
+}
+
 // ordered tiers, and, with a running angel, the live probe and traffic state
 // of every node. It never prints a password, a hash or an address.
 func accountShow(home string, cfg *config.Config, rest []string, stdout io.Writer) error {
@@ -61,10 +71,13 @@ func accountShow(home string, cfg *config.Config, rest []string, stdout io.Write
 		return err
 	}
 	live := accountShowLive(context.Background(), home, login, tiers)
+	info := infoForAccount(cfg, a)
 	cli.Success(stdout, map[string]any{
 		"login":        a.Login,
 		"provider":     a.Provider,
 		"exit_country": a.ExitCountry,
+		"pre_socks5":   showChainInfoForAccount(info.PreSOCKS5),
+		"post_socks5":  showChainInfoForAccount(info.PostSOCKS5),
 		"providers":    providers,
 		"countries":    countries,
 		"tiers":        tiers,

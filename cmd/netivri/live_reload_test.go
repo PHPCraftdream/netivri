@@ -814,6 +814,123 @@ func TestReloadUpdatesNodesInPlace(t *testing.T) {
 	}
 }
 
+func TestReloadRestartsOnGlobalPostOnlyChange(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	running := f.script.inst(0)
+	running.setInPlace(nil)
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 || !running.isClosed() {
+		t.Fatalf("post-only change did not restart: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	if len(running.reconfigured()) != 0 {
+		t.Fatal("post-only change attempted Reconfigure")
+	}
+}
+
+func TestReloadRestartsOnGlobalPostWithRoutes(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	running := f.script.inst(0)
+	running.setInPlace(nil)
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 || !running.isClosed() {
+		t.Fatalf("global post change did not restart: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	if len(running.reconfigured()) != 0 {
+		t.Fatal("global post change attempted Reconfigure")
+	}
+	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5 {
+		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
+	}
+}
+
+func TestReloadRestartsWhenRoutesAppearOrDisappear(t *testing.T) {
+	f := newReloadFixture(t, upOptions{})
+	f.writeConfig(t, f.routed())
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 || !f.script.inst(0).isClosed() {
+		t.Fatalf("route appearance: starts=%d old closed=%v", f.script.calls(), f.script.inst(0).isClosed())
+	}
+	running := f.script.inst(1)
+	running.setInPlace(nil)
+	f.writeConfig(t)
+	f.l.reload(t.Context())
+	if f.script.calls() != 3 || !running.isClosed() {
+		t.Fatalf("route disappearance: starts=%d old closed=%v", f.script.calls(), running.isClosed())
+	}
+	if len(running.reconfigured()) != 0 {
+		t.Fatal("route disappearance attempted Reconfigure")
+	}
+}
+
+func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	running := f.script.inst(0)
+	running.setInPlace(nil)
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts[0].PreSOCKS5 = "socks5://127.0.0.1:1081"
+	cfg.Accounts[0].PostSOCKS5 = "socks5://127.0.0.1:1082"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(t.Context())
+	if f.script.calls() != 1 || running.isClosed() {
+		t.Fatalf("account chain update restarted: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	got := running.reconfigured()
+	if len(got) != 1 {
+		t.Fatalf("Reconfigure calls = %d, want 1", len(got))
+	}
+	key := got[0].AccountRoute["alice"]
+	if got[0].RoutePre[key] != cfg.Accounts[0].PreSOCKS5 || got[0].RoutePost[key] != cfg.Accounts[0].PostSOCKS5 {
+		t.Errorf("Reconfigure chain options pre=%v post=%v, want the account's URLs under route key %q", got[0].RoutePre, got[0].RoutePost, key)
+	}
+}
+
+func TestReloadRestartsOnGlobalPostWithNoRoutes(t *testing.T) {
+	f := newReloadFixture(t, upOptions{})
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 {
+		t.Fatalf("global post change started core %d times, want restart (2)", f.script.calls())
+	}
+	if len(f.script.inst(0).reconfigured()) != 0 {
+		t.Fatal("global post change without account routes attempted Reconfigure")
+	}
+	if !f.script.inst(0).isClosed() {
+		t.Fatal("old core remains open after fallback restart")
+	}
+	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5 {
+		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
+	}
+}
+
 // A core that cannot take the change in place is restarted; a real failure
 // is logged, an unsupported change is not.
 func TestReloadRestartsWhenInPlaceFails(t *testing.T) {

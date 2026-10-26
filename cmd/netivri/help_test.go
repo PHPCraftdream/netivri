@@ -587,8 +587,44 @@ func conceptText(tp *helpTopic) string {
 // Every key the configuration loader accepts (internal/config/config.go,
 // allowed_clients.go and load.go; documented in docs/config.md) must be
 // named by the config topic, so the binary alone explains its own file.
+func TestSOCKS5ChainHelpCoverage(t *testing.T) {
+	for _, name := range []string{"account set-socks5", "account show", "config", "routing"} {
+		if findHelpTopic(name) == nil {
+			t.Errorf("no help topic for %q", name)
+		}
+	}
+	add := renderTopic(findHelpTopic("account add"))
+	for _, flag := range []string{"--pre-socks5", "--post-socks5"} {
+		if !strings.Contains(add, flag) {
+			t.Errorf("account add topic lacks %q", flag)
+		}
+	}
+	set := renderTopic(findHelpTopic("account set-socks5"))
+	for _, want := range []string{"--pre", "--post", "inherit", "none", "socks5://", "port required", "netivri help"} {
+		if !strings.Contains(set, want) {
+			t.Errorf("account set-socks5 topic lacks %q", want)
+		}
+	}
+	show := renderTopic(findHelpTopic("account show"))
+	for _, want := range []string{"pre_socks5", "post_socks5", "redacted"} {
+		if !strings.Contains(show, want) {
+			t.Errorf("account show topic lacks %q", want)
+		}
+	}
+	for _, name := range []string{"account set-socks5", "account show"} {
+		out := mustDispatch(t, "help", name)
+		if !strings.HasPrefix(out, "netivri "+name+" - ") {
+			t.Errorf("help %s starts with %q", name, firstLine(out))
+		}
+	}
+}
+
 func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	keys := []string{
+		"chain",
+		"chain.pre_socks5",
+		"chain.post_socks5",
+
 		"listen.bind",
 		"listen.port",
 		"listen.allowed_clients",
@@ -607,6 +643,8 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 		"accounts.provider",
 		"accounts.exit_country",
 		"accounts.allowed_clients",
+		"accounts.pre_socks5",
+		"accounts.post_socks5",
 		"selection.node",
 		"selection.country",
 		"selection.mode",
@@ -737,7 +775,7 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 		return renderTopic(tp)
 	}
 	routing := text("routing")
-	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials"} {
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "client -> pre-hop -> selected exit -> post-hop -> target", "port", "inherit", "none", "redacted", "netivri help"} {
 		if !strings.Contains(strings.Join(strings.Fields(routing), " "), want) {
 			t.Errorf("routing topic lacks %q", want)
 		}

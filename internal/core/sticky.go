@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -274,6 +275,7 @@ var _ C.ProxyAdapter = (*stickyGroup)(nil)
 // routePlan is one account route prepared for sticky-group installation.
 type routePlan struct {
 	index  int
+	gen    int
 	key    string   // route key the plan was built from
 	group  string   // internal proxy name of the route's group
 	names  []string // internal proxy names, member order
@@ -341,16 +343,36 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 	plans := make([]routePlan, 0, len(keys))
 	for index, key := range keys {
 		nodes := o.RouteNodes[key]
-		if len(nodes) == 0 {
+		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
+		directRoute := len(nodes) == 0 && !directPost && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key])) && (o.RoutePost[key] == "" || isNoChain(o.RoutePost[key]))
+		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, &cli.Error{
 				Code:    "NO_NODES_FOR_COUNTRY",
 				Message: "no nodes are available for an account route",
 				Exit:    cli.ExitNotFound,
 			}
 		}
-		plan := routePlan{index: index, key: key, group: groupProxyName(gen, index)}
+		plan := routePlan{index: index, gen: gen, key: key, group: groupProxyName(gen, index)}
+		if directRoute {
+			plan.names = append(plan.names, "DIRECT")
+			plan.labels = append(plan.labels, "r"+fmt.Sprint(index)+"-0")
+			plan.tiers = []int{0}
+			plans = append(plans, plan)
+			continue
+		}
+		if directPost {
+			plan.names = append(plan.names, helperProxyName(gen, index, 0, "post"))
+			plan.labels = append(plan.labels, "r"+fmt.Sprint(index)+"-0")
+			plan.tiers = []int{0}
+			plans = append(plans, plan)
+			continue
+		}
 		for node := range nodes {
-			plan.names = append(plan.names, memberProxyName(gen, index, node))
+			name := memberProxyName(gen, index, node)
+			if o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) {
+				name = helperProxyNameFromMember(name, "post")
+			}
+			plan.names = append(plan.names, name)
 			plan.labels = append(plan.labels, fmt.Sprintf("r%d-%d", index, node))
 		}
 		if labels, ok := o.NodeLabels[key]; ok {
@@ -402,6 +424,9 @@ func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *aff
 		members := make([]C.Proxy, 0, len(plan.names))
 		for _, memberName := range plan.names {
 			proxy, ok := proxies[memberName]
+			if !ok && memberName == "DIRECT" {
+				proxy, ok = tunnel.Proxies()["DIRECT"]
+			}
 			if !ok || proxy == nil {
 				return nil, errors.New("core: missing route member proxy " + memberName)
 			}
@@ -419,7 +444,11 @@ func planProxyNames(plans []routePlan) []string {
 	var names []string
 	for _, plan := range plans {
 		names = append(names, plan.group)
-		names = append(names, plan.names...)
+		for _, name := range plan.names {
+			if name != "DIRECT" {
+				names = append(names, name)
+			}
+		}
 	}
 	return names
 }
@@ -446,7 +475,18 @@ func memberNameLabels(plans []routePlan) map[string]string {
 	labels := make(map[string]string)
 	for _, plan := range plans {
 		for i, name := range plan.names {
-			labels[name] = plan.labels[i]
+			if name == "DIRECT" {
+				labels[name] = plan.labels[i]
+				continue
+			}
+			label := plan.labels[i]
+			base := name
+			if isRoutePostName(name) {
+				base = strings.TrimSuffix(name, "-post")
+			}
+			labels[base] = label
+			labels[helperProxyNameFromMember(base, "pre")] = label
+			labels[helperProxyNameFromMember(base, "post")] = label
 		}
 	}
 	return labels

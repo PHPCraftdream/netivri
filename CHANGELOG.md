@@ -16,6 +16,26 @@ it ships in 0.3.0.
 
 ### Added
 
+- **SOCKS5 proxies before and after the VPN.** An optional `pre_socks5` is the
+  SOCKS5 proxy netivri connects through to reach the VPN node, and an optional
+  `post_socks5` is the proxy the traffic is handed to after the VPN node, which
+  then connects to the destination. Both are set globally (`chain.pre_socks5`,
+  `chain.post_socks5` in `config.ktav`) and per account (`pre_socks5`,
+  `post_socks5`); an account value overrides the global one for that side, an
+  absent value inherits it, and `none` cancels the global value. New commands
+  and flags: `account add --pre-socks5/--post-socks5` and `account set-socks5
+  {ACCOUNT} [--pre ...] [--post ...]` (URL, `none` or `inherit`);
+  `account clone` copies both. A URL is `socks5://[user:password@]host:port`
+  with a required port; credentials are never printed: `account list`,
+  `account show` and `status` show `socks5://host:port` with `source`
+  (`account`, `global` or `none`) and `auth`. The global post also applies to
+  traffic of accounts without a route and to unauthenticated traffic; an
+  account without a route gets its post (and a pre never applies, there is no
+  VPN node). Probes test the whole chain once per node. A change of pre, of an
+  account's post and of nodes is applied in place and keeps open connections;
+  a change of the global post, or a route that appears or disappears
+  entirely, restarts the listener. See
+  [`docs/design/socks5-chain.md`](docs/design/socks5-chain.md).
 - **Self-contained help.** `netivri help` now teaches configuration and
   operation without the repository: three concept topics (`netivri help
   config`, `netivri help routing`, `netivri help output`) under a new

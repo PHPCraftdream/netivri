@@ -210,9 +210,16 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 func warmLeaves(proxies map[string]C.Proxy, only func(name string) bool) []C.Proxy {
 	var out []C.Proxy
 	for _, p := range proxies {
-		if p != nil && isWarmLeaf(p) && (only == nil || only(p.Name())) {
-			out = append(out, p)
+		if p == nil || !isWarmLeaf(p) || (only != nil && !only(p.Name())) {
+			continue
 		}
+		if generatedNodeName(p.Name()) && proxies[p.Name()+"-post"] != nil {
+			continue
+		}
+		if isChainHelperName(p.Name()) && !isRoutePostName(p.Name()) {
+			continue
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out

@@ -317,7 +317,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|set-clients|rm} [arguments]"},
+		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|set-clients|set-socks5|rm} [arguments]"},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
@@ -342,17 +342,20 @@ var helpTopics = []helpTopic{
 		Name:    "account add",
 		Group:   groupAccount,
 		Summary: "Create an account",
-		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]"},
+		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--pre-socks5 {URL}] [--post-socks5 {URL}]"},
 		Description: "Creates a proxy login with the password placeholder 'init': the first client that connects with " +
 			"this login sets the password. A login uses the characters A-Z a-z 0-9 . _ @ - (and is not 'init').\n\n" +
 			"Repeating the command with the same providers and countries, in the same order, succeeds and reports " +
 			"existing true; any difference for an existing login is ACCOUNT_EXISTS (use set-country or " +
 			"set-provider to change it). " +
-			"A running angel applies the new account within a few seconds.",
+			"A running angel applies the new account within a few seconds. Optional --pre-socks5 and --post-socks5 set " +
+			"account-specific SOCKS5 transport hops; see 'netivri help routing' for order and inheritance.",
 		Flags: []helpFlag{
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
 			{"--clients {RULES}", "Client addresses that may use this account: an allowed-clients rule list (e.g. 10.0.0.0/8, 192.168.1.*, loopback, *). Default: no account restriction."},
+			{"--pre-socks5 {URL}", "SOCKS5 hop before the selected netivri exit. Use socks5://[user:password@]host:port; the port is required; credentials are never shown."},
+			{"--post-socks5 {URL}", "SOCKS5 hop after the selected netivri exit. Use socks5://[user:password@]host:port; the port is required; credentials are never shown."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
@@ -361,6 +364,7 @@ var helpTopics = []helpTopic{
 			{"Germany first, then the Netherlands; main first, then backup", "netivri account add dave --provider main,backup --country DE,NL"},
 			{"Connect: the first password you send for alice becomes her password", "curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org"},
 			{"Only clients from 10.0.0.0/8 may use alice", "netivri account add alice --provider main --clients 10.0.0.0/8"},
+			{"Add a pre- and post-hop", "netivri account add alice --pre-socks5 socks5://user:secret@pre.example:1080 --post-socks5 socks5://post.example:1080"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
@@ -445,7 +449,8 @@ var helpTopics = []helpTopic{
 			"with a reason and does not consume a tier index, so the indexes match the order the angel actually " +
 			"tries.\n\n" +
 			"Without a running angel the static part is still shown and live is false (the live fields are null). " +
-			"Passwords, hashes and subscription URLs are never shown.",
+			"SOCKS5 hops are shown as effective pre_socks5 and post_socks5 values with their source (account or global); " +
+			"credentials are redacted. Passwords, hashes and subscription URLs are never shown.",
 		Examples: []helpExample{
 			{"Show alice and her route tiers", "netivri account show alice"},
 			{"While the angel runs: alive, delay and live connections per node", "netivri account show alice"},
@@ -536,6 +541,34 @@ var helpTopics = []helpTopic{
 		SeeAlso: []string{"account set-country", "sub rm"},
 	},
 	{
+		Name:    "account set-socks5",
+		Group:   groupAccount,
+		Summary: "Set or inherit account SOCKS5 hops",
+		Usage: []string{
+			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --pre {URL|none|inherit}",
+			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --post {URL|none|inherit}",
+			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --pre {VALUE} --post {VALUE}",
+		},
+		Description: "Updates one or more accounts' SOCKS5 chain sides. Set a side to a socks5://user:password@host:port " +
+			"URL (port required), none to explicitly disable that hop, or inherit to use the global chain setting. " +
+			"Unspecified sides are unchanged. The sides are independent; URLs are credentials and are never printed. " +
+			"Changes are applied by a running angel within a few seconds.",
+		Flags: []helpFlag{
+			{"--pre {VALUE}", "Set the pre-hop SOCKS5 URL (port required), or none/inherit."},
+			{"--post {VALUE}", "Set the post-hop SOCKS5 URL (port required), or none/inherit."},
+		},
+		Examples: []helpExample{
+			{"Set a pre-hop", "netivri account set-socks5 alice --pre socks5://user:secret@proxy.example:1080"},
+			{"Disable the inherited post-hop", "netivri account set-socks5 alice --post none"},
+			{"Return to the global pre-hop", "netivri account set-socks5 alice --pre inherit"},
+		},
+		Errors: []helpError{
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account in the list does not exist"),
+			herr("USAGE", cli.ExitUsage, "requires one or more account logins and --pre and/or --post"),
+		},
+		SeeAlso: []string{"account add", "account show", "config", "routing"},
+	},
+	{
 		Name:    "account set-clients",
 		Group:   groupAccount,
 		Summary: "Change or clear the client addresses that may use an account",
@@ -567,7 +600,7 @@ var helpTopics = []helpTopic{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login in the list is not valid"),
 			herr("CONFIG_INVALID", cli.ExitUsage, "the rule list is not a valid allowed-clients value"),
 		},
-		SeeAlso: []string{"account set-country", "account set-provider", "config"},
+		SeeAlso: []string{"account set-country", "account set-provider", "account set-socks5", "config"},
 	},
 	{
 		Name:    "account rm",
@@ -790,6 +823,11 @@ var helpTopics = []helpTopic{
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
+			"chain.pre_socks5 and chain.post_socks5 are optional global SOCKS5 defaults. Each accounts[] entry may " +
+			"set pre_socks5 and post_socks5; each side cascades independently: absent/empty or inherit uses the " +
+			"global value, while none explicitly disables that hop. SOCKS5 URLs require a port (1 to 65535) " +
+			"and may include optional percent-encoded username:password userinfo; these are credentials and are " +
+			"never printed. See 'netivri help routing'.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
 			"around a comma are ignored. The rules: * (every address), loopback (127.0.0.0/8 and ::1), an exact " +
 			"IPv4 or IPv6 address, an IPv4 whole-octet mask (trailing * octets only: 192.168.1.*, 10.*; a * " +
@@ -844,6 +882,12 @@ var helpTopics = []helpTopic{
 			"fallback. There is no fallback beyond the lists: no direct connection, and no country or provider " +
 			"the account does not name. An account with neither a provider nor a country uses the default route, " +
 			"which is direct until a node is selected.\n\n" +
+			"A SOCKS5 chain has up to three hops: an optional pre_socks5 hop, the selected subscription exit, " +
+			"and an optional post_socks5 hop. The order is client -> pre-hop -> selected exit -> post-hop -> target; " +
+			"each SOCKS5 URL requires a port. Account pre/post settings cascade independently: inherit uses the " +
+			"corresponding global chain setting, while none disables it. Credentials in URLs are redacted in help " +
+			"output and account show. Use 'netivri help config' for configuration keys and 'netivri help account " +
+			"set-socks5' to change account hops.\n\n" +
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
@@ -871,7 +915,7 @@ var helpTopics = []helpTopic{
 			{"Give an account providers and countries in priority order", "netivri account add alice --provider main,backup --country DE,NL"},
 			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
 		},
-		SeeAlso: []string{"config", "account show", "account set-country", "status"},
+		SeeAlso: []string{"config", "account show", "account set-country", "account set-socks5", "status"},
 	},
 	{
 		Name:    "output",

@@ -25,10 +25,21 @@ func NewToken() (string, error) {
 
 // AccountInfo describes an account's configured provider and exit-country route.
 type AccountInfo struct {
-	Login          string `json:"login"`
-	Provider       string `json:"provider"`
-	ExitCountry    string `json:"exit_country"`
-	AllowedClients string `json:"allowed_clients"`
+	Login          string        `json:"login"`
+	Provider       string        `json:"provider"`
+	ExitCountry    string        `json:"exit_country"`
+	AllowedClients string        `json:"allowed_clients"`
+	Chain          *AccountChain `json:"chain,omitempty"`
+}
+
+// AccountChain is the effective, redacted SOCKS5 chain configuration for an account.
+type AccountChain struct {
+	PreSOCKS5        string `json:"pre_socks5"`
+	PreSOCKS5Source  string `json:"pre_socks5_source"`
+	PreSOCKS5Auth    bool   `json:"pre_socks5_auth"`
+	PostSOCKS5       string `json:"post_socks5"`
+	PostSOCKS5Source string `json:"post_socks5_source"`
+	PostSOCKS5Auth   bool   `json:"post_socks5_auth"`
 }
 
 // NodeUse is the live traffic of one account through one node. Node is the

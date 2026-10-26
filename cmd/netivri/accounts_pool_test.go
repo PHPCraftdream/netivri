@@ -21,7 +21,44 @@ func node(id, country string) subscription.Node {
 	return subscription.Node{ID: id, Country: country, Raw: map[string]any{"name": id}}
 }
 
-// The design table of docs/design/accounts.md, one row per case.
+func TestBuildAccountRoutePoolEffectiveChainKeys(t *testing.T) {
+	accounts := []config.Account{{Login: "inherit", Provider: "p", ExitCountry: "DE"}}
+	snapshots := map[string]*subscription.Snapshot{"p": snap(node("1", "DE"))}
+	base, err := buildAccountRoutePool(accounts, snapshots, "socks5://u:secret@pre.example:1080", "socks5://post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := credentialRouteKey("p", "DE", "socks5://u:secret@pre.example:1080", "socks5://post.example:1080")
+	if strings.Contains(key, "secret") || strings.Contains(key, "pre.example") || strings.Contains(key, "post.example") {
+		t.Fatalf("route key leaks chain credentials: %q", key)
+	}
+	if base.routePre[key] != "socks5://u:secret@pre.example:1080" || base.routePost[key] != "socks5://post.example:1080" {
+		t.Fatalf("inherited chains = pre %q post %q", base.routePre[key], base.routePost[key])
+	}
+	changed, err := buildAccountRoutePool(accounts, snapshots, "socks5://u:secret@pre2.example:1080", "socks5://post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.accountRoutes["inherit"] == key {
+		t.Fatal("effective inherited chain change did not change route key")
+	}
+}
+
+func TestBuildAccountRoutePoolAccountChainOverrides(t *testing.T) {
+	accounts := []config.Account{{Login: "a", Provider: "p", ExitCountry: "DE", PreSOCKS5: "none", PostSOCKS5: "socks5://acct:secret@post.example:1080"}}
+	got, err := buildAccountRoutePool(accounts, map[string]*subscription.Snapshot{"p": snap(node("1", "DE"))}, "socks5://global.example:1080", "socks5://global-post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := got.accountRoutes["a"]
+	if got.routePre[key] != "none" || got.routePost[key] != accounts[0].PostSOCKS5 {
+		t.Fatalf("effective chains = pre %q post %q", got.routePre[key], got.routePost[key])
+	}
+	if strings.Contains(key, "secret") || strings.Contains(key, "post.example") {
+		t.Fatalf("route key leaks account chain: %q", key)
+	}
+}
+
 func TestBuildAccountRoutePoolDesignTable(t *testing.T) {
 	snapshots := map[string]*subscription.Snapshot{
 		"main": snap(node("m-de", "DE"), node("m-nl", "NL")),
@@ -34,13 +71,13 @@ func TestBuildAccountRoutePoolDesignTable(t *testing.T) {
 		first   string // raw name of the first node of the route
 	}{
 		{"default route", config.Account{Login: "u"}, "", ""},
-		{"country only", config.Account{Login: "u", ExitCountry: "DE"}, "~DE", "a-de"},
-		{"provider only", config.Account{Login: "u", Provider: "main"}, "main~", "m-de"},
-		{"provider and country", config.Account{Login: "u", Provider: "main", ExitCountry: "DE"}, "main~DE", "m-de"},
+		{"country only", config.Account{Login: "u", ExitCountry: "DE"}, credentialRouteKey("", "DE", "", ""), "a-de"},
+		{"provider only", config.Account{Login: "u", Provider: "main"}, credentialRouteKey("main", "", "", ""), "m-de"},
+		{"provider and country", config.Account{Login: "u", Provider: "main", ExitCountry: "DE"}, credentialRouteKey("main", "DE", "", ""), "m-de"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots)
+			got, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -60,17 +97,65 @@ func TestBuildAccountRoutePoolDesignTable(t *testing.T) {
 	}
 }
 
+func TestBuildAccountRoutePoolDirectAccountIgnoresGlobalPre(t *testing.T) {
+	got, err := buildAccountRoutePool([]config.Account{{Login: "direct"}}, nil, "socks5://pre.example:1080", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.accountRoutes) != 0 || len(got.routePre) != 0 || len(got.routePost) != 0 {
+		t.Fatalf("pre-only direct account created route: routes=%v pre=%v post=%v", got.accountRoutes, got.routePre, got.routePost)
+	}
+}
+
+func TestBuildAccountRoutePoolDirectAccountEffectivePost(t *testing.T) {
+	got, err := buildAccountRoutePool([]config.Account{{Login: "direct"}}, nil, "socks5://pre.example:1080", "socks5://post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := got.accountRoutes["direct"]
+	if key == "" || len(got.nodes[key]) != 0 || got.routePre[key] != "none" || got.routePost[key] != "socks5://post.example:1080" {
+		t.Fatalf("direct route=%q pre=%v post=%v nodes=%v", key, got.routePre, got.routePost, got.nodes)
+	}
+	withoutPost, err := buildAccountRoutePool([]config.Account{{Login: "plain"}}, nil, "", "")
+	if err != nil || len(withoutPost.accountRoutes) != 0 {
+		t.Fatalf("plain direct route=%v err=%v", withoutPost.accountRoutes, err)
+	}
+}
+
+func TestBuildAccountRoutePoolDirectAccountNoneOverridesGlobalPost(t *testing.T) {
+	account := config.Account{Login: "direct", PostSOCKS5: "none"}
+	got, err := buildAccountRoutePool([]config.Account{account}, nil, "", "socks5://post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := got.accountRoutes["direct"]
+	want := credentialRouteKey("", "", "none", "none")
+	if key != want || got.routePost[key] != "none" || got.routePre[key] != "none" || len(got.nodes[key]) != 0 {
+		t.Fatalf("direct none override route=%q pre=%v post=%v nodes=%v", key, got.routePre, got.routePost, got.nodes)
+	}
+}
+
+func TestBuildAccountRoutePoolDirectAccountExplicitPost(t *testing.T) {
+	got, err := buildAccountRoutePool([]config.Account{{Login: "direct", PostSOCKS5: "socks5://account-post.example:1080"}}, nil, "", "socks5://global-post.example:1080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := got.accountRoutes["direct"]
+	if key != credentialRouteKey("", "", "none", "socks5://account-post.example:1080") || got.routePost[key] != "socks5://account-post.example:1080" || len(got.nodes[key]) != 0 {
+		t.Fatalf("explicit direct post route=%q post=%v nodes=%v", key, got.routePost, got.nodes)
+	}
+}
 func TestBuildAccountRoutePoolCountryOnlySpansProvidersOrdered(t *testing.T) {
 	snapshots := map[string]*subscription.Snapshot{
 		"main": snap(node("z", "DE"), node("nl", "NL")),
 		"alt":  snap(node("a", "DE"), node("a-dup", "DE")),
 	}
-	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "DE"}}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "DE"}}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var names []string
-	for _, raw := range got.nodes["~DE"] {
+	for _, raw := range got.nodes[credentialRouteKey("", "DE", "", "")] {
 		names = append(names, raw["name"].(string))
 	}
 	if strings.Join(names, ",") != "a,a-dup,z" {
@@ -86,11 +171,11 @@ func TestBuildAccountRoutePoolIDTieBrokenByProviderName(t *testing.T) {
 		"zeta":  snap(from("zeta")),
 		"alpha": snap(from("alpha")),
 	}
-	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "DE"}}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "DE"}}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	route := got.nodes["~DE"]
+	route := got.nodes[credentialRouteKey("", "DE", "", "")]
 	if len(route) != 2 || route[0]["from"] != "alpha" || route[1]["from"] != "zeta" {
 		t.Fatalf("nodes = %v, want alpha before zeta", route)
 	}
@@ -114,11 +199,11 @@ func TestBuildAccountRoutePoolInfosCarryFirstName(t *testing.T) {
 		{Login: "a", Provider: "main", ExitCountry: "DE"},
 		{Login: "b", Provider: "main"},
 	}
-	got, err := buildAccountRoutePool(accounts, snapshots)
+	got, err := buildAccountRoutePool(accounts, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.accountRoutes["a"] != "main~DE" || got.accountRoutes["b"] != "main~" {
+	if got.accountRoutes["a"] != credentialRouteKey("main", "DE", "", "") || got.accountRoutes["b"] != credentialRouteKey("main", "", "", "") {
 		t.Fatalf("routes = %v, want main~DE and main~", got.accountRoutes)
 	}
 	if len(got.infos) != 1 {
@@ -133,7 +218,7 @@ func TestBuildAccountRoutePoolInfosCarryFirstName(t *testing.T) {
 	snapshots = map[string]*subscription.Snapshot{
 		"main": snap(withName("1", "DE", "bad\nname")),
 	}
-	got, err = buildAccountRoutePool([]config.Account{{Login: "a", Provider: "main", ExitCountry: "DE"}}, snapshots)
+	got, err = buildAccountRoutePool([]config.Account{{Login: "a", Provider: "main", ExitCountry: "DE"}}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,14 +233,14 @@ func TestBuildAccountRoutePoolEachKeyBuiltOnce(t *testing.T) {
 		{Login: "b", Provider: "p", ExitCountry: "DE"},
 	}
 	snapshots := map[string]*subscription.Snapshot{"p": snap(node("1", "DE"), node("2", "DE"))}
-	got, err := buildAccountRoutePool(accounts, snapshots)
+	got, err := buildAccountRoutePool(accounts, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.nodes) != 1 || len(got.nodes["p~DE"]) != 2 {
+	if len(got.nodes) != 1 || len(got.nodes[credentialRouteKey("p", "DE", "", "")]) != 2 {
 		t.Fatalf("pool = %+v", got.nodes)
 	}
-	if got.accountRoutes["a"] != "p~DE" || got.accountRoutes["b"] != "p~DE" {
+	if got.accountRoutes["a"] != credentialRouteKey("p", "DE", "", "") || got.accountRoutes["b"] != credentialRouteKey("p", "DE", "", "") {
 		t.Fatalf("routes = %v", got.accountRoutes)
 	}
 }
@@ -173,7 +258,7 @@ func TestBuildAccountRoutePoolFailClosed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := buildAccountRoutePool([]config.Account{tc.account}, tc.snapshot)
+			_, err := buildAccountRoutePool([]config.Account{tc.account}, tc.snapshot, "", "")
 			var ce *cli.Error
 			if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" || ce.Exit != cli.ExitNotFound || ce.Hint != "run netivri sub update before netivri up" {
 				t.Fatalf("unexpected error: %#v", err)
@@ -197,10 +282,10 @@ func TestAccountRoutePoolLoadsStoredSnapshotsAndSkipsMissing(t *testing.T) {
 		Subscriptions: []config.Subscription{{Name: "missing"}, {Name: "matching"}},
 	}
 	got, err := accountRoutePool(home, cfg)
-	if err != nil || got.nodes["matching~DE"][0]["name"] != "fixture" || got.accountRoutes["a"] != "matching~DE" {
+	if err != nil || got.nodes[credentialRouteKey("matching", "DE", "", "")][0]["name"] != "fixture" || got.accountRoutes["a"] != credentialRouteKey("matching", "DE", "", "") {
 		t.Fatalf("pool=%v routes=%v err=%v", got.nodes, got.accountRoutes, err)
 	}
-	if labels := got.labels["matching~DE"]; len(labels) != 1 || labels[0] != "matching/1" {
+	if labels := got.labels[credentialRouteKey("matching", "DE", "", "")]; len(labels) != 1 || labels[0] != "matching/1" {
 		t.Fatalf("labels = %v, want [matching/1]", labels)
 	}
 	if len(got.infos) != 1 || got.infos[0] != (stats.NodeInfo{Label: "matching/1", Provider: "matching", Country: "DE"}) {
@@ -219,15 +304,15 @@ func TestBuildAccountRoutePoolLabelsFollowNodeOrder(t *testing.T) {
 		{Login: "any", ExitCountry: "DE"},
 		{Login: "onlymain", Provider: "main", ExitCountry: "DE"},
 	}
-	got, err := buildAccountRoutePool(accounts, snapshots)
+	got, err := buildAccountRoutePool(accounts, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(got.labels["~DE"], ",") != "main/a,alt/m,main/z" {
-		t.Fatalf("~DE labels = %v", got.labels["~DE"])
+	if strings.Join(got.labels[credentialRouteKey("", "DE", "", "")], ",") != "main/a,alt/m,main/z" {
+		t.Fatalf("~DE labels = %v", got.labels[credentialRouteKey("", "DE", "", "")])
 	}
-	if strings.Join(got.labels["main~DE"], ",") != "main/a,main/z" {
-		t.Fatalf("main~DE labels = %v", got.labels["main~DE"])
+	if strings.Join(got.labels[credentialRouteKey("main", "DE", "", "")], ",") != "main/a,main/z" {
+		t.Fatalf("main~DE labels = %v", got.labels[credentialRouteKey("main", "DE", "", "")])
 	}
 	for key, labels := range got.labels {
 		if len(labels) != len(got.nodes[key]) {
@@ -282,7 +367,7 @@ func TestAccountRoutePoolIgnoresSnapshotsNoRouteReads(t *testing.T) {
 	cfg.Accounts = []config.Account{{Login: "a", Provider: "used"}}
 	cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: "used"})
 	got, err = accountRoutePool(home, cfg)
-	if err != nil || len(got.nodes["used~"]) != 1 || got.accountRoutes["a"] != "used~" {
+	if err != nil || len(got.nodes[credentialRouteKey("used", "", "", "")]) != 1 || got.accountRoutes["a"] != credentialRouteKey("used", "", "", "") {
 		t.Fatalf("provider route must not read the other snapshot: nodes=%v routes=%v err=%v", got.nodes, got.accountRoutes, err)
 	}
 }

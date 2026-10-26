@@ -81,8 +81,10 @@ rest.
 
 ## Applying routes in place
 
-A subscription refresh that brings a changed node list, or a changed
-`exit_country` or `provider` of an account, only touches the routes half. The
+A subscription refresh that brings a changed node list, a changed
+`exit_country` or `provider` of an account, or a changed SOCKS5 chain of an
+account or `chain.pre_socks5` (see [socks5-chain.md](socks5-chain.md)) only
+touches the routes half. The
 angel tells the statistics store about the nodes and calls
 `Reconfigure` on the running core (`internal/core/reconfigure.go`):
 
@@ -110,7 +112,10 @@ angel tells the statistics store about the nodes and calls
 
 The core refuses a change it cannot take in place (an instance that was
 started without account routes, or routing through a single default node)
-with `core.ErrReconfigureUnsupported`, and the angel restarts it instead. Any
+with `core.ErrReconfigureUnsupported`, and the angel restarts it instead. The
+angel also restarts without trying when `chain.post_socks5` changed (the
+global post is built into the default route when the core starts) or when
+account routes appear or disappear entirely. Any
 other `Reconfigure` error is logged (`routes not updated in place, restarting
 the listener: ...`) and also ends in a restart.
 

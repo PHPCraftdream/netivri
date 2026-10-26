@@ -48,7 +48,14 @@ To verify a change, push it and read the CI result.
   `affinity`. `netivri help config`, `netivri help routing` and
   `netivri help output` (also with `--json`) explain the configuration file,
   routing and the fields of every command without the repository.
-- Never print or log subscription URLs; they are credentials.
+- Never print or log subscription URLs; they are credentials. SOCKS5 chain
+  URLs (`pre_socks5`, `post_socks5`) are credentials too.
+- SOCKS5 around the VPN node: `chain.pre_socks5` / `chain.post_socks5` in
+  `config.ktav`, per account `netivri account set-socks5 {ACCOUNT} --pre
+  {URL|none|inherit} --post {URL|none|inherit}` (also `account add
+  --pre-socks5/--post-socks5`); an account value overrides the global one,
+  `none` cancels it. `account show` and `status` show the redacted effective
+  values.
 - Do not bind the proxy to anything other than `127.0.0.1` unless the user
   asked for it.
 

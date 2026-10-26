@@ -38,12 +38,12 @@ func nodeInvalid(format string, args ...any) *cli.Error {
 }
 
 // prepareNode validates a caller-supplied Mihomo proxy mapping and turns it
-// into the raw-config values for single-node routing: one proxy entry with
-// the fixed internal name and one MATCH rule pointing at it. It never
-// mutates the caller's map. Mihomo's built-in proxies (DIRECT, REJECT, ...)
-// stay available but unused: the MATCH rule always routes to the node, so
-// there is no fallback to DIRECT when the node is unreachable.
+// into raw-config values.
 func prepareNode(node map[string]any) ([]map[string]any, []string, error) {
+	return prepareNodeAs(node, nodeName, true)
+}
+
+func prepareNodeAs(node map[string]any, name string, stripDialer bool) ([]map[string]any, []string, error) {
 	if node == nil {
 		return nil, nil, nodeInvalid("node is missing")
 	}
@@ -84,12 +84,12 @@ func prepareNode(node map[string]any) ([]map[string]any, []string, error) {
 	for k, v := range node {
 		entry[k] = v
 	}
-	entry["name"] = nodeName
-	// dialer-proxy would chain the node through another proxy; strip it so
-	// every connection really goes through this node only.
-	delete(entry, "dialer-proxy")
+	entry["name"] = name
+	if stripDialer {
+		delete(entry, "dialer-proxy")
+	}
 
-	return []map[string]any{entry}, []string{"MATCH," + nodeName}, nil
+	return []map[string]any{entry}, []string{"MATCH," + name}, nil
 }
 
 // Route results reported by Instance.Route.

@@ -3,11 +3,22 @@ package core
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
 const accountGroupPrefix = "netivri-group-"
+
+func proxyMappingNames(mappings []map[string]any) []string {
+	var names []string
+	for _, mapping := range mappings {
+		if name, ok := mapping["name"].(string); ok {
+			names = append(names, name)
+		}
+	}
+	return names
+}
 
 // prepareRoutes builds independent Mihomo routing mappings without mutating
 // the caller's node maps or route node slices. Route keys are opaque to the
@@ -28,6 +39,74 @@ func memberProxyName(gen, r, n int) string {
 	return fmt.Sprintf("netivri-g%d-r%d-%d", gen, r, n)
 }
 
+func helperProxyName(gen, route, node int, side string) string {
+	if gen == 0 {
+		return fmt.Sprintf("netivri-r%d-%d-%s", route, node, side)
+	}
+	return fmt.Sprintf("netivri-g%d-r%d-%d-%s", gen, route, node, side)
+}
+
+func helperProxyNameFromMember(member string, side string) string { return member + "-" + side }
+
+func routeGroupMemberName(gen, route, node int, post bool) string {
+	member := memberProxyName(gen, route, node)
+	if post {
+		return helperProxyNameFromMember(member, "post")
+	}
+	return member
+}
+
+func generatedNodeName(name string) bool { return isRouteNodeName(name) }
+
+func isRouteNodeName(name string) bool {
+	if !strings.HasPrefix(name, "netivri-") {
+		return false
+	}
+	body := strings.TrimPrefix(name, "netivri-")
+	if strings.HasPrefix(body, "g") {
+		generation, rest, ok := strings.Cut(body[1:], "-")
+		if !ok || !allDigits(generation) {
+			return false
+		}
+		body = rest
+	}
+	if !strings.HasPrefix(body, "r") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(body, "r"), "-")
+	return len(parts) == 2 && allDigits(parts[0]) && allDigits(parts[1])
+}
+func allDigits(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, c := range v {
+		if c < 48 || c > 57 {
+			return false
+		}
+	}
+	return true
+}
+func isChainHelperName(name string) bool {
+	for _, side := range []string{"-pre", "-post"} {
+		if strings.HasSuffix(name, side) && isRouteNodeName(strings.TrimSuffix(name, side)) {
+			return true
+		}
+	}
+	return false
+}
+func generatedMemberName(name string) bool { return isRouteNodeName(name) || isChainHelperName(name) }
+func isRoutePostName(name string) bool {
+	return strings.HasSuffix(name, "-post") && isRouteNodeName(strings.TrimSuffix(name, "-post"))
+}
+
+func globalPostProxyName(gen int) string {
+	if gen == 0 {
+		return "netivri-global-post"
+	}
+	return fmt.Sprintf("netivri-g%d-global-post", gen)
+}
+
 // groupProxyName is the internal name of the group of route r in routing
 // generation gen.
 func groupProxyName(gen, r int) string {
@@ -41,11 +120,30 @@ func groupProxyName(gen, r int) string {
 // generation gen.
 func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, []string, error) {
 	if len(o.AccountRoute) == 0 {
-		if o.Node == nil {
+		if o.Node == nil && (o.GlobalPost == "" || isNoChain(o.GlobalPost)) {
 			return nil, nil, nil, nil
 		}
+		if o.Node == nil {
+			post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			return []map[string]any{post}, nil, []string{"MATCH," + globalPostProxyName(gen)}, nil
+		}
 		proxies, rules, err := prepareNode(o.Node)
-		return proxies, nil, rules, err
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
+			post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			post["dialer-proxy"] = nodeName
+			proxies = append(proxies, post)
+			return proxies, nil, []string{"MATCH," + globalPostProxyName(gen)}, nil
+		}
+		return proxies, nil, rules, nil
 	}
 
 	var defaultProxy map[string]any
@@ -85,10 +183,22 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	if defaultProxy != nil {
 		proxies = append(proxies, defaultProxy)
 	}
+	if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
+		post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if o.Node != nil {
+			post["dialer-proxy"] = nodeName
+		}
+		proxies = append(proxies, post)
+	}
 	groups := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
 		nodes := o.RouteNodes[key]
-		if len(nodes) == 0 {
+		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
+		directRoute := len(nodes) == 0 && !directPost && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key])) && (o.RoutePost[key] == "" || isNoChain(o.RoutePost[key]))
+		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, nil, nil, &cli.Error{
 				Code:    "NO_NODES_FOR_COUNTRY",
 				Message: "no nodes are available for an account route",
@@ -97,15 +207,47 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		}
 
 		members := make([]string, 0, len(nodes))
+		if directRoute {
+			members = append(members, "DIRECT")
+		}
+		if directPost {
+			postName := helperProxyName(gen, keyIndex[key], 0, "post")
+			post, err := chainProxy(o.RoutePost[key], postName)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			post["dialer-proxy"] = "DIRECT"
+			proxies = append(proxies, post)
+			members = append(members, postName)
+		}
 		for index, node := range nodes {
 			prepared, _, err := prepareNode(node)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			name := memberProxyName(gen, keyIndex[key], index)
+			if uri := o.RoutePre[key]; uri != "" && !isNoChain(uri) {
+				pre, err := chainProxy(uri, helperProxyName(gen, keyIndex[key], index, "pre"))
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				prepared[0]["dialer-proxy"] = pre["name"]
+				proxies = append(proxies, pre)
+			}
+			member := name
+			if uri := o.RoutePost[key]; uri != "" && !isNoChain(uri) {
+				postName := helperProxyName(gen, keyIndex[key], index, "post")
+				post, err := chainProxy(uri, postName)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				post["dialer-proxy"] = name
+				proxies = append(proxies, post)
+				member = postName
+			}
 			prepared[0]["name"] = name
 			proxies = append(proxies, prepared[0])
-			members = append(members, name)
+			members = append(members, member)
 		}
 		groups = append(groups, map[string]any{
 			"name":    groupProxyName(gen, keyIndex[key]),
@@ -120,7 +262,9 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		rules = append(rules, "IN-USER,"+login+","+group)
 	}
 	fallback := "DIRECT"
-	if o.Node != nil {
+	if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
+		fallback = globalPostProxyName(gen)
+	} else if o.Node != nil {
 		fallback = nodeName
 	}
 	rules = append(rules, "MATCH,"+fallback)

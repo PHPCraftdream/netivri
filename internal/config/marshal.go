@@ -75,5 +75,18 @@ func configEqual(a, b *Config) bool {
 	if strings.TrimSpace(y.Listen.AllowedClients) == "" {
 		y.Listen.AllowedClients = AllowedClientsAny
 	}
+	// Empty chain fields and the sentinel both represent the same disabled state.
+	if strings.EqualFold(x.Chain.PreSOCKS5, "none") {
+		x.Chain.PreSOCKS5 = ""
+	}
+	if strings.EqualFold(y.Chain.PreSOCKS5, "none") {
+		y.Chain.PreSOCKS5 = ""
+	}
+	if strings.EqualFold(x.Chain.PostSOCKS5, "none") {
+		x.Chain.PostSOCKS5 = ""
+	}
+	if strings.EqualFold(y.Chain.PostSOCKS5, "none") {
+		y.Chain.PostSOCKS5 = ""
+	}
 	return reflect.DeepEqual(x, y)
 }

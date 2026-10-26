@@ -31,8 +31,10 @@ not preserved, so keep personal notes elsewhere.
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
+| `chain.pre_socks5` | string | *(empty)* | Default SOCKS5 proxy netivri connects through to reach a VPN node: `socks5://[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
+| `chain.post_socks5` | string | *(empty)* | Default SOCKS5 proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format. An account's own `post_socks5` overrides it. |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
-| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, so an `init` account cannot be claimed from a disallowed address). |
+| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, or an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
 | `selection.country` | string | *(empty)* | Reserved for the planned `netivri use --country {COUNTRY}`: validated, but nothing reads it yet. |
 | `selection.mode` | string | `manual` | Reserved for the planned `netivri use`: `manual`, `fastest` or `auto`; validated, but nothing reads it yet. Routing today comes from the accounts. |
@@ -40,6 +42,60 @@ not preserved, so keep personal notes elsewhere.
 `accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters per code, not whether that code represents a real country. Config validation checks the provider's shape only; `up` and the `account` commands check that the named subscriptions exist.
 
 `provider` and `exit_country` may each hold a list: items separated by commas, blanks around a comma ignored, a repeated item kept once. In `exit_country` a `*` item stands for every country the list does not name, nodes of an unknown country included, at its place in the order (`DE,*` is DE first, then everything else; `*` alone is any country). When the file is loaded the lists are rewritten in the canonical form (`DE,NL`, `main,backup`), and the commands store them that way. The order is the priority: the countries first, then, inside a country, the providers (`provider: main,backup` with `exit_country: DE,NL` tries `main` in DE, `backup` in DE, `main` in NL, `backup` in NL). See [`docs/design/accounts.md`](design/accounts.md).
+
+## SOCKS5 chain
+
+`chain.pre_socks5` and `chain.post_socks5` (global) and `pre_socks5` and
+`post_socks5` of an account put SOCKS5 proxies around the VPN node:
+
+```text
+client -> netivri -> [pre] -> VPN node -> [post] -> destination
+```
+
+- `pre_socks5` is how netivri reaches the VPN node: the node's own connection
+  goes through this proxy. It applies to accounts with a route (a provider
+  and/or an exit country). An account without a route has no VPN node, so a
+  pre never applies to it.
+- `post_socks5` is where the traffic goes after the VPN node: the node hands
+  the connection to the post proxy, which connects to the destination. It
+  applies to accounts with a route, to accounts without one (their traffic
+  goes to the post proxy directly) and to unauthenticated traffic (the global
+  value).
+
+A value is `socks5://[user:password@]host:port`: scheme `socks5` only
+(case-insensitive), a host (name, IPv4 or `[IPv6]`), a **required** port
+1..65535, optional percent-encoded user name and password, no path, query or
+fragment. `none` is also accepted. Anything else is `CONFIG_INVALID`; the
+message names the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and
+never contains the value. Write the value with the raw marker:
+`chain.pre_socks5:: socks5://user:secret@pre.example:1080`.
+
+**Cascade.** Each side is resolved on its own, account over global:
+
+| Global | Account | Effective |
+| --- | --- | --- |
+| *(empty)* | *(absent)* | no proxy |
+| `socks5://g.example:1080` | *(absent)* | `socks5://g.example:1080` (source `global`) |
+| `socks5://g.example:1080` | `socks5://a.example:1081` | `socks5://a.example:1081` (source `account`) |
+| `socks5://g.example:1080` | `none` | no proxy (source `none`) |
+| `none` | *(absent)* | no proxy |
+
+`netivri account set-socks5 {ACCOUNT} --pre {URL|none|inherit}` and `--post`
+change the account values; `inherit` removes the account key so the global
+value applies again.
+
+Credentials are secrets, like subscription URLs: no output, log or error
+shows them. `account list`, `account show` and `status` print the URL as
+`socks5://host:port` with `"auth": true` when it had a user name, and the
+`source` of the value (`account`, `global` or `none`).
+
+Routes of accounts with different effective chains are separate, but the
+health and statistics of a node are kept per node, so two accounts that use
+the same node through different proxies share its health. A change of
+`chain.pre_socks5` or of an account's `pre_socks5` or `post_socks5` is applied
+by the running angel in place and keeps the open connections; a change of
+`chain.post_socks5` restarts the listener (see
+[`design/socks5-chain.md`](design/socks5-chain.md)).
 
 ## Allowed clients
 
@@ -154,6 +210,25 @@ selection.country::
 selection.mode: manual
 ```
 
+Chain settings in a file (global in dotted form, per account inside the
+object):
+
+```ktav
+chain.pre_socks5:: socks5://user:secret@pre.example:1080
+chain.post_socks5:: socks5://post.example:1080
+
+accounts: [
+    {
+        login: carol
+        password:: init
+        provider: main
+        exit_country: NL
+        pre_socks5:: none
+        post_socks5:: socks5://carol-exit.example:1080
+    }
+]
+```
+
 ## Value types and the `::` marker
 
 Ktav infers scalar types from spelling: `7890` is an integer, `true` a
@@ -207,6 +282,8 @@ Subscription URLs contain secrets and are never printed in full. Logs,
 errors and status output show them redacted: scheme + host + `/****`
 (path and query dropped). Proxy URLs with credentials keep only the
 username with the password masked: `socks5://user:****@host:port`.
+SOCKS5 chain URLs are redacted harder: the whole user name and password are
+dropped, `socks5://host:port` is all that is shown.
 Parse errors are reported only from the parser's structured fields
 (error class, reason, line number, spec section, key path) and never
 contain document text, so passwords and URLs cannot leak through them.

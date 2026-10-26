@@ -10,14 +10,33 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
-type accountInfo struct {
-	Login          string `json:"login"`
-	Provider       string `json:"provider"`
-	ExitCountry    string `json:"exit_country"`
-	AllowedClients string `json:"allowed_clients"`
-	PasswordSet    bool   `json:"password_set"`
+type accountChainInfo struct {
+	Value  string  `json:"value"`
+	Source string  `json:"source"`
+	Auth   bool    `json:"auth"`
+	Own    *string `json:"own,omitempty"`
 }
 
+type accountInfo struct {
+	Login          string           `json:"login"`
+	Provider       string           `json:"provider"`
+	ExitCountry    string           `json:"exit_country"`
+	AllowedClients string           `json:"allowed_clients"`
+	PreSOCKS5      accountChainInfo `json:"pre_socks5"`
+	PostSOCKS5     accountChainInfo `json:"post_socks5"`
+	PasswordSet    bool             `json:"password_set"`
+}
+
+func accountList(cfg *config.Config) []accountInfo {
+	items := make([]accountInfo, 0, len(cfg.Accounts))
+	for i := range cfg.Accounts {
+		info := infoForAccount(cfg, &cfg.Accounts[i])
+		info.PreSOCKS5.Own = nil
+		info.PostSOCKS5.Own = nil
+		items = append(items, info)
+	}
+	return items
+}
 func runAccount(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return cli.Usage("account: missing subcommand (add, clone, list, show, set-country, set-provider, set-clients, rm)")
@@ -46,10 +65,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		if len(rest) != 0 {
 			return usage("unexpected argument")
 		}
-		items := make([]accountInfo, 0, len(cfg.Accounts))
-		for _, a := range cfg.Accounts {
-			items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(&a)})
-		}
+		items := accountList(cfg)
 		cli.Success(stdout, map[string]any{"accounts": items})
 		return nil
 	case "show":
@@ -60,9 +76,30 @@ func runAccount(args []string, stdout io.Writer) error {
 		country := fs.String("country", "", "exit country")
 		provider := fs.String("provider", "", "subscription (provider) the account exits through")
 		clients := fs.String("clients", "", "client addresses that may use this account (allowed-clients rules)")
+		pre := fs.String("pre-socks5", "", "pre-hop SOCKS5 URL")
+		post := fs.String("post-socks5", "", "post-hop SOCKS5 URL")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
 			return usage("invalid flags")
+		}
+		preGiven, postGiven := false, false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "pre-socks5" {
+				preGiven = true
+			}
+			if f.Name == "post-socks5" {
+				postGiven = true
+			}
+		})
+		if preGiven {
+			if err := validateCLIChain(*pre, "--pre-socks5"); err != nil {
+				return err
+			}
+		}
+		if postGiven {
+			if err := validateCLIChain(*post, "--post-socks5"); err != nil {
+				return err
+			}
 		}
 		if len(pos) != 1 {
 			return usage("requires LOGIN")
@@ -96,20 +133,22 @@ func runAccount(args []string, stdout io.Writer) error {
 			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
 		}
 		if a, _ := cfg.Account(login); a != nil {
-			if a.ExitCountry == cc && a.Provider == prov && a.AllowedClients == clientsVal {
-				cli.Success(stdout, map[string]any{"account": accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(a)}, "existing": true})
+			if a.ExitCountry == cc && a.Provider == prov && a.AllowedClients == clientsVal && a.PreSOCKS5 == *pre && a.PostSOCKS5 == *post {
+				cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true})
 				return nil
 			}
 			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country or clients rule", Exit: cli.ExitConflict}
 		}
-		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, AllowedClients: clientsVal})
+		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, AllowedClients: clientsVal, PreSOCKS5: *pre, PostSOCKS5: *post})
 		if err := save(); err != nil {
 			return err
 		}
-		cli.Success(stdout, map[string]any{"account": accountInfo{login, prov, cc, clientsVal, false}, "existing": false})
+		cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false})
 		return nil
 	case "clone":
 		return accountClone(home, cfg, rest, save, stdout)
+	case "set-socks5":
+		return accountSetSOCKS5(cfg, rest, save, stdout)
 	case "set-country":
 		return accountSet("country", home, cfg, rest, save, stdout)
 	case "set-provider":
@@ -217,7 +256,7 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 	}
 	items := make([]accountInfo, 0, len(targets))
 	for _, a := range targets {
-		items = append(items, accountInfo{a.Login, a.Provider, a.ExitCountry, a.AllowedClients, accountHasPassword(a)})
+		items = append(items, infoForAccount(cfg, a))
 	}
 	if !*all && !strings.Contains(spec, ",") {
 		cli.Success(stdout, map[string]any{"account": items[0]})
