@@ -364,7 +364,8 @@ var helpTopics = []helpTopic{
 			{"Germany first, then the Netherlands; main first, then backup", "netivri account add dave --provider main,backup --country DE,NL"},
 			{"Connect: the first password you send for alice becomes her password", "curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org"},
 			{"Only clients from 10.0.0.0/8 may use alice", "netivri account add alice --provider main --clients 10.0.0.0/8"},
-			{"Add a pre- and post-hop", "netivri account add alice --pre-socks5 socks5://user:secret@pre.example:1080 --post-socks5 socks5://post.example:1080"},
+			{"Reach the VPN node through a SOCKS5 proxy", "netivri account add alice --provider main --pre-socks5 socks5://pre.example:1080"},
+			{"Send the traffic on to a SOCKS5 proxy after the VPN node", "netivri account add bob --provider main --post-socks5 socks5://post.example:1080"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
@@ -823,8 +824,8 @@ var helpTopics = []helpTopic{
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
-			"chain.pre_socks5 and chain.post_socks5 are optional global SOCKS5 defaults. Each accounts[] entry may " +
-			"set pre_socks5 and post_socks5; each side cascades independently: absent/empty or inherit uses the " +
+			"chain.pre_socks5 and chain.post_socks5 are optional global SOCKS5 defaults. Each account may " +
+			"set accounts.pre_socks5 and accounts.post_socks5; each side cascades independently: absent/empty or inherit uses the " +
 			"global value, while none explicitly disables that hop. SOCKS5 URLs require a port (1 to 65535) " +
 			"and may include optional percent-encoded username:password userinfo; these are credentials and are " +
 			"never printed. See 'netivri help routing'.\n\n" +

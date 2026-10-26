@@ -584,9 +584,6 @@ func conceptText(tp *helpTopic) string {
 	return b.String()
 }
 
-// Every key the configuration loader accepts (internal/config/config.go,
-// allowed_clients.go and load.go; documented in docs/config.md) must be
-// named by the config topic, so the binary alone explains its own file.
 func TestSOCKS5ChainHelpCoverage(t *testing.T) {
 	for _, name := range []string{"account set-socks5", "account show", "config", "routing"} {
 		if findHelpTopic(name) == nil {
@@ -619,6 +616,9 @@ func TestSOCKS5ChainHelpCoverage(t *testing.T) {
 	}
 }
 
+// Every key the configuration loader accepts (internal/config/config.go,
+// allowed_clients.go and load.go; documented in docs/config.md) must be
+// named by the config topic, so the binary alone explains its own file.
 func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	keys := []string{
 		"chain",

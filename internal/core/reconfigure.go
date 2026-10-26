@@ -82,9 +82,6 @@ func (i *Instance) Reconfigure(o Options) error {
 	if err != nil {
 		return err
 	}
-	if direct := tunnel.Proxies()["DIRECT"]; direct != nil {
-		members["DIRECT"] = direct
-	}
 	names := planProxyNames(plans)
 	for _, mapping := range rawProxies {
 		if name, ok := mapping["name"].(string); ok && name != "DIRECT" {

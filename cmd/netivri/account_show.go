@@ -51,6 +51,7 @@ func showChainInfoForAccount(info accountChainInfo) accountShowChainInfo {
 	return accountShowChainInfo{Value: info.Value, Source: info.Source, Auth: info.Auth, Own: info.Own}
 }
 
+// accountShow implements `account show`: the configured lists, the route as
 // ordered tiers, and, with a running angel, the live probe and traffic state
 // of every node. It never prints a password, a hash or an address.
 func accountShow(home string, cfg *config.Config, rest []string, stdout io.Writer) error {

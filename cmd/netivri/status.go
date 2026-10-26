@@ -93,14 +93,16 @@ func runStatus(args []string, stdout io.Writer) error {
 	data["allowed_clients"] = allowedClientsLabel(st.AllowedClients)
 	data["accounts"] = accs
 	data["uptime_seconds"] = uptimeSeconds(st.StartedAt)
-	active := 0
-	for _, a := range st.Activity {
-		if a.Active {
-			active++
+	if st.Activity != nil {
+		active := 0
+		for _, a := range st.Activity {
+			if a.Active {
+				active++
+			}
 		}
+		data["active_accounts"] = active
+		data["activity"] = st.Activity
 	}
-	data["active_accounts"] = active
-	data["activity"] = st.Activity
 	if !*full {
 		delete(data, "stats")
 		delete(data, "affinity")
@@ -126,6 +128,7 @@ func runStatus(args []string, stdout io.Writer) error {
 	return nil
 }
 
+// decodeUseNumber decodes JSON so numbers keep their exact text
 // (json.Number instead of float64).
 func decodeUseNumber(raw []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))

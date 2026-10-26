@@ -224,7 +224,16 @@ func (f *reloadFixture) reloadErr() string {
 	return f.l.reloadErr
 }
 
-func serverOf(o core.Options) any { return o.RouteNodes["p~DE"][0]["server"] }
+// onlyRoute returns the nodes of the single route of o; route keys carry a
+// digest of the chain, so tests do not spell them out.
+func onlyRoute(nodes map[string][]map[string]any) []map[string]any {
+	for _, list := range nodes {
+		return list
+	}
+	return nil
+}
+
+func serverOf(o core.Options) any { return onlyRoute(o.RouteNodes)[0]["server"] }
 
 func TestReloadRestartsOnlyOnChange(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
@@ -261,7 +270,7 @@ func TestReloadRestartsOnlyOnChange(t *testing.T) {
 	if f.script.calls() != 3 || f.reloads() != 2 {
 		t.Fatalf("a new account did not restart the core: starts=%d reloads=%d", f.script.calls(), f.reloads())
 	}
-	if got := f.script.call(2).AccountRoute; got["bob"] != "p~DE" || got["alice"] != "p~DE" {
+	if got := f.script.call(2).AccountRoute; !strings.HasPrefix(got["bob"], "p~DE") || got["bob"] != got["alice"] {
 		t.Errorf("account routes of the new core = %v", got)
 	}
 	f.l.mu.Lock()
@@ -419,7 +428,7 @@ func TestReloadRollsBackWhenTheNewCoreDoesNotStart(t *testing.T) {
 		t.Errorf("reloads=%d error=%q", f.reloads(), f.reloadErr())
 	}
 	f.l.mu.Lock()
-	applied := f.l.applied.pool.nodes["p~DE"][0]["server"]
+	applied := onlyRoute(f.l.applied.pool.nodes)[0]["server"]
 	f.l.mu.Unlock()
 	if applied != "192.0.2.1" {
 		t.Errorf("the applied state moved to %v although it did not start", applied)
@@ -777,7 +786,7 @@ func TestReloadUpdatesNodesInPlace(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("Reconfigure calls = %d, want 1", len(got))
 	}
-	if serverOf(got[0]) != "192.0.2.2" || got[0].AccountRoute["alice"] != "p~DE" {
+	if serverOf(got[0]) != "192.0.2.2" || !strings.HasPrefix(got[0].AccountRoute["alice"], "p~DE") {
 		t.Errorf("Reconfigure got node %v, routes %v", serverOf(got[0]), got[0].AccountRoute)
 	}
 	if got[0].InitialBindings != nil {
@@ -793,7 +802,7 @@ func TestReloadUpdatesNodesInPlace(t *testing.T) {
 		t.Errorf("log does not say the connections were kept: %q", f.logText())
 	}
 	f.l.mu.Lock()
-	applied := f.l.applied.pool.nodes["p~DE"][0]["server"]
+	applied := onlyRoute(f.l.applied.pool.nodes)[0]["server"]
 	port := f.l.startOpts.Port
 	f.l.mu.Unlock()
 	if want := portOf(running.Addr()); applied != "192.0.2.2" || port != want {
