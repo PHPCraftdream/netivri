@@ -89,11 +89,14 @@ angel tells the statistics store about the nodes and calls
 1. The new member proxies are parsed and the new rules built; anything that
    fails here leaves the core as it was.
 2. The probes of the old routes stop. The health of every node label that
-   stays (measurements, down state, hedge budget) and its probe backoff are
+   stays (measurements, down state, hedge budget) and its probe schedule are
    copied to the new routes; nothing is announced for it, so a node that was
-   down is not logged as down a second time and is not probed at the short
-   interval again. The site bindings are moved by label to the node's new
-   place in the route; a binding to a node that left the route is dropped.
+   down is not logged as down a second time and keeps its lengthened probe
+   interval, and a node that is up is not probed again before its interval
+   is up. The site bindings are moved by label to the node's new
+   place in the route; a binding to a node that left the route is dropped,
+   and so are all bindings of an account whose country or provider lists
+   changed (its route key is new), so its sites follow the new preference.
    The affinity counters continue.
 3. The new proxies and sticky groups get names of their own generation
    (`netivri-g{N}-r{R}-{I}`, `netivri-g{N}-group-{R}`) and are added to

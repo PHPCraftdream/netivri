@@ -796,8 +796,8 @@ func TestReloadUpdatesNodesInPlace(t *testing.T) {
 	applied := f.l.applied.pool.nodes["p~DE"][0]["server"]
 	port := f.l.startOpts.Port
 	f.l.mu.Unlock()
-	if applied != "192.0.2.2" || port != 43210 {
-		t.Errorf("applied node %v, port %d; want 192.0.2.2 and 43210", applied, port)
+	if want := portOf(running.Addr()); applied != "192.0.2.2" || port != want {
+		t.Errorf("applied node %v, port %d; want 192.0.2.2 and %d", applied, port, want)
 	}
 
 	// Nothing changed since: no further call.

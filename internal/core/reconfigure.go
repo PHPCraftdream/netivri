@@ -29,7 +29,8 @@ var errInstanceClosed = errors.New("core: the instance is closed")
 //
 // What a node label keeps across the change: its health (measurements, down
 // state, hedge budget), its probe backoff and the site bindings that point at
-// it, as long as the login's route still contains the label. Nothing is
+// it, as long as the login keeps its route key and the route still contains
+// the label. Nothing is
 // announced for a node that keeps its state. InitialBindings is ignored.
 //
 // Mihomo's configuration is not re-applied: the new member proxies and
@@ -119,7 +120,7 @@ func (i *Instance) Reconfigure(o Options) error {
 	health.register(mapValues(connLabels))
 	table := newAffinityTable(nil, o.AffinityTTL)
 	table.carryCounters(old.table)
-	loadInitialBindings(table, plans, o.AccountRoute, old.snapshotBindings())
+	loadInitialBindings(table, plans, o.AccountRoute, sameRouteBindings(old.snapshotBindings(), old.accountRoutes, o.AccountRoute))
 	groups, err := buildStickyGroups(plans, members, table, health, o.Observer)
 	if err != nil {
 		return err
@@ -204,6 +205,19 @@ func parseRouteRules(lines []string, known func(name string) bool) ([]C.Rule, er
 	return rules, nil
 }
 
+// sameRouteBindings keeps the bindings of the logins whose route key did not
+// change. A new key means new country or provider lists: the account asked for
+// other nodes, so its sites pick anew instead of staying where they were.
+func sameRouteBindings(records []BindingRecord, oldRoutes, newRoutes map[string]string) []BindingRecord {
+	out := records[:0:0]
+	for _, r := range records {
+		if key, ok := newRoutes[r.Login]; ok && key == oldRoutes[r.Login] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // planLabels lists the node labels of every plan, in plan and member order.
 func planLabels(plans []routePlan) []string {
 	var labels []string
@@ -213,7 +227,7 @@ func planLabels(plans []routePlan) []string {
 	return labels
 }
 
-// carryBackoff moves the probe backoff of the old proxy names to the new
+// carryBackoff moves the probe schedule of the old proxy names to the new
 // names of the same node labels. A label that is a member of several routes
 // keeps its longest backoff.
 func carryBackoff(old map[string]probeSchedule, oldLabels, newLabels map[string]string) map[string]probeSchedule {

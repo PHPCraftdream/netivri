@@ -136,7 +136,8 @@ it ships in 0.3.0.
   a changed node list, or an account gets a new country or provider list, the
   running angel takes the new routes in place: the listener stays, open
   connections finish on their node, and every node that stays keeps its
-  health, probe backoff and site bindings, so a node that was down is not
+  health, probe schedule and site bindings (an account whose country or
+  provider lists changed picks its nodes anew), so a node that was down is not
   reported down again. The log says `configuration applied, connections kept`.
   Adding or removing an account, a new password, `allowed_clients` or the port
   still restart the listener.

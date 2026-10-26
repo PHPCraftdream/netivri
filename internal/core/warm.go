@@ -51,9 +51,10 @@ type WarmOptions struct {
 	Down func(name string) bool
 
 	// only, when set, limits the probed proxies to the names it accepts;
-	// seed is the probe backoff each name starts with. Reconfigure sets both,
-	// so the earlier generations still in Mihomo's proxy map are not probed
-	// and nodes that stay down keep their lengthened interval.
+	// seed is the probe schedule each name starts with. Reconfigure sets both,
+	// so the earlier generations still in Mihomo's proxy map are not probed,
+	// nodes that stay down keep their lengthened interval and the others are
+	// not probed again before their interval is up.
 	only func(name string) bool
 	seed map[string]probeSchedule
 }
@@ -286,6 +287,11 @@ func (w *warmer) probeAll(parent context.Context) {
 	for i, p := range w.proxies {
 		st := &w.backoff[i]
 		if !w.isDown(p.Name()) {
+			if st.downRounds == 0 && now.Before(st.nextDue) {
+				// Seeded by Reconfigure: probed by the previous generation
+				// less than an interval ago.
+				continue
+			}
 			*st = probeSchedule{}
 			due = append(due, scheduled{proxy: p, index: i})
 			continue
@@ -397,8 +403,10 @@ func (w *warmer) Close() {
 	})
 }
 
-// backoffByName returns the probe backoff of every probed proxy that has
-// one, keyed by proxy name. Nil-safe.
+// backoffByName returns when every probed proxy is next due, keyed by proxy
+// name: the backoff of a node that is down, and one interval after the last
+// probe for the others, so a Reconfigure keeps the probe cadence instead of
+// probing every node again at once. Nil-safe.
 func (w *warmer) backoffByName() map[string]probeSchedule {
 	if w == nil {
 		return nil
@@ -406,8 +414,13 @@ func (w *warmer) backoffByName() map[string]probeSchedule {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	out := make(map[string]probeSchedule)
+	for _, h := range w.stats.Nodes {
+		if !h.CheckedAt.IsZero() {
+			out[h.Name] = probeSchedule{nextDue: h.CheckedAt.Add(w.options.ProbeInterval)}
+		}
+	}
 	for i, st := range w.backoff {
-		if i < len(w.proxies) && st != (probeSchedule{}) {
+		if i < len(w.proxies) && st.downRounds > 0 {
 			out[w.proxies[i].Name()] = st
 		}
 	}

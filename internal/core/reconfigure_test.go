@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -204,33 +205,77 @@ func TestWarmLeavesAndSeededBackoff(t *testing.T) {
 	if none.backoffByName() != nil {
 		t.Error("a nil warmer has a backoff")
 	}
-	w := &warmer{proxies: only, backoff: got}
-	if by := w.backoffByName(); len(by) != 1 || by["netivri-g1-r0-1"].downRounds != 3 {
+	checked := time.Unix(500, 0)
+	w := &warmer{proxies: only, backoff: got, options: WarmOptions{ProbeInterval: 45 * time.Second}}
+	w.stats.Nodes = []NodeHealth{
+		{Name: "netivri-g1-r0-0", Alive: true, CheckedAt: checked},
+		{Name: "netivri-g1-r0-1", CheckedAt: checked},
+	}
+	by := w.backoffByName()
+	if len(by) != 2 || by["netivri-g1-r0-1"].downRounds != 3 ||
+		by["netivri-g1-r0-0"] != (probeSchedule{nextDue: checked.Add(45 * time.Second)}) {
 		t.Errorf("backoffByName = %v", by)
 	}
 }
 
+// A node that is not down but was seeded by Reconfigure waits for its
+// interval; afterwards it is probed every round again.
+func TestProbeAllHonoursSeededSchedule(t *testing.T) {
+	clock := &testWarmClockRef{now: time.Unix(1000, 0)}
+	probed := map[string]int{}
+	w := &warmer{options: WarmOptions{ProbeInterval: 45 * time.Second, ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: clock}
+	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-g1-r0-0", typ: C.Socks5}, testWarmProxy{name: "netivri-g1-r0-1", typ: C.Socks5}}
+	w.backoff = []probeSchedule{{nextDue: clock.now.Add(30 * time.Second)}, {}}
+	w.probe = func(_ context.Context, p C.Proxy, _ string) (uint16, error) {
+		probed[p.Name()]++
+		return 10, nil
+	}
+	w.probeAll(context.Background())
+	if probed["netivri-g1-r0-0"] != 0 || probed["netivri-g1-r0-1"] != 1 {
+		t.Fatalf("first round probed %v, want only the unseeded node", probed)
+	}
+	clock.now = clock.now.Add(31 * time.Second)
+	w.probeAll(context.Background())
+	w.probeAll(context.Background())
+	if probed["netivri-g1-r0-0"] != 2 || probed["netivri-g1-r0-1"] != 3 {
+		t.Fatalf("later rounds probed %v, want every node each round", probed)
+	}
+}
+
+// testWarmClockRef is a settable clock for probeAll.
+type testWarmClockRef struct{ now time.Time }
+
+func (c *testWarmClockRef) Now() time.Time                     { return c.now }
+func (c *testWarmClockRef) NewTicker(time.Duration) warmTicker { return nil }
+
+var _ warmClock = (*testWarmClockRef)(nil)
+
 // The bindings of the old generation are carried by label: a site keeps
-// its node when the node is still in the route, under its new index.
+// its node when the node is still in the route, under its new index. A login
+// whose route key changed (new country or provider lists) picks anew.
 func TestCarriedBindingsFollowTheLabel(t *testing.T) {
 	notDown := func(int) bool { return false }
 	pick := func(member int) func() (int, bool) { return func() (int, bool) { return member, false } }
 	oldTable := newAffinityTable(nil, 0)
 	oldTable.acquire(affinityKey{login: "alice", site: "example.com"}, notDown, pick(1))
 	oldTable.acquire(affinityKey{login: "alice", site: "gone.example"}, notDown, pick(0))
+	oldTable.acquire(affinityKey{login: "bob", site: "example.com"}, notDown, pick(1))
 	oldTable.rebinds.Add(2)
 	oldTable.hedges.Add(3)
 	oldTable.hedgeWins.Add(1)
 	old := &routingState{
 		table:         oldTable,
-		accountRoutes: map[string]string{"alice": "k"},
+		accountRoutes: map[string]string{"alice": "k", "bob": "k"},
 		routeLabels:   map[string][]string{"k": {"p/a", "p/b"}},
 	}
 
 	o := Options{
-		RouteNodes:   map[string][]map[string]any{"k2": {testNode("192.0.2.2"), testNode("192.0.2.3")}},
-		NodeLabels:   map[string][]string{"k2": {"p/b", "p/c"}},
-		AccountRoute: map[string]string{"alice": "k2"},
+		RouteNodes: map[string][]map[string]any{
+			"k":  {testNode("192.0.2.2"), testNode("192.0.2.3")},
+			"k2": {testNode("192.0.2.2"), testNode("192.0.2.3")},
+		},
+		NodeLabels:   map[string][]string{"k": {"p/b", "p/c"}, "k2": {"p/b", "p/c"}},
+		AccountRoute: map[string]string{"alice": "k", "bob": "k2"},
 	}
 	plans, err := buildRoutePlansGen(o, 1)
 	if err != nil {
@@ -238,7 +283,8 @@ func TestCarriedBindingsFollowTheLabel(t *testing.T) {
 	}
 	table := newAffinityTable(nil, 0)
 	table.carryCounters(oldTable)
-	if n := loadInitialBindings(table, plans, o.AccountRoute, old.snapshotBindings()); n != 1 {
+	records := sameRouteBindings(old.snapshotBindings(), old.accountRoutes, o.AccountRoute)
+	if n := loadInitialBindings(table, plans, o.AccountRoute, records); n != 1 {
 		t.Fatalf("carried %d bindings, want 1", n)
 	}
 	if member, ok := table.peek(affinityKey{login: "alice", site: "example.com"}); !ok || member != 0 {
@@ -246,6 +292,9 @@ func TestCarriedBindingsFollowTheLabel(t *testing.T) {
 	}
 	if _, ok := table.peek(affinityKey{login: "alice", site: "gone.example"}); ok {
 		t.Error("a binding to a node that left the route was carried")
+	}
+	if _, ok := table.peek(affinityKey{login: "bob", site: "example.com"}); ok {
+		t.Error("a binding of a login with a new route key was carried")
 	}
 	if table.rebindCount() != 2 || table.hedgeCount() != 3 || table.hedgeWinCount() != 1 {
 		t.Errorf("counters = %d/%d/%d, want 2/3/1", table.rebindCount(), table.hedgeCount(), table.hedgeWinCount())
