@@ -6,7 +6,7 @@ import (
 )
 
 func TestPrepareRoutesDirectAccountRouteUsesDirect(t *testing.T) {
-	o := Options{AccountRoute: map[string]string{"a": "direct"}}
+	o := Options{AccountRoute: map[string]string{"a": "direct"}, RoutePre: map[string]string{"direct": "none"}, RoutePost: map[string]string{"direct": "none"}}
 	proxies, groups, rules, err := prepareRoutes(o)
 	if err != nil {
 		t.Fatal(err)

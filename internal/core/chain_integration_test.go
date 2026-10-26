@@ -97,6 +97,7 @@ func TestSOCKS5PrePostDirectBypassesAndPostOnly(t *testing.T) {
 			{User: "alice", Pass: alicePassword}, {User: "bob", Pass: bobPassword},
 		}),
 		AccountRoute: map[string]string{"alice": "alice-direct", "bob": "bob-direct"},
+		RoutePre:     map[string]string{"alice-direct": "none", "bob-direct": "none"},
 		RoutePost:    map[string]string{"alice-direct": "socks5://" + postAddr, "bob-direct": "none"},
 		GlobalPost:   "socks5://" + postAddr,
 	})
