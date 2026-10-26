@@ -412,7 +412,7 @@ The checks:
 | `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
-| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
+| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
 on stdout says which.
@@ -572,8 +572,10 @@ fallback to a direct connection or to a country or provider that is not in the
 lists. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.
 A running angel applies a change to accounts by itself, within a few seconds
-(no `down` and `up` needed): it restarts its listener on the same port, which
-ends the open connections. A change it cannot apply, such as a route without
+(no `down` and `up` needed). A new country or provider list goes into the
+running listener and the open connections go on; adding or removing an
+account, a new password or a new `allowed_clients` restarts the listener on
+the same port, which ends the open connections. A change it cannot apply, such as a route without
 nodes, leaves the running configuration in place and is reported as
 `reload.last_error` by `status`. See [design/live-reload.md](design/live-reload.md).
 
@@ -712,8 +714,9 @@ refreshes, `last_at` is the time of the latest one (RFC3339 UTC) and
 `last_error` its failure (`CODE: message`, never a URL), empty after a success.
 A fetched list that would leave an account without nodes is rejected and the
 old list stays. `reload.count` is how many times the angel applied changed
-files by restarting its listener (accounts, passwords, nodes, port), `last_at`
-the latest such restart, and `last_error` why the newest files are not applied
+files: new nodes and routes in place, keeping the open connections, and
+accounts, passwords or the port by restarting its listener; `last_at` the
+latest of them, and `last_error` why the newest files are not applied
 (an invalid `config.ktav`, a route without nodes); it is empty when the files
 on disk are what runs. A refresh that brings the same nodes, or only different
 node names, changes nothing and does not count.

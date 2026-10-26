@@ -14,6 +14,32 @@ const accountGroupPrefix = "netivri-group-"
 // core: they are sorted, indexed and replaced by internal names, so a key
 // never reaches a rule or a proxy name.
 func prepareRoutes(o Options) ([]map[string]any, []map[string]any, []string, error) {
+	return prepareRoutesGen(o, 0)
+}
+
+// memberProxyName is the internal name of node n of route r in routing
+// generation gen. Generation 0 (Start) keeps the short form; every
+// Reconfigure uses names of its own, so a connection opened before it is
+// still attributed to the node it really went through.
+func memberProxyName(gen, r, n int) string {
+	if gen == 0 {
+		return fmt.Sprintf("netivri-r%d-%d", r, n)
+	}
+	return fmt.Sprintf("netivri-g%d-r%d-%d", gen, r, n)
+}
+
+// groupProxyName is the internal name of the group of route r in routing
+// generation gen.
+func groupProxyName(gen, r int) string {
+	if gen == 0 {
+		return fmt.Sprintf("%s%d", accountGroupPrefix, r)
+	}
+	return fmt.Sprintf("netivri-g%d-group-%d", gen, r)
+}
+
+// prepareRoutesGen is prepareRoutes with the proxy names of routing
+// generation gen.
+func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, []string, error) {
 	if len(o.AccountRoute) == 0 {
 		if o.Node == nil {
 			return nil, nil, nil, nil
@@ -76,13 +102,13 @@ func prepareRoutes(o Options) ([]map[string]any, []map[string]any, []string, err
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			name := fmt.Sprintf("netivri-r%d-%d", keyIndex[key], index)
+			name := memberProxyName(gen, keyIndex[key], index)
 			prepared[0]["name"] = name
 			proxies = append(proxies, prepared[0])
 			members = append(members, name)
 		}
 		groups = append(groups, map[string]any{
-			"name":    fmt.Sprintf("%s%d", accountGroupPrefix, keyIndex[key]),
+			"name":    groupProxyName(gen, keyIndex[key]),
 			"type":    "select",
 			"proxies": members,
 		})
@@ -90,7 +116,7 @@ func prepareRoutes(o Options) ([]map[string]any, []map[string]any, []string, err
 
 	rules := make([]string, 0, len(logins)+1)
 	for _, login := range logins {
-		group := fmt.Sprintf("%s%d", accountGroupPrefix, keyIndex[o.AccountRoute[login]])
+		group := groupProxyName(gen, keyIndex[o.AccountRoute[login]])
 		rules = append(rules, "IN-USER,"+login+","+group)
 	}
 	fallback := "DIRECT"

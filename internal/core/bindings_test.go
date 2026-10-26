@@ -34,11 +34,11 @@ func TestSnapshotBindings(t *testing.T) {
 	table.acquire(affinityKey{login: "bob", site: "stale.example"}, func(int) bool { return false }, pick(2, false))
 	nanos.Store(base.UnixNano())
 
-	inst := &Instance{
-		stickyTable:   table,
+	inst := instanceWith(&routingState{
+		table:         table,
 		accountRoutes: map[string]string{"alice": "p~DE", "bob": "p~DE"},
 		routeLabels:   map[string][]string{"p~DE": {"p/n1", "p/n2", "p/n3"}},
-	}
+	})
 	got := inst.SnapshotBindings()
 	if len(got) != 1 {
 		t.Fatalf("SnapshotBindings = %+v, want only the live non-provisional binding", got)
@@ -181,11 +181,11 @@ func TestSnapshotWithFakeGroupMembers(t *testing.T) {
 	if _, err := g.DialContext(context.Background(), dialMetadata("alice", "www.example.com")); err != nil {
 		t.Fatalf("DialContext: %v", err)
 	}
-	inst := &Instance{
-		stickyTable:   table,
+	inst := instanceWith(&routingState{
+		table:         table,
 		accountRoutes: map[string]string{"alice": "k"},
 		routeLabels:   map[string][]string{"k": {"p/a", "p/b"}},
-	}
+	})
 	got := inst.SnapshotBindings()
 	if len(got) != 1 || got[0].Label != "p/b" || got[0].Site != "example.com" {
 		t.Fatalf("SnapshotBindings = %+v, want the example.com site on p/b", got)

@@ -49,6 +49,14 @@ type WarmOptions struct {
 	// lengthened interval (probeBackoffInterval). Start sets it from the
 	// sticky health table.
 	Down func(name string) bool
+
+	// only, when set, limits the probed proxies to the names it accepts;
+	// seed is the probe schedule each name starts with. Reconfigure sets both,
+	// so the earlier generations still in Mihomo's proxy map are not probed,
+	// nodes that stay down keep their lengthened interval and the others are
+	// not probed again before their interval is up.
+	only func(name string) bool
+	seed map[string]probeSchedule
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -191,14 +199,35 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 		}
 		w.pool.start()
 	}
-	for _, p := range tunnel.Proxies() {
-		if p != nil && isWarmLeaf(p) {
-			w.proxies = append(w.proxies, p)
-		}
-	}
-	sort.Slice(w.proxies, func(i, j int) bool { return w.proxies[i].Name() < w.proxies[j].Name() })
+	w.proxies = warmLeaves(tunnel.Proxies(), o.only)
+	w.backoff = seededBackoff(w.proxies, o.seed)
 	go w.run(ctx)
 	return w, nil
+}
+
+// warmLeaves returns the probed proxies of a proxy map sorted by name: the
+// netivri leaves that only accepts (every one when only is nil).
+func warmLeaves(proxies map[string]C.Proxy, only func(name string) bool) []C.Proxy {
+	var out []C.Proxy
+	for _, p := range proxies {
+		if p != nil && isWarmLeaf(p) && (only == nil || only(p.Name())) {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out
+}
+
+// seededBackoff lays the seed out in proxy order; nil without a seed.
+func seededBackoff(proxies []C.Proxy, seed map[string]probeSchedule) []probeSchedule {
+	if len(seed) == 0 {
+		return nil
+	}
+	out := make([]probeSchedule, len(proxies))
+	for i, p := range proxies {
+		out[i] = seed[p.Name()]
+	}
+	return out
 }
 
 func isWarmLeaf(p C.Proxy) bool {
@@ -258,6 +287,11 @@ func (w *warmer) probeAll(parent context.Context) {
 	for i, p := range w.proxies {
 		st := &w.backoff[i]
 		if !w.isDown(p.Name()) {
+			if st.downRounds == 0 && now.Before(st.nextDue) {
+				// Seeded by Reconfigure: probed by the previous generation
+				// less than an interval ago.
+				continue
+			}
 			*st = probeSchedule{}
 			due = append(due, scheduled{proxy: p, index: i})
 			continue
@@ -367,6 +401,39 @@ func (w *warmer) Close() {
 			w.pool.wait(5 * time.Second)
 		}
 	})
+}
+
+// backoffByName returns when every probed proxy is next due, keyed by proxy
+// name: the backoff of a node that is down, and one interval after the last
+// probe for the others, so a Reconfigure keeps the probe cadence instead of
+// probing every node again at once. Nil-safe.
+func (w *warmer) backoffByName() map[string]probeSchedule {
+	if w == nil {
+		return nil
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make(map[string]probeSchedule)
+	// Down nodes, and nodes still waiting for the schedule they were seeded
+	// with: a generation that never probed a node passes its seed on.
+	for i, st := range w.backoff {
+		if i < len(w.proxies) && st != (probeSchedule{}) {
+			out[w.proxies[i].Name()] = st
+		}
+	}
+	for _, h := range w.stats.Nodes {
+		if h.CheckedAt.IsZero() {
+			continue
+		}
+		st, ok := out[h.Name]
+		if ok && st.downRounds > 0 {
+			continue
+		}
+		if due := h.CheckedAt.Add(w.options.ProbeInterval); !ok || due.After(st.nextDue) {
+			out[h.Name] = probeSchedule{nextDue: due}
+		}
+	}
+	return out
 }
 
 // isDown reports whether the node behind an internal proxy name is down;

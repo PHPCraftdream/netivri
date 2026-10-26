@@ -8,7 +8,8 @@
 // intact. There is no fallback when a routed node is unreachable. Route
 // groups are sticky groups: connections of one account to one site leave
 // through the same member while it is healthy (see docs/design/node-stats.md).
-// Routes are chosen at Start time only; hot-switching is not supported yet.
+// Reconfigure replaces the account routes of a running instance without
+// closing its listener or its open connections.
 package core
 
 import (
@@ -20,6 +21,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter/inbound"
@@ -94,26 +96,44 @@ type Options struct {
 
 // Instance is one running proxy listener.
 type Instance struct {
-	mu            sync.Mutex
-	closed        bool
-	ln            *mixed.Listener
-	done          chan struct{} // closed by Close; stops the ctx watcher
-	tt            *trackedTunnel
-	route         string // "direct" or "node"; immutable after Start publishes the instance
-	accountRoutes map[string]string
-	warm          *warmer // nil without Options.Warm; immutable after Start publishes the instance
-	// Sticky-group state, nil without account routes; immutable after Start
-	// publishes the instance.
-	stickyTable  *affinityTable
-	stickyHealth *healthTable
-	poller       *throughputPoller
-	memberLabels map[string]string // route member proxy name -> node label, for Activity
-	// routeLabels maps a route key to the statistics label per member, for
-	// SnapshotBindings; immutable after Start publishes the instance.
-	routeLabels map[string][]string
+	mu     sync.Mutex
+	closed bool
+	ln     *mixed.Listener
+	done   chan struct{} // closed by Close; stops the ctx watcher
+	tt     *trackedTunnel
+	route  string // "direct" or "node"; immutable after Start publishes the instance
+	// poller is nil without account routes; one poller serves every
+	// generation, so the byte counts of open connections carry on.
+	// Immutable after Start publishes the instance.
+	poller *throughputPoller
 	// restoredBindings is how many of Options.InitialBindings Start actually
 	// installed; immutable after Start publishes the instance.
 	restoredBindings int
+	// routing is the part Reconfigure replaces; never nil once published.
+	routing atomic.Pointer[routingState]
+}
+
+// routingState is one generation of the account routes: Start builds
+// generation 0 and every Reconfigure the next one.
+type routingState struct {
+	gen           int
+	accountRoutes map[string]string
+	warm          *warmer // nil without Options.Warm
+	// Sticky-group state, nil without account routes.
+	table  *affinityTable
+	health *healthTable
+	// memberLabels maps this generation's member proxy names to node labels;
+	// connLabels also keeps the names of earlier generations that open
+	// connections still go through, for Activity and the poller.
+	memberLabels map[string]string
+	connLabels   map[string]string
+	// routeLabels maps a route key to the statistics label per member, for
+	// SnapshotBindings.
+	routeLabels map[string][]string
+	// names are the proxies this generation added to Mihomo's proxy map;
+	// prevNames are those of the generation before, still in the map so a
+	// connection matched by the previous rules finds its group.
+	names, prevNames []string
 }
 
 var (
@@ -299,15 +319,19 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		done:             make(chan struct{}),
 		route:            route,
 		tt:               tt,
-		accountRoutes:    copyAccountRoutes(o.AccountRoute),
-		warm:             warm,
-		stickyTable:      table,
-		stickyHealth:     health,
 		poller:           poller,
-		memberLabels:     memberNameLabels(plans),
-		routeLabels:      routeLabels(plans),
 		restoredBindings: restored,
 	}
+	inst.routing.Store(&routingState{
+		accountRoutes: copyAccountRoutes(o.AccountRoute),
+		warm:          warm,
+		table:         table,
+		health:        health,
+		memberLabels:  memberNameLabels(plans),
+		connLabels:    memberNameLabels(plans),
+		routeLabels:   routeLabels(plans),
+		names:         planProxyNames(plans),
+	})
 	current = inst
 
 	// Optional lifecycle: cancel ctx to stop the instance.
@@ -321,6 +345,15 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		}()
 	}
 	return inst, nil
+}
+
+// state returns the current routing generation; an Instance that was never
+// published (tests) has an empty one.
+func (i *Instance) state() *routingState {
+	if st := i.routing.Load(); st != nil {
+		return st
+	}
+	return &routingState{}
 }
 
 // Addr returns the actual host:port the listener is bound to.
@@ -341,23 +374,25 @@ func (i *Instance) Route() string {
 // WarmStats returns the warm-up counters and node health, and false when the
 // instance runs without Options.Warm.
 func (i *Instance) WarmStats() (WarmStats, bool) {
-	if i.warm == nil {
+	warm := i.state().warm
+	if warm == nil {
 		return WarmStats{}, false
 	}
-	return i.warm.Stats(), true
+	return warm.Stats(), true
 }
 
 // AffinityStats returns the live number of site bindings and the rebind
 // counter; it is safe to call while the instance runs.
 func (i *Instance) AffinityStats() AffinityStats {
-	if i.stickyTable == nil {
+	table := i.state().table
+	if table == nil {
 		return AffinityStats{}
 	}
 	return AffinityStats{
-		Bindings:  i.stickyTable.count(),
-		Rebinds:   i.stickyTable.rebindCount(),
-		Hedges:    i.stickyTable.hedgeCount(),
-		HedgeWins: i.stickyTable.hedgeWinCount(),
+		Bindings:  table.count(),
+		Rebinds:   table.rebindCount(),
+		Hedges:    table.hedgeCount(),
+		HedgeWins: table.hedgeWinCount(),
 	}
 }
 
@@ -370,14 +405,15 @@ func (i *Instance) RestoredBindings() int {
 
 // AccountRoutes returns a copy of the configured login-to-route-key routes.
 func (i *Instance) AccountRoutes() map[string]string {
-	return copyAccountRoutes(i.accountRoutes)
+	return copyAccountRoutes(i.state().accountRoutes)
 }
 
 // MemberLabels returns a copy of the route member proxy name to node label
 // mapping used for Activity; empty when the instance runs without routes.
 func (i *Instance) MemberLabels() map[string]string {
-	out := make(map[string]string, len(i.memberLabels))
-	for name, label := range i.memberLabels {
+	labels := i.state().memberLabels
+	out := make(map[string]string, len(labels))
+	for name, label := range labels {
 		out[name] = label
 	}
 	return out
@@ -407,7 +443,7 @@ func (i *Instance) Close() error {
 	// before Mihomo's global state is torn down.
 	i.poller.stop()
 	// The probes and the pool dial through Mihomo's proxies: stop them first.
-	i.warm.Close()
+	i.state().warm.Close()
 	executor.Shutdown()
 	// Allow-all again: the filter is process-global state.
 	resetAllowedClients()

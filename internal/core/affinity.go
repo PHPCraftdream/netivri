@@ -205,6 +205,14 @@ func (t *affinityTable) count() int {
 	return n
 }
 
+// carryCounters continues the rebind and hedge counters of old, the table a
+// new routing generation replaces.
+func (t *affinityTable) carryCounters(old *affinityTable) {
+	t.rebinds.Store(old.rebinds.Load())
+	t.hedges.Store(old.hedges.Load())
+	t.hedgeWins.Store(old.hedgeWins.Load())
+}
+
 // rebindCount returns how often a binding was replaced because its node was
 // down.
 func (t *affinityTable) rebindCount() uint64 {

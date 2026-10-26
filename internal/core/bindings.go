@@ -77,14 +77,19 @@ func (t *affinityTable) loadBinding(key affinityKey, member int, boundAt, lastUs
 // call while the instance runs and never creates, refreshes or counts
 // bindings.
 func (i *Instance) SnapshotBindings() []BindingRecord {
-	table := i.stickyTable
+	return i.state().snapshotBindings()
+}
+
+// snapshotBindings resolves the live bindings of one generation to labels.
+func (st *routingState) snapshotBindings() []BindingRecord {
+	table := st.table
 	if table == nil {
 		return nil
 	}
 	snap := table.snapshot(table.now(), maxAffinityBindings)
 	out := make([]BindingRecord, 0, len(snap))
 	for _, s := range snap {
-		labels := i.routeLabels[i.accountRoutes[s.key.login]]
+		labels := st.routeLabels[st.accountRoutes[s.key.login]]
 		if s.member < 0 || s.member >= len(labels) {
 			continue
 		}

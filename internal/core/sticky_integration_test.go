@@ -124,11 +124,30 @@ func TestStickyGroupAffinity(t *testing.T) {
 // It is used where failures are expected (dead route nodes).
 func tryDialAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, password string) error {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp", proxyAddress, testTimeout)
+	connection, err := openAccountSOCKS5(t, proxyAddress, domain, backend, login, password)
 	if err != nil {
 		return err
 	}
 	defer connection.Close()
+	return accountEcho(connection)
+}
+
+// openAccountSOCKS5 authenticates as login and connects to domain (port of
+// backend) through the proxy; the caller closes the connection.
+func openAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, password string) (net.Conn, error) {
+	t.Helper()
+	connection, err := net.DialTimeout("tcp", proxyAddress, testTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if err := socks5AccountHandshake(connection, domain, backend, login, password); err != nil {
+		_ = connection.Close()
+		return nil, err
+	}
+	return connection, nil
+}
+
+func socks5AccountHandshake(connection net.Conn, domain, backend, login, password string) error {
 	if err := connection.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 		return err
 	}
@@ -197,7 +216,13 @@ func tryDialAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, pa
 	default:
 		return fmt.Errorf("unknown socks5 address type: %d", reply[3])
 	}
-	// The tunnel must carry traffic before the connection counts as success.
+	return nil
+}
+
+// accountEcho sends a payload through an open connection to an echo backend
+// and checks it comes back: the tunnel must carry traffic before the
+// connection counts as success.
+func accountEcho(connection net.Conn) error {
 	payload := []byte("sticky-probe")
 	if _, err := connection.Write(payload); err != nil {
 		return err

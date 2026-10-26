@@ -11,7 +11,9 @@ A running angel keeps itself in step with its files. Two things feed it:
    restarts the angel.
 
 Both end in the same place: the angel rebuilds what the core is made of and,
-if it differs from what runs, replaces the core.
+if it differs from what runs, applies it. New nodes and routes go into the
+running core, which keeps its listener and its open connections; a change of
+the listener or the accounts replaces the core.
 
 ## Goals
 
@@ -25,13 +27,10 @@ if it differs from what runs, replaces the core.
 
 ## Non-goals
 
-- **No hot swap.** The core takes its routes and accounts when it starts
-  (`core.Start`; see the header of `internal/core/core.go`). Replacing a route
-  means closing the listener and starting a new one on the same port, so the
-  open connections end and the affinity counters and warm-up counters start
-  from zero. The site bindings themselves are persisted in the statistics
-  store and restored on the new core (see [node-stats.md](node-stats.md)). Swapping the members of a sticky group in place is a separate,
-  larger change.
+- **No hot swap of the listener.** The address, the allowed clients and the
+  credentials are taken when the core starts (`core.Start`). Changing one of
+  them closes the listener and starts a new one on the same port, so the open
+  connections end.
 - No notification channel from the CLI to the angel: see "Why polling".
 - No per-subscription interval, no refresh at an exact wall-clock time.
 
@@ -46,8 +45,11 @@ core does not read them) and the display name of each node (the core renames
 every node itself, and providers put changing text such as traffic left into
 it).
 
+The fingerprint has two halves: `listenerFingerprint` (address, allowed
+clients, credentials) and `routesFingerprint` (nodes, labels, tiers, routes).
 The angel compares the fingerprint of what runs with the fingerprint of the
-files. Equal: nothing happens. That also covers the angel's own write when a
+files. Equal: nothing happens. Only the routes half differs: the change is
+applied in place. The listener half differs: the core is restarted. That also covers the angel's own write when a
 client claims an `init` password: the in-memory configuration already holds
 the claimed hash.
 
@@ -76,6 +78,41 @@ stat of a handful of files every 2 seconds. A `POST /v1/reload` on the control
 channel, called by the commands after they write, would be immediate and could
 report the outcome to the caller; it can be added later without changing the
 rest.
+
+## Applying routes in place
+
+A subscription refresh that brings a changed node list, or a changed
+`exit_country` or `provider` of an account, only touches the routes half. The
+angel tells the statistics store about the nodes and calls
+`Reconfigure` on the running core (`internal/core/reconfigure.go`):
+
+1. The new member proxies are parsed and the new rules built; anything that
+   fails here leaves the core as it was.
+2. The probes of the old routes stop. The health of every node label that
+   stays (measurements, down state, hedge budget) and its probe schedule are
+   copied to the new routes; nothing is announced for it, so a node that was
+   down is not logged as down a second time and keeps its lengthened probe
+   interval, and a node that is up is not probed again before its interval
+   is up. The site bindings are moved by label to the node's new
+   place in the route; a binding to a node that left the route is dropped,
+   and so are all bindings of an account whose country or provider lists
+   changed (its route key is new), so its sites follow the new preference.
+   The affinity counters continue.
+3. The new proxies and sticky groups get names of their own generation
+   (`netivri-g{N}-r{R}-{I}`, `netivri-g{N}-group-{R}`) and are added to
+   Mihomo's proxy map, then the new rules replace the old ones. Mihomo's
+   configuration is not re-applied and the listener is not touched. The
+   previous generation stays in the map until the next change, so a connection
+   that matched the old rules a moment before the switch still finds its
+   group.
+4. Open connections finish on the node they use; `status` keeps showing them
+   under that node, and their traffic still counts for it.
+
+The core refuses a change it cannot take in place (an instance that was
+started without account routes, or routing through a single default node)
+with `core.ErrReconfigureUnsupported`, and the angel restarts it instead. Any
+other `Reconfigure` error is logged (`routes not updated in place, restarting
+the listener: ...`) and also ends in a restart.
 
 ## Restarting the core
 
@@ -130,6 +167,7 @@ is then applied by the file watcher like any other change.
 | a route has no nodes after a change | running core stays, `reload.last_error` |
 | a refresh fails (network, HTTP status, parse) | old snapshot stays, `refresh.last_error`, retry in 10 minutes |
 | a refresh would empty a route | refresh rejected, old snapshot stays, `refresh.last_error` |
+| the core cannot take routes in place | the core is restarted |
 | the new core does not start | previous core is started again |
 | neither core starts | the angel stops |
 | `fetch.update_interval: off` | no refresh; files are still watched |
@@ -146,12 +184,16 @@ outcome and per applied or refused configuration, never a URL or a credential.
 Unit tests start the angel logic on a fake core (`coreStart` is a variable,
 the core is the small `coreInstance` interface) and cover: the fingerprint
 (what changes it and what must not), the file signature, restart only on a
-real change, a random port that stays, the rollback to the previous core, the
+real change, routes applied in place without a restart and the restart when
+that fails, a random port that stays, the rollback to the previous core, the
 angel stopping when no core starts, a refused file or empty route keeping the
 core, the statistics store opened late, the port retry, the watcher loop, the
 refresh loop (due, off, failure and retry wait, stop with its context), the
 refresh schedule, the rejection of a refresh that would empty a route, the
-merge of a claimed password into the file, and the `status` output.
+merge of a claimed password into the file, and the `status` output. Core
+tests cover `Reconfigure`: an open connection that survives two changes and
+keeps its node label, bindings and health carried by label, a down node that
+stays down without a second report, and the changes it refuses.
 End-to-end tests start a real angel (`up --foreground`), add and remove an
 account with the CLI, replace a stored snapshot, and break and repair
 `config.ktav`, then check the routing through fake upstream nodes and the

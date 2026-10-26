@@ -546,7 +546,7 @@ func TestInstanceAffinityStats(t *testing.T) {
 		func() (int, bool) { return 0, false },
 	)
 	table.rebinds.Add(3)
-	inst := &Instance{stickyTable: table}
+	inst := instanceWith(&routingState{table: table})
 	got := inst.AffinityStats()
 	if got.Bindings != 1 || got.Rebinds != 3 {
 		t.Fatalf("AffinityStats = %+v, want {1 3}", got)

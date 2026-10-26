@@ -329,8 +329,9 @@ var helpTopics = []helpTopic{
 			"quote it in shells that expand globs.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
-			"A running angel applies account changes by itself within a few seconds. Its listener restarts on the " +
-			"same port, so open connections end; 'netivri status' shows the outcome under 'reload'.",
+			"A running angel applies account changes by itself within a few seconds. A new or removed account or a " +
+			"new password restarts its listener on the same port, so open connections end; a new country or " +
+			"provider list keeps them. 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
 			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
 			{"Show one account and its route", "netivri account show alice"},
@@ -710,8 +711,9 @@ var helpTopics = []helpTopic{
 			"check per account (its route has stored nodes and, with a running angel, a live node " +
 			"in the first tier that has nodes; without an angel the stored nodes are counted and " +
 			"the liveness part is a warn) and log (no WARN or ERROR entries in the last hour of " +
-			"the angel log; the log is read even when the angel is down, and a missing log file " +
-			"is fine).\n\n" +
+			"the angel log; reports of a node going down are only counted, since the account " +
+			"checks cover the routes; the log is read even when the angel is down, and a missing " +
+			"log file is fine).\n\n" +
 			"A check that cannot run is a warn with the reason, never a failure of the whole " +
 			"command. No check contacts anything but the local angel and the local port; " +
 			"subscription URLs, passwords and hashes are never printed.",

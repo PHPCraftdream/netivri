@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -274,6 +275,7 @@ var _ C.ProxyAdapter = (*stickyGroup)(nil)
 type routePlan struct {
 	index  int
 	key    string   // route key the plan was built from
+	group  string   // internal proxy name of the route's group
 	names  []string // internal proxy names, member order
 	labels []string // statistics labels, member order
 	tiers  []int    // priority tier per member, lower first; nil = one tier
@@ -302,7 +304,11 @@ func checkedTiers(tiers []int, n int) ([]int, error) {
 // the sorted distinct values of AccountRoute) and resolves the statistics
 // label of every member. Errors use nodeInvalid and never contain labels or
 // keys.
-func buildRoutePlans(o Options) ([]routePlan, error) {
+func buildRoutePlans(o Options) ([]routePlan, error) { return buildRoutePlansGen(o, 0) }
+
+// buildRoutePlansGen is buildRoutePlans with the proxy names of routing
+// generation gen (see memberProxyName).
+func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 	// Validate every NodeLabels entry of a known route, referenced or not and
 	// whether or not any account has a route.
 	for key, labels := range o.NodeLabels {
@@ -342,9 +348,9 @@ func buildRoutePlans(o Options) ([]routePlan, error) {
 				Exit:    cli.ExitNotFound,
 			}
 		}
-		plan := routePlan{index: index, key: key}
+		plan := routePlan{index: index, key: key, group: groupProxyName(gen, index)}
 		for node := range nodes {
-			plan.names = append(plan.names, fmt.Sprintf("netivri-r%d-%d", index, node))
+			plan.names = append(plan.names, memberProxyName(gen, index, node))
 			plan.labels = append(plan.labels, fmt.Sprintf("r%d-%d", index, node))
 		}
 		if labels, ok := o.NodeLabels[key]; ok {
@@ -373,26 +379,49 @@ func buildRoutePlans(o Options) ([]routePlan, error) {
 // default node. Must run after executor.ApplyConfig.
 func installStickyGroups(plans []routePlan, table *affinityTable, health *healthTable, observer Observer) error {
 	proxies := tunnel.Proxies()
-	updated := make(map[string]C.Proxy, len(proxies))
+	groups, err := buildStickyGroups(plans, proxies, table, health, observer)
+	if err != nil {
+		return err
+	}
+	updated := make(map[string]C.Proxy, len(proxies)+len(groups))
 	for name, existing := range proxies {
 		updated[name] = existing
 	}
+	for name, group := range groups {
+		updated[name] = group
+	}
+	tunnel.UpdateProxies(updated, tunnel.Providers())
+	return nil
+}
+
+// buildStickyGroups builds the sticky adapter of every plan over the member
+// proxies found in proxies, keyed by group name. It changes nothing global.
+func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *affinityTable, health *healthTable, observer Observer) (map[string]C.Proxy, error) {
+	groups := make(map[string]C.Proxy, len(plans))
 	for _, plan := range plans {
-		name := fmt.Sprintf("%s%d", accountGroupPrefix, plan.index)
 		members := make([]C.Proxy, 0, len(plan.names))
 		for _, memberName := range plan.names {
 			proxy, ok := proxies[memberName]
 			if !ok || proxy == nil {
-				return errors.New("core: missing route member proxy " + memberName)
+				return nil, errors.New("core: missing route member proxy " + memberName)
 			}
 			members = append(members, proxy)
 		}
-		group := newStickyGroup(name, members, plan.labels, table, health, observer)
+		group := newStickyGroup(plan.group, members, plan.labels, table, health, observer)
 		group.tiers = plan.tiers
-		updated[name] = adapter.NewProxy(group)
+		groups[plan.group] = adapter.NewProxy(group)
 	}
-	tunnel.UpdateProxies(updated, tunnel.Providers())
-	return nil
+	return groups, nil
+}
+
+// planProxyNames lists the group and member proxy names of the plans.
+func planProxyNames(plans []routePlan) []string {
+	var names []string
+	for _, plan := range plans {
+		names = append(names, plan.group)
+		names = append(names, plan.names...)
+	}
+	return names
 }
 
 // probeHook maps internal proxy names to node labels and feeds the health
@@ -492,11 +521,14 @@ type accountTraffic struct {
 // moved since the previous read per node.
 type throughputPoller struct {
 	source   trackerSource
-	health   *healthTable
 	observer Observer
-	labels   map[string]string // member proxy name -> node label
 	window   time.Duration
 	clock    stickyClock
+
+	// targetsMu guards health and labels, which Reconfigure replaces.
+	targetsMu sync.Mutex
+	health    *healthTable
+	labels    map[string]string // member proxy name -> node label
 
 	// started and lastTick come from the injected clock; last holds the
 	// per-tracker totals of the previous read. All three are touched only by
@@ -514,11 +546,7 @@ func newThroughputPoller(source trackerSource, health *healthTable, observer Obs
 	if clock == nil {
 		clock = realStickyClock{}
 	}
-	labels := make([]string, 0, len(memberLabels))
-	for _, label := range memberLabels {
-		labels = append(labels, label)
-	}
-	health.register(labels)
+	health.register(mapValues(memberLabels))
 	ctx, cancel := context.WithCancel(context.Background())
 	return &throughputPoller{
 		source:   source,
@@ -566,6 +594,9 @@ func (p *throughputPoller) run() {
 // that already existed before the previous tick is only baselined. Trackers
 // that disappeared are pruned.
 func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Duration) {
+	p.targetsMu.Lock()
+	health, labels := p.health, p.labels
+	p.targetsMu.Unlock()
 	type accountKey struct{ login, label string }
 	nodeMoved := make(map[string]*accountTraffic)
 	acctMoved := make(map[accountKey]*accountTraffic)
@@ -575,7 +606,7 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 		if info == nil {
 			return true
 		}
-		label := p.memberLabel(info.Chain)
+		label := chainLabel(info.Chain, labels)
 		if label == "" {
 			return true
 		}
@@ -635,7 +666,7 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 		if p.observer != nil {
 			p.observer.ObserveThroughput(label, bytes, window)
 		}
-		p.health.recordThroughput(label, bytes, window)
+		health.recordThroughput(label, bytes, window)
 	}
 	for key, acc := range acctMoved {
 		if acc.up+acc.down < throughputSampleMin {
@@ -662,13 +693,33 @@ func (p *throughputPoller) stop() {
 	}
 }
 
-// memberLabel maps a connection chain to the node label of the member it
-// used, or "" when the chain contains no member of this instance.
-func (p *throughputPoller) memberLabel(chain C.Chain) string {
+// setTargets points the poller at a new health table and member names; the
+// next window uses them. Nil-safe.
+func (p *throughputPoller) setTargets(health *healthTable, memberLabels map[string]string) {
+	if p == nil {
+		return
+	}
+	health.register(mapValues(memberLabels))
+	p.targetsMu.Lock()
+	p.health, p.labels = health, memberLabels
+	p.targetsMu.Unlock()
+}
+
+// chainLabel maps a connection chain to the node label of the member it
+// used, or "" when the chain contains no member in labels.
+func chainLabel(chain C.Chain, labels map[string]string) string {
 	for _, name := range chain {
-		if label, ok := p.labels[name]; ok {
+		if label, ok := labels[name]; ok {
 			return label
 		}
 	}
 	return ""
+}
+
+func mapValues(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
 }

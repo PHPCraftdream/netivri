@@ -251,6 +251,50 @@ func (t *healthTable) register(labels []string) {
 	}
 }
 
+// carryHealth builds the table of a new routing generation: a label that
+// stays keeps its measurements, down state and hedge budget, the others start
+// fresh. Nothing is announced, so a node that was down before stays down
+// without a second report. notify is the table's new listener.
+func carryHealth(old *healthTable, labels []string, notify func(label string, down bool)) *healthTable {
+	t := newHealthTable()
+	t.notify = notify
+	for _, label := range labels {
+		if _, done := t.entries[label]; done || old == nil {
+			continue
+		}
+		if h := old.entries[label]; h != nil {
+			t.entries[label] = h.cloneFor(notify)
+		}
+	}
+	t.register(labels)
+	return t
+}
+
+// cloneFor copies the record under its lock for a new table with listener
+// notify.
+func (h *nodeHealth) cloneFor(notify func(label string, down bool)) *nodeHealth {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	c := &nodeHealth{
+		probeEWMS:     h.probeEWMS,
+		dialEWMS:      h.dialEWMS,
+		throughput:    h.throughput,
+		hasProbe:      h.hasProbe,
+		hasDial:       h.hasDial,
+		hasThroughput: h.hasThroughput,
+		ring:          h.ring,
+		ringLen:       h.ringLen,
+		ringPos:       h.ringPos,
+		consProbeFail: h.consProbeFail,
+		consDialFail:  h.consDialFail,
+		label:         h.label,
+		notify:        notify,
+	}
+	c.downFlag.Store(h.downFlag.Load())
+	c.hedgeUnits.Store(h.hedgeUnits.Load())
+	return c
+}
+
 // health returns the record for a registered label, or nil.
 func (t *healthTable) health(label string) *nodeHealth { return t.entries[label] }
 

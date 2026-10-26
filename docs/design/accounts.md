@@ -151,8 +151,10 @@ Consequences:
   route has a node. There is never a fallback to direct and never to a country
   or provider outside the account's lists.
 - Accounts without a country, and `auth`'s account, take the default route.
-- A running angel applies changes by itself (see [live-reload.md](live-reload.md));
-  the listener restarts, so open connections end.
+- A running angel applies changes by itself (see [live-reload.md](live-reload.md)).
+  A new country or provider list keeps the open connections; adding or
+  removing an account or a new password restarts the listener, so open
+  connections end.
 - `set-country` and `set-provider` ask the question `up` asks before they
   write: would every account addressed still have a stored node on its route?
   If not, nothing is written for any account (`NO_NODES_FOR_COUNTRY`). Whether
