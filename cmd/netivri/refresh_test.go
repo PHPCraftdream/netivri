@@ -180,12 +180,12 @@ func TestAccountRoutePoolWithOverride(t *testing.T) {
 	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "main", ExitCountry: "DE"}}
 
 	pool, err := accountRoutePool(home, cfg)
-	if err != nil || pool.nodes["main~DE"][0]["name"] != "old" {
+	if err != nil || pool.nodes[credentialRouteKey("main", "DE", "", "")][0]["name"] != "old" {
 		t.Fatalf("stored pool = %+v, %v", pool.nodes, err)
 	}
 	over := map[string]*subscription.Snapshot{"main": {Nodes: []subscription.Node{node("new", "DE")}}}
 	pool, err = accountRoutePoolWith(home, cfg, over)
-	if err != nil || pool.nodes["main~DE"][0]["name"] != "new" {
+	if err != nil || pool.nodes[credentialRouteKey("main", "DE", "", "")][0]["name"] != "new" {
 		t.Fatalf("overridden pool = %+v, %v", pool.nodes, err)
 	}
 	over["main"] = &subscription.Snapshot{Nodes: []subscription.Node{node("other", "NL")}}
