@@ -26,7 +26,18 @@ func Marshal(cfg *Config) (string, error) {
 	if render.Listen.AllowedClients == AllowedClientsAny {
 		render.Listen.AllowedClients = ""
 	}
-	body, err := ktavDumps(&render)
+	var body string
+	var err error
+	if render.Chain == (Chain{}) {
+		// No chain proxies: render exactly as before the chain existed, so a
+		// rewrite adds no empty chain table to an existing file.
+		body, err = ktavDumps(&configWithoutChain{
+			Listen: render.Listen, Auth: render.Auth, Fetch: render.Fetch,
+			Subscriptions: render.Subscriptions, Accounts: render.Accounts, Selection: render.Selection,
+		})
+	} else {
+		body, err = ktavDumps(&render)
+	}
 	if err != nil {
 		// Binding rendering errors get the same structured-fields-only
 		// hygiene as parse errors.
@@ -44,6 +55,16 @@ func Marshal(cfg *Config) (string, error) {
 		return "", invalid("the rendered configuration does not round-trip")
 	}
 	return doc, nil
+}
+
+// configWithoutChain is Config without the chain table, in the same key order.
+type configWithoutChain struct {
+	Listen        Listen         `json:"listen"`
+	Auth          Auth           `json:"auth"`
+	Fetch         Fetch          `json:"fetch"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	Accounts      []Account      `json:"accounts,omitempty"`
+	Selection     Selection      `json:"selection"`
 }
 
 // configEqual compares two configurations, treating nil and empty

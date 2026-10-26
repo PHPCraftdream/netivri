@@ -197,7 +197,9 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	for _, key := range keys {
 		nodes := o.RouteNodes[key]
 		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
-		directRoute := len(nodes) == 0 && !directPost && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key])) && (o.RoutePost[key] == "" || isNoChain(o.RoutePost[key]))
+		// A plain DIRECT route is explicit: both sides say none. A route with
+		// no nodes and no such marker is a missing route, not a direct one.
+		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
 		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, nil, nil, &cli.Error{
 				Code:    "NO_NODES_FOR_COUNTRY",

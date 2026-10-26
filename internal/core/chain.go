@@ -8,6 +8,12 @@ import (
 
 func isNoChain(value string) bool { return strings.EqualFold(value, "none") }
 
+// explicitNoChain reports whether m holds the value none for key.
+func explicitNoChain(m map[string]string, key string) bool {
+	v, ok := m[key]
+	return ok && isNoChain(v)
+}
+
 // chainProxy parses an effective SOCKS5 URI and renders its Mihomo proxy mapping.
 func chainProxy(raw, name string) (map[string]any, error) {
 	u, err := url.Parse(raw)

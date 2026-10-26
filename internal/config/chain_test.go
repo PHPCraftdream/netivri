@@ -20,7 +20,8 @@ func TestSOCKS5ChainValidation(t *testing.T) {
 		c.Chain.PreSOCKS5 = value
 		if err := c.Validate(); err == nil {
 			t.Errorf("accepted %q", value)
-		} else if strings.Contains(err.Error(), value) {
+		} else if leak := strings.ReplaceAll(value, "socks5://", ""); leak != "" && strings.Contains(err.Error(), leak) {
+			// The fixed message itself names the scheme, which is not a leak.
 			t.Errorf("error leaked value %q: %v", value, err)
 		}
 	}
