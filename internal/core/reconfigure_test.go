@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -216,29 +217,44 @@ func TestWarmLeavesAndSeededBackoff(t *testing.T) {
 		by["netivri-g1-r0-0"] != (probeSchedule{nextDue: checked.Add(45 * time.Second)}) {
 		t.Errorf("backoffByName = %v", by)
 	}
+
+	// A seed the warmer has not reached yet is passed on to the next
+	// generation, unless a later probe moved the schedule.
+	seeded := time.Unix(600, 0)
+	w = &warmer{proxies: only, backoff: []probeSchedule{{nextDue: seeded}, {nextDue: seeded}}, options: WarmOptions{ProbeInterval: 45 * time.Second}}
+	w.stats.Nodes = []NodeHealth{{Name: "netivri-g1-r0-1", Alive: true, CheckedAt: seeded.Add(time.Minute)}}
+	by = w.backoffByName()
+	if by["netivri-g1-r0-0"] != (probeSchedule{nextDue: seeded}) ||
+		by["netivri-g1-r0-1"] != (probeSchedule{nextDue: seeded.Add(time.Minute + 45*time.Second)}) {
+		t.Errorf("backoffByName with seeds = %v", by)
+	}
 }
 
 // A node that is not down but was seeded by Reconfigure waits for its
 // interval; afterwards it is probed every round again.
 func TestProbeAllHonoursSeededSchedule(t *testing.T) {
 	clock := &testWarmClockRef{now: time.Unix(1000, 0)}
+	var mu sync.Mutex
 	probed := map[string]int{}
+	count := func(name string) int { mu.Lock(); defer mu.Unlock(); return probed[name] }
 	w := &warmer{options: WarmOptions{ProbeInterval: 45 * time.Second, ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"}, clock: clock}
 	w.proxies = []C.Proxy{testWarmProxy{name: "netivri-g1-r0-0", typ: C.Socks5}, testWarmProxy{name: "netivri-g1-r0-1", typ: C.Socks5}}
 	w.backoff = []probeSchedule{{nextDue: clock.now.Add(30 * time.Second)}, {}}
 	w.probe = func(_ context.Context, p C.Proxy, _ string) (uint16, error) {
+		mu.Lock()
 		probed[p.Name()]++
+		mu.Unlock()
 		return 10, nil
 	}
 	w.probeAll(context.Background())
-	if probed["netivri-g1-r0-0"] != 0 || probed["netivri-g1-r0-1"] != 1 {
-		t.Fatalf("first round probed %v, want only the unseeded node", probed)
+	if count("netivri-g1-r0-0") != 0 || count("netivri-g1-r0-1") != 1 {
+		t.Fatalf("first round probed %d/%d, want only the unseeded node", count("netivri-g1-r0-0"), count("netivri-g1-r0-1"))
 	}
 	clock.now = clock.now.Add(31 * time.Second)
 	w.probeAll(context.Background())
 	w.probeAll(context.Background())
-	if probed["netivri-g1-r0-0"] != 2 || probed["netivri-g1-r0-1"] != 3 {
-		t.Fatalf("later rounds probed %v, want every node each round", probed)
+	if count("netivri-g1-r0-0") != 2 || count("netivri-g1-r0-1") != 3 {
+		t.Fatalf("later rounds probed %d/%d, want every node each round", count("netivri-g1-r0-0"), count("netivri-g1-r0-1"))
 	}
 }
 

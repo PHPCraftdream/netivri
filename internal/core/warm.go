@@ -414,14 +414,23 @@ func (w *warmer) backoffByName() map[string]probeSchedule {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	out := make(map[string]probeSchedule)
-	for _, h := range w.stats.Nodes {
-		if !h.CheckedAt.IsZero() {
-			out[h.Name] = probeSchedule{nextDue: h.CheckedAt.Add(w.options.ProbeInterval)}
+	// Down nodes, and nodes still waiting for the schedule they were seeded
+	// with: a generation that never probed a node passes its seed on.
+	for i, st := range w.backoff {
+		if i < len(w.proxies) && st != (probeSchedule{}) {
+			out[w.proxies[i].Name()] = st
 		}
 	}
-	for i, st := range w.backoff {
-		if i < len(w.proxies) && st.downRounds > 0 {
-			out[w.proxies[i].Name()] = st
+	for _, h := range w.stats.Nodes {
+		if h.CheckedAt.IsZero() {
+			continue
+		}
+		st, ok := out[h.Name]
+		if ok && st.downRounds > 0 {
+			continue
+		}
+		if due := h.CheckedAt.Add(w.options.ProbeInterval); !ok || due.After(st.nextDue) {
+			out[h.Name] = probeSchedule{nextDue: due}
 		}
 	}
 	return out
