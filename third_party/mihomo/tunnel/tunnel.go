@@ -1,3 +1,5 @@
+// Modified by the netivri authors: Proxies reads the proxy map under configMux, so a dialer-proxy lookup does not race with UpdateProxies.
+
 package tunnel
 
 import (
@@ -117,7 +119,7 @@ func (t tunnel) NatTable() C.NatTable {
 }
 
 func (t tunnel) Proxies() map[string]C.Proxy {
-	return proxies
+	return Proxies()
 }
 
 func (t tunnel) Providers() map[string]P.ProxyProvider {
@@ -213,6 +215,8 @@ func UpdateRules(newRules []C.Rule, newSubRule map[string][]C.Rule, rp map[strin
 
 // Proxies return all proxies
 func Proxies() map[string]C.Proxy {
+	configMux.RLock()
+	defer configMux.RUnlock()
 	return proxies
 }
 
