@@ -49,6 +49,13 @@ type WarmOptions struct {
 	// lengthened interval (probeBackoffInterval). Start sets it from the
 	// sticky health table.
 	Down func(name string) bool
+
+	// only, when set, limits the probed proxies to the names it accepts;
+	// seed is the probe backoff each name starts with. Reconfigure sets both,
+	// so the earlier generations still in Mihomo's proxy map are not probed
+	// and nodes that stay down keep their lengthened interval.
+	only func(name string) bool
+	seed map[string]probeSchedule
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -191,14 +198,35 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 		}
 		w.pool.start()
 	}
-	for _, p := range tunnel.Proxies() {
-		if p != nil && isWarmLeaf(p) {
-			w.proxies = append(w.proxies, p)
-		}
-	}
-	sort.Slice(w.proxies, func(i, j int) bool { return w.proxies[i].Name() < w.proxies[j].Name() })
+	w.proxies = warmLeaves(tunnel.Proxies(), o.only)
+	w.backoff = seededBackoff(w.proxies, o.seed)
 	go w.run(ctx)
 	return w, nil
+}
+
+// warmLeaves returns the probed proxies of a proxy map sorted by name: the
+// netivri leaves that only accepts (every one when only is nil).
+func warmLeaves(proxies map[string]C.Proxy, only func(name string) bool) []C.Proxy {
+	var out []C.Proxy
+	for _, p := range proxies {
+		if p != nil && isWarmLeaf(p) && (only == nil || only(p.Name())) {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out
+}
+
+// seededBackoff lays the seed out in proxy order; nil without a seed.
+func seededBackoff(proxies []C.Proxy, seed map[string]probeSchedule) []probeSchedule {
+	if len(seed) == 0 {
+		return nil
+	}
+	out := make([]probeSchedule, len(proxies))
+	for i, p := range proxies {
+		out[i] = seed[p.Name()]
+	}
+	return out
 }
 
 func isWarmLeaf(p C.Proxy) bool {
@@ -367,6 +395,23 @@ func (w *warmer) Close() {
 			w.pool.wait(5 * time.Second)
 		}
 	})
+}
+
+// backoffByName returns the probe backoff of every probed proxy that has
+// one, keyed by proxy name. Nil-safe.
+func (w *warmer) backoffByName() map[string]probeSchedule {
+	if w == nil {
+		return nil
+	}
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	out := make(map[string]probeSchedule)
+	for i, st := range w.backoff {
+		if i < len(w.proxies) && st != (probeSchedule{}) {
+			out[w.proxies[i].Name()] = st
+		}
+	}
+	return out
 }
 
 // isDown reports whether the node behind an internal proxy name is down;

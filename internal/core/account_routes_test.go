@@ -6,7 +6,7 @@ import (
 )
 
 func TestAccountRoutesReturnsCopy(t *testing.T) {
-	inst := &Instance{accountRoutes: map[string]string{"alice": "de"}}
+	inst := instanceWith(&routingState{accountRoutes: map[string]string{"alice": "de"}})
 	got := inst.AccountRoutes()
 	got["alice"] = "NL"
 	got["bob"] = "FI"

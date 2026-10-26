@@ -32,8 +32,13 @@ type fakeCore struct {
 	snap         []core.BindingRecord // answer of SnapshotBindings
 	restored     int                  // answer of RestoredBindings
 	snapAtClose  bool                 // set when SnapshotBindings saw the core closed
-	mu           sync.Mutex
-	closed       bool
+	// inPlace makes Reconfigure succeed; otherwise it answers
+	// core.ErrReconfigureUnsupported, or reconfErr when set.
+	inPlace   bool
+	reconfErr error
+	mu        sync.Mutex
+	closed    bool
+	reconfs   []core.Options // every Reconfigure call
 }
 
 func (f *fakeCore) Addr() string                      { return f.addr }
@@ -52,7 +57,24 @@ func (f *fakeCore) SnapshotBindings() []core.BindingRecord {
 func (f *fakeCore) sawClosedSnapshot() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.snapAtClose }
 func (f *fakeCore) RestoredBindings() int   { return f.restored }
 func (f *fakeCore) Close() error            { f.mu.Lock(); f.closed = true; f.mu.Unlock(); return nil }
-func (f *fakeCore) isClosed() bool          { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
+func (f *fakeCore) Reconfigure(o core.Options) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reconfs = append(f.reconfs, o)
+	switch {
+	case f.reconfErr != nil:
+		return f.reconfErr
+	case !f.inPlace:
+		return core.ErrReconfigureUnsupported
+	}
+	return nil
+}
+func (f *fakeCore) reconfigured() []core.Options {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]core.Options(nil), f.reconfs...)
+}
+func (f *fakeCore) isClosed() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.closed }
 
 // coreScript replaces coreStart: it records every call and fails the ones
 // listed in fail (1-based, counting failed calls too).
@@ -63,6 +85,7 @@ type coreScript struct {
 	fail     map[int]error
 	port     int           // what a start with port 0 gets
 	restored int           // what every created fake core reports as installed
+	inPlace  bool          // every created fake core takes Reconfigure
 	started  chan struct{} // one signal per successful start, when set
 }
 
@@ -77,7 +100,7 @@ func (s *coreScript) start(_ context.Context, o core.Options) (coreInstance, err
 	if port == 0 {
 		port = s.port
 	}
-	f := &fakeCore{addr: fmt.Sprintf("127.0.0.1:%d", port), restored: s.restored}
+	f := &fakeCore{addr: fmt.Sprintf("127.0.0.1:%d", port), restored: s.restored, inPlace: s.inPlace}
 	s.insts = append(s.insts, f)
 	if s.started != nil {
 		select {
@@ -726,5 +749,98 @@ func TestRunStatusPassesRefreshAndReload(t *testing.T) {
 	}
 	if _, has := data["reload"]; has {
 		t.Error("reload is printed for an angel that did not report it")
+	}
+}
+
+// setInPlace makes a fake core take Reconfigure (err nil) or fail it with err.
+func (f *fakeCore) setInPlace(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.inPlace, f.reconfErr = true, err
+}
+
+// New nodes go into the running core: no new listener, the old core stays
+// open, and the applied state moves on. A change of the accounts still
+// restarts the listener.
+func TestReloadUpdatesNodesInPlace(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	ctx := t.Context()
+	running := f.script.inst(0)
+	running.setInPlace(nil)
+
+	f.saveNodes(t, "192.0.2.2", "n1")
+	f.l.reload(ctx)
+	if f.script.calls() != 1 || running.isClosed() {
+		t.Fatalf("a node change restarted the core: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	got := running.reconfigured()
+	if len(got) != 1 {
+		t.Fatalf("Reconfigure calls = %d, want 1", len(got))
+	}
+	if serverOf(got[0]) != "192.0.2.2" || got[0].AccountRoute["alice"] != "p~DE" {
+		t.Errorf("Reconfigure got node %v, routes %v", serverOf(got[0]), got[0].AccountRoute)
+	}
+	if got[0].InitialBindings != nil {
+		t.Error("Reconfigure must not read the stored bindings")
+	}
+	if got[0].OnNodeHealth == nil || got[0].Warm == nil {
+		t.Error("Reconfigure lost the health logger or the probes")
+	}
+	if f.reloads() != 1 || f.reloadErr() != "" {
+		t.Errorf("reloads=%d error=%q", f.reloads(), f.reloadErr())
+	}
+	if !strings.Contains(f.logText(), "connections kept") {
+		t.Errorf("log does not say the connections were kept: %q", f.logText())
+	}
+	f.l.mu.Lock()
+	applied := f.l.applied.pool.nodes["p~DE"][0]["server"]
+	port := f.l.startOpts.Port
+	f.l.mu.Unlock()
+	if applied != "192.0.2.2" || port != 43210 {
+		t.Errorf("applied node %v, port %d; want 192.0.2.2 and 43210", applied, port)
+	}
+
+	// Nothing changed since: no further call.
+	f.l.reload(ctx)
+	if len(running.reconfigured()) != 1 || f.script.calls() != 1 {
+		t.Fatal("an unchanged state reconfigured or restarted the core")
+	}
+
+	// A new account changes the listener's credentials: restart.
+	f.writeConfig(t, f.routed(), config.Account{Login: "bob", Password: config.InitPlaceholder, Provider: "p", ExitCountry: "DE"})
+	f.l.reload(ctx)
+	if f.script.calls() != 2 || !running.isClosed() || len(running.reconfigured()) != 1 {
+		t.Fatalf("a new account: starts=%d closed=%v reconfigures=%d", f.script.calls(), running.isClosed(), len(running.reconfigured()))
+	}
+}
+
+// A core that cannot take the change in place is restarted; a real failure
+// is logged, an unsupported change is not.
+func TestReloadRestartsWhenInPlaceFails(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	f.saveNodes(t, "192.0.2.2", "n1")
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 || len(f.script.inst(0).reconfigured()) != 1 {
+		t.Fatalf("unsupported in place: starts=%d reconfigures=%d", f.script.calls(), len(f.script.inst(0).reconfigured()))
+	}
+	if strings.Contains(f.logText(), "restarting the listener") {
+		t.Errorf("an unsupported change was logged as a failure: %q", f.logText())
+	}
+
+	running := f.script.inst(1)
+	running.setInPlace(errors.New("boom"))
+	f.saveNodes(t, "192.0.2.3", "n1")
+	f.l.reload(t.Context())
+	if f.script.calls() != 3 || !running.isClosed() {
+		t.Fatalf("failed in place: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	if serverOf(f.script.call(2)) != "192.0.2.3" {
+		t.Errorf("the restarted core got node %v", serverOf(f.script.call(2)))
+	}
+	if !strings.Contains(f.logText(), "restarting the listener: boom") {
+		t.Errorf("log does not name the failure: %q", f.logText())
+	}
+	if f.reloads() != 2 || f.reloadErr() != "" {
+		t.Errorf("reloads=%d error=%q", f.reloads(), f.reloadErr())
 	}
 }

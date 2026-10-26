@@ -219,13 +219,19 @@ func TestE2ELiveSnapshotReplaced(t *testing.T) {
 		t.Fatalf("upstream counts p1=%d p2=%d", f.p1.count.Load(), f.p2.count.Load())
 	}
 
+	// A connection that is open while the node list changes goes on.
+	held := socks5AuthConnect(t, f.listen, "alice", f.pass, f.backend)
+	echoRoundTrip(t, held, held)
+
 	// What `sub update` or the hourly refresh does: a new node list on disk.
 	accountsSaveSnapshot(t, f.home, "p1", []subscription.Node{accountsSocksNode("de-new", "DE", f.p2)})
 	waitLive(t, f.home, "the new node list is applied", func(s liveStatus) bool { return s.Data.Reload.Count >= 1 })
 	accountsClient(t, f.listen, "alice", f.pass, f.backend)
-	if f.p1.count.Load() != 1 || f.p2.count.Load() != 1 {
-		t.Fatalf("after the update upstream counts p1=%d p2=%d, want 1/1", f.p1.count.Load(), f.p2.count.Load())
+	if f.p1.count.Load() != 2 || f.p2.count.Load() != 1 {
+		t.Fatalf("after the update upstream counts p1=%d p2=%d, want 2/1", f.p1.count.Load(), f.p2.count.Load())
 	}
+	_ = held.SetDeadline(time.Now().Add(e2eIOTimeout))
+	echoRoundTrip(t, held, held)
 
 	// A provider that only renames the node (a traffic counter in the name)
 	// must not restart the listener.

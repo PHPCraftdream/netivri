@@ -132,6 +132,18 @@ it ships in 0.3.0.
   the files in `run/` are unchanged, and log lines of older versions are still
   read. `schema_version` stays 1: 0.3.0 is the first release after the
   withdrawn ones.
+- **New nodes no longer cut connections.** When a subscription refresh brings
+  a changed node list, or an account gets a new country or provider list, the
+  running angel takes the new routes in place: the listener stays, open
+  connections finish on their node, and every node that stays keeps its
+  health, probe backoff and site bindings, so a node that was down is not
+  reported down again. The log says `configuration applied, connections kept`.
+  Adding or removing an account, a new password, `allowed_clients` or the port
+  still restart the listener.
+- `netivri doctor` no longer warns about the log for node-down reports alone:
+  they are counted in the `log` detail ("besides N node-down reports"), and
+  the `account` checks show whether the routes have live nodes. Other `WARN`
+  and every `ERROR` entry still make the check warn.
 - **`netivri status` is short by default.** The default answer keeps the
   angel, route, accounts, activity, refresh and reload fields and a reduced
   `warm` summary (`alive`, `total`, `probes`, `probe_failures`). The complete

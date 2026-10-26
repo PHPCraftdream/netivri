@@ -480,8 +480,59 @@ func TestDoctorLogWarnEntries(t *testing.T) {
 		t.Fatalf("doctor = %v, want nil", err)
 	}
 	c := doctorFind(t, doc, "log")
-	if c.Status != doctorWarn || !strings.Contains(c.Detail, "2 warn/error entries") || !strings.Contains(c.Detail, "boom") {
+	if c.Status != doctorWarn || !strings.Contains(c.Detail, "1 warn/error entries") ||
+		!strings.Contains(c.Detail, "besides 1 node-down reports") || !strings.Contains(c.Detail, "boom") {
 		t.Errorf("log = %+v", c)
+	}
+}
+
+// Node-down reports alone do not make the log check warn: one flapping node
+// would keep it at warn, and the account checks cover the routes.
+func TestDoctorLogCountsNodeDownReports(t *testing.T) {
+	fixed := doctorFixTime(t)
+	doctorAngelDown(t)
+	doctorStubListen(t, nil)
+	home := t.TempDir()
+	doctorConfig(t, home, nil)
+	doctorWriteLog(t, home,
+		angel.FormatLogLine(fixed.Add(-3*time.Minute), angel.LevelWarn, "node main/c04c806b3b3c (FI, provider main, country FI) is down"),
+		angel.FormatLogLine(fixed.Add(-2*time.Minute), angel.LevelInfo, "node main/c04c806b3b3c (FI, provider main, country FI) is back"),
+		angel.FormatLogLine(fixed.Add(-time.Minute), angel.LevelWarn, "node own/36e059043e66 (provider own, country DE) is down"),
+		// An error that only looks like one is still reported.
+		angel.FormatLogLine(fixed.Add(-2*time.Hour), angel.LevelError, "node main/x is down"),
+	)
+	doc, err := doctorRunDoc(t, home)
+	if err != nil {
+		t.Fatalf("doctor = %v, want nil", err)
+	}
+	if c := doctorFind(t, doc, "log"); c.Status != doctorOK || !strings.Contains(c.Detail, "besides 2 node-down reports") {
+		t.Errorf("log = %+v", c)
+	}
+
+	doctorWriteLog(t, home,
+		angel.FormatLogLine(fixed.Add(-time.Minute), angel.LevelError, "node main/x is down"),
+	)
+	doc, err = doctorRunDoc(t, home)
+	if err != nil {
+		t.Fatalf("doctor = %v, want nil", err)
+	}
+	if c := doctorFind(t, doc, "log"); c.Status != doctorWarn || !strings.Contains(c.Detail, "1 warn/error entries") {
+		t.Errorf("an ERROR line was taken for a node-down report: %+v", c)
+	}
+}
+
+func TestIsNodeDownMessage(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"node main/a (FI, provider main, country FI) is down": true,
+		"node main/a (provider main, country FI) is down":     true,
+		"route node main/m-de is down":                        true,
+		"node main/a (FI, provider main, country FI) is back": false,
+		"subscription main: refresh failed: is down":          false,
+		"the node is down":                                    false,
+	} {
+		if got := isNodeDownMessage(msg); got != want {
+			t.Errorf("isNodeDownMessage(%q) = %v, want %v", msg, got, want)
+		}
 	}
 }
 

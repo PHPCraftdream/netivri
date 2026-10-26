@@ -41,6 +41,9 @@ type coreInstance interface {
 	MemberLabels() map[string]string
 	SnapshotBindings() []core.BindingRecord
 	RestoredBindings() int
+	// Reconfigure takes new routes without closing the listener; see
+	// core.Instance.Reconfigure.
+	Reconfigure(o core.Options) error
 	Close() error
 }
 
@@ -67,10 +70,10 @@ type desiredState struct {
 }
 
 // liveAngel keeps the running core in step with the files in the state
-// directory (docs/design/live-reload.md). The core takes its routes and its
-// accounts at Start, so applying a change means closing the listener and
-// starting a new one on the same port; that happens only when something the
-// core is built from really changed.
+// directory (docs/design/live-reload.md). New nodes and routes go into the
+// running core and keep its open connections; a change of the listener or
+// the accounts closes the listener and starts a new one on the same port.
+// Either happens only when something the core is built from really changed.
 type liveAngel struct {
 	opts upOptions
 	logf func(format string, args ...any) // INFO
@@ -149,25 +152,32 @@ func portOf(addr string) int {
 }
 
 func (l *liveAngel) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
+	o := l.routeOptions(d, a, store)
+	o.InitialBindings = initialBindings(store, l.warnf)
+	return o
+}
+
+// routeOptions is coreOptions without the stored bindings, which only a
+// starting core reads.
+func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
 	var observer core.Observer
 	if store != nil {
 		observer = statsObserver{store: store}
 	}
 	return core.Options{
-		HomeDir:         l.opts.Home,
-		Bind:            d.bind,
-		Port:            d.port,
-		Authenticator:   a,
-		AllowedClients:  config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
-		RouteNodes:      d.pool.nodes,
-		AccountRoute:    d.pool.accountRoutes,
-		NodeLabels:      d.pool.labels,
-		NodeTiers:       d.pool.tiers,
-		OnNodeHealth:    nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
-		Observer:        observer,
-		Warm:            warmOptions(d.pool.nodes),
-		AffinityTTL:     stats.BindingTTL,
-		InitialBindings: initialBindings(store, l.warnf),
+		HomeDir:        l.opts.Home,
+		Bind:           d.bind,
+		Port:           d.port,
+		Authenticator:  a,
+		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
+		RouteNodes:     d.pool.nodes,
+		AccountRoute:   d.pool.accountRoutes,
+		NodeLabels:     d.pool.labels,
+		NodeTiers:      d.pool.tiers,
+		OnNodeHealth:   nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
+		Observer:       observer,
+		Warm:           warmOptions(d.pool.nodes),
+		AffinityTTL:    stats.BindingTTL,
 	}
 }
 
@@ -234,17 +244,33 @@ func nodesWithoutNames(routes map[string][]map[string]any) map[string][]map[stri
 // Settings the core does not read (subscription URLs, the refresh interval)
 // are left out, so changing them never restarts the listener.
 func fingerprint(d desiredState) string {
+	return listenerFingerprint(d) + routesFingerprint(d)
+}
+
+// routesFingerprint covers the nodes, labels, tiers and routes: what
+// Reconfigure can change in a running core.
+func routesFingerprint(d desiredState) string {
+	v := struct {
+		Nodes  map[string][]map[string]any
+		Labels map[string][]string
+		Tiers  map[string][]int
+		Routes map[string]string
+	}{nodesWithoutNames(d.pool.nodes), d.pool.labels, d.pool.tiers, d.pool.accountRoutes}
+	data, _ := json.Marshal(v)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// listenerFingerprint covers the listener: address, allowed clients and the
+// credentials. A change here needs a new core.
+func listenerFingerprint(d desiredState) string {
 	type acct struct{ Login, Password, Clients string }
 	v := struct {
 		Bind, AuthLogin, AuthPassword string
 		Port                          int
 		AllowedClients                string
 		Accounts                      []acct
-		Nodes                         map[string][]map[string]any
-		Labels                        map[string][]string
-		Tiers                         map[string][]int
-		Routes                        map[string]string
-	}{Bind: d.bind, Port: d.port, AllowedClients: config.NormalizeAllowedClients(d.cfg.Listen.AllowedClients), Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers, Routes: d.pool.accountRoutes}
+	}{Bind: d.bind, Port: d.port, AllowedClients: config.NormalizeAllowedClients(d.cfg.Listen.AllowedClients)}
 	// The persist callbacks rewrite credentials of this config in place.
 	persistMu.Lock()
 	v.AuthLogin, v.AuthPassword = d.cfg.Auth.Login, d.cfg.Auth.Password
@@ -281,13 +307,57 @@ func (l *liveAngel) reload(ctx context.Context) {
 		d.port = l.actualPort // a random port stays the one clients know
 	}
 	same := fingerprint(l.applied) == fingerprint(d)
+	inPlace := !same && listenerFingerprint(l.applied) == listenerFingerprint(d)
 	if same {
 		l.reloadErr = ""
 	}
 	l.mu.Unlock()
-	if !same {
+	switch {
+	case same:
+	case inPlace && l.reconfigure(d):
+	default:
 		l.restart(ctx, d)
 	}
+}
+
+// reconfigure gives the running core new routes without closing its
+// listener, so open connections go on and the nodes that stay keep their
+// health and bindings. False means the core could not take them in place and
+// must be restarted instead.
+func (l *liveAngel) reconfigure(d desiredState) bool {
+	l.mu.Lock()
+	inst, store, auth := l.inst, l.store, l.startOpts.Authenticator
+	l.mu.Unlock()
+	// A core without routes has no sticky groups to replace (it answers
+	// ErrReconfigureUnsupported); its restart also opens the statistics store.
+	if inst == nil || len(d.pool.accountRoutes) == 0 {
+		return false
+	}
+	if store != nil && len(d.pool.infos) > 0 {
+		if err := store.SetNodes(d.pool.infos); err != nil {
+			l.warnf("statistics: node details not stored: %v", err)
+		}
+	}
+	o := l.routeOptions(d, auth, store)
+	if err := inst.Reconfigure(o); err != nil {
+		if !errors.Is(err, core.ErrReconfigureUnsupported) {
+			l.warnf("routes not updated in place, restarting the listener: %s", errText(err))
+		}
+		return false
+	}
+	l.mu.Lock()
+	if l.closed || l.inst != inst {
+		l.mu.Unlock()
+		return true
+	}
+	o.Port, d.port = l.actualPort, l.actualPort
+	l.applied, l.latest, l.startOpts = d, d.cfg, o
+	l.reloads++
+	l.lastReload = time.Now()
+	l.reloadErr = ""
+	l.mu.Unlock()
+	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
+	return true
 }
 
 func (l *liveAngel) noteReloadError(what string, err error) {

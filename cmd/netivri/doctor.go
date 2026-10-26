@@ -332,18 +332,41 @@ func (d *doctorContext) routeProbed(tiers []accountShowTier) bool {
 
 // checkLog reads the angel log for WARN and ERROR entries of the last hour.
 // It reads the file, so it works while the angel runs and after it stopped;
-// a missing log file is fine.
+// a missing log file is fine. Reports of a node going down are only counted:
+// one flapping node would otherwise keep the check at warn, and the account
+// checks already say whether the routes have live nodes.
 func (d *doctorContext) checkLog() doctorCheck {
 	q := angel.LogQuery{MinLevel: angel.LevelWarn, Since: d.now.Add(-doctorLogWindow)}
-	entries, _, err := angel.ReadLog(d.home, q)
+	all, _, err := angel.ReadLog(d.home, q)
 	if errors.Is(err, os.ErrNotExist) {
 		return doctorCheck{"log", doctorOK, "no log yet"}
 	}
 	if err != nil {
 		return doctorCheck{"log", doctorWarn, "log cannot be read: " + err.Error()}
 	}
-	if len(entries) == 0 {
-		return doctorCheck{"log", doctorOK, "no warn or error entries in the last hour"}
+	var entries []angel.LogEntry
+	nodeDown := 0
+	for _, e := range all {
+		if e.Level == angel.LevelWarn && isNodeDownMessage(e.Message) {
+			nodeDown++
+			continue
+		}
+		entries = append(entries, e)
 	}
-	return doctorCheck{"log", doctorWarn, fmt.Sprintf("%d warn/error entries in the last hour; newest: %s", len(entries), entries[len(entries)-1].Message)}
+	nodes := ""
+	if nodeDown > 0 {
+		nodes = fmt.Sprintf(" (besides %d node-down reports)", nodeDown)
+	}
+	if len(entries) == 0 {
+		return doctorCheck{"log", doctorOK, "no warn or error entries in the last hour" + nodes}
+	}
+	return doctorCheck{"log", doctorWarn, fmt.Sprintf("%d warn/error entries in the last hour%s; newest: %s", len(entries), nodes, entries[len(entries)-1].Message)}
+}
+
+// isNodeDownMessage matches the angel's report of a route node going down,
+// in the current form ("node {LABEL} (...) is down") and the older one
+// ("route node {LABEL} is down").
+func isNodeDownMessage(message string) bool {
+	return strings.HasSuffix(message, " is down") &&
+		(strings.HasPrefix(message, "node ") || strings.HasPrefix(message, "route node "))
 }

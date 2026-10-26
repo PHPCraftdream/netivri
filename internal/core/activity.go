@@ -36,9 +36,10 @@ type AccountActivity struct {
 // Activity returns the open connections of every account that has any,
 // sorted by login. Connections without a login (no authentication) are not
 // attributed. It reads Mihomo's connection trackers and is safe to call while
-// the instance runs.
+// the instance runs. A connection opened before a Reconfigure keeps the
+// label of the node it went through.
 func (i *Instance) Activity() []AccountActivity {
-	return collectActivity(managerSource{statistic.DefaultManager}, i.memberLabels)
+	return collectActivity(managerSource{statistic.DefaultManager}, i.state().connLabels)
 }
 
 // collectActivity groups the trackers by account and node. labels maps the

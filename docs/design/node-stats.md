@@ -363,8 +363,10 @@ binding TTL (24 hours) are deleted on every write and on every load. Sites
 are never printed or logged: not in `netivri stats` (which has no binding
 view), not in `netivri logs`, not in `status`.
 
-**Load.** When the angel starts or restarts the core (a live reload, see
-[live-reload.md](live-reload.md)), it reads the stored bindings and passes
+**Load.** A live reload that only changes nodes and routes keeps the core
+running and moves the live bindings to the new routes by label, in memory
+(see [live-reload.md](live-reload.md)). When the angel starts or restarts the
+core, it reads the stored bindings and passes
 them to the core as `Options.InitialBindings`. The core maps each record to
 the member whose label matches within the login's route (account, route key,
 plan labels) and installs it with the stored `bound_at` and `last_used`, so
