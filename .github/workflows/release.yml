@@ -544,11 +544,11 @@ jobs:
           prefix="${RUNNER_TEMP}/npm-global"
           home="${RUNNER_TEMP}/netivri-home"
           npm install -g --prefix "${prefix}" \
-            "${GITHUB_WORKSPACE}/npm-dist/netivri-${plat}-${VER}.tgz" \
-            "${GITHUB_WORKSPACE}/npm-dist/netivri-${VER}.tgz"
+            "${GITHUB_WORKSPACE}/npm-dist/phpcraftdream-netivri-${plat}-${VER}.tgz" \
+            "${GITHUB_WORKSPACE}/npm-dist/phpcraftdream-netivri-${VER}.tgz"
           root="$(npm root -g --prefix "${prefix}")"
-          node "${root}/netivri/bin/netivri.js" version
-          node "${root}/netivri/bin/netivri.js" sub list --home "${home}"
+          node "${root}/@phpcraftdream/netivri/bin/netivri.js" version
+          node "${root}/@phpcraftdream/netivri/bin/netivri.js" sub list --home "${home}"
 
   # .deb and .rpm of the Linux archives. The amd64 packages are installed and
   # removed again, the .deb on the runner and the .rpm in a Fedora container;
@@ -699,7 +699,7 @@ jobs:
           set -euo pipefail
           cd artifacts
           sha256sum netivri_*.zip netivri_*.tar.gz netivri_*.deb netivri_*.rpm \
-            install.sh install.ps1 netivri.json netivri.rb netivri-*.tgz > SHA256SUMS
+            install.sh install.ps1 netivri.json netivri.rb phpcraftdream-netivri-*.tgz > SHA256SUMS
 
       - name: Upload checksums
         uses: actions/upload-artifact@v7
@@ -723,7 +723,7 @@ jobs:
             artifacts/netivri_*.tar.gz
             artifacts/netivri_*.deb
             artifacts/netivri_*.rpm
-            artifacts/netivri-*.tgz
+            artifacts/phpcraftdream-netivri-*.tgz
             artifacts/install.sh
             artifacts/install.ps1
             artifacts/netivri.json
@@ -746,5 +746,5 @@ jobs:
             --notes-file release-notes.md \
             "${flags[@]}" \
             artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz \
-            artifacts/netivri_*.deb artifacts/netivri_*.rpm artifacts/netivri-*.tgz \
+            artifacts/netivri_*.deb artifacts/netivri_*.rpm artifacts/phpcraftdream-netivri-*.tgz \
             artifacts/install.sh artifacts/install.ps1 artifacts/netivri.json artifacts/netivri.rb

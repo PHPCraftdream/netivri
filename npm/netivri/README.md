@@ -12,11 +12,11 @@ registry traffic.
 ## Install
 
 ```sh
-npm i -g netivri
+npm i -g @phpcraftdream/netivri
 ```
 
-Update: `npm update -g netivri` (or `npm i -g netivri@latest`).
-Uninstall: `npm rm -g netivri`.
+Update: `npm update -g @phpcraftdream/netivri` (or `npm i -g @phpcraftdream/netivri@latest`).
+Uninstall: `npm rm -g @phpcraftdream/netivri`.
 
 ## Quick start
 
@@ -48,8 +48,8 @@ JSON.
 
 ## Platforms
 
-The binary ships in a per-platform package (`netivri-linux-x64`,
-`netivri-darwin-arm64`, `netivri-w32-x64`, ...) installed automatically as
+The binary ships in a per-platform package (`@phpcraftdream/netivri-linux-x64`,
+`@phpcraftdream/netivri-darwin-arm64`, `@phpcraftdream/netivri-w32-x64`, ...) installed automatically as
 an optional dependency: Linux, macOS and Windows on x64 and arm64. Linux
 builds are made for glibc; musl (Alpine) is not supported.
 

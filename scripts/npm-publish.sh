@@ -21,8 +21,10 @@ mode="${3:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 # absolute path is always a file.
 dist="$(cd "${dist}" && pwd)"
 
-# The Windows packages go first: their names are the newest on npm, so a
-# refusal there stops the run before any other package moves on.
+# Every package is in the author's scope. The Windows packages go first: if npm
+# refuses a new name (spam detection), the run stops before any other package
+# moves on.
+scope="@phpcraftdream"
 platforms=(w32-x64 w32-arm64 linux-x64 linux-arm64 darwin-x64 darwin-arm64)
 
 args=(--access public)
@@ -40,12 +42,14 @@ esac
 
 names=()
 for p in "${platforms[@]}"; do
-  names+=("netivri-${p}")
+  names+=("${scope}/netivri-${p}")
 done
-names+=(netivri)
+names+=("${scope}/netivri")
 
 for name in "${names[@]}"; do
-  tgz="${dist}/${name}-${version}.tgz"
+  # npm pack names the tarball scope-name-version.tgz, without "@" and "/".
+  stem="${name#@}"
+  tgz="${dist}/${stem//\//-}-${version}.tgz"
   if [ ! -f "${tgz}" ]; then
     echo "missing ${tgz}" >&2
     exit 1
