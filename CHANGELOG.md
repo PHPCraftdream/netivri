@@ -10,6 +10,14 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The npm packages move to the `@phpcraftdream` scope.** Install with
+  `npm i -g @phpcraftdream/netivri` (was `netivri`); the six platform packages
+  are `@phpcraftdream/netivri-{linux,darwin,w32}-{x64,arm64}`. The platform
+  packages carry no keywords and a description that sends the reader to the
+  main package, so they stay out of `npm search`. The release tarballs are
+  named `phpcraftdream-netivri-*.tgz`. Nothing of 0.3.0 was published under the
+  old names.
+
 - **A failed probe is confirmed before it counts.** The warm-up probe asks
   `www.gstatic.com`, and one slow or unreachable target made working nodes look
   down (on one setup real dials succeeded 100% while the probes gave the

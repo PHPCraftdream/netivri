@@ -1,5 +1,5 @@
 {
-  "name": "netivri",
+  "name": "@phpcraftdream/netivri",
   "version": "0.0.0",
   "description": "Local SOCKS5/SOCKS4/HTTP proxy service with provider subscriptions and a per-account exit country, built on Mihomo (placeholder version; rewritten at release build time)",
   "license": "GPL-3.0-only",
@@ -39,11 +39,14 @@
   ],
   "dependencies": {},
   "optionalDependencies": {
-    "netivri-linux-x64": "0.0.0",
-    "netivri-linux-arm64": "0.0.0",
-    "netivri-darwin-x64": "0.0.0",
-    "netivri-darwin-arm64": "0.0.0",
-    "netivri-w32-x64": "0.0.0",
-    "netivri-w32-arm64": "0.0.0"
+    "@phpcraftdream/netivri-linux-x64": "0.0.0",
+    "@phpcraftdream/netivri-linux-arm64": "0.0.0",
+    "@phpcraftdream/netivri-darwin-x64": "0.0.0",
+    "@phpcraftdream/netivri-darwin-arm64": "0.0.0",
+    "@phpcraftdream/netivri-w32-x64": "0.0.0",
+    "@phpcraftdream/netivri-w32-arm64": "0.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

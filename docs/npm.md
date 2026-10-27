@@ -1,6 +1,6 @@
 # npm distribution
 
-`npm i -g netivri` installs a prebuilt netivri binary. The packages are
+`npm i -g @phpcraftdream/netivri` installs a prebuilt netivri binary. The packages are
 repackaged release artifacts, not rebuilds; no compiler runs on the user's
 machine, and there are **no postinstall scripts and no downloads at install
 time** — npm's own registry connection (including any proxy configured for
@@ -8,17 +8,23 @@ npm) is the only network path.
 
 ## Layout
 
-- `netivri` — the main package: a small dependency-free CommonJS launcher
+- `@phpcraftdream/netivri` — the main package: a small dependency-free CommonJS launcher
   (`bin/netivri.js`). It maps `process.platform` / `process.arch` (plus a
   glibc/musl check on Linux via `process.report`) to a platform package,
   resolves the binary with `require.resolve`, and spawns it with
   `stdio: 'inherit'`, forwarding SIGINT/SIGTERM/SIGHUP and the exit code.
-- `netivri-{OS}-{CPU}` — six platform packages (`linux-x64`,
+- `@phpcraftdream/netivri-{OS}-{CPU}` — six platform packages (`linux-x64`,
   `linux-arm64`, `darwin-x64`, `darwin-arm64`, `w32-x64`,
   `w32-arm64`) installed as `optionalDependencies` of the main package.
   Each declares `os`, `cpu` and (on Linux) `libc: ["glibc"]`, so npm
   downloads exactly one. Each contains `bin/netivri[.exe]` (a single static
   file), `LICENSE` and `THIRD_PARTY_LICENSES/`.
+
+All seven packages are published in the `@phpcraftdream` scope, which keeps the
+platform packages out of the unscoped namespace. The platform packages carry no
+keywords and a description that points to the main package, so they do not
+show up in `npm search` next to it; each package has
+`publishConfig.access: public`, which a scoped package needs to be public.
 
 If the platform is unsupported, or the platform package is missing (e.g.
 installed with `--omit=optional` or `--no-optional`), the launcher prints
@@ -83,15 +89,15 @@ copy, so replacing it is a rename that a running angel never blocks —
 ## Update
 
 ```sh
-npm update -g netivri
+npm update -g @phpcraftdream/netivri
 # or
-npm i -g netivri@latest
+npm i -g @phpcraftdream/netivri@latest
 ```
 
 ## Uninstall
 
 ```sh
-npm rm -g netivri
+npm rm -g @phpcraftdream/netivri
 ```
 
 Removing the main package removes the platform package installed for your

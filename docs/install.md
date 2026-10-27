@@ -9,13 +9,13 @@ With Node.js 18 or newer you can install the same binary through npm
 instead:
 
 ```sh
-npm i -g netivri
+npm i -g @phpcraftdream/netivri
 ```
 
-npm picks the package of your platform (`netivri-linux-x64`,
-`netivri-darwin-arm64`, `netivri-w32-x64`, ...) by itself; how the packages
+npm picks the package of your platform (`@phpcraftdream/netivri-linux-x64`,
+`@phpcraftdream/netivri-darwin-arm64`, `@phpcraftdream/netivri-w32-x64`, ...) by itself; how the packages
 are laid out and published is in [docs/npm.md](npm.md). Upgrade with
-`npm i -g netivri@latest`, remove with `npm rm -g netivri`.
+`npm i -g @phpcraftdream/netivri@latest`, remove with `npm rm -g @phpcraftdream/netivri`.
 
 ## One-liners
 
@@ -69,11 +69,14 @@ them listed there and covered by the build provenance):
   your own (`brew tap-new {USER}/netivri`, copy the file to its `Formula`
   directory, `brew install {USER}/netivri/netivri`); Homebrew no longer
   installs a formula straight from a file.
-- `netivri-{VERSION}.tgz` and `netivri-{PLATFORM}-{VERSION}.tgz` — the npm
-  packages, for an install without the registry:
-  `npm i -g netivri-{PLATFORM}-{VERSION}.tgz netivri-{VERSION}.tgz` (the first
-  file is the package of your platform, for example `netivri-linux-x64`; the
-  Windows ones are `netivri-w32-x64` and `netivri-w32-arm64`).
+- `phpcraftdream-netivri-{VERSION}.tgz` and
+  `phpcraftdream-netivri-{PLATFORM}-{VERSION}.tgz` — the npm packages
+  (`@phpcraftdream/netivri` and `@phpcraftdream/netivri-{PLATFORM}`), for an
+  install without the registry:
+  `npm i -g phpcraftdream-netivri-{PLATFORM}-{VERSION}.tgz phpcraftdream-netivri-{VERSION}.tgz`
+  (the first file is the package of your platform, for example
+  `@phpcraftdream/netivri-linux-x64`; the Windows ones are
+  `@phpcraftdream/netivri-w32-x64` and `@phpcraftdream/netivri-w32-arm64`).
 
 The Scoop manifest and the Homebrew formula are written from the archives of
 the release and checked for syntax; they are not installed by the workflow.

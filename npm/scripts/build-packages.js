@@ -17,8 +17,14 @@ const path = require('path');
 // purely numeric ones carry no leading zeros.
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
 
+// Every package lives in the author's npm scope, so the platform packages stay
+// out of the unscoped namespace and out of search results.
+const SCOPE = '@phpcraftdream';
+const MAIN_NAME = `${SCOPE}/netivri`;
+
 // goos/goarch are the Go names used in the archive directory names;
-// os/cpu are the npm field values.
+// os/cpu are the npm field values; pkg is the short name and the output
+// directory, name the scoped npm name (filled in below).
 const PLATFORMS = [
   { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-x64' },
   { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-arm64' },
@@ -27,6 +33,10 @@ const PLATFORMS = [
   { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-x64' },
   { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-arm64' },
 ];
+
+for (const platform of PLATFORMS) {
+  platform.name = `${SCOPE}/${platform.pkg}`;
+}
 
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/PHPCraftdream/netivri.git' };
 const HOMEPAGE = 'https://github.com/PHPCraftdream/netivri#readme';
@@ -139,10 +149,10 @@ function buildPackages(options) {
   copyDir(path.join(archives[0].dir, 'THIRD_PARTY_LICENSES'), path.join(mainDir, 'THIRD_PARTY_LICENSES'));
   const optionalDeps = {};
   for (const platform of PLATFORMS) {
-    optionalDeps[platform.pkg] = version;
+    optionalDeps[platform.name] = version;
   }
   writeJson(path.join(mainDir, 'package.json'), {
-    name: 'netivri',
+    name: MAIN_NAME,
     version,
     description: DESCRIPTION,
     license: 'GPL-3.0-only',
@@ -157,8 +167,9 @@ function buildPackages(options) {
     cpu: ['x64', 'arm64'],
     dependencies: {},
     optionalDependencies: optionalDeps,
+    publishConfig: { access: 'public' },
   });
-  packages.push({ name: 'netivri', path: mainDir });
+  packages.push({ name: MAIN_NAME, path: mainDir });
 
   // One platform package per archive found.
   for (const { platform, dir } of archives) {
@@ -176,10 +187,12 @@ function buildPackages(options) {
     copyFile(pkgLicenseSrc, path.join(pkgDir, 'LICENSE'));
     copyDir(tplDir, path.join(pkgDir, 'THIRD_PARTY_LICENSES'));
 
+    // No keywords and a description that sends the reader to the main
+    // package: npm search indexes both, and this package is not for installing.
     const manifest = {
-      name: platform.pkg,
+      name: platform.name,
       version,
-      description: `netivri binary for ${platform.os} ${platform.cpu}${platform.libc ? ' (glibc)' : ''}`,
+      description: `Binary of ${MAIN_NAME} for ${platform.os} ${platform.cpu}${platform.libc ? ' (glibc)' : ''}; install ${MAIN_NAME} instead`,
       license: 'GPL-3.0-only',
       os: [platform.os],
       cpu: [platform.cpu],
@@ -188,12 +201,13 @@ function buildPackages(options) {
       repository: REPOSITORY,
       homepage: HOMEPAGE,
       bugs: BUGS,
+      publishConfig: { access: 'public' },
     };
     if (platform.libc) {
       manifest.libc = platform.libc;
     }
     writeJson(path.join(pkgDir, 'package.json'), manifest);
-    packages.push({ name: platform.pkg, path: pkgDir });
+    packages.push({ name: platform.name, path: pkgDir });
   }
 
   return { ok: true, version, packages };
@@ -235,4 +249,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { buildPackages, parseArgs, PLATFORMS };
+module.exports = { buildPackages, parseArgs, PLATFORMS, SCOPE, MAIN_NAME };
