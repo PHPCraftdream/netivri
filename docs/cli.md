@@ -300,7 +300,12 @@ provider and the country, the reason and how long it was silent, as in
 and the downtime when it is back (`... is back after 41s down`). The reason is `2 probe
 failures` with the kind of the last probe error (`timeout`, `connection refused`,
 `connection reset`, `dns failure`, `network unreachable`, `connection closed`,
-`handshake failed`, or none) or `3 dial failures`; it never holds an address. When 3
+`handshake failed`, `error: {WORDS}` for a cause it does not know, or none) or `3 dial
+failures`. `{WORDS}` is a short excerpt of the error in which every word that could be
+an address, host, port, path or credential is replaced by `<addr>`. A node that goes
+down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
+within the last hour (...)`, says so, and its further down and back lines are `INFO`
+until it has been quiet for an hour (a flapping node does not count toward a burst). When 3
 or more nodes go down within 10 seconds (a lost network on this machine, a shared
 outage, or the first probes after a start) the third one raises a single `WARN`,
 `node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
@@ -423,7 +428,7 @@ The checks:
 | `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
-| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, and the summary of a burst of them, are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
+| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
 on stdout says which.

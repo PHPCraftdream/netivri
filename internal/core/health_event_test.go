@@ -159,7 +159,10 @@ func TestProbeFailKindNamesAFewCausesWithoutTheAddress(t *testing.T) {
 		{errors.New("connect: network is unreachable"), "network unreachable"},
 		{io.EOF, "connection closed"},
 		{errors.New("tls: handshake failure"), "handshake failed"},
-		{errors.New("something odd with 203.0.113.9"), "error"},
+		{errors.New("dial tcp 203.0.113.9:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time"), "timeout"},
+		{errors.New("wsarecv: An existing connection was forcibly closed by the remote host."), "connection reset"},
+		{errors.New("connect: no route to host"), "network unreachable"},
+		{errors.New("something odd with 203.0.113.9"), "error: something odd with <addr>"},
 	}
 	for _, c := range cases {
 		got := probeFailKind(c.err)

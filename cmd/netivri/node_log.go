@@ -19,6 +19,10 @@ const (
 	// startupWindow is how long after the angel started a burst is reported as
 	// a start-up one.
 	startupWindow = time.Minute
+	// flapWindow and flapDowns: a node that goes down that many times within
+	// the window is flapping, which is one warning and not one per drop.
+	flapWindow = time.Hour
+	flapDowns  = 3
 )
 
 type logFunc = func(format string, args ...any)
@@ -37,7 +41,10 @@ func nodeHealthLogger(infos []stats.NodeInfo, info, warn logFunc) func(core.Node
 	return l.event
 }
 
-// nodeLog turns node down/back events into log lines. The first burstNodes-1
+// nodeLog turns node down/back events into log lines. A node that keeps going
+// down (flapDowns times within flapWindow) is flapping: one WARN says so, its
+// further down and back lines are INFO until it has been quiet for flapWindow,
+// and it does not count toward a burst. For the others, the first burstNodes-1
 // nodes that go down within burstWindow get a WARN line each. The next one
 // also raises a single WARN summary ("node burst: ...") and from then on the
 // per-node lines of the burst are INFO, so a network loss that takes ten nodes
@@ -50,6 +57,8 @@ type nodeLog struct {
 	started    time.Time
 
 	mu          sync.Mutex
+	drops       map[string][]drop // recent downs per node, within flapWindow
+	flapping    map[string]bool
 	windowStart time.Time
 	window      []string       // labels down in the current window
 	kinds       map[string]int // reasons in the current window
@@ -58,12 +67,19 @@ type nodeLog struct {
 	burstStart  time.Time
 }
 
+// drop is one recent down of a node.
+type drop struct {
+	at   time.Time
+	kind string
+}
+
 // newNodeLog returns nil when there are no nodes to report on.
 func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time) *nodeLog {
 	if len(infos) == 0 {
 		return nil
 	}
-	l := &nodeLog{info: info, warn: warn, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now()}
+	l := &nodeLog{info: info, warn: warn, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
+		drops: map[string][]drop{}, flapping: map[string]bool{}}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
 	}
@@ -83,15 +99,19 @@ func (l *nodeLog) event(ev core.NodeEvent) {
 
 func (l *nodeLog) down(ev core.NodeEvent) {
 	now := l.now()
+	line := l.describe(ev.Label) + " is down: " + ev.Reason
+	if ev.SinceOK > 0 {
+		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
+	}
+	if l.flaps(ev, now) {
+		l.info("%s", line)
+		return
+	}
 	if len(l.window) == 0 || now.Sub(l.windowStart) > burstWindow {
 		l.windowStart, l.window, l.kinds = now, nil, map[string]int{}
 	}
 	l.window = append(l.window, ev.Label)
 	l.kinds[reasonKind(ev.Reason)]++
-	line := l.describe(ev.Label) + " is down: " + ev.Reason
-	if ev.SinceOK > 0 {
-		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
-	}
 	switch {
 	case len(l.window) < burstNodes:
 		l.warn("%s", line)
@@ -115,6 +135,33 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	}
 }
 
+// flaps records a down of the node and reports whether the node is flapping.
+// The drop that makes it flap raises the one WARN about it.
+func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
+	recent := l.drops[ev.Label][:0]
+	for _, d := range l.drops[ev.Label] {
+		if now.Sub(d.at) <= flapWindow {
+			recent = append(recent, d)
+		}
+	}
+	recent = append(recent, drop{at: now, kind: reasonKind(ev.Reason)})
+	l.drops[ev.Label] = recent
+	if len(recent) < flapDowns {
+		delete(l.flapping, ev.Label)
+		return false
+	}
+	if !l.flapping[ev.Label] {
+		l.flapping[ev.Label] = true
+		kinds := map[string]int{}
+		for _, d := range recent {
+			kinds[d.kind]++
+		}
+		l.warn("%s is flapping: %d downs within the last hour (%s); its further down and back reports are INFO",
+			l.describe(ev.Label), len(recent), joinKinds(kinds))
+	}
+	return true
+}
+
 func (l *nodeLog) back(ev core.NodeEvent) {
 	line := l.describe(ev.Label) + " is back"
 	if ev.Downtime > 0 {
@@ -133,17 +180,22 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 
 // summary is the one WARN line of a burst.
 func (l *nodeLog) summary(now time.Time) string {
-	kinds := make([]string, 0, len(l.kinds))
-	for k, n := range l.kinds {
-		kinds = append(kinds, fmt.Sprintf("%s x%d", k, n))
-	}
-	sort.Strings(kinds)
 	s := fmt.Sprintf("node burst: %d of %d nodes went down within %s (%s), likely a lost network or a shared outage",
-		len(l.window), len(l.byLabel), burstWindow, strings.Join(kinds, ", "))
+		len(l.window), len(l.byLabel), burstWindow, joinKinds(l.kinds))
 	if now.Sub(l.started) < startupWindow {
 		s += ", right after start"
 	}
 	return s
+}
+
+// joinKinds lists down reasons with their counts, sorted: "a x2, b x1".
+func joinKinds(kinds map[string]int) string {
+	out := make([]string, 0, len(kinds))
+	for k, n := range kinds {
+		out = append(out, fmt.Sprintf("%s x%d", k, n))
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
 }
 
 // describe names a node: label, name when known, provider and country.

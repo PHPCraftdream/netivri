@@ -322,8 +322,12 @@ type NodeEvent struct {
 `WarmOptions.OnProbeError(name, err)` runs just before `OnProbe` for a failed
 probe; the core keeps the kind of the error on the node (`timeout`,
 `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
-`connection closed`, `handshake failed`, else `error`) so the next down event
-can name it. A success clears it. The kind never carries an address. The down
+`connection closed`, `handshake failed`, else `error: ` and a scrubbed excerpt)
+so the next down event can name it. A success clears it. The excerpt keeps only
+lowercase plain words and numbers of up to three digits, every other word
+(anything with a dot, a colon, a slash, an `@`, a letter next to a digit or a
+non-ASCII letter) becomes `<addr>`, at most 12 words and 80 bytes; it is best
+effort for a log line, never used for matching. The down
 state, the time it began and the time of the last answer are carried over by a
 `Reconfigure`.
 
@@ -331,8 +335,12 @@ state, the time it began and the time of the last answer are carried over by a
 seconds are one burst: the first two get a `WARN` line each, the third raises
 one `WARN` summary (`node burst: ...`, with the reason kinds, and "right after
 start" in the first minute), the others and the third's own line are `INFO`,
-and an `INFO` line closes the burst when its last node is back. `doctor` counts
-the lines and the summary as node-down reports.
+and an `INFO` line closes the burst when its last node is back. A node with 3
+downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
+the reason kinds), then its down and back lines are `INFO` until its recent
+downs drop below 3 again (checked at its next down), and its downs do not count
+toward a burst. `doctor` counts the lines, the burst summary and the flapping
+warning as node-down reports.
 
 ## Wiring (`cmd/netivri`)
 
