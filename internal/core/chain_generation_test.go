@@ -99,11 +99,14 @@ func TestDirectRouteBuildStickyGroupUsesBuiltinDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	direct := testWarmProxy{name: "DIRECT", typ: C.Direct}
-	groups, err := buildStickyGroups(plans, map[string]C.Proxy{}, newAffinityTable(nil, 0), newHealthTable(), nil)
-	if err == nil {
-		t.Fatal("buildStickyGroups without DIRECT should fail")
+	// The built-in DIRECT is not generation-owned: it never enters the names
+	// that Reconfigure retires.
+	for _, name := range planProxyNames(plans) {
+		if name == "DIRECT" {
+			t.Fatalf("planProxyNames lists the built-in DIRECT: %v", planProxyNames(plans))
+		}
 	}
-	groups, err = buildStickyGroups(plans, map[string]C.Proxy{"DIRECT": direct}, newAffinityTable(nil, 0), newHealthTable(), nil)
+	groups, err := buildStickyGroups(plans, map[string]C.Proxy{"DIRECT": direct}, newAffinityTable(nil, 0), newHealthTable(), nil)
 	if err != nil {
 		t.Fatalf("buildStickyGroups with builtin DIRECT: %v", err)
 	}
