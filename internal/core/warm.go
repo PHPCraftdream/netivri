@@ -44,6 +44,9 @@ type WarmOptions struct {
 	// name, alive reports probe success and delay is the measured
 	// delay (0 on failure).
 	OnProbe func(name string, alive bool, delay time.Duration)
+	// OnProbeError, when set, is called with the error of a failed probe,
+	// from the probing goroutine just before OnProbe reports the failure.
+	OnProbeError func(name string, err error)
 	// Down, when set, reports whether the node behind an internal proxy
 	// name is down (see nodeHealth.Down); down nodes are probed with a
 	// lengthened interval (probeBackoffInterval). Start sets it from the
@@ -366,6 +369,9 @@ func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
 		w.backoff[index] = probeSchedule{}
 	}
 	w.mu.Unlock()
+	if err != nil && w.options.OnProbeError != nil {
+		w.options.OnProbeError(p.Name(), err)
+	}
 	if w.options.OnProbe != nil {
 		w.options.OnProbe(p.Name(), err == nil, measured)
 	}

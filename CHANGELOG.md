@@ -8,6 +8,21 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The log says why a node went down and for how long.** A down line now
+  carries the reason (`2 probe failures (timeout)`, `3 dial failures`) and the
+  time since the node last answered, and a back line the downtime:
+  `node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe
+  failures (timeout), last ok 3m12s ago`, `... is back after 41s down`. When 3
+  or more nodes go down within 10 seconds (a lost network, a shared outage, the
+  first probes after a start) one `WARN` line, `node burst: ...`, sums them up
+  and the nodes of the burst are logged at `INFO`; `node burst over: ...`
+  closes it. `netivri doctor` counts the summary with the node-down reports.
+  The reason is a few words, never an address. In `internal/core`,
+  `Options.OnNodeHealth` now takes a `core.NodeEvent` and `WarmOptions` has
+  `OnProbeError`.
+
 ## [0.3.0] - 2026-10-25
 
 Release 0.2.0 was withdrawn before all its npm packages were published,

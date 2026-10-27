@@ -1,6 +1,12 @@
 package core
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,24 +68,115 @@ type nodeHealth struct {
 	consProbeFail int
 	consDialFail  int
 
+	// lastOK is the last successful probe or dial, downSince the moment the
+	// node went down (zero while up) and probeFail the kind of the latest
+	// probe error: they feed the NodeEvent.
+	lastOK    time.Time
+	downSince time.Time
+	probeFail string
+
 	// label and notify report a change of the down state; notify may be nil.
+	// now is the clock (nil means time.Now).
 	label  string
-	notify func(label string, down bool)
+	notify func(NodeEvent)
+	now    func() time.Time
+}
+
+// NodeEvent is one change of a route node's down state, for Options.OnNodeHealth.
+type NodeEvent struct {
+	Label string
+	// Down is true when the node just went down, false when it is back.
+	Down bool
+	// Reason (Down only) names what tripped it, such as "2 probe failures
+	// (timeout)" or "3 dial failures". It never holds an address.
+	Reason string
+	// SinceOK (Down only) is how long ago the node last answered; 0 if never.
+	SinceOK time.Duration
+	// Downtime (back only) is how long the node was down; 0 if unknown.
+	Downtime time.Duration
+}
+
+func (h *nodeHealth) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
 }
 
 // recomputeDown refreshes the atomic flag and reports whether it changed; the
 // caller holds h.mu.
 func (h *nodeHealth) recomputeDown() bool {
 	down := h.consProbeFail >= downProbeFailures || h.consDialFail >= downDialFailures
-	return h.downFlag.Swap(down) != down
+	changed := h.downFlag.Swap(down) != down
+	if changed && down {
+		h.downSince = h.clock()
+	}
+	return changed
+}
+
+// eventLocked describes the change recomputeDown just reported; the caller
+// holds h.mu. A node that is back forgets when it went down.
+func (h *nodeHealth) eventLocked() NodeEvent {
+	now := h.clock()
+	ev := NodeEvent{Label: h.label, Down: h.downFlag.Load()}
+	if ev.Down {
+		switch {
+		case h.consProbeFail >= downProbeFailures && h.probeFail != "":
+			ev.Reason = fmt.Sprintf("%d probe failures (%s)", h.consProbeFail, h.probeFail)
+		case h.consProbeFail >= downProbeFailures:
+			ev.Reason = fmt.Sprintf("%d probe failures", h.consProbeFail)
+		default:
+			ev.Reason = fmt.Sprintf("%d dial failures", h.consDialFail)
+		}
+		if !h.lastOK.IsZero() {
+			ev.SinceOK = now.Sub(h.lastOK)
+		}
+		return ev
+	}
+	if !h.downSince.IsZero() {
+		ev.Downtime = now.Sub(h.downSince)
+	}
+	h.downSince = time.Time{}
+	return ev
 }
 
 // announce tells the owner of the table that the node went down or came back.
 // It runs after h.mu is released, so a slow listener never holds the lock.
-func (h *nodeHealth) announce(changed bool) {
+func (h *nodeHealth) announce(changed bool, ev NodeEvent) {
 	if changed && h.notify != nil {
-		h.notify(h.label, h.downFlag.Load())
+		h.notify(ev)
 	}
+}
+
+// noteProbeError remembers the kind of the latest probe error, so the next
+// down event can name it.
+func (h *nodeHealth) noteProbeError(kind string) {
+	h.mu.Lock()
+	h.probeFail = kind
+	h.mu.Unlock()
+}
+
+// probeFailKind names a probe error in a few words, without any address.
+func probeFailKind(err error) string {
+	var netErr net.Error
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout"):
+		return "timeout"
+	case strings.Contains(msg, "refused"):
+		return "connection refused"
+	case strings.Contains(msg, "reset"):
+		return "connection reset"
+	case strings.Contains(msg, "no such host") || strings.Contains(msg, "lookup"):
+		return "dns failure"
+	case strings.Contains(msg, "unreachable"):
+		return "network unreachable"
+	case errors.Is(err, io.EOF) || strings.Contains(msg, "eof"):
+		return "connection closed"
+	case strings.Contains(msg, "tls") || strings.Contains(msg, "handshake") || strings.Contains(msg, "certificate"):
+		return "handshake failed"
+	}
+	return "error"
 }
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3
@@ -89,8 +186,12 @@ func (h *nodeHealth) Down() bool { return h.downFlag.Load() }
 func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 	h.mu.Lock()
 	changed := h.applyProbe(alive, delay)
+	var ev NodeEvent
+	if changed {
+		ev = h.eventLocked()
+	}
 	h.mu.Unlock()
-	h.announce(changed)
+	h.announce(changed, ev)
 }
 
 // applyProbe is recordProbe under h.mu; it reports a change of the down state.
@@ -98,6 +199,8 @@ func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 	if alive {
 		h.consProbeFail = 0
 		h.consDialFail = 0
+		h.probeFail = ""
+		h.lastOK = h.clock()
 		// The first sample initialises the EWMA instead of averaging into 0.
 		if !h.hasProbe {
 			h.hasProbe = true
@@ -115,8 +218,12 @@ func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 func (h *nodeHealth) recordDial(ok bool, took time.Duration) {
 	h.mu.Lock()
 	changed := h.applyDial(ok, took)
+	var ev NodeEvent
+	if changed {
+		ev = h.eventLocked()
+	}
 	h.mu.Unlock()
-	h.announce(changed)
+	h.announce(changed, ev)
 }
 
 // applyDial is recordDial under h.mu; it reports a change of the down state.
@@ -124,6 +231,7 @@ func (h *nodeHealth) applyDial(ok bool, took time.Duration) bool {
 	if ok {
 		h.consDialFail = 0
 		h.consProbeFail = 0
+		h.lastOK = h.clock()
 		if !h.hasDial {
 			h.hasDial = true
 			h.dialEWMS = delaySeconds(took) * 1000
@@ -233,7 +341,9 @@ type healthTable struct {
 	entries map[string]*nodeHealth
 	// notify, set before the first register, hears every change of a node's
 	// down state with the node label. It may be nil.
-	notify func(label string, down bool)
+	notify func(NodeEvent)
+	// now is the clock of the records; nil means time.Now.
+	now func() time.Time
 }
 
 func newHealthTable() *healthTable {
@@ -244,7 +354,7 @@ func newHealthTable() *healthTable {
 func (t *healthTable) register(labels []string) {
 	for _, label := range labels {
 		if _, ok := t.entries[label]; !ok {
-			h := &nodeHealth{label: label, notify: t.notify}
+			h := &nodeHealth{label: label, notify: t.notify, now: t.now}
 			h.initHedgeBudget()
 			t.entries[label] = h
 		}
@@ -255,9 +365,12 @@ func (t *healthTable) register(labels []string) {
 // stays keeps its measurements, down state and hedge budget, the others start
 // fresh. Nothing is announced, so a node that was down before stays down
 // without a second report. notify is the table's new listener.
-func carryHealth(old *healthTable, labels []string, notify func(label string, down bool)) *healthTable {
+func carryHealth(old *healthTable, labels []string, notify func(NodeEvent)) *healthTable {
 	t := newHealthTable()
 	t.notify = notify
+	if old != nil {
+		t.now = old.now
+	}
 	for _, label := range labels {
 		if _, done := t.entries[label]; done || old == nil {
 			continue
@@ -272,7 +385,7 @@ func carryHealth(old *healthTable, labels []string, notify func(label string, do
 
 // cloneFor copies the record under its lock for a new table with listener
 // notify.
-func (h *nodeHealth) cloneFor(notify func(label string, down bool)) *nodeHealth {
+func (h *nodeHealth) cloneFor(notify func(NodeEvent)) *nodeHealth {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c := &nodeHealth{
@@ -287,8 +400,12 @@ func (h *nodeHealth) cloneFor(notify func(label string, down bool)) *nodeHealth 
 		ringPos:       h.ringPos,
 		consProbeFail: h.consProbeFail,
 		consDialFail:  h.consDialFail,
+		lastOK:        h.lastOK,
+		downSince:     h.downSince,
+		probeFail:     h.probeFail,
 		label:         h.label,
 		notify:        notify,
+		now:           h.now,
 	}
 	c.downFlag.Store(h.downFlag.Load())
 	c.hedgeUnits.Store(h.hedgeUnits.Load())
@@ -301,6 +418,14 @@ func (t *healthTable) health(label string) *nodeHealth { return t.entries[label]
 func (t *healthTable) recordProbe(label string, alive bool, delay time.Duration) {
 	if h := t.entries[label]; h != nil {
 		h.recordProbe(alive, delay)
+	}
+}
+
+// noteProbeError records the kind of a failed probe of a node before its
+// result is recorded.
+func (t *healthTable) noteProbeError(label string, err error) {
+	if h := t.entries[label]; h != nil {
+		h.noteProbeError(probeFailKind(err))
 	}
 }
 

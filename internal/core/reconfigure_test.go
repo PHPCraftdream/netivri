@@ -121,7 +121,7 @@ func TestParseRouteRules(t *testing.T) {
 func TestCarryHealthKeepsStateWithoutAnnouncing(t *testing.T) {
 	var oldEvents, newEvents []string
 	old := newHealthTable()
-	old.notify = func(label string, down bool) { oldEvents = append(oldEvents, fmt.Sprintf("%s %v", label, down)) }
+	old.notify = func(ev NodeEvent) { oldEvents = append(oldEvents, fmt.Sprintf("%s %v", ev.Label, ev.Down)) }
 	old.register([]string{"p/a", "p/gone"})
 	old.recordProbe("p/a", false, 0)
 	old.recordProbe("p/a", false, 0)
@@ -132,8 +132,8 @@ func TestCarryHealthKeepsStateWithoutAnnouncing(t *testing.T) {
 	}
 	oldEvents = nil
 
-	carried := carryHealth(old, []string{"p/a", "p/new", "p/a"}, func(label string, down bool) {
-		newEvents = append(newEvents, fmt.Sprintf("%s %v", label, down))
+	carried := carryHealth(old, []string{"p/a", "p/new", "p/a"}, func(ev NodeEvent) {
+		newEvents = append(newEvents, fmt.Sprintf("%s %v", ev.Label, ev.Down))
 	})
 	if !carried.down("p/a") {
 		t.Error("a node that was down came back by the change")

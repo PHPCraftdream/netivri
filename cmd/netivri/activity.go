@@ -59,37 +59,3 @@ func activityInfo(accounts []angel.AccountInfo, live []core.AccountActivity, inf
 	}
 	return out
 }
-
-// nodeHealthLogger returns the core.Options.OnNodeHealth hook that writes a
-// WARN line when a route node goes down and an INFO line when it is back, with
-// the node label, provider and country (never an address or a URL). Without
-// route nodes there is nothing to report and it returns nil.
-func nodeHealthLogger(infos []stats.NodeInfo, info, warn func(format string, args ...any)) func(label string, down bool) {
-	if len(infos) == 0 {
-		return nil
-	}
-	byLabel := make(map[string]stats.NodeInfo, len(infos))
-	for _, n := range infos {
-		byLabel[n.Label] = n
-	}
-	return func(label string, down bool) {
-		n := byLabel[label]
-		country := n.Country
-		if country == "" {
-			country = unknownCountry
-		}
-		if n.Name != "" {
-			if down {
-				warn("node %s (%s, provider %s, country %s) is down", label, n.Name, n.Provider, country)
-				return
-			}
-			info("node %s (%s, provider %s, country %s) is back", label, n.Name, n.Provider, country)
-			return
-		}
-		if down {
-			warn("node %s (provider %s, country %s) is down", label, n.Provider, country)
-			return
-		}
-		info("node %s (provider %s, country %s) is back", label, n.Provider, country)
-	}
-}

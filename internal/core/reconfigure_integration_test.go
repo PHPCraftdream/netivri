@@ -21,9 +21,9 @@ type healthEvents struct {
 	events []string
 }
 
-func (h *healthEvents) record(label string, down bool) {
+func (h *healthEvents) record(ev NodeEvent) {
 	h.mu.Lock()
-	h.events = append(h.events, fmt.Sprintf("%s %v", label, down))
+	h.events = append(h.events, fmt.Sprintf("%s %v", ev.Label, ev.Down))
 	h.mu.Unlock()
 }
 

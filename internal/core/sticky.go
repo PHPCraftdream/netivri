@@ -471,6 +471,19 @@ func probeHook(nameToLabel map[string]string, health *healthTable, observer Obse
 	}
 }
 
+// probeErrorHook hands the error of a failed probe to the health table, just
+// before its result is recorded; the caller's own OnProbeError still runs.
+func probeErrorHook(nameToLabel map[string]string, health *healthTable, next func(string, error)) func(string, error) {
+	return func(name string, err error) {
+		if label, ok := nameToLabel[name]; ok {
+			health.noteProbeError(label, err)
+		}
+		if next != nil {
+			next(name, err)
+		}
+	}
+}
+
 // memberNameLabels maps every member proxy name of every route to its
 // statistics label.
 func memberNameLabels(plans []routePlan) map[string]string {

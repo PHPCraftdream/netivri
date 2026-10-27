@@ -15,9 +15,9 @@ func notifyingTable(labels ...string) (*healthTable, func() []healthEvent) {
 	var mu sync.Mutex
 	var events []healthEvent
 	table := newHealthTable()
-	table.notify = func(label string, down bool) {
+	table.notify = func(ev NodeEvent) {
 		mu.Lock()
-		events = append(events, healthEvent{label, down})
+		events = append(events, healthEvent{ev.Label, ev.Down})
 		mu.Unlock()
 	}
 	table.register(labels)
@@ -92,9 +92,9 @@ func TestHealthNotifyRunsWithoutTheNodeLock(t *testing.T) {
 	table.register([]string{"p/a"})
 	h := table.health("p/a")
 	done := make(chan struct{})
-	table.entries["p/a"].notify = func(label string, down bool) {
+	table.entries["p/a"].notify = func(ev NodeEvent) {
 		// A listener may read the node's health: the lock must be free.
-		_ = h.view(label)
+		_ = h.view(ev.Label)
 		close(done)
 	}
 	table.recordProbe("p/a", false, 0)
