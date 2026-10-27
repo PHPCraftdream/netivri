@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,18 +33,27 @@ func routeKey(providers, countries string) string {
 	return providers + "~" + countries
 }
 
-// snapshotDemand tells which stored snapshots the routes read: all of them
-// when some route has a country but no provider, else only the named ones.
+// credentialRouteKey keeps credentials out of core route keys and Mihomo rule names.
+func credentialRouteKey(providers, countries, pre, post string) string {
+	payload := providers + "\x00" + countries + "\x00" + pre + "\x00" + post
+	sum := sha256.Sum256([]byte(payload))
+	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
+}
+
+// snapshotDemand tells which stored snapshots the account routes read: all of them
+// when a non-direct route has countries but no provider, else only named ones.
 func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool) {
 	named = make(map[string]bool)
 	for _, a := range accounts {
 		providers, countries := routeLists(a)
-		switch {
-		case len(providers) > 0:
+		if len(providers) == 0 && len(countries) == 0 {
+			continue
+		}
+		if len(providers) > 0 {
 			for _, p := range providers {
 				named[p] = true
 			}
-		case len(countries) > 0:
+		} else if len(countries) > 0 {
 			all = true
 		}
 	}
@@ -79,7 +91,7 @@ func accountRoutePoolWith(home string, cfg *config.Config, override map[string]*
 		}
 		snapshots[sub.Name] = snap
 	}
-	return buildAccountRoutePool(cfg.Accounts, snapshots)
+	return buildAccountRoutePool(cfg.Accounts, snapshots, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
 }
 
 // routePool is the outcome of buildAccountRoutePool: the nodes of every
@@ -92,6 +104,8 @@ type routePool struct {
 	tiers         map[string][]int
 	infos         []stats.NodeInfo
 	accountRoutes map[string]string
+	routePre      map[string]string
+	routePost     map[string]string
 }
 
 // nodeLabel is the stable identity of a node in statistics and bindings.
@@ -109,30 +123,55 @@ func nodeLabel(provider, id string) string {
 // name); without a country list the tiers are the providers alone. An account
 // with neither has no route. A route without any node is a hard error: `up`
 // fails closed.
-func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot) (routePool, error) {
+func inheritChain(account, global string) string {
+	if strings.EqualFold(account, "none") {
+		return "none"
+	}
+	if account != "" {
+		return account
+	}
+	return global
+}
+
+func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string) (routePool, error) {
 	pool := routePool{
 		nodes:         map[string][]map[string]any{},
 		labels:        map[string][]string{},
 		tiers:         map[string][]int{},
 		accountRoutes: map[string]string{},
+		routePre:      map[string]string{},
+		routePost:     map[string]string{},
 	}
 	infoSeen := make(map[string]bool)
 	type demand struct {
 		providers []string
 		countries []string
+		key       string
+		pre       string
+		post      string
+		direct    bool
 	}
 	seen := make(map[string]bool)
 	var wanted []demand // in account order, so the first failure is stable
 	for _, a := range accounts {
 		providers, countries := routeLists(a)
-		if len(providers) == 0 && len(countries) == 0 {
-			continue
+		pre, post := inheritChain(a.PreSOCKS5, globalPre), inheritChain(a.PostSOCKS5, globalPost)
+		direct := len(providers) == 0 && len(countries) == 0
+		key := credentialRouteKey(config.JoinList(providers), config.JoinList(countries), pre, post)
+		if direct {
+			// Preserve the implicit plain-direct default. An explicit post
+			// chain, including an account-level "none" overriding a global post,
+			// needs a route to bypass MATCH.
+			if post == "" || (strings.EqualFold(post, "none") && !(strings.EqualFold(a.PostSOCKS5, "none") && globalPost != "" && !strings.EqualFold(globalPost, "none"))) {
+				continue
+			}
+			pre = "none"
+			key = credentialRouteKey("", "", pre, post)
 		}
-		key := routeKey(config.JoinList(providers), config.JoinList(countries))
 		pool.accountRoutes[a.Login] = key
 		if !seen[key] {
 			seen[key] = true
-			wanted = append(wanted, demand{providers, countries})
+			wanted = append(wanted, demand{providers: providers, countries: countries, key: key, pre: pre, post: post, direct: direct})
 		}
 	}
 	if len(wanted) == 0 {
@@ -145,6 +184,10 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 	}
 	sort.Strings(allProviders)
 	for _, d := range wanted {
+		pool.routePre[d.key], pool.routePost[d.key] = d.pre, d.post
+		if d.direct {
+			continue
+		}
 		// Each group is the set of providers that share a tier.
 		var groups [][]string
 		if len(d.providers) > 0 {
@@ -170,7 +213,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 			name     string
 			raw      map[string]any
 		}
-		key := routeKey(config.JoinList(d.providers), config.JoinList(d.countries))
+		key := d.key
 		tier := 0
 		for _, country := range countries {
 			for _, names := range groups {
@@ -242,6 +285,9 @@ func noNodesError(providers, countries []string) error {
 
 // countryPhrase reads "country DE" or "countries DE,NL".
 func countryPhrase(codes []string) string {
+	if len(codes) == 0 {
+		return "countries"
+	}
 	if len(codes) > 1 {
 		return "countries " + strings.Join(codes, ",")
 	}
@@ -309,21 +355,52 @@ func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeI
 	return info
 }
 
+type resolvedChain struct {
+	value, source string
+	auth          bool
+}
+
+func resolveChain(account, global string) resolvedChain {
+	source, effective := "account", account
+	if effective == "" {
+		source, effective = "global", global
+	}
+	if effective == "" || strings.EqualFold(effective, "none") {
+		return resolvedChain{value: "none", source: "none"}
+	}
+	u, err := url.Parse(effective)
+	if err != nil {
+		return resolvedChain{value: "configured", source: source}
+	}
+	auth := u.User != nil
+	u.User = nil
+	u.Path, u.RawQuery, u.Fragment = "", "", ""
+	return resolvedChain{value: u.String(), source: source, auth: auth}
+}
+
+func statusAccountChain(accountPre, accountPost, globalPre, globalPost string) *angel.AccountChain {
+	pre, post := resolveChain(accountPre, globalPre), resolveChain(accountPost, globalPost)
+	return &angel.AccountChain{PreSOCKS5: pre.value, PreSOCKS5Source: pre.source, PreSOCKS5Auth: pre.auth,
+		PostSOCKS5: post.value, PostSOCKS5Source: post.source, PostSOCKS5Auth: post.auth}
+}
+
 // accountStatus lists the configured accounts for the status answer,
-// sorted by login. The country comes from the live route key (the part
-// after "~"); a routed account always carries the route it was built for.
+// sorted by login. The country comes from the live route key's second field;
+// a credential hash, when present, is a separate third field.
 func accountStatus(cfg *config.Config, routes map[string]string) []angel.AccountInfo {
 	out := make([]angel.AccountInfo, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
 		country := ""
 		if key, routed := routes[a.Login]; routed {
-			if i := strings.Index(key, "~"); i >= 0 {
-				country = key[i+1:]
+			fields := strings.SplitN(key, "~", 3)
+			if len(fields) > 1 {
+				country = fields[1]
 			}
 		}
 		// No normalization: an account without its own rule reports "" here, like
 		// in `account list`.
-		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients})
+		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients,
+			Chain: statusAccountChain(a.PreSOCKS5, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out

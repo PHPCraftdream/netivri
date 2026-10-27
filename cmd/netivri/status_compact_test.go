@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
@@ -34,6 +36,79 @@ func runStatusData(t *testing.T, args ...string) map[string]any {
 		t.Fatalf("runStatus: %v", err)
 	}
 	return decodeData(t, &out)
+}
+
+func TestStatusChainComesFromRealProducerAndIsRedacted(t *testing.T) {
+	status := statusAccountChain(
+		"socks5://acct-user:acct-secret@account.example:1080",
+		"",
+		"socks5://unused-user:unused-secret@unused.example:1082",
+		"socks5://global-user:global-secret@global.example:1081",
+	)
+	stubStatus(t, angel.Status{Accounts: []angel.AccountInfo{{Login: "alice", Chain: status}}})
+	data := runStatusData(t)
+	accounts := data["accounts"].([]any)
+	account := accounts[0].(map[string]any)
+	chain := account["chain"].(map[string]any)
+	if chain["pre_socks5"] != "socks5://account.example:1080" || chain["pre_socks5_source"] != "account" || chain["pre_socks5_auth"] != true {
+		t.Fatalf("account pre chain = %#v", chain)
+	}
+	if chain["post_socks5"] != "socks5://global.example:1081" || chain["post_socks5_source"] != "global" || chain["post_socks5_auth"] != true {
+		t.Fatalf("global post chain = %#v", chain)
+	}
+	for _, secret := range []string{"acct-user", "acct-secret", "global-user", "global-secret", "unused-user", "unused-secret"} {
+		if strings.Contains(mustJSON(t, data), secret) {
+			t.Errorf("status leaked %q: %s", secret, mustJSON(t, data))
+		}
+	}
+}
+
+func TestStatusShowsAppliedChainWhileDiskHasPendingChain(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Accounts = append(cfg.Accounts, config.Account{Login: "alice", Password: config.InitPlaceholder,
+		PreSOCKS5: "socks5://disk-user:disk-secret@disk.example:1080", PostSOCKS5: "none"})
+	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	diskBytes, err := os.ReadFile(config.ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := &liveAngel{opts: upOptions{Home: home}, applied: desiredState{cfg: func() *config.Config {
+		applied := config.Default()
+		applied.Accounts = append(applied.Accounts, config.Account{Login: "alice", Password: config.InitPlaceholder,
+			PreSOCKS5: "socks5://live-user:live-secret@live.example:1080", PostSOCKS5: ""})
+		return applied
+	}()}}
+	status := live.status("")
+	stubStatus(t, status)
+	data := runStatusData(t)
+	chain := data["accounts"].([]any)[0].(map[string]any)["chain"].(map[string]any)
+	if chain["pre_socks5"] != "socks5://live.example:1080" || chain["post_socks5"] != "none" {
+		t.Fatalf("status did not report applied chain: %#v", chain)
+	}
+	for _, secret := range []string{"disk-user", "disk-secret", "live-user", "live-secret"} {
+		if strings.Contains(mustJSON(t, data), secret) {
+			t.Errorf("status leaked %q: %s", secret, mustJSON(t, data))
+		}
+	}
+	after, err := os.ReadFile(config.ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(diskBytes, after) {
+		t.Fatal("status changed on-disk configuration")
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
 
 func TestStatusShortOmitsFullWarmStatsAffinity(t *testing.T) {

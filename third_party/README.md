@@ -64,3 +64,10 @@
    instance starts and resets them when it closes; upstream never changes
    them after start, so it had no synchronization (the race detector found
    the race in `TestMixedPortLifecycle`). Behaviour is otherwise unchanged.
+5. **Locked proxy map read** (`tunnel/tunnel.go`): `Proxies()` (the function
+   and the `tunnel` method that `proxydialer` calls to resolve a
+   `dialer-proxy` by name) takes `configMux.RLock` like the other readers.
+   netivri replaces the proxy map in a running instance (`Reconfigure`,
+   `UpdateProxies`) while dials look their `dialer-proxy` up, which is the
+   SOCKS5 chain's pre and post hop; upstream never replaced it while
+   serving. The race detector found it in `TestSOCKS5PreReconfigureKeepsOpenConnection`.

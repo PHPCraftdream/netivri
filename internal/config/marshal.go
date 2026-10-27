@@ -26,7 +26,18 @@ func Marshal(cfg *Config) (string, error) {
 	if render.Listen.AllowedClients == AllowedClientsAny {
 		render.Listen.AllowedClients = ""
 	}
-	body, err := ktavDumps(&render)
+	var body string
+	var err error
+	if render.Chain == (Chain{}) {
+		// No chain proxies: render exactly as before the chain existed, so a
+		// rewrite adds no empty chain table to an existing file.
+		body, err = ktavDumps(&configWithoutChain{
+			Listen: render.Listen, Auth: render.Auth, Fetch: render.Fetch,
+			Subscriptions: render.Subscriptions, Accounts: render.Accounts, Selection: render.Selection,
+		})
+	} else {
+		body, err = ktavDumps(&render)
+	}
 	if err != nil {
 		// Binding rendering errors get the same structured-fields-only
 		// hygiene as parse errors.
@@ -44,6 +55,16 @@ func Marshal(cfg *Config) (string, error) {
 		return "", invalid("the rendered configuration does not round-trip")
 	}
 	return doc, nil
+}
+
+// configWithoutChain is Config without the chain table, in the same key order.
+type configWithoutChain struct {
+	Listen        Listen         `json:"listen"`
+	Auth          Auth           `json:"auth"`
+	Fetch         Fetch          `json:"fetch"`
+	Subscriptions []Subscription `json:"subscriptions,omitempty"`
+	Accounts      []Account      `json:"accounts,omitempty"`
+	Selection     Selection      `json:"selection"`
 }
 
 // configEqual compares two configurations, treating nil and empty
@@ -74,6 +95,19 @@ func configEqual(a, b *Config) bool {
 	}
 	if strings.TrimSpace(y.Listen.AllowedClients) == "" {
 		y.Listen.AllowedClients = AllowedClientsAny
+	}
+	// Empty chain fields and the sentinel both represent the same disabled state.
+	if strings.EqualFold(x.Chain.PreSOCKS5, "none") {
+		x.Chain.PreSOCKS5 = ""
+	}
+	if strings.EqualFold(y.Chain.PreSOCKS5, "none") {
+		y.Chain.PreSOCKS5 = ""
+	}
+	if strings.EqualFold(x.Chain.PostSOCKS5, "none") {
+		x.Chain.PostSOCKS5 = ""
+	}
+	if strings.EqualFold(y.Chain.PostSOCKS5, "none") {
+		y.Chain.PostSOCKS5 = ""
 	}
 	return reflect.DeepEqual(x, y)
 }

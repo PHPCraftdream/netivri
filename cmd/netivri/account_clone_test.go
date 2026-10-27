@@ -228,7 +228,7 @@ func TestAccountCloneIsListed(t *testing.T) {
 	home := cloneHome(t)
 	runClone(t, home, "alice", "bob")
 	out := runAccountOK(t, home, "list")
-	if !strings.Contains(string(out), `"login":"bob","provider":"p1","exit_country":"DE","allowed_clients":"","password_set":true`) {
+	if !strings.Contains(string(out), `"login":"bob","provider":"p1","exit_country":"DE","allowed_clients":"","pre_socks5":{"value":"none","source":"none","auth":false},"post_socks5":{"value":"none","source":"none","auth":false},"password_set":true`) {
 		t.Fatalf("list = %s", out)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -34,6 +35,7 @@ type Config struct {
 	Listen        Listen         `json:"listen"`
 	Auth          Auth           `json:"auth"`
 	Fetch         Fetch          `json:"fetch"`
+	Chain         Chain          `json:"chain"`
 	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 	Accounts      []Account      `json:"accounts,omitempty"`
 	Selection     Selection      `json:"selection"`
@@ -49,6 +51,8 @@ type Account struct {
 	// AllowedClients optionally narrows the client addresses this account
 	// may authenticate from; empty means no account restriction.
 	AllowedClients string `json:"allowed_clients,omitempty"`
+	PreSOCKS5      string `json:"pre_socks5,omitempty"`
+	PostSOCKS5     string `json:"post_socks5,omitempty"`
 }
 
 // Account returns the account and its index, or (nil, -1) when absent.
@@ -102,6 +106,12 @@ func NormalizeCountry(code string) (string, bool) {
 		}
 	}
 	return string(b), true
+}
+
+// Chain is the optional pair of global SOCKS5 hops.
+type Chain struct {
+	PreSOCKS5  string `json:"pre_socks5,omitempty"`
+	PostSOCKS5 string `json:"post_socks5,omitempty"`
 }
 
 // Listen is the local mixed HTTP/SOCKS5 proxy endpoint.
@@ -216,6 +226,12 @@ func (c *Config) Validate() error {
 	if err := validateUpdateInterval(c.Fetch.UpdateInterval); err != nil {
 		return err
 	}
+	if err := validateSOCKS5URL("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
+		return err
+	}
+	if err := validateSOCKS5URL("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
+		return err
+	}
 	first := make(map[string]int, len(c.Subscriptions))
 	for i, s := range c.Subscriptions {
 		if err := checkScalar(fmt.Sprintf("subscriptions[%d].name", i), s.Name); err != nil {
@@ -310,6 +326,18 @@ func (c *Config) Validate() error {
 		if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
 			return invalid("accounts[%d].allowed_clients: %v", i, err)
 		}
+		if err := checkScalar(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
+			return err
+		}
+		if err := validateSOCKS5URL(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
+			return err
+		}
+		if err := checkScalar(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
+			return err
+		}
+		if err := validateSOCKS5URL(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
+			return err
+		}
 	}
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
@@ -353,6 +381,45 @@ func validateBind(bind string) error {
 	}
 	return nil
 }
+
+func validateSOCKS5URL(field, raw string) error {
+	if raw == "" || strings.EqualFold(raw, "none") {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(u.Scheme, "socks5") || u.Opaque != "" || u.Hostname() == "" || hasInvalidEscapes(raw) || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+	}
+	port := u.Port()
+	if port == "" {
+		return invalid("%s must be empty, none, or a valid socks5:// URL with a host and port", field)
+	}
+	if port != "" {
+		for _, r := range port {
+			if r < '0' || r > '9' {
+				return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+			}
+		}
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+		}
+	}
+	return nil
+}
+
+func hasInvalidEscapes(raw string) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '%' {
+			if i+2 >= len(raw) || !isHex(raw[i+1]) || !isHex(raw[i+2]) {
+				return true
+			}
+			i += 2
+		}
+	}
+	return false
+}
+func isHex(c byte) bool { return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' }
 
 // validateProxy checks a fetch/via proxy URL: scheme whitelist plus a
 // host. The parsed URL itself is never echoed back.

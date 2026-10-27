@@ -34,6 +34,10 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
+- **SOCKS5 before and after the VPN.** Optional `pre_socks5` (how netivri
+  reaches the VPN node) and `post_socks5` (where the traffic goes after it),
+  global and per account; an account value overrides the global one and `none`
+  cancels it.
 - **Client address rules.** `listen.allowed_clients` limits which client
   addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
   an account can narrow it with its own rule, checked before its password.
@@ -122,6 +126,39 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
 
+### SOCKS5 before and after the VPN
+
+Two optional SOCKS5 proxies wrap the VPN node: `pre_socks5` is what netivri
+connects through to reach the node, `post_socks5` is where the traffic goes
+after the node (client → netivri → pre → VPN node → post → destination). Set
+them for everyone in `config.ktav` and override them per account:
+
+```ktav
+chain.pre_socks5:: socks5://user:secret@pre.example:1080
+chain.post_socks5:: socks5://post.example:1080
+
+accounts: [
+    {
+        login: alice
+        password:: init
+        provider: main
+        exit_country: DE
+        post_socks5:: socks5://alice-exit.example:1080
+    }
+]
+```
+
+```sh
+netivri account set-socks5 alice --post none        # alice skips the global post
+netivri account set-socks5 alice --post inherit     # back to the global value
+netivri account add bob --provider main --country NL --pre-socks5 socks5://pre2.example:1080
+netivri account show alice                          # effective values, never the credentials
+```
+
+Each side is independent: an account value wins over the global one, an
+absent value inherits it, `none` cancels it. See
+[`docs/config.md`](docs/config.md) and `netivri help account set-socks5`.
+
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one
 command.
@@ -153,7 +190,7 @@ command.
 | Dependency licenses | [`docs/licenses.md`](docs/licenses.md) |
 | Testing | [`docs/testing.md`](docs/testing.md) |
 | Performance measurements | [`docs/perf/`](docs/perf/) |
-| Design notes | [`docs/design/`](docs/design/) |
+| Design notes | [`docs/design/`](docs/design/) (the SOCKS5 chain: [`socks5-chain.md`](docs/design/socks5-chain.md)) |
 | For AI agents | [`AGENTS.md`](AGENTS.md) |
 | History | [`CHANGELOG.md`](CHANGELOG.md) |
 

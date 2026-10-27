@@ -60,6 +60,11 @@ type Options struct {
 	// nodes of that route, in preference order. A route key is 1..128 printable
 	// ASCII characters chosen by the caller; it never reaches a rule.
 	RouteNodes map[string][]map[string]any
+	// RoutePre and RoutePost map opaque route keys to one effective URI string.
+	RoutePre  map[string]string
+	RoutePost map[string]string
+	// GlobalPost chains the MATCH route through one effective URI string.
+	GlobalPost string
 	// AccountRoute maps an authenticated login to the route key it uses.
 	AccountRoute map[string]string
 	// Warm optionally enables the background probes of the node proxies and,
@@ -201,7 +206,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	if o.Node != nil || len(o.AccountRoute) != 0 {
+	if o.Node != nil || len(o.AccountRoute) != 0 || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
 		raw.Mode = tunnel.Rule
 		raw.Proxy = proxies
 		raw.ProxyGroup = groups
@@ -299,7 +304,19 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			// down are probed with a lengthened interval.
 			nameToLabel := memberNameLabels(plans)
 			wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
+			wo.only = func(name string) bool {
+				_, tracked := nameToLabel[name]
+				return generatedMemberName(name) && tracked
+			}
 			wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
+		} else if o.Node != nil || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
+			// MATCH traffic leaves through the global post when there is one
+			// (behind the default node, if any): probe that whole chain.
+			want := nodeName
+			if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
+				want = globalPostProxyName(0)
+			}
+			wo.only = func(name string) bool { return name == want }
 		}
 		warm, err = startWarm(wo, o.Node)
 		if err != nil {
@@ -330,7 +347,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		memberLabels:  memberNameLabels(plans),
 		connLabels:    memberNameLabels(plans),
 		routeLabels:   routeLabels(plans),
-		names:         planProxyNames(plans),
+		names:         append(planProxyNames(plans), proxyMappingNames(proxies)...),
 	})
 	current = inst
 

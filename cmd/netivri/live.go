@@ -172,6 +172,9 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
 		RouteNodes:     d.pool.nodes,
 		AccountRoute:   d.pool.accountRoutes,
+		RoutePre:       d.pool.routePre,
+		RoutePost:      d.pool.routePost,
+		GlobalPost:     d.cfg.Chain.PostSOCKS5,
 		NodeLabels:     d.pool.labels,
 		NodeTiers:      d.pool.tiers,
 		OnNodeHealth:   nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
@@ -239,23 +242,29 @@ func nodesWithoutNames(routes map[string][]map[string]any) map[string][]map[stri
 	return out
 }
 
-// fingerprint identifies what a core is built from: the bind address, the
-// port, the proxy credentials, and the nodes and routes of the accounts.
-// Settings the core does not read (subscription URLs, the refresh interval)
-// are left out, so changing them never restarts the listener.
+// fingerprint identifies all settings a core is built from. Settings the core
+// does not read (subscription URLs and refresh interval) are left out.
 func fingerprint(d desiredState) string {
 	return listenerFingerprint(d) + routesFingerprint(d)
 }
 
-// routesFingerprint covers the nodes, labels, tiers and routes: what
-// Reconfigure can change in a running core.
+// routesFingerprint covers nodes, labels, tiers, account routes and SOCKS5
+// chains. Route-specific chains are applied by Reconfigure; global post is
+// included because it affects core construction and requires a restart.
 func routesFingerprint(d desiredState) string {
 	v := struct {
-		Nodes  map[string][]map[string]any
-		Labels map[string][]string
-		Tiers  map[string][]int
-		Routes map[string]string
-	}{nodesWithoutNames(d.pool.nodes), d.pool.labels, d.pool.tiers, d.pool.accountRoutes}
+		Nodes      map[string][]map[string]any
+		Labels     map[string][]string
+		Tiers      map[string][]int
+		Routes     map[string]string
+		Pre        map[string]string
+		Post       map[string]string
+		GlobalPost string
+	}{
+		Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers,
+		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost,
+		GlobalPost: d.cfg.Chain.PostSOCKS5,
+	}
 	data, _ := json.Marshal(v)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -307,7 +316,9 @@ func (l *liveAngel) reload(ctx context.Context) {
 		d.port = l.actualPort // a random port stays the one clients know
 	}
 	same := fingerprint(l.applied) == fingerprint(d)
-	inPlace := !same && listenerFingerprint(l.applied) == listenerFingerprint(d)
+	globalPostChanged := l.applied.cfg.Chain.PostSOCKS5 != d.cfg.Chain.PostSOCKS5
+	inPlace := !same && !globalPostChanged && listenerFingerprint(l.applied) == listenerFingerprint(d) &&
+		(len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)
 	if same {
 		l.reloadErr = ""
 	}

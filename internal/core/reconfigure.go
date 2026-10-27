@@ -83,7 +83,16 @@ func (i *Instance) Reconfigure(o Options) error {
 		return err
 	}
 	names := planProxyNames(plans)
+	for _, mapping := range rawProxies {
+		if name, ok := mapping["name"].(string); ok && name != "DIRECT" {
+			names = append(names, name)
+		}
+	}
 	proxies := tunnel.Proxies()
+	// Route members may intentionally use Mihomo's built-in DIRECT adapter.
+	if direct := proxies["DIRECT"]; direct != nil {
+		members["DIRECT"] = direct
+	}
 	known := make(map[string]bool, len(names))
 	for _, name := range names {
 		known[name] = true
@@ -98,13 +107,18 @@ func (i *Instance) Reconfigure(o Options) error {
 	for _, plan := range plans {
 		for _, name := range plan.names {
 			if members[name] == nil {
-				return errors.New("core: missing route member proxy " + name)
+				return errors.New("core: missing route member proxy")
 			}
 		}
 	}
+	for _, mapping := range rawProxies {
+		name, _ := mapping["name"].(string)
+		if members[name] == nil {
+			return errors.New("core: missing route helper proxy")
+		}
+	}
 
-	// The old probes stop first, so no result lands in the old health table
-	// after it was carried over.
+	// Stop old probes before carrying their schedules into the next generation.
 	old.warm.Close()
 	backoff := carryBackoff(old.warm.backoffByName(), old.memberLabels, memberNameLabels(plans))
 
@@ -149,7 +163,7 @@ func (i *Instance) Reconfigure(o Options) error {
 		wo := *o.Warm
 		wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
 		wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
-		wo.only = func(name string) bool { _, ok := nameToLabel[name]; return ok }
+		wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
 		wo.seed = backoff
 		if warm, err = startWarm(wo, nil); err != nil {
 			return err
@@ -180,7 +194,8 @@ func parseMembers(mappings []map[string]any) (map[string]C.Proxy, error) {
 	for index, mapping := range mappings {
 		proxy, err := adapter.ParseProxy(mapping, adapter.WithTunnelForAPI(tunnel.Tunnel))
 		if err != nil {
-			return nil, fmt.Errorf("proxy %d: %w", index, err)
+			// Mihomo parser errors may echo proxy fields, including credentials.
+			return nil, fmt.Errorf("proxy %d: invalid proxy configuration", index)
 		}
 		members[proxy.Name()] = proxy
 	}

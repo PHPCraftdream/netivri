@@ -27,21 +27,21 @@ func TestBuildAccountRoutePoolProviderListKeepsPriority(t *testing.T) {
 		"a": snap(node("a1", "DE"), node("a2", "NL")),
 		"b": snap(node("b1", "DE")),
 	}
-	got, err := buildAccountRoutePool([]config.Account{{Login: "u", Provider: "b,a"}}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{{Login: "u", Provider: "b,a"}}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.accountRoutes["u"] != "b,a~" {
+	if got.accountRoutes["u"] != credentialRouteKey("b,a", "", "", "") {
 		t.Fatalf("route = %q", got.accountRoutes["u"])
 	}
-	if names := routeNames(t, got, "b,a~"); strings.Join(names, ",") != "b1,a1,a2" {
+	if names := routeNames(t, got, credentialRouteKey("b,a", "", "", "")); strings.Join(names, ",") != "b1,a1,a2" {
 		t.Fatalf("order = %v, want [b1 a1 a2]", names)
 	}
-	if !reflect.DeepEqual(got.tiers["b,a~"], []int{0, 1, 1}) {
-		t.Fatalf("tiers = %v", got.tiers["b,a~"])
+	if !reflect.DeepEqual(got.tiers[credentialRouteKey("b,a", "", "", "")], []int{0, 1, 1}) {
+		t.Fatalf("tiers = %v", got.tiers[credentialRouteKey("b,a", "", "", "")])
 	}
-	if !reflect.DeepEqual(got.labels["b,a~"], []string{"b/b1", "a/a1", "a/a2"}) {
-		t.Fatalf("labels = %v", got.labels["b,a~"])
+	if !reflect.DeepEqual(got.labels[credentialRouteKey("b,a", "", "", "")], []string{"b/b1", "a/a1", "a/a2"}) {
+		t.Fatalf("labels = %v", got.labels[credentialRouteKey("b,a", "", "", "")])
 	}
 }
 
@@ -52,18 +52,18 @@ func TestBuildAccountRoutePoolCountryListIsCountryMajor(t *testing.T) {
 		"main": snap(node("m-de", "DE"), node("m-nl", "NL")),
 		"alt":  snap(node("a-de", "DE"), node("a-nl", "NL")),
 	}
-	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "nl,de"}}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{{Login: "u", ExitCountry: "nl,de"}}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.accountRoutes["u"] != "~NL,DE" {
+	if got.accountRoutes["u"] != credentialRouteKey("", "NL,DE", "", "") {
 		t.Fatalf("route = %q", got.accountRoutes["u"])
 	}
-	if names := routeNames(t, got, "~NL,DE"); strings.Join(names, ",") != "a-nl,m-nl,a-de,m-de" {
+	if names := routeNames(t, got, credentialRouteKey("", "NL,DE", "", "")); strings.Join(names, ",") != "a-nl,m-nl,a-de,m-de" {
 		t.Fatalf("order = %v, want [a-nl m-nl a-de m-de]", names)
 	}
-	if !reflect.DeepEqual(got.tiers["~NL,DE"], []int{0, 0, 1, 1}) {
-		t.Fatalf("tiers = %v", got.tiers["~NL,DE"])
+	if !reflect.DeepEqual(got.tiers[credentialRouteKey("", "NL,DE", "", "")], []int{0, 0, 1, 1}) {
+		t.Fatalf("tiers = %v", got.tiers[credentialRouteKey("", "NL,DE", "", "")])
 	}
 }
 
@@ -74,11 +74,11 @@ func TestBuildAccountRoutePoolBothListsCountryThenProvider(t *testing.T) {
 		"b": snap(node("b-de", "DE"), node("b-nl", "NL"), node("b-fi", "FI")),
 	}
 	acct := config.Account{Login: "u", Provider: "b,a", ExitCountry: "NL,DE"}
-	got, err := buildAccountRoutePool([]config.Account{acct}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{acct}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := "b,a~NL,DE"
+	key := credentialRouteKey("b,a", "NL,DE", "", "")
 	if names := routeNames(t, got, key); strings.Join(names, ",") != "b-nl,a-nl,b-de,a-de" {
 		t.Fatalf("order = %v, want [b-nl a-nl b-de a-de]", names)
 	}
@@ -95,11 +95,11 @@ func TestBuildAccountRoutePoolSkipsEmptyPairsAndMissingSnapshots(t *testing.T) {
 		"b": snap(node("b-nl", "NL")),
 	}
 	acct := config.Account{Login: "u", Provider: "ghost,a,b", ExitCountry: "NL,DE"}
-	got, err := buildAccountRoutePool([]config.Account{acct}, snapshots)
+	got, err := buildAccountRoutePool([]config.Account{acct}, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := "ghost,a,b~NL,DE"
+	key := credentialRouteKey("ghost,a,b", "NL,DE", "", "")
 	if names := routeNames(t, got, key); strings.Join(names, ",") != "b-nl,a-de" {
 		t.Fatalf("order = %v, want [b-nl a-de]", names)
 	}
@@ -118,14 +118,14 @@ func TestBuildAccountRoutePoolCanonicalKey(t *testing.T) {
 		{Login: "u1", Provider: "a, b", ExitCountry: "de, DE"},
 		{Login: "u2", Provider: "a,b,a", ExitCountry: "DE"},
 	}
-	got, err := buildAccountRoutePool(accounts, snapshots)
+	got, err := buildAccountRoutePool(accounts, snapshots, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.accountRoutes["u1"] != "a,b~DE" || got.accountRoutes["u2"] != "a,b~DE" {
+	if got.accountRoutes["u1"] != credentialRouteKey("a,b", "DE", "", "") || got.accountRoutes["u2"] != credentialRouteKey("a,b", "DE", "", "") {
 		t.Fatalf("routes = %v", got.accountRoutes)
 	}
-	if len(got.nodes) != 1 || len(got.nodes["a,b~DE"]) != 2 {
+	if len(got.nodes) != 1 || len(got.nodes[credentialRouteKey("a,b", "DE", "", "")]) != 2 {
 		t.Fatalf("nodes = %v", got.nodes)
 	}
 }
@@ -144,7 +144,7 @@ func TestBuildAccountRoutePoolListsFailClosed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots)
+			_, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots, "", "")
 			var ce *cli.Error
 			if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" || ce.Exit != cli.ExitNotFound {
 				t.Fatalf("error = %#v", err)
@@ -191,14 +191,14 @@ func TestBuildAccountRoutePoolAnyCountry(t *testing.T) {
 		wantNames string
 		wantTiers []int
 	}{
-		{"last", config.Account{Login: "u", Provider: "a,b", ExitCountry: "NL,*"}, "a,b~NL,*", "a-nl,b-nl,a-de,a-fr,a-unknown,b-fr", []int{0, 1, 2, 2, 2, 3}},
-		{"first", config.Account{Login: "u", Provider: "a", ExitCountry: "*,DE"}, "a~*,DE", "a-fr,a-nl,a-unknown,a-de", []int{0, 0, 0, 1}},
-		{"alone with providers", config.Account{Login: "u", Provider: "b,a", ExitCountry: "*"}, "b,a~*", "b-fr,b-nl,a-de,a-fr,a-nl,a-unknown", []int{0, 0, 1, 1, 1, 1}},
-		{"alone without providers", config.Account{Login: "u", ExitCountry: "*"}, "~*", "a-de,a-fr,a-nl,a-unknown,b-fr,b-nl", []int{0, 0, 0, 0, 0, 0}},
-		{"nothing left for it", config.Account{Login: "u", Provider: "b", ExitCountry: "FR,NL,*"}, "b~FR,NL,*", "b-fr,b-nl", []int{0, 1}},
+		{"last", config.Account{Login: "u", Provider: "a,b", ExitCountry: "NL,*"}, credentialRouteKey("a,b", "NL,*", "", ""), "a-nl,b-nl,a-de,a-fr,a-unknown,b-fr", []int{0, 1, 2, 2, 2, 3}},
+		{"first", config.Account{Login: "u", Provider: "a", ExitCountry: "*,DE"}, credentialRouteKey("a", "*,DE", "", ""), "a-fr,a-nl,a-unknown,a-de", []int{0, 0, 0, 1}},
+		{"alone with providers", config.Account{Login: "u", Provider: "b,a", ExitCountry: "*"}, credentialRouteKey("b,a", "*", "", ""), "b-fr,b-nl,a-de,a-fr,a-nl,a-unknown", []int{0, 0, 1, 1, 1, 1}},
+		{"alone without providers", config.Account{Login: "u", ExitCountry: "*"}, credentialRouteKey("", "*", "", ""), "a-de,a-fr,a-nl,a-unknown,b-fr,b-nl", []int{0, 0, 0, 0, 0, 0}},
+		{"nothing left for it", config.Account{Login: "u", Provider: "b", ExitCountry: "FR,NL,*"}, credentialRouteKey("b", "FR,NL,*", "", ""), "b-fr,b-nl", []int{0, 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots)
+			got, err := buildAccountRoutePool([]config.Account{tc.account}, snapshots, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -222,7 +222,7 @@ func TestSnapshotDemandAnyCountryReadsEverySnapshot(t *testing.T) {
 }
 
 func TestBuildAccountRoutePoolAnyCountryWithoutNodesFailsClosed(t *testing.T) {
-	_, err := buildAccountRoutePool([]config.Account{{Login: "u", Provider: "a", ExitCountry: "*"}}, map[string]*subscription.Snapshot{"a": snap()})
+	_, err := buildAccountRoutePool([]config.Account{{Login: "u", Provider: "a", ExitCountry: "*"}}, map[string]*subscription.Snapshot{"a": snap()}, "", "")
 	var ce *cli.Error
 	if !errors.As(err, &ce) || ce.Code != "NO_NODES_FOR_COUNTRY" {
 		t.Fatalf("error = %#v", err)
