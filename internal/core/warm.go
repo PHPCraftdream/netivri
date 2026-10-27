@@ -22,7 +22,10 @@ const (
 	// down (45 s, 90 s, 3 m, then this cap).
 	probeDownMaxInterval = 10 * time.Minute
 	defaultProbeURL      = "http://www.gstatic.com/generate_204"
-	defaultPoolTTL       = 30 * time.Second
+	// defaultConfirmURL is where a failed probe is tried once more, so one
+	// unreachable or slow target does not make a working node look down.
+	defaultConfirmURL = "http://cp.cloudflare.com/generate_204"
+	defaultPoolTTL    = 30 * time.Second
 
 	// defaultProbeConcurrency bounds the probes of one round.
 	defaultProbeConcurrency = 8
@@ -35,6 +38,15 @@ type WarmOptions struct {
 	ProbeURL      string
 	PoolSize      int
 	PoolTTL       time.Duration
+
+	// ConfirmProbe retries a failed probe at once against ConfirmURL with
+	// ConfirmTimeout, and only a failure of both counts as a failed probe.
+	// Off by default; the angel turns it on.
+	ConfirmProbe bool
+	// ConfirmURL defaults to defaultConfirmURL when ProbeURL is the default
+	// and to ProbeURL otherwise; ConfirmTimeout defaults to twice ProbeTimeout.
+	ConfirmURL     string
+	ConfirmTimeout time.Duration
 
 	// ProbeConcurrency bounds how many probes of one round run at a
 	// time; 0 means defaultProbeConcurrency, negative is invalid.
@@ -153,18 +165,34 @@ func normalizeWarmOptions(o WarmOptions) (WarmOptions, error) {
 	if o.ProbeURL == "" {
 		o.ProbeURL = defaultProbeURL
 	}
+	if o.ConfirmProbe {
+		if o.ConfirmURL == "" {
+			o.ConfirmURL = o.ProbeURL
+			if o.ProbeURL == defaultProbeURL {
+				o.ConfirmURL = defaultConfirmURL
+			}
+		}
+		if o.ConfirmTimeout == 0 {
+			o.ConfirmTimeout = 2 * o.ProbeTimeout
+		}
+	}
 	if o.PoolTTL == 0 {
 		o.PoolTTL = defaultPoolTTL
 	}
 	if o.ProbeConcurrency == 0 {
 		o.ProbeConcurrency = defaultProbeConcurrency
 	}
-	if o.ProbeInterval < 0 || o.ProbeTimeout <= 0 || o.PoolTTL < 0 || o.PoolSize < 0 || o.ProbeConcurrency < 0 {
+	if o.ProbeInterval < 0 || o.ProbeTimeout <= 0 || o.PoolTTL < 0 || o.PoolSize < 0 || o.ProbeConcurrency < 0 || o.ConfirmTimeout < 0 {
 		return o, errors.New("core: invalid warm options")
 	}
-	u, err := url.Parse(o.ProbeURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return o, errors.New("core: probe URL must be absolute HTTP(S)")
+	for _, raw := range []string{o.ProbeURL, o.ConfirmURL} {
+		if raw == "" && !o.ConfirmProbe {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return o, errors.New("core: probe URL must be absolute HTTP(S)")
+		}
 	}
 	return o, nil
 }
@@ -340,6 +368,13 @@ func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
 	ctx, cancel := context.WithTimeout(parent, w.options.ProbeTimeout)
 	delay, err := w.probe(ctx, p, w.options.ProbeURL)
 	cancel()
+	if err != nil && w.options.ConfirmProbe && parent.Err() == nil {
+		// One failure may be the target and not the node: try another
+		// target, with more time, before the node is blamed.
+		ctx, cancel = context.WithTimeout(parent, w.options.ConfirmTimeout)
+		delay, err = w.probe(ctx, p, w.options.ConfirmURL)
+		cancel()
+	}
 	if parent.Err() != nil {
 		// Shutdown interrupted the probe: that says nothing about the node.
 		return

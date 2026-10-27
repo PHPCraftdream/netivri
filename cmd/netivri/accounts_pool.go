@@ -308,7 +308,7 @@ func warmOptions(routes map[string][]map[string]any) *core.WarmOptions {
 	if len(routes) == 0 {
 		return nil
 	}
-	return &core.WarmOptions{}
+	return &core.WarmOptions{ConfirmProbe: true}
 }
 
 // warmInfo converts the warm-up counters of the instance for the status

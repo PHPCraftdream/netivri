@@ -10,6 +10,15 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **A failed probe is confirmed before it counts.** The warm-up probe asks
+  `www.gstatic.com`, and one slow or unreachable target made working nodes look
+  down (on one setup real dials succeeded 100% while the probes gave the
+  busiest exit 93.6% uptime, which moved its traffic to a fallback tier). A
+  failed probe is now tried once more at once, against
+  `cp.cloudflare.com/generate_204` and with twice the timeout; only a failure
+  of both counts as a failed probe, makes a node count toward going down and
+  shows in `stats` uptime. In `internal/core`, `WarmOptions` has `ConfirmProbe`,
+  `ConfirmURL` and `ConfirmTimeout`; the angel turns it on.
 - **The log says why a node went down and for how long.** A down line now
   carries the reason (`2 probe failures (timeout)`, `3 dial failures`) and the
   time since the node last answered, and a back line the downtime:
