@@ -74,8 +74,8 @@ func TestNodeEventWithoutAProbeErrorOrAnswer(t *testing.T) {
 	table.recordProbe("p/a", false, 0)
 	table.recordProbe("p/a", false, 0)
 	got := events()
-	if len(got) != 1 || got[0].Reason != "2 probe failures" || got[0].SinceOK != 0 {
-		t.Fatalf("events = %+v, want a bare 2 probe failures with no last answer", got)
+	if len(got) != 1 || got[0].Reason != "2 probe failures" || got[0].SinceOK != 0 || !got[0].NeverOK {
+		t.Fatalf("events = %+v, want a bare 2 probe failures from a node that never answered", got)
 	}
 }
 

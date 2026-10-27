@@ -41,7 +41,9 @@ func nodeHealthLogger(infos []stats.NodeInfo, info, warn logFunc) func(core.Node
 	return l.event
 }
 
-// nodeLog turns node down/back events into log lines. A node that keeps going
+// nodeLog turns node down/back events into log lines. A node that has never
+// answered (it did not go down, it never came up) is one INFO line and takes
+// no part in the rest. A node that keeps going
 // down (flapDowns times within flapWindow) is flapping: one WARN says so, its
 // further down and back lines are INFO until it has been quiet for flapWindow,
 // and it does not count toward a burst. For the others, the first burstNodes-1
@@ -99,6 +101,10 @@ func (l *nodeLog) event(ev core.NodeEvent) {
 
 func (l *nodeLog) down(ev core.NodeEvent) {
 	now := l.now()
+	if ev.NeverOK {
+		l.info("%s has never answered: %s", l.describe(ev.Label), ev.Reason)
+		return
+	}
 	line := l.describe(ev.Label) + " is down: " + ev.Reason
 	if ev.SinceOK > 0 {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"

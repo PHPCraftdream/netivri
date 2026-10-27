@@ -222,6 +222,35 @@ func TestNodeLogForgetsOldDowns(t *testing.T) {
 	}
 }
 
+func TestNodeLogNeverAnsweredNodesAreInfoAndOutsideTheBurst(t *testing.T) {
+	f := newBurstFixture(t, 10)
+	for i := 0; i < 8; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, Reason: "2 probe failures (timeout)", NeverOK: true})
+	}
+	if got := f.count("WARN"); got != 0 {
+		t.Fatalf("%d warnings for nodes that never answered: %q", got, f.lines)
+	}
+	if got := f.count("INFO node p/n"); got != 8 {
+		t.Fatalf("%d info lines, want 8: %q", got, f.lines)
+	}
+	want := "INFO node p/n0 (provider p, country DE) has never answered: 2 probe failures (timeout)"
+	if f.lines[0] != want {
+		t.Errorf("line = %q, want %q", f.lines[0], want)
+	}
+	// They are not part of a burst either: two real downs stay two warnings.
+	f.down(8, "2 probe failures (timeout)")
+	f.down(9, "2 probe failures (timeout)")
+	if got := f.count("WARN node p/n"); got != 2 || f.count("WARN node burst") != 0 {
+		t.Errorf("lines = %q, want two plain warnings and no burst", f.lines)
+	}
+	// And they do not count toward flapping: a node that never answered and
+	// then went down and up again is still new to the flap count.
+	f.back(0, time.Minute)
+	if got := f.count("INFO node p/n0 (provider p, country DE) is back after 1m0s down"); got != 1 {
+		t.Errorf("back line missing: %q", f.lines)
+	}
+}
+
 func TestNodeLogWithoutNodesHasNoHook(t *testing.T) {
 	if newNodeLog(nil, nil, nil, time.Now) != nil {
 		t.Fatal("a node log for a route without nodes")
