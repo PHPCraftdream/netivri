@@ -7,17 +7,22 @@ read and written with the official Go binding
 [`github.com/ktav-lang/golang`](https://github.com/ktav-lang/golang) v0.8.1,
 used as is. No own parser.
 
-License: the binding is `MIT OR Apache-2.0`, its dependencies (`purego`,
-`golang.org/x/sys`) are permissive; all are compatible with the project's
-`GPL-3.0-only`.
+License: the binding is `MIT OR Apache-2.0`, its dependencies are permissive;
+all are compatible with the project's `GPL-3.0-only`.
 
 ## How the binding works (constraints we design around)
 
 The binding has two backends: the reference Rust library (`ktav_cabi`, loaded
 through `purego`, downloaded from GitHub Releases on first use when it is not
-found) and a self-contained pure-Go one. netivri runs the pure-Go backend only:
-`ktav.UsePure()` is called once when `internal/config` is initialised, before
-any other call.
+found) and a self-contained pure-Go one. netivri uses the pure-Go backend only,
+and imports only its subpackage `github.com/ktav-lang/golang/pure`, never the
+root package `github.com/ktav-lang/golang`: the root package links the
+native-library loader (`purego`, which brings `cgo_import_dynamic`), and that
+alone turns the Linux binary, even with `CGO_ENABLED=0`, into a dynamically
+linked one with the interpreter `/lib64/ld-linux-x86-64.so.2`, which does not
+exist on musl (Alpine). `TestNoPackageImportsTheKtavRootPackage` fails on such an
+import, and the release workflow checks that the Linux binary is "statically
+linked"; the binding's `purego` is no longer in `go.mod`.
 
 Consequences:
 
@@ -40,7 +45,7 @@ Consequences:
 
 ## Usage in netivri
 
-- Read: `ktav.LoadsInto(src, &cfg)` into typed structs.
+- Read: `pure.LoadsInto(src, &cfg)` into typed structs.
 - Write-back (e.g. the password hash after `init`): whole-file
   regeneration via `Dumps` over the config struct (deterministic field
   order) plus a generated header comment, with a mandatory round-trip

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -65,7 +65,7 @@ func TestKtavOutputRoundTrips(t *testing.T) {
 		"running":  true,
 		"nested":   map[string]any{"name": "\U0001F1FA\U0001F1F8 USA", "delay_ms": int64(177)},
 	})
-	got, err := ktav.Loads(out.String())
+	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("the output is not Ktav: %v\n%s", err, out.String())
 	}
@@ -97,7 +97,7 @@ func TestKtavErrorOutput(t *testing.T) {
 	if code != cli.ExitNotFound {
 		t.Errorf("exit = %d", code)
 	}
-	got, err := ktav.Loads(out.String())
+	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("the error is not Ktav: %v\n%s", err, out.String())
 	}
@@ -117,7 +117,7 @@ func TestKtavOutputOfACommand(t *testing.T) {
 	if err := runVersion(nil, &out); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ktav.Loads(out.String())
+	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("version output is not Ktav: %v\n%s", err, out.String())
 	}

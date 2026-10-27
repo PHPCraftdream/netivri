@@ -6,19 +6,19 @@ import (
 	"os"
 	"strings"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
 // configFromBindingError builds the CONFIG_INVALID message from the
 // binding's STRUCTURED error fields only (Class, Reason, Line,
-// SpecSection, Path). Free-form fields of *ktav.Error (Msg, LineText,
+// SpecSection, Path). Free-form fields of *pure.Error (Msg, LineText,
 // Body, Canonical) can embed source text — a password, a subscription
-// URL — and are never included. A non-*ktav.Error gets a fixed generic
+// URL — and are never included. A non-*pure.Error gets a fixed generic
 // message.
 func configFromBindingError(err error) *cli.Error {
-	var kerr *ktav.Error
+	var kerr *pure.Error
 	if !errors.As(err, &kerr) {
 		return invalid("config parse error: the document is not valid Ktav")
 	}
@@ -45,7 +45,7 @@ func configFromBindingError(err error) *cli.Error {
 // bindingErrorSummary is the part of a Ktav binding error that is safe to
 // show: the structured fields only, never the quoted source text.
 func bindingErrorSummary(err error) string {
-	var kerr *ktav.Error
+	var kerr *pure.Error
 	if !errors.As(err, &kerr) {
 		return "the document is not valid Ktav"
 	}

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
@@ -45,7 +45,7 @@ func runOutput(t *testing.T, extraEnv []string, args ...string) (int, string, st
 
 func loadKtavDoc(t *testing.T, text string) map[string]any {
 	t.Helper()
-	doc, err := ktav.Loads(text)
+	doc, err := pure.Loads(text)
 	if err != nil {
 		t.Fatalf("not Ktav: %v\n%s", err, text)
 	}

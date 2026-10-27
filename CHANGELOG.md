@@ -10,6 +10,11 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The Linux binary is really static now.** It was dynamically linked against
+  glibc (`/lib64/ld-linux-x86-64.so.2`) even with `CGO_ENABLED=0`, because the
+  Ktav binding's root package links the native-library loader (`purego`) that
+  netivri never used; it now imports only the binding's pure-Go subpackage, and a
+  test and the release workflow guard it.
 - **The Linux binary runs on musl (Alpine) as well.** It is a static Go build, so
   one Linux package serves glibc and musl: the Linux npm packages no longer
   declare `libc: ["glibc"]`, the launcher no longer detects musl, and
