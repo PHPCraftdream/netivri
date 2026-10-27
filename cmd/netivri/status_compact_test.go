@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -260,7 +260,7 @@ func runStatusKtavDoc(t *testing.T, args ...string) map[string]any {
 	if err := runStatus(append([]string{"--home", t.TempDir()}, args...), &out); err != nil {
 		t.Fatalf("runStatus: %v", err)
 	}
-	got, err := ktav.Loads(out.String())
+	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("output is not Ktav: %v\n%s", err, out.String())
 	}

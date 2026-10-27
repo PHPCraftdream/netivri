@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/auth"
@@ -612,7 +612,7 @@ func TestDoctorKtavShape(t *testing.T) {
 	if err := runDoctor([]string{"--home", home}, &out); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ktav.Loads(out.String())
+	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("output is not Ktav: %v\n%s", err, out.String())
 	}

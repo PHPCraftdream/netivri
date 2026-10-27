@@ -316,6 +316,15 @@ func TestProbeAllRespectsProbeConcurrency(t *testing.T) {
 // A shutdown during a round neither schedules the remaining probes nor
 // records the interrupted one as a node failure.
 func TestProbeAllCancellationRecordsNothing(t *testing.T) {
+	// The first probe's release of its slot races with the cancellation in the
+	// scheduler's select; repeat so a regression shows up every time.
+	for i := 0; i < 200; i++ {
+		probeAllCancellationRecordsNothing(t)
+	}
+}
+
+func probeAllCancellationRecordsNothing(t *testing.T) {
+	t.Helper()
 	w := &warmer{options: WarmOptions{ProbeTimeout: time.Minute, ProbeURL: "http://probe.invalid/", ProbeConcurrency: 1}, clock: testWarmClock{now: time.Unix(1, 0)}}
 	w.options.OnProbe = func(string, bool, time.Duration) {
 		t.Error("OnProbe called for a probe interrupted by shutdown")

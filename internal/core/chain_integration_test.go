@@ -65,6 +65,11 @@ func TestSOCKS5PreReconfigureKeepsOpenConnection(t *testing.T) {
 		t.Fatalf("open held connection: %v", err)
 	}
 	defer held.Close()
+	// The SOCKS5 success reply comes before the upstream dial: an echo proves
+	// the held connection went through the old chain before the change.
+	if err := accountEcho(held); err != nil {
+		t.Fatalf("held connection before Reconfigure: %v", err)
+	}
 	if err := instance.Reconfigure(options(pre2Addr)); err != nil {
 		t.Fatalf("Reconfigure: %v", err)
 	}

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 )
 
 const validSample = `## netivri sample configuration
@@ -155,7 +155,7 @@ func TestLoadErrorHidesDocumentText(t *testing.T) {
 
 func TestConfigFromBindingErrorHidesSource(t *testing.T) {
 	// A ktav error is reduced to structured fields only.
-	kerr := &ktav.Error{
+	kerr := &pure.Error{
 		Msg:   "LossyScalar: body s3cr3t-value canonical 7890",
 		Class: "LossyScalar", Reason: "LossyScalar", Line: 2,
 		SpecSection: "8.1", Path: []string{"listen", "port"},

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	ktav "github.com/ktav-lang/golang"
+	"github.com/ktav-lang/golang/pure"
 )
 
 func TestKtavDumpsRendersDocument(t *testing.T) {
@@ -50,12 +50,12 @@ func TestBindingErrorSummary(t *testing.T) {
 	if got := bindingErrorSummary(errors.New("boom: quoted source")); got != "the document is not valid Ktav" {
 		t.Errorf("a foreign error gives %q", got)
 	}
-	wrapped := fmt.Errorf("load: %w", &ktav.Error{Class: "syntax", Reason: "unclosed table", Line: 3, Msg: "secret text"})
+	wrapped := fmt.Errorf("load: %w", &pure.Error{Class: "syntax", Reason: "unclosed table", Line: 3, Msg: "secret text"})
 	got := bindingErrorSummary(wrapped)
 	if got != "Ktav parse error: syntax (unclosed table) at line 3" {
 		t.Errorf("summary = %q", got)
 	}
-	if got := bindingErrorSummary(&ktav.Error{Msg: "secret text"}); got != "Ktav parse error" {
+	if got := bindingErrorSummary(&pure.Error{Msg: "secret text"}); got != "Ktav parse error" {
 		t.Errorf("a bare error gives %q", got)
 	}
 }
