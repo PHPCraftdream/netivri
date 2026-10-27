@@ -92,6 +92,9 @@ type NodeEvent struct {
 	Reason string
 	// SinceOK (Down only) is how long ago the node last answered; 0 if never.
 	SinceOK time.Duration
+	// NeverOK (Down only) is true when no probe or dial of the node has ever
+	// succeeded: it did not go down, it never came up.
+	NeverOK bool
 	// Downtime (back only) is how long the node was down; 0 if unknown.
 	Downtime time.Duration
 }
@@ -128,7 +131,9 @@ func (h *nodeHealth) eventLocked() NodeEvent {
 		default:
 			ev.Reason = fmt.Sprintf("%d dial failures", h.consDialFail)
 		}
-		if !h.lastOK.IsZero() {
+		if h.lastOK.IsZero() {
+			ev.NeverOK = true
+		} else {
 			ev.SinceOK = now.Sub(h.lastOK)
 		}
 		return ev

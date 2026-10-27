@@ -330,6 +330,7 @@ type NodeEvent struct {
 	Down     bool          // true: just went down, false: back
 	Reason   string        // down: "2 probe failures (timeout)" or "3 dial failures"
 	SinceOK  time.Duration // down: time since the last successful probe or dial, 0 if never
+	NeverOK  bool          // down: no probe or dial of the node has ever succeeded
 	Downtime time.Duration // back: how long the node was down
 }
 ```
@@ -350,7 +351,11 @@ state, the time it began and the time of the last answer are carried over by a
 seconds are one burst: the first two get a `WARN` line each, the third raises
 one `WARN` summary (`node burst: ...`, with the reason kinds, and "right after
 start" in the first minute), the others and the third's own line are `INFO`,
-and an `INFO` line closes the burst when its last node is back. A node with 3
+and an `INFO` line closes the burst when its last node is back. A node that has
+never answered (`NeverOK`: it did not go down, it never came up) is one `INFO`
+line, `... has never answered: ...`, and counts toward neither a burst nor
+flapping, so the dead nodes of a subscription do not raise a burst at every
+start. A node with 3
 downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
 the reason kinds), then its down and back lines are `INFO` until its recent
 downs drop below 3 again (checked at its next down), and its downs do not count

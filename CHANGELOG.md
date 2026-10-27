@@ -31,6 +31,12 @@ versions; every such change is listed here.
   The reason is a few words, never an address. In `internal/core`,
   `Options.OnNodeHealth` now takes a `core.NodeEvent` and `WarmOptions` has
   `OnProbeError`.
+- **A node that never answers is not a burst.** A node that has not answered a
+  single probe or dial since it was added (a dead entry of the subscription)
+  is logged once as `INFO`, `node ... has never answered: ...`, and counts
+  toward neither a `node burst` nor flapping. Before, the dead nodes of one
+  subscription raised a misleading "likely a lost network" burst at every
+  start. In `internal/core`, `NodeEvent` has `NeverOK`.
 - **A flapping node is one warning.** A node that goes down 3 times within an
   hour gets one `WARN` (`node ... is flapping: 3 downs within the last hour
   (...)`); its further down and back lines are `INFO` until it has been quiet
