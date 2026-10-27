@@ -21,28 +21,10 @@ const PACKAGE_BY_TARGET = {
 };
 
 // Pure mapping used by the launcher and the tests. Returns the platform
-// package name, or null when the platform is unsupported (musl Linux or a
-// target we do not ship).
-function platformPackage(platform, arch, isMusl) {
-  if (platform === 'linux' && isMusl) return null;
+// package name, or null when the platform is unsupported. The Linux binary is
+// a static Go build, so one package serves glibc and musl (Alpine) alike.
+function platformPackage(platform, arch) {
   return PACKAGE_BY_TARGET[`${platform}-${arch}`] || null;
-}
-
-// Best-effort musl detection: glibc reports glibcVersionRuntime in the
-// process report. If the report is unavailable, assume glibc (the common
-// case) so normal distros keep working.
-function detectMusl(platform) {
-  if (platform !== 'linux') return false;
-  try {
-    const report = process.report && process.report.getReport
-      ? process.report.getReport()
-      : null;
-    const header = report && report.header;
-    if (!header) return false;
-    return !header.glibcVersionRuntime;
-  } catch (_err) {
-    return false;
-  }
 }
 
 function errorEnvelope(message, hint) {
@@ -53,25 +35,21 @@ function errorEnvelope(message, hint) {
   };
 }
 
-const HINT_GLIBC = 'netivri on Linux is built and tested for glibc; musl (Alpine) is not supported';
 const HINT_MISSING_PKG = 'reinstall the package: npm i -g @phpcraftdream/netivri (do not use --no-optional or --omit=optional)';
 
-function unsupportedMessage(platform, arch, isMusl) {
-  if (platform === 'linux' && isMusl) {
-    return `no netivri build for ${platform}-${arch} on musl libc (Alpine)`;
-  }
+function unsupportedMessage(platform, arch) {
   return `unsupported platform ${platform}-${arch}`;
 }
 
 // Resolves the platform binary. `resolve` is injectable for tests (defaults
 // to require.resolve). Returns { bin } or { error: { message, hint } }.
-function resolveBinary(platform, arch, isMusl, resolve) {
-  const pkg = platformPackage(platform, arch, isMusl);
+function resolveBinary(platform, arch, resolve) {
+  const pkg = platformPackage(platform, arch);
   if (!pkg) {
     return {
       error: {
-        message: unsupportedMessage(platform, arch, isMusl),
-        hint: platform === 'linux' ? HINT_GLIBC : 'check the supported platforms in the netivri README',
+        message: unsupportedMessage(platform, arch),
+        hint: 'check the supported platforms in the netivri README',
       },
     };
   }
@@ -141,12 +119,7 @@ function printError(envelope) {
 
 async function main(argv) {
   const args = argv || process.argv.slice(2);
-  const resolved = resolveBinary(
-    process.platform,
-    process.arch,
-    detectMusl(process.platform),
-    require.resolve
-  );
+  const resolved = resolveBinary(process.platform, process.arch, require.resolve);
   if (resolved.error) {
     printError(errorEnvelope(resolved.error.message, resolved.error.hint));
     return 1;
@@ -162,7 +135,6 @@ if (require.main === module) {
 
 module.exports = {
   ERROR_CODE,
-  detectMusl,
   errorEnvelope,
   main,
   platformPackage,

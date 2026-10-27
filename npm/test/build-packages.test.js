@@ -132,7 +132,7 @@ test('built main package contains LICENSE and THIRD_PARTY_LICENSES', (t) => {
   );
 });
 
-test('buildPackages generates platform packages with os/cpu/libc and files', (t) => {
+test('buildPackages generates platform packages with os/cpu and files, and no libc restriction', (t) => {
   const root = tempRoot(t);
   const archives = makeFakeArchives(root);
   const out = path.join(root, 'out');
@@ -150,11 +150,8 @@ test('buildPackages generates platform packages with os/cpu/libc and files', (t)
     assert.equal(manifest.version, VERSION);
     assert.deepEqual(manifest.os, [p.os]);
     assert.deepEqual(manifest.cpu, [p.cpu]);
-    if (p.libc) {
-      assert.deepEqual(manifest.libc, ['glibc']);
-    } else {
-      assert.equal(manifest.libc, undefined);
-    }
+    // The binary is static: no libc field, so glibc and musl hosts both get it.
+    assert.equal(manifest.libc, undefined);
     assert.equal(manifest.license, 'GPL-3.0-only');
 
     assert.ok(fs.existsSync(path.join(pkgDir, 'bin', p.bin)), `${p.pkg} binary`);

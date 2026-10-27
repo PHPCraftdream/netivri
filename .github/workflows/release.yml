@@ -58,6 +58,14 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
 
+      # One binary must run on glibc and musl alike: it may not link libc.
+      - name: Check the Linux binary is static
+        if: matrix.goos == 'linux'
+        run: |
+          set -euo pipefail
+          file build/netivri
+          file build/netivri | grep -q 'statically linked'
+
       - name: Collect third-party licenses
         shell: bash
         run: bash scripts/collect-licenses.sh build/THIRD_PARTY_LICENSES
@@ -550,6 +558,94 @@ jobs:
           node "${root}/@phpcraftdream/netivri/bin/netivri.js" version
           node "${root}/@phpcraftdream/netivri/bin/netivri.js" sub list --home "${home}"
 
+  # The Linux binary is a static Go build, so it must also run on musl. This
+  # runs the release archive, the standalone installer and the npm packages in
+  # Alpine containers, on amd64 and (under QEMU) arm64.
+  alpine-test:
+    name: alpine test (${{ matrix.arch }})
+    needs: [build, npm-packages]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          pattern: dist-linux-*
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-dist
+          path: npm-dist
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=0.0.0-dryrun" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Register QEMU for arm64
+        if: matrix.arch == 'arm64'
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
+
+      # The archive, then the installer (which downloads over file://, so it
+      # needs curl and the checksum file the publish job would write).
+      - name: Release archive and installer on Alpine
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          cat > alpine-archive.sh <<'SCRIPT'
+          set -eu
+          test -f /etc/alpine-release
+          ldd --version 2>&1 | head -n 1 || true
+          mkdir -p /tmp/x /tmp/home
+          tar -xzf "artifacts/netivri_${VER}_linux_${ARCH}.tar.gz" -C /tmp/x
+          bin="/tmp/x/netivri_${VER}_linux_${ARCH}/netivri"
+          "${bin}" version
+          printf 'listen.port: 7890\n' > /tmp/home/config.ktav
+          "${bin}" sub list --home /tmp/home
+          "${bin}" up --port 0 --home /tmp/home
+          "${bin}" status --home /tmp/home
+          "${bin}" down --home /tmp/home
+
+          apk add --no-cache curl ca-certificates > /dev/null
+          (cd artifacts && sha256sum netivri_*.tar.gz > SHA256SUMS)
+          sh install.sh --version "${VER}" --base-url "file:///w/artifacts" --dir /tmp/inst/bin
+          /tmp/inst/bin/netivri version
+          /tmp/inst/bin/netivri sub list --home /tmp/home
+          SCRIPT
+          docker run --rm --platform "linux/${ARCH}" -e VER -e ARCH -v "${GITHUB_WORKSPACE}:/w" -w /w alpine:3 sh alpine-archive.sh
+
+      # The launcher resolves the platform package with Node on musl.
+      - name: npm packages on Alpine
+        env:
+          VER: ${{ steps.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          plat="${ARCH/amd64/x64}"
+          cat > alpine-npm.sh <<'SCRIPT'
+          set -eu
+          test -f /etc/alpine-release
+          mkdir -p /tmp/home
+          npm install -g --prefix /tmp/g "/w/npm-dist/phpcraftdream-netivri-linux-${PLAT}-${VER}.tgz" "/w/npm-dist/phpcraftdream-netivri-${VER}.tgz"
+          launcher=/tmp/g/lib/node_modules/@phpcraftdream/netivri/bin/netivri.js
+          node "${launcher}" version
+          node "${launcher}" sub list --home /tmp/home
+          SCRIPT
+          docker run --rm --platform "linux/${ARCH}" -e VER -e PLAT="${plat}" -v "${GITHUB_WORKSPACE}:/w" -w /w node:20-alpine sh alpine-npm.sh
+
   # .deb and .rpm of the Linux archives. The amd64 packages are installed and
   # removed again, the .deb on the runner and the .rpm in a Fedora container;
   # the arm64 ones are only built (no arm64 runner here).
@@ -648,7 +744,7 @@ jobs:
 
   publish:
     name: checksums and release
-    needs: [build, linux-packages, npm-packages, install-test, licenses]
+    needs: [build, linux-packages, npm-packages, install-test, alpine-test, licenses]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -132,15 +132,6 @@ case "$GOOS" in
   darwin) LEGACY_LIB=libktav_cabi.dylib ;;
 esac
 
-if [ "$GOOS" = "linux" ]; then
-  if [ -f /etc/alpine-release ]; then
-    fail "Alpine Linux (musl) is not supported: releases are built and tested for glibc only"
-  fi
-  if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
-    fail "musl-based Linux is not supported: releases are built and tested for glibc only"
-  fi
-fi
-
 # local_path FILE_URL: turn a file:// URL into a filesystem path.
 local_path() {
   case "$1" in

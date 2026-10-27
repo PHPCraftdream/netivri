@@ -94,7 +94,7 @@ Upgrade with `npm i -g @phpcraftdream/netivri@latest`, remove with `npm rm -g @p
 
 You can also download an archive from [GitHub Releases](https://github.com/PHPCraftdream/netivri/releases)
 and check it against `SHA256SUMS`. Options, upgrading while netivri runs and
-the supported platforms (Linux needs glibc; Alpine is not supported) are in
+the supported platforms (Linux on glibc and musl, such as Alpine; macOS; Windows) are in
 [`docs/install.md`](docs/install.md).
 
 `go install` does not work: the module vendors Mihomo through a `replace`

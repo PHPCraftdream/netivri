@@ -26,12 +26,12 @@ const MAIN_NAME = `${SCOPE}/netivri`;
 // os/cpu are the npm field values; pkg is the short name and the output
 // directory, name the scoped npm name (filled in below).
 const PLATFORMS = [
-  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-x64' },
-  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', libc: ['glibc'], pkg: 'netivri-linux-arm64' },
-  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-x64' },
-  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', bin: 'netivri', libc: null, pkg: 'netivri-darwin-arm64' },
-  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-x64' },
-  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', libc: null, pkg: 'netivri-w32-arm64' },
+  { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', pkg: 'netivri-linux-x64' },
+  { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', pkg: 'netivri-linux-arm64' },
+  { goos: 'darwin', goarch: 'amd64', os: 'darwin', cpu: 'x64', bin: 'netivri', pkg: 'netivri-darwin-x64' },
+  { goos: 'darwin', goarch: 'arm64', os: 'darwin', cpu: 'arm64', bin: 'netivri', pkg: 'netivri-darwin-arm64' },
+  { goos: 'windows', goarch: 'amd64', os: 'win32', cpu: 'x64', bin: 'netivri.exe', pkg: 'netivri-w32-x64' },
+  { goos: 'windows', goarch: 'arm64', os: 'win32', cpu: 'arm64', bin: 'netivri.exe', pkg: 'netivri-w32-arm64' },
 ];
 
 for (const platform of PLATFORMS) {
@@ -192,7 +192,7 @@ function buildPackages(options) {
     const manifest = {
       name: platform.name,
       version,
-      description: `Binary of ${MAIN_NAME} for ${platform.os} ${platform.cpu}${platform.libc ? ' (glibc)' : ''}; install ${MAIN_NAME} instead`,
+      description: `Binary of ${MAIN_NAME} for ${platform.os} ${platform.cpu}; install ${MAIN_NAME} instead`,
       license: 'GPL-3.0-only',
       os: [platform.os],
       cpu: [platform.cpu],
@@ -203,9 +203,6 @@ function buildPackages(options) {
       bugs: BUGS,
       publishConfig: { access: 'public' },
     };
-    if (platform.libc) {
-      manifest.libc = platform.libc;
-    }
     writeJson(path.join(pkgDir, 'package.json'), manifest);
     packages.push({ name: platform.name, path: pkgDir });
   }

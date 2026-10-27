@@ -7,7 +7,6 @@ const os = require('node:os');
 const path = require('node:path');
 const {
   ERROR_CODE,
-  detectMusl,
   errorEnvelope,
   resolveBinary,
   run,
@@ -26,28 +25,18 @@ test('errorEnvelope matches the CLI JSON error contract', () => {
   assert.equal(ERROR_CODE, 'INSTALL_BROKEN');
 });
 
-test('detectMusl returns a boolean for any platform', () => {
-  assert.equal(typeof detectMusl('win32'), 'boolean');
-  assert.equal(detectMusl('win32'), false);
-  assert.equal(typeof detectMusl('linux'), 'boolean');
-});
-
 test('resolveBinary reports unsupported platforms with the error envelope fields', () => {
-  const res = resolveBinary('freebsd', 'x64', false, () => '/unused');
+  const res = resolveBinary('freebsd', 'x64', () => '/unused');
   assert.ok(res.error);
   assert.equal(res.bin, undefined);
   const envelope = errorEnvelope(res.error.message, res.error.hint);
   assert.equal(envelope.error.code, ERROR_CODE);
   assert.ok(envelope.error.message.includes('freebsd-x64'));
   assert.ok(typeof envelope.error.hint === 'string' && envelope.error.hint.length > 0);
-
-  const musl = resolveBinary('linux', 'x64', true, () => '/unused');
-  assert.ok(musl.error);
-  assert.ok(musl.error.message.includes('musl'));
 });
 
 test('resolveBinary reports a missing platform package', () => {
-  const res = resolveBinary('linux', 'x64', false, () => {
+  const res = resolveBinary('linux', 'x64', () => {
     throw new Error("Cannot find module '@phpcraftdream/netivri-linux-x64/package.json'");
   });
   assert.ok(res.error);
@@ -60,7 +49,7 @@ test('resolveBinary reports a missing platform package', () => {
 
 test('resolveBinary resolves the binary next to the platform package.json', () => {
   const pkgDir = path.join('fake', 'node_modules', '@phpcraftdream', 'netivri-darwin-arm64');
-  const res = resolveBinary('darwin', 'arm64', false,
+  const res = resolveBinary('darwin', 'arm64',
     () => path.join(pkgDir, 'package.json'));
   assert.equal(res.error, undefined);
   const expected = path.join(pkgDir, 'bin', 'netivri');
@@ -69,7 +58,7 @@ test('resolveBinary resolves the binary next to the platform package.json', () =
 
 test('resolveBinary appends .exe on win32', () => {
   const pkgDir = path.join('fake', '@phpcraftdream', 'netivri-w32-x64');
-  const res = resolveBinary('win32', 'x64', false,
+  const res = resolveBinary('win32', 'x64',
     () => path.join(pkgDir, 'package.json'));
   assert.equal(res.bin, path.join(pkgDir, 'bin', 'netivri.exe'));
 });

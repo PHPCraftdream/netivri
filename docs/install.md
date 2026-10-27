@@ -86,13 +86,14 @@ The `.deb`, `.rpm` and npm tarball installs are.
 
 | OS | Architectures | Notes |
 |---|---|---|
-| Linux | amd64, arm64 | glibc distributions |
+| Linux | amd64, arm64 | glibc and musl (Alpine); the binary is static |
 | macOS (darwin) | amd64, arm64 | |
 | Windows | amd64, arm64 | PowerShell 5.1 or 7 |
 
-**Alpine and every other musl-based distribution are not supported.** The
-Linux release is built and tested for glibc only; the installer detects musl
-(`ldd --version` or `/etc/alpine-release`) and aborts with a clear message.
+The Linux binary is a static Go build (`CGO_ENABLED=0`, checked in the release
+workflow), so the same file runs on glibc and musl distributions. The release
+workflow runs the archive, the standalone installer and the npm packages in
+Alpine containers on amd64 and arm64 before it publishes anything.
 See [docs/release.md](release.md).
 
 ## Options

@@ -10,14 +10,14 @@ npm) is the only network path.
 
 - `@phpcraftdream/netivri` — the main package: a small dependency-free CommonJS launcher
   (`bin/netivri.js`). It maps `process.platform` / `process.arch` (plus a
-  glibc/musl check on Linux via `process.report`) to a platform package,
+  to a platform package,
   resolves the binary with `require.resolve`, and spawns it with
   `stdio: 'inherit'`, forwarding SIGINT/SIGTERM/SIGHUP and the exit code.
 - `@phpcraftdream/netivri-{OS}-{CPU}` — six platform packages (`linux-x64`,
   `linux-arm64`, `darwin-x64`, `darwin-arm64`, `w32-x64`,
   `w32-arm64`) installed as `optionalDependencies` of the main package.
-  Each declares `os`, `cpu` and (on Linux) `libc: ["glibc"]`, so npm
-  downloads exactly one. Each contains `bin/netivri[.exe]` (a single static
+  Each declares `os` and `cpu` (no `libc`: the Linux binary is static, so
+  glibc and musl hosts get the same package), so npm downloads exactly one. Each contains `bin/netivri[.exe]` (a single static
   file), `LICENSE` and `THIRD_PARTY_LICENSES/`.
 
 All seven packages are published in the `@phpcraftdream` scope, which keeps the
@@ -31,13 +31,14 @@ installed with `--omit=optional` or `--no-optional`), the launcher prints
 one JSON error envelope on stderr (code `INSTALL_BROKEN`) and exits 1,
 matching the CLI contract in [`cli.md`](cli.md).
 
-## musl / Alpine limitation
+## musl / Alpine
 
-The Linux platform packages declare `libc: ["glibc"]`, so npm skips them on
-musl-based systems such as Alpine. The Linux release is built and tested
-for glibc only, so Alpine/musl is unsupported for every distribution channel — the npm
-packages and the standalone installer alike. Use a glibc-based
-distribution or a glibc container.
+The Linux binary is a static Go build (`CGO_ENABLED=0`; the release workflow
+checks that `file` reports "statically linked"), so there are no separate musl
+packages: `@phpcraftdream/netivri-linux-x64` and `-linux-arm64` carry no `libc`
+field and install on glibc and musl hosts alike. The `alpine test` job of the
+release workflow installs the packed packages with `node:20-alpine` (amd64 and
+arm64) and runs the launcher before anything is published.
 
 ## Relation to the release archives
 
