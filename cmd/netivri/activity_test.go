@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -157,17 +158,17 @@ func TestNodeHealthLoggerWritesDownAndBack(t *testing.T) {
 	if hook == nil {
 		t.Fatal("no hook for a route with nodes")
 	}
-	hook("main/a", true)
-	hook("main/b", true)
-	hook("main/a", false)
+	hook(core.NodeEvent{Label: "main/a", Down: true, Reason: "2 probe failures (timeout)", SinceOK: 3 * time.Minute})
+	hook(core.NodeEvent{Label: "main/b", Down: true, Reason: "3 dial failures"})
+	hook(core.NodeEvent{Label: "main/a", Downtime: 41 * time.Second})
 	wantWarn := []string{
-		"node main/a (provider main, country US) is down",
-		"node main/b (provider main, country unknown) is down",
+		"node main/a (provider main, country US) is down: 2 probe failures (timeout), last ok 3m0s ago",
+		"node main/b (provider main, country unknown) is down: 3 dial failures",
 	}
 	if !reflect.DeepEqual(warnLines, wantWarn) {
 		t.Errorf("warnings = %q, want %q", warnLines, wantWarn)
 	}
-	if !reflect.DeepEqual(infoLines, []string{"node main/a (provider main, country US) is back"}) {
+	if !reflect.DeepEqual(infoLines, []string{"node main/a (provider main, country US) is back after 41s down"}) {
 		t.Errorf("info = %q", infoLines)
 	}
 }
@@ -182,9 +183,9 @@ func TestNodeHealthLoggerIncludesTheName(t *testing.T) {
 	if hook == nil {
 		t.Fatal("no hook for a route with nodes")
 	}
-	hook("own/a970e0d9fef1", true)
-	hook("own/a970e0d9fef1", false)
-	if !reflect.DeepEqual(warnLines, []string{"node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down"}) {
+	hook(core.NodeEvent{Label: "own/a970e0d9fef1", Down: true, Reason: "2 probe failures"})
+	hook(core.NodeEvent{Label: "own/a970e0d9fef1"})
+	if !reflect.DeepEqual(warnLines, []string{"node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe failures"}) {
 		t.Errorf("warnings = %q", warnLines)
 	}
 	if !reflect.DeepEqual(infoLines, []string{"node own/a970e0d9fef1 (Finland 1, provider own, country FI) is back"}) {
@@ -206,7 +207,7 @@ func TestCoreOptionsCarryTheNodeHealthHook(t *testing.T) {
 	f.l.mu.Lock()
 	infos := append([]stats.NodeInfo(nil), f.l.applied.pool.infos...)
 	f.l.mu.Unlock()
-	f.script.call(0).OnNodeHealth(infos[0].Label, true)
+	f.script.call(0).OnNodeHealth(core.NodeEvent{Label: infos[0].Label, Down: true, Reason: "2 probe failures"})
 	if !strings.Contains(f.logText(), "is down") || !strings.Contains(f.logText(), infos[0].Label) {
 		t.Errorf("the hook wrote nothing useful: %q", f.logText())
 	}

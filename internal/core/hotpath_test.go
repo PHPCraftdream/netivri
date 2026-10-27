@@ -307,8 +307,8 @@ func TestHealthAnnounceRunsAfterUnlock(t *testing.T) {
 	table := newHealthTable()
 	table.register([]string{"p/a", "p/b"})
 	done := make(chan struct{})
-	table.entries["p/a"].notify = func(label string, down bool) {
-		_ = table.health(label).view(label)
+	table.entries["p/a"].notify = func(ev NodeEvent) {
+		_ = table.health(ev.Label).view(ev.Label)
 		table.recordDial("p/b", true, time.Millisecond)
 		close(done)
 	}

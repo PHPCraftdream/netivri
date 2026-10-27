@@ -304,6 +304,36 @@ Down func(name string) bool // reports the down state of a node proxy; down node
 The core maps the internal name to its label and forwards probe results to
 both the sticky group's health table and `Observer.ObserveProbe`.
 
+### Down and back events
+
+`Options.OnNodeHealth` receives a `core.NodeEvent` on every change of a node's
+down state, built under the node's lock and delivered after it is released:
+
+```go
+type NodeEvent struct {
+	Label    string
+	Down     bool          // true: just went down, false: back
+	Reason   string        // down: "2 probe failures (timeout)" or "3 dial failures"
+	SinceOK  time.Duration // down: time since the last successful probe or dial, 0 if never
+	Downtime time.Duration // back: how long the node was down
+}
+```
+
+`WarmOptions.OnProbeError(name, err)` runs just before `OnProbe` for a failed
+probe; the core keeps the kind of the error on the node (`timeout`,
+`connection refused`, `connection reset`, `dns failure`, `network unreachable`,
+`connection closed`, `handshake failed`, else `error`) so the next down event
+can name it. A success clears it. The kind never carries an address. The down
+state, the time it began and the time of the last answer are carried over by a
+`Reconfigure`.
+
+`cmd/netivri` writes the log lines. Three or more nodes going down within 10
+seconds are one burst: the first two get a `WARN` line each, the third raises
+one `WARN` summary (`node burst: ...`, with the reason kinds, and "right after
+start" in the first minute), the others and the third's own line are `INFO`,
+and an `INFO` line closes the burst when its last node is back. `doctor` counts
+the lines and the summary as node-down reports.
+
 ## Wiring (`cmd/netivri`)
 
 - `routePool` also returns labels (`provider/{NODE_ID}`) in node order.

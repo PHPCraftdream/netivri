@@ -162,6 +162,7 @@ func (i *Instance) Reconfigure(o Options) error {
 	if o.Warm != nil {
 		wo := *o.Warm
 		wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
+		wo.OnProbeError = probeErrorHook(nameToLabel, health, o.Warm.OnProbeError)
 		wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
 		wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
 		wo.seed = backoff

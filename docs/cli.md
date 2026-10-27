@@ -295,8 +295,18 @@ netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [
 The angel log, `{HOME}/run/netivri.log`: start and stop, applied and rejected
 configuration changes, subscription refreshes, storage problems, and route nodes going
 down (`WARN`) or coming back (`INFO`), with the node label, its display name when one is known, the
-provider and the country, as in
-`node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down`. It reads the
+provider and the country, the reason and how long it was silent, as in
+`node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe failures (timeout), last ok 3m12s ago`,
+and the downtime when it is back (`... is back after 41s down`). The reason is `2 probe
+failures` with the kind of the last probe error (`timeout`, `connection refused`,
+`connection reset`, `dns failure`, `network unreachable`, `connection closed`,
+`handshake failed`, or none) or `3 dial failures`; it never holds an address. When 3
+or more nodes go down within 10 seconds (a lost network on this machine, a shared
+outage, or the first probes after a start) the third one raises a single `WARN`,
+`node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
+lost network or a shared outage` (with `, right after start` in the first minute), the
+nodes of the burst are logged at `INFO` from then on, and `node burst over: 9 nodes
+were down, all back after 41s` closes it when the last one is back. It reads the
 file, so it works while the angel runs and after it stopped or failed to start.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
@@ -413,7 +423,7 @@ The checks:
 | `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
-| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
+| `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, and the summary of a burst of them, are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
 on stdout says which.

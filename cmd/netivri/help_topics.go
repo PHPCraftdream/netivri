@@ -659,8 +659,9 @@ var helpTopics = []helpTopic{
 		Summary: "Show the angel log",
 		Usage:   []string{"netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}] [--home {DIR}]"},
 		Description: "Shows what the angel wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
-			"configuration changes, subscription refreshes, storage problems and route nodes going down or coming back, " +
-			"each with a time and a level. It " +
+			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
+			"reason) or coming back (with the downtime), each with a time and a level. Three or more nodes " +
+			"going down within 10 seconds are one 'node burst' warning, not a warning per node. It " +
 			"reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
 			"tokens and subscription URLs are never logged.\n\n" +
 			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +
@@ -745,7 +746,7 @@ var helpTopics = []helpTopic{
 			"check per account (its route has stored nodes and, with a running angel, a live node " +
 			"in the first tier that has nodes; without an angel the stored nodes are counted and " +
 			"the liveness part is a warn) and log (no WARN or ERROR entries in the last hour of " +
-			"the angel log; reports of a node going down are only counted, since the account " +
+			"the angel log; reports of nodes going down (and bursts of them) are only counted, since the account " +
 			"checks cover the routes; the log is read even when the angel is down, and a missing " +
 			"log file is fine).\n\n" +
 			"A check that cannot run is a warn with the reason, never a failure of the whole " +

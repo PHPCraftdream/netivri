@@ -81,10 +81,10 @@ type Options struct {
 	// not down, so the later tiers are fallbacks. nil puts all nodes in one tier.
 	NodeTiers map[string][]int
 	// OnNodeHealth optionally hears every change of a route node's down state
-	// (true: it just went down, false: it is back) with the node label. It runs
+	// (it went down with the reason, or it is back with its downtime). It runs
 	// on the goroutine that recorded the measurement, so it must return quickly.
 	// nil disables it.
-	OnNodeHealth func(label string, down bool)
+	OnNodeHealth func(NodeEvent)
 	// Observer optionally receives probe, dial and throughput measurements
 	// of the route nodes. nil disables reporting.
 	Observer Observer
@@ -304,6 +304,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			// down are probed with a lengthened interval.
 			nameToLabel := memberNameLabels(plans)
 			wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
+			wo.OnProbeError = probeErrorHook(nameToLabel, health, o.Warm.OnProbeError)
 			wo.only = func(name string) bool {
 				_, tracked := nameToLabel[name]
 				return generatedMemberName(name) && tracked
