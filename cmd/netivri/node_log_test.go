@@ -52,6 +52,16 @@ func (f *burstFixture) count(prefix string) int {
 	return n
 }
 
+func (f *burstFixture) countContaining(text string) int {
+	n := 0
+	for _, l := range f.lines {
+		if strings.Contains(l, text) {
+			n++
+		}
+	}
+	return n
+}
+
 func TestNodeLogIsolatedFailuresStayIndividualWarnings(t *testing.T) {
 	f := newBurstFixture(t, 6)
 	f.down(0, "2 probe failures (timeout)")
@@ -192,7 +202,7 @@ func TestNodeLogFlappingNodesDoNotMakeABurst(t *testing.T) {
 	if got := f.count("WARN node burst"); got != 2 {
 		t.Errorf("%d burst warnings, want 2: %q", got, f.lines)
 	}
-	if got := f.count("is flapping"); got != 3 {
+	if got := f.countContaining("is flapping"); got != 3 {
 		t.Errorf("%d flapping warnings, want 3: %q", got, f.lines)
 	}
 }
@@ -204,7 +214,7 @@ func TestNodeLogForgetsOldDowns(t *testing.T) {
 		f.now = f.now.Add(flapWindow/2 + time.Minute)
 	}
 	f.down(0, "2 probe failures (timeout)") // the first drop is older than the window
-	if got := f.count("is flapping"); got != 0 {
+	if got := f.countContaining("is flapping"); got != 0 {
 		t.Errorf("flapping after two recent downs: %q", f.lines)
 	}
 	if got := f.count("WARN node p/n0"); got != 3 {
