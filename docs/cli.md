@@ -886,7 +886,11 @@ country; `node_name` is the display name the subscription gives the node,
 cleaned of control characters and capped at 64 characters, and is omitted when
 the node has none. An instance without account routes has no labels, and
 `label` is omitted on every node. The pre-dial pool is off in the angel (`pool_*` stay `0`).
-The probes request `http://www.gstatic.com/generate_204` through each node.
+The probes request `http://www.gstatic.com/generate_204` through each node. A probe that
+fails is tried once more at once, against `http://cp.cloudflare.com/generate_204` and
+with twice the timeout (10 s); only a failure of both counts in `probe_failures`, makes
+the node count toward going down and shows in `stats` uptime. One slow or unreachable
+target does not make a working node look down.
 
 When no angel is running: error `ANGEL_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control

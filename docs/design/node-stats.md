@@ -223,6 +223,18 @@ of a node is 45 s while it is not down, then 45 s, 90 s, 3 m and every
 10 minutes (cap) over its consecutive down probes. The first success of
 any kind (probe or real dial) resets it to 45 s.
 
+A failed probe is confirmed before it counts (`WarmOptions.ConfirmProbe`, on
+in the angel): it is retried at once against `ConfirmURL`
+(`http://cp.cloudflare.com/generate_204`, or the probe URL itself when that
+was changed) with `ConfirmTimeout` (twice the probe timeout, 10 s). The result
+that is recorded, counted, reported to `OnProbe`/`OnProbeError` and fed to the
+health table and the statistics is the confirmation's; a failure of both is a
+failed probe. Why: on the author's nodes real dials succeeded 100% (3486 and
+9347 dials) while probes put the busiest exit at 93.6% uptime, so a single
+target at 5 s blamed working nodes and moved their traffic to a fallback tier.
+A confirmation costs a failing node up to 15 s of one probe slot per round,
+which `ProbeConcurrency` (8) absorbs.
+
 Selection for a new binding: candidates are the members that are not down
 and have a delay; if there are none, the members that are not down; if there
 are none, all members (the route is never left, and nothing falls back to
@@ -297,6 +309,9 @@ type AffinityStats struct {
 
 // WarmOptions gains (warm.go):
 ProbeConcurrency int // 0 = 8; probes of one round run this many at a time
+ConfirmProbe bool // retry a failed probe against ConfirmURL with ConfirmTimeout; only a failure of both counts
+ConfirmURL string // "" = cloudflare generate_204, or ProbeURL when it is not the default
+ConfirmTimeout time.Duration // 0 = 2 x ProbeTimeout
 OnProbe func(name string, alive bool, delay time.Duration) // after every probe, from probe goroutines; name is the internal proxy name netivri-r{R}-{N}
 Down func(name string) bool // reports the down state of a node proxy; down nodes are probed with the backoff interval above
 ```
