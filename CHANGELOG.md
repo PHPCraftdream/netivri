@@ -10,6 +10,14 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The Linux binary runs on musl (Alpine) as well.** It is a static Go build, so
+  one Linux package serves glibc and musl: the Linux npm packages no longer
+  declare `libc: ["glibc"]`, the launcher no longer detects musl, and
+  `install.sh` no longer refuses Alpine. The release workflow checks that the
+  Linux binary is static and runs the release archive, the installer and the
+  npm packages in Alpine containers (amd64, and arm64 under QEMU) before it
+  publishes anything; this replaces the "Alpine is not supported" limitation.
+
 - **The npm packages move to the `@phpcraftdream` scope.** Install with
   `npm i -g @phpcraftdream/netivri` (was `netivri`); the six platform packages
   are `@phpcraftdream/netivri-{linux,darwin,w32}-{x64,arm64}`. The platform

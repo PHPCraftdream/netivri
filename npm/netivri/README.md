@@ -50,8 +50,8 @@ JSON.
 
 The binary ships in a per-platform package (`@phpcraftdream/netivri-linux-x64`,
 `@phpcraftdream/netivri-darwin-arm64`, `@phpcraftdream/netivri-w32-x64`, ...) installed automatically as
-an optional dependency: Linux, macOS and Windows on x64 and arm64. Linux
-builds are made for glibc; musl (Alpine) is not supported.
+an optional dependency: Linux, macOS and Windows on x64 and arm64. The Linux
+binary is static, so one package serves glibc and musl (Alpine) distributions.
 
 ## Links
 

@@ -136,7 +136,10 @@ inside the directory holding the archives and the checksum file.
 The npm platform packages and the standalone installer (later tasks) consume
 these same archives; they repackage, they do not rebuild.
 
-## Known limitation
+## Linux libc
 
-musl-based Linux distributions such as Alpine are not supported: the Linux
-release is built and tested for glibc only.
+The Linux binary is static (the build job checks `file` for "statically linked"),
+so it runs on glibc and musl alike. The `alpine test` job runs the release
+archive, `install.sh` and the packed npm packages in `alpine:3` and
+`node:20-alpine` containers (amd64, and arm64 under QEMU), and the `publish`
+job waits for it.
