@@ -352,6 +352,12 @@ schedule:
 		case <-parent.Done():
 			break schedule
 		}
+		if parent.Err() != nil {
+			// Both cases of the select can be ready after a cancellation and
+			// Go picks one at random: never start a probe once it is seen.
+			<-sem
+			break schedule
+		}
 		wg.Add(1)
 		go func(p C.Proxy, index int) {
 			defer wg.Done()
