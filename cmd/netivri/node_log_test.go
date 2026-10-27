@@ -147,6 +147,71 @@ func TestNodeLogClosesTheBurstWhenTheLastNodeIsBack(t *testing.T) {
 	}
 }
 
+func TestNodeLogFlappingNodeIsOneWarning(t *testing.T) {
+	f := newBurstFixture(t, 4)
+	for i := 0; i < 5; i++ {
+		f.down(0, "2 probe failures (timeout)")
+		f.now = f.now.Add(40 * time.Second)
+		f.back(0, 40*time.Second)
+		f.now = f.now.Add(3 * time.Minute)
+	}
+	var warns []string
+	for _, l := range f.lines {
+		if strings.HasPrefix(l, "WARN ") {
+			warns = append(warns, l)
+		}
+	}
+	want := []string{
+		"WARN node p/n0 (provider p, country DE) is down: 2 probe failures (timeout)",
+		"WARN node p/n0 (provider p, country DE) is down: 2 probe failures (timeout)",
+		"WARN node p/n0 (provider p, country DE) is flapping: 3 downs within the last hour (probe failures (timeout) x3); its further down and back reports are INFO",
+	}
+	if !reflect.DeepEqual(warns, want) {
+		t.Fatalf("warnings = %q\nwant %q", warns, want)
+	}
+	if got := f.count("INFO node p/n0"); got != 5+3 {
+		t.Logf("lines = %q", f.lines)
+		t.Errorf("%d info lines, want 8 (5 back, 3 down)", got)
+	}
+}
+
+func TestNodeLogFlappingNodesDoNotMakeABurst(t *testing.T) {
+	f := newBurstFixture(t, 6)
+	for round := 0; round < 3; round++ {
+		for i := 0; i < 3; i++ {
+			f.down(i, "2 probe failures (timeout)")
+		}
+		f.now = f.now.Add(time.Minute)
+		for i := 0; i < 3; i++ {
+			f.back(i, time.Minute)
+		}
+		f.now = f.now.Add(time.Minute)
+	}
+	// Rounds one and two raised a burst each; in round three all three nodes
+	// are flapping, so there is no burst, only their flapping warnings.
+	if got := f.count("WARN node burst"); got != 2 {
+		t.Errorf("%d burst warnings, want 2: %q", got, f.lines)
+	}
+	if got := f.count("is flapping"); got != 3 {
+		t.Errorf("%d flapping warnings, want 3: %q", got, f.lines)
+	}
+}
+
+func TestNodeLogForgetsOldDowns(t *testing.T) {
+	f := newBurstFixture(t, 3)
+	for i := 0; i < 2; i++ {
+		f.down(0, "2 probe failures (timeout)")
+		f.now = f.now.Add(flapWindow/2 + time.Minute)
+	}
+	f.down(0, "2 probe failures (timeout)") // the first drop is older than the window
+	if got := f.count("is flapping"); got != 0 {
+		t.Errorf("flapping after two recent downs: %q", f.lines)
+	}
+	if got := f.count("WARN node p/n0"); got != 3 {
+		t.Errorf("%d warnings, want 3", got)
+	}
+}
+
 func TestNodeLogWithoutNodesHasNoHook(t *testing.T) {
 	if newNodeLog(nil, nil, nil, time.Now) != nil {
 		t.Fatal("a node log for a route without nodes")

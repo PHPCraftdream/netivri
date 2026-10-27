@@ -156,27 +156,83 @@ func (h *nodeHealth) noteProbeError(kind string) {
 	h.mu.Unlock()
 }
 
-// probeFailKind names a probe error in a few words, without any address.
+// probeFailKind names a probe error in a few words, without any address. A
+// cause it does not know is "error: " and a scrubbed excerpt of the message.
 func probeFailKind(err error) string {
 	var netErr net.Error
 	msg := strings.ToLower(err.Error())
 	switch {
-	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout"):
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "did not properly respond") || strings.Contains(msg, "failed to respond"):
 		return "timeout"
 	case strings.Contains(msg, "refused"):
 		return "connection refused"
-	case strings.Contains(msg, "reset"):
+	case strings.Contains(msg, "reset") || strings.Contains(msg, "forcibly closed") || strings.Contains(msg, "broken pipe"):
 		return "connection reset"
 	case strings.Contains(msg, "no such host") || strings.Contains(msg, "lookup"):
 		return "dns failure"
-	case strings.Contains(msg, "unreachable"):
+	case strings.Contains(msg, "unreachable") || strings.Contains(msg, "no route to host") || strings.Contains(msg, "network is down"):
 		return "network unreachable"
 	case errors.Is(err, io.EOF) || strings.Contains(msg, "eof"):
 		return "connection closed"
 	case strings.Contains(msg, "tls") || strings.Contains(msg, "handshake") || strings.Contains(msg, "certificate"):
 		return "handshake failed"
 	}
+	if text := scrubError(msg); text != "" {
+		return "error: " + text
+	}
 	return "error"
+}
+
+const (
+	scrubMaxWords = 12
+	scrubMaxBytes = 80
+	scrubAddr     = "<addr>"
+)
+
+// scrubError keeps the plain words of an error message and drops anything
+// that could name a host, an address, a port, a path or a credential: a word
+// made of anything but lowercase ASCII letters, a short number, "-" and "_" is
+// replaced by "<addr>". It is best effort, for a log line, never for matching.
+func scrubError(msg string) string {
+	var words []string
+	for _, tok := range strings.Fields(msg) {
+		tok = strings.Trim(tok, ".,;:()\"'")
+		if tok == "" {
+			continue
+		}
+		if !plainWord(tok) {
+			tok = scrubAddr
+		}
+		if tok == scrubAddr && len(words) > 0 && words[len(words)-1] == scrubAddr {
+			continue
+		}
+		words = append(words, tok)
+		if len(words) == scrubMaxWords {
+			break
+		}
+	}
+	out := strings.Join(words, " ")
+	if len(out) > scrubMaxBytes {
+		out = strings.TrimSpace(out[:scrubMaxBytes])
+	}
+	return out
+}
+
+// plainWord reports whether w is lowercase letters, "-" and "_", or a number of
+// at most three digits.
+func plainWord(w string) bool {
+	digits := 0
+	for _, r := range w {
+		switch {
+		case r >= 'a' && r <= 'z', r == '-', r == '_':
+		case r >= '0' && r <= '9':
+			digits++
+		default:
+			return false
+		}
+	}
+	return digits == 0 || (digits == len(w) && digits <= 3)
 }
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3

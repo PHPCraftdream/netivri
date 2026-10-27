@@ -22,6 +22,13 @@ versions; every such change is listed here.
   The reason is a few words, never an address. In `internal/core`,
   `Options.OnNodeHealth` now takes a `core.NodeEvent` and `WarmOptions` has
   `OnProbeError`.
+- **A flapping node is one warning.** A node that goes down 3 times within an
+  hour gets one `WARN` (`node ... is flapping: 3 downs within the last hour
+  (...)`); its further down and back lines are `INFO` until it has been quiet
+  for an hour, and it does not count toward a burst. A probe error the log
+  could not name now reads `error: ` and a short excerpt with every word that
+  could be an address, host, port or credential replaced by `<addr>`, and
+  the Windows wording of a timeout and of a reset is recognised.
 
 ## [0.3.0] - 2026-10-25
 
