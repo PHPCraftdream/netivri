@@ -896,11 +896,13 @@ var helpTopics = []helpTopic{
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
 			"The binding between an account and a site is sticky: once the angel picked an exit node for the " +
 			"(login, site) pair it keeps that node for later connections to the same site while the node is up, " +
-			"even after a better tier recovers. The bindings survive restarts and configuration reloads: the " +
+			"until a node of a better tier has been up for 5 minutes, when the next connection of the site goes " +
+			"back to that tier (open connections stay). The bindings survive restarts and configuration reloads: the " +
 			"angel stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
 			"describes the affinity counters.\n\n" +
 			"The angel probes the route nodes in the background. A node is marked down after 2 consecutive " +
-			"failed probes or 3 consecutive failed dials. A single failed dial is returned to the client as an " +
+			"failed probes or 3 consecutive failed dials; a failed probe does not count while data has come back " +
+			"through the node within the last minute. A single failed dial is returned to the client as an " +
 			"error and the client retries; the connection is not moved on the spot, unless the node just went " +
 			"down with that failure, in which case the angel re-binds and retries once on the node it now " +
 			"selects. Once a node is down, new connections skip it and existing bindings to it re-bind to the " +

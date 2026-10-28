@@ -68,6 +68,7 @@ type nodeLog struct {
 	drops       map[string][]drop // recent downs per server, within flapWindow
 	flapping    map[string]bool   // by server
 	lastDown    map[string]drop   // latest counted down per server, with the label
+	lastNever   map[string]drop   // the same for never-answered reports
 	windowStart time.Time
 	window      []string       // labels down in the current window
 	kinds       map[string]int // reasons in the current window
@@ -98,7 +99,7 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 		return nil
 	}
 	l := &nodeLog{info: info, warn: warn, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
-		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}}
+		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
 	}
@@ -119,14 +120,18 @@ func (l *nodeLog) event(ev core.NodeEvent) {
 func (l *nodeLog) down(ev core.NodeEvent) {
 	now := l.now()
 	if ev.NeverOK {
-		l.info("%s has never answered: %s", l.describe(ev.Label), ev.Reason)
+		line := l.describe(ev.Label) + " has never answered: " + ev.Reason
+		if twin, ok := l.twinOf(l.lastNever, ev, now); ok {
+			line += ", same server as " + twin
+		}
+		l.info("%s", line)
 		return
 	}
 	line := l.describe(ev.Label) + " is down: " + ev.Reason
 	if ev.SinceOK > 0 {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
 	}
-	if twin, ok := l.twinOf(ev, now); ok {
+	if twin, ok := l.twinOf(l.lastDown, ev, now); ok {
 		l.info("%s, same server as %s", line, twin)
 		return
 	}
@@ -162,15 +167,15 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	}
 }
 
-// twinOf reports whether the same server went down under another label within
-// twinWindow, and which one. Otherwise it remembers this down as the latest
-// one of the server.
-func (l *nodeLog) twinOf(ev core.NodeEvent, now time.Time) (string, bool) {
+// twinOf reports whether the same server was reported under another label
+// within twinWindow (in latest), and which one. Otherwise it remembers this
+// report as the latest one of the server.
+func (l *nodeLog) twinOf(latest map[string]drop, ev core.NodeEvent, now time.Time) (string, bool) {
 	id := serverID(ev.Label)
-	if last, ok := l.lastDown[id]; ok && last.label != ev.Label && now.Sub(last.at) <= twinWindow {
+	if last, ok := latest[id]; ok && last.label != ev.Label && now.Sub(last.at) <= twinWindow {
 		return last.label, true
 	}
-	l.lastDown[id] = drop{at: now, label: ev.Label}
+	latest[id] = drop{at: now, label: ev.Label}
 	return "", false
 }
 

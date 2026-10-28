@@ -289,11 +289,19 @@ withdrawn pre-releases.
   could not name now reads `error: ` and a short excerpt with every word that
   could be an address, host, port or credential replaced by `<addr>`, and
   the Windows wording of a timeout and of a reset is recognised.
+- **A node that moves data is not marked down by its probes.** A busy node can
+  answer a probe slowly: on a real setup the only first-tier node was marked
+  down by its probes several times an hour (once for over 7 minutes) and the
+  account's new connections went to a fallback country meanwhile. Now data coming back through a node on an open connection
+  clears its failed probes and, for 60 seconds, a failed probe does not count
+  toward the down rule; failed dials still do. A node that the probes alone
+  declared down is back as soon as data flows through it.
 - **One server under two providers is one node in the log.** The same node id
   in two subscriptions (`own/a970e0d9fef1` and `main/a970e0d9fef1`) is one
   server: when its twin goes down within 10 seconds, the second line is `INFO`
   and ends with `, same server as {LABEL}`, and the burst and flapping counts
-  treat the pair as one node, so the pair no longer doubles every warning.
+  treat the pair as one node, so the pair no longer doubles every warning. The
+  same note ends the `has never answered` lines of such a pair.
 
 - **The background process is called the angel.** Every place that said
   daemon now says angel: the `angel` field of `up`, `down` and `status`

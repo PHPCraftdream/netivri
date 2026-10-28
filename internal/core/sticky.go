@@ -738,6 +738,9 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 	// the combined per-node total of all logins, while the account gate is
 	// the same threshold applied to each individual per-(login, label) entry.
 	for label, node := range nodeMoved {
+		if node.down > 0 {
+			health.noteTraffic(label)
+		}
 		bytes := node.up + node.down
 		if bytes < throughputSampleMin {
 			continue
