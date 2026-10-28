@@ -251,6 +251,14 @@ node).
 While the bound node is not down it is used for every connection of the site,
 even if another node became faster: stability beats optimality. When the
 bound node is down, the next connection rebinds to the best remaining node.
+A binding in a worse tier goes back to a better one: when a node of a tier
+better than the bound member's has been up and not down for
+`TierReturnAfter` (default 5 minutes, counted from the node's registration or
+from its last recovery, `nodeHealth.upSince`), the next connection of the site
+picks again and the binding moves (`affinity.returns`); open connections stay
+where they are. The check is a prefix scan of the better tiers (members are in
+non-decreasing tier order) and costs nothing for a binding in the first tier;
+it allocates nothing.
 A failed dial that makes the node down is retried once on the re-selected
 node; any other failure is returned to the client.
 
@@ -288,6 +296,7 @@ contract and the gate.
 NodeLabels  map[string][]string // route key -> label per node, same order and length as RouteNodes[key]; nil = "r{R}-{N}"
 Observer    Observer           // nil = none
 AffinityTTL time.Duration      // 0 = 24h; negative is invalid
+TierReturnAfter time.Duration  // 0 = 5m; negative turns the return to a better tier off
 
 // Observer receives measurements; methods must not block and must be safe
 // for concurrent use.
@@ -370,7 +379,7 @@ warning as node-down reports.
   cannot be opened is logged and the angel runs without statistics: the
   proxy never fails because of its bookkeeping.
 - The status answer gains `stats` (`path`, `dropped`) and `affinity`
-  (`bindings`, `rebinds`), both in the full view only
+  (`bindings`, `rebinds`, `returns`), both in the full view only
   (`netivri status --full`).
 
 ### Configuration

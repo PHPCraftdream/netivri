@@ -19,12 +19,15 @@ import (
 // route, in the order the angel tries them. A pair without nodes is shown
 // as skipped, with a reason, and does not consume a tier index.
 type accountShowTier struct {
-	Tier      int               `json:"tier"`
-	Country   string            `json:"country"`
-	Providers []string          `json:"providers"`
-	Skipped   bool              `json:"skipped,omitempty"`
-	Reason    string            `json:"reason,omitempty"`
-	Nodes     []accountShowNode `json:"nodes"`
+	Tier      int      `json:"tier"`
+	Country   string   `json:"country"`
+	Providers []string `json:"providers"`
+	Skipped   bool     `json:"skipped,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+	// Fallback marks a tier after the first one that has nodes: traffic goes
+	// there only while the better tiers are down.
+	Fallback bool              `json:"fallback,omitempty"`
+	Nodes    []accountShowNode `json:"nodes"`
 }
 
 // accountShowNode is one node of a tier: its static identity and, when the
@@ -83,6 +86,8 @@ func accountShow(home string, cfg *config.Config, rest []string, stdout io.Write
 		"countries":    countries,
 		"tiers":        tiers,
 		"live":         live,
+		// Open connections on the fallback tiers; null without a running angel.
+		"fallback_connections": fallbackConnections(tiers),
 	})
 	return nil
 }
@@ -198,11 +203,33 @@ func buildShowTiers(known map[string]bool, snapshots map[string]*subscription.Sn
 					Tier:     tier,
 				})
 			}
+			t.Fallback = len(nodes) > 0 && tier > 0
 			out = append(out, t)
 			tier++
 		}
 	}
 	return out
+}
+
+// fallbackConnections counts the open connections on nodes of the tiers after
+// the first, or nil when the live connection counts are not known (no angel).
+func fallbackConnections(tiers []accountShowTier) *int {
+	known, n := false, 0
+	for _, t := range tiers {
+		for _, node := range t.Nodes {
+			if node.Connections == nil {
+				continue
+			}
+			known = true
+			if t.Fallback {
+				n += *node.Connections
+			}
+		}
+	}
+	if !known {
+		return nil
+	}
+	return &n
 }
 
 // accountShowLive fills the live fields of the tiers from the running

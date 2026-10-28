@@ -91,6 +91,11 @@ type Options struct {
 	// AffinityTTL is how long an idle site binding is kept before it is
 	// dropped. 0 means 24 hours; a negative value is invalid.
 	AffinityTTL time.Duration
+	// TierReturnAfter is how long a node of a better tier must have been up
+	// (and not down) before the bindings that sit in a worse tier go back to
+	// it, for the next connection of each site; open connections stay. 0 means
+	// 5 minutes, negative turns the return off.
+	TierReturnAfter time.Duration
 	// InitialBindings optionally loads persisted bindings into the affinity
 	// table after the sticky groups are installed: a record is bound to the
 	// member whose label matches within the login's route, keeping bound_at
@@ -236,6 +241,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	var poller *throughputPoller
 	if len(plans) > 0 {
 		table = newAffinityTable(nil, o.AffinityTTL)
+		table.setReturnAfter(o.TierReturnAfter)
 		health = newHealthTable()
 		health.notify = o.OnNodeHealth
 	}
@@ -409,6 +415,7 @@ func (i *Instance) AffinityStats() AffinityStats {
 	return AffinityStats{
 		Bindings:  table.count(),
 		Rebinds:   table.rebindCount(),
+		Returns:   table.returnCount(),
 		Hedges:    table.hedgeCount(),
 		HedgeWins: table.hedgeWinCount(),
 	}

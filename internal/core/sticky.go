@@ -39,6 +39,7 @@ type AccountObserver interface {
 type AffinityStats struct {
 	Bindings  int
 	Rebinds   uint64
+	Returns   uint64 // bindings moved back to a better tier
 	Hedges    uint64
 	HedgeWins uint64
 }
@@ -71,6 +72,7 @@ type stickyGroup struct {
 	healths  []*nodeHealth // per member, same order; Down() is one atomic load
 	tiers    []int         // priority tier per member (lower first), nil = one tier
 	isDownFn func(member int) bool
+	betterFn func(member int, now time.Time) bool
 	observer Observer
 	hedgeAll bool // test seam: fake members are hedgeable when set
 }
@@ -106,6 +108,7 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 		g.healths[i] = health.health(label)
 	}
 	g.isDownFn = g.memberDown
+	g.betterFn = g.betterTierStable
 	return g
 }
 
@@ -113,7 +116,28 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 // creating or keeping the binding as needed. On a healthy binding hit it
 // neither allocates nor builds health views.
 func (g *stickyGroup) choose(login, site string) (int, bool) {
-	return g.table.acquire(affinityKey{login: login, site: site}, g.isDownFn, g.pickFor(login, site))
+	member, rebound, _ := g.table.acquireWith(affinityKey{login: login, site: site}, g.isDownFn, g.betterFn, g.pickFor(login, site))
+	return member, rebound
+}
+
+// betterTierStable reports whether a node of a better tier than the member's
+// is up and has been for the table's return time, so that a binding made in a
+// fallback tier goes back to the tier the account asked for first. Members are
+// in non-decreasing tier order, so the better ones are a prefix; a member of
+// the first tier costs one comparison and nothing allocates.
+func (g *stickyGroup) betterTierStable(member int, now time.Time) bool {
+	after := g.table.returnAfter
+	if after < 0 || len(g.tiers) != len(g.healths) || member < 0 || member >= len(g.tiers) {
+		return false
+	}
+	tier := g.tiers[member]
+	nowNs := now.UnixNano()
+	for i := 0; i < len(g.tiers) && g.tiers[i] < tier; i++ {
+		if g.healths[i].stableFor(nowNs, after) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *stickyGroup) memberDown(member int) bool {

@@ -494,7 +494,12 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   when the angel tracks the account, null when it does not. A (country,
   provider) pair without nodes is listed as a skipped tier with a reason; it
   keeps the index it would have had and does not consume one, so the indexes
-  of the other tiers match the order the angel actually tries. `pre_socks5`
+  of the other tiers match the order the angel actually tries. A tier after
+  the first one that has nodes carries `"fallback": true`, and the top-level
+  `fallback_connections` is the number of the account's open connections on
+  such tiers (null without a running angel): traffic sits there while the
+  better tiers were down, and a site goes back for its next connection once a
+  node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective SOCKS5 proxy of each side (see
   `set-socks5`); in `show` they also carry `own`, the account's own value
   (`none`, or a redacted URL), and no `own` when the account has none. The
@@ -784,10 +789,11 @@ node names, changes nothing and does not count.
 `stats` (`{"path", "dropped"}`) is full-only and present while the statistics
 store is open;
 `dropped` counts samples lost to a full write queue. `affinity`
-(`{"bindings", "rebinds", "hedges", "hedge_wins", "restored", "saved_at"}`) is
+(`{"bindings", "rebinds", "returns", "hedges", "hedge_wins", "restored", "saved_at"}`) is
 also full-only and present while an account has a route: the number of
 site-to-node bindings held now, how many times a binding moved to another node
-because its node was down, how many second dial attempts (to the same node)
+because its node was down, how many times a binding went back to a better tier
+(`returns`, see `docs/design/node-stats.md`), how many second dial attempts (to the same node)
 were started for a slow handshake and how many dials such an attempt won.
 `restored` is how many persisted bindings were loaded when the core last
 started (an angel start or a reload); the angel stores the bindings in the

@@ -144,6 +144,17 @@ it ships in 0.3.0.
 
 ### Changed
 
+- **Sites go back to the preferred tier.** A binding that sat in a fallback tier
+  (an exit country or provider later in the account's list) used to stay there
+  for as long as the site was used, even after the first tier was back: on a
+  real setup 11 of an account's connections were on NL, FR and PL exits while
+  its US node was up and idle. Now, when a node of a better tier has been up for
+  5 minutes, the next connection of the site goes back to it (open connections
+  stay; a node that flaps keeps restarting the five minutes). `status --full`
+  counts it in `affinity.returns`, `account show` marks the later tiers
+  `fallback` and gives `fallback_connections`, and `doctor` notes the
+  connections that are still on fallback tiers. In `internal/core`,
+  `Options.TierReturnAfter` (0 is 5 minutes, negative turns it off).
 - **The Linux binary is really static now.** It was dynamically linked against
   glibc (`/lib64/ld-linux-x86-64.so.2`) even with `CGO_ENABLED=0`, because the
   Ktav binding's root package links the native-library loader (`purego`) that

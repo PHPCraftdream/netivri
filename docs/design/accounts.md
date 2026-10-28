@@ -61,9 +61,14 @@ Rules:
   the next tier is used; when every node of the route is down the first tier
   is tried again. A later tier is a fallback, never a load-sharing partner.
 - A binding of a site to a node (the sticky table) is kept while the node is
-  up, so traffic does not move back to a better tier by itself when it
-  recovers: new sites go there, existing ones when their node goes down or
-  their binding expires.
+  up, with one exception: when the binding sits in a worse tier and a node of
+  a better tier has been up (not down) for 5 minutes, the site's next
+  connection is picked again and goes back to the better tier (counted in
+  `affinity.returns`). The five minutes keep a node that flaps from pulling
+  sites back and forth; open connections are never moved. Without this a short
+  outage of the first tier would leave a site on a fallback exit for as long
+  as it is used. `account show` marks the later tiers `fallback` and counts the
+  connections on them; `doctor` notes them.
 - Lists never reach beyond themselves: no fallback to a provider or country
   that is not listed, and none to a direct connection.
 - The canonical stored form drops blanks and repeats (the first occurrence
