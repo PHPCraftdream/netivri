@@ -305,7 +305,10 @@ failures`. `{WORDS}` is a short excerpt of the error in which every word that co
 an address, host, port, path or credential is replaced by `<addr>`. A node that goes
 down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
 within the last hour (...)`, says so, and its further down and back lines are `INFO`
-until it has been quiet for an hour (a flapping node does not count toward a burst). A node
+until it has been quiet for an hour (a flapping node does not count toward a burst). The
+same node id under two providers is one server: when its twin goes down within 10 seconds,
+that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for
+bursts and flapping. A node
 that has never answered since it was added (no probe or dial has ever succeeded) is one
 `INFO` line, `node ... has never answered: 2 probe failures (timeout)`, and counts toward
 neither a burst nor flapping. When 3

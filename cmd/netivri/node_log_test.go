@@ -272,3 +272,93 @@ func TestIsNodeDownMessageCoversTheNewForms(t *testing.T) {
 		}
 	}
 }
+
+// twinFixture is a node log over servers that two providers list: own/a and
+// main/a are one server, own/b and main/b another, own/c is alone.
+func twinFixture(t *testing.T) *burstFixture {
+	t.Helper()
+	f := &burstFixture{now: time.Unix(10_000, 0)}
+	var infos []stats.NodeInfo
+	for _, label := range []string{"own/a", "main/a", "own/b", "main/b", "own/c", "own/d"} {
+		provider, _, _ := strings.Cut(label, "/")
+		infos = append(infos, stats.NodeInfo{Label: label, Provider: provider, Country: "FI"})
+	}
+	f.log = newNodeLog(infos,
+		func(format string, args ...any) { f.lines = append(f.lines, "INFO "+fmt.Sprintf(format, args...)) },
+		func(format string, args ...any) { f.lines = append(f.lines, "WARN "+fmt.Sprintf(format, args...)) },
+		func() time.Time { return f.now })
+	f.now = f.now.Add(10 * time.Minute)
+	return f
+}
+
+func (f *burstFixture) downLabel(label string) {
+	f.log.event(core.NodeEvent{Label: label, Down: true, Reason: "2 probe failures (timeout)"})
+}
+
+func TestNodeLogTwinOfTheSameServerIsOneEvent(t *testing.T) {
+	f := twinFixture(t)
+	f.downLabel("own/a")
+	f.now = f.now.Add(2 * time.Second)
+	f.downLabel("main/a")
+	if got := f.count("WARN"); got != 1 {
+		t.Errorf("%d warnings for one server, want 1: %q", got, f.lines)
+	}
+	if got := f.countContaining("is down: 2 probe failures (timeout), same server as own/a"); got != 1 {
+		t.Errorf("twin line missing: %q", f.lines)
+	}
+	if !isNodeDownMessage(strings.TrimPrefix(f.lines[1], "INFO ")) {
+		t.Errorf("doctor does not recognise the twin line: %q", f.lines[1])
+	}
+}
+
+func TestNodeLogTwinsAreOneServerForBurstAndFlapping(t *testing.T) {
+	f := twinFixture(t)
+	// Two servers (four labels) down together are not three nodes: no burst.
+	for _, label := range []string{"own/a", "main/a", "own/b", "main/b"} {
+		f.downLabel(label)
+	}
+	if got := f.count("WARN node burst"); got != 0 {
+		t.Errorf("burst from two servers: %q", f.lines)
+	}
+	// A third server makes it a burst of three.
+	f.downLabel("own/c")
+	if got := f.count("WARN node burst: 3 of"); got != 1 {
+		t.Errorf("no burst of three servers: %q", f.lines)
+	}
+
+	// The same server dropping three times, reported by both labels each
+	// time, flaps once, after its third drop and not its second.
+	g := twinFixture(t)
+	for i := 0; i < 3; i++ {
+		g.downLabel("own/a")
+		g.downLabel("main/a")
+		g.now = g.now.Add(3 * time.Minute)
+	}
+	if got := g.countContaining("is flapping: 3 downs"); got != 1 {
+		t.Errorf("%d flapping warnings, want 1: %q", got, g.lines)
+	}
+	if got := g.countContaining("flapping: 2 downs"); got != 0 {
+		t.Errorf("flapping after two drops: %q", g.lines)
+	}
+}
+
+func TestNodeLogTwinOutsideTheWindowIsItsOwnEvent(t *testing.T) {
+	f := twinFixture(t)
+	f.downLabel("own/a")
+	f.now = f.now.Add(twinWindow + time.Second)
+	f.downLabel("main/a")
+	if got := f.count("WARN"); got != 2 {
+		t.Errorf("%d warnings, want 2 (the twin came late): %q", got, f.lines)
+	}
+	if got := f.countContaining("same server as"); got != 0 {
+		t.Errorf("late twin got the same-server note: %q", f.lines)
+	}
+}
+
+func TestServerID(t *testing.T) {
+	for in, want := range map[string]string{"own/abc": "abc", "main/abc": "abc", "plain": "plain", "x/": "x/"} {
+		if got := serverID(in); got != want {
+			t.Errorf("serverID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

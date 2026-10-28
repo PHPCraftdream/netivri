@@ -211,6 +211,11 @@ it ships in 0.3.0.
   could not name now reads `error: ` and a short excerpt with every word that
   could be an address, host, port or credential replaced by `<addr>`, and
   the Windows wording of a timeout and of a reset is recognised.
+- **One server under two providers is one node in the log.** The same node id
+  in two subscriptions (`own/a970e0d9fef1` and `main/a970e0d9fef1`) is one
+  server: when its twin goes down within 10 seconds, the second line is `INFO`
+  and ends with `, same server as {LABEL}`, and the burst and flapping counts
+  treat the pair as one node, so the pair no longer doubles every warning.
 
 - **The background process is called the angel.** Every place that said
   daemon now says angel: the `angel` field of `up`, `down` and `status`

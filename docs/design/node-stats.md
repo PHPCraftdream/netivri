@@ -368,8 +368,11 @@ start. A node with 3
 downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
 the reason kinds), then its down and back lines are `INFO` until its recent
 downs drop below 3 again (checked at its next down), and its downs do not count
-toward a burst. `doctor` counts the lines, the burst summary and the flapping
-warning as node-down reports.
+toward a burst. The same id under two providers is one server (`serverID`, the
+part of the label after the provider): drops and flapping are kept per server, and
+a down of the twin label within 10 s of the first is an `INFO` line ending in
+`, same server as {LABEL}` that counts for neither burst nor flapping. `doctor`
+counts the lines, the burst summary and the flapping warning as node-down reports.
 
 ## Wiring (`cmd/netivri`)
 
