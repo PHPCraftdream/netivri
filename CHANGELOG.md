@@ -8,65 +8,7 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
-### Changed
-
-- **The Linux binary is really static now.** It was dynamically linked against
-  glibc (`/lib64/ld-linux-x86-64.so.2`) even with `CGO_ENABLED=0`, because the
-  Ktav binding's root package links the native-library loader (`purego`) that
-  netivri never used; it now imports only the binding's pure-Go subpackage, and a
-  test and the release workflow guard it.
-- **The Linux binary runs on musl (Alpine) as well.** It is a static Go build, so
-  one Linux package serves glibc and musl: the Linux npm packages no longer
-  declare `libc: ["glibc"]`, the launcher no longer detects musl, and
-  `install.sh` no longer refuses Alpine. The release workflow checks that the
-  Linux binary is static and runs the release archive, the installer and the
-  npm packages in Alpine containers (amd64, and arm64 under QEMU) before it
-  publishes anything; this replaces the "Alpine is not supported" limitation.
-
-- **The npm packages move to the `@netivri` organization.** Install with
-  `npm i -g @netivri/proxy` (was `netivri`); the six platform packages
-  are `@netivri/proxy-{linux,darwin,w32}-{x64,arm64}`. The platform
-  packages carry no keywords and a description that sends the reader to the
-  main package, so they stay out of `npm search`. The release tarballs are
-  named `netivri-proxy-*.tgz`. Nothing of 0.3.0 was published under the
-  old names.
-
-- **A failed probe is confirmed before it counts.** The warm-up probe asks
-  `www.gstatic.com`, and one slow or unreachable target made working nodes look
-  down (on one setup real dials succeeded 100% while the probes gave the
-  busiest exit 93.6% uptime, which moved its traffic to a fallback tier). A
-  failed probe is now tried once more at once, against
-  `cp.cloudflare.com/generate_204` and with twice the timeout; only a failure
-  of both counts as a failed probe, makes a node count toward going down and
-  shows in `stats` uptime. In `internal/core`, `WarmOptions` has `ConfirmProbe`,
-  `ConfirmURL` and `ConfirmTimeout`; the angel turns it on.
-- **The log says why a node went down and for how long.** A down line now
-  carries the reason (`2 probe failures (timeout)`, `3 dial failures`) and the
-  time since the node last answered, and a back line the downtime:
-  `node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe
-  failures (timeout), last ok 3m12s ago`, `... is back after 41s down`. When 3
-  or more nodes go down within 10 seconds (a lost network, a shared outage, the
-  first probes after a start) one `WARN` line, `node burst: ...`, sums them up
-  and the nodes of the burst are logged at `INFO`; `node burst over: ...`
-  closes it. `netivri doctor` counts the summary with the node-down reports.
-  The reason is a few words, never an address. In `internal/core`,
-  `Options.OnNodeHealth` now takes a `core.NodeEvent` and `WarmOptions` has
-  `OnProbeError`.
-- **A node that never answers is not a burst.** A node that has not answered a
-  single probe or dial since it was added (a dead entry of the subscription)
-  is logged once as `INFO`, `node ... has never answered: ...`, and counts
-  toward neither a `node burst` nor flapping. Before, the dead nodes of one
-  subscription raised a misleading "likely a lost network" burst at every
-  start. In `internal/core`, `NodeEvent` has `NeverOK`.
-- **A flapping node is one warning.** A node that goes down 3 times within an
-  hour gets one `WARN` (`node ... is flapping: 3 downs within the last hour
-  (...)`); its further down and back lines are `INFO` until it has been quiet
-  for an hour, and it does not count toward a burst. A probe error the log
-  could not name now reads `error: ` and a short excerpt with every word that
-  could be an address, host, port or credential replaced by `<addr>`, and
-  the Windows wording of a timeout and of a reset is recognised.
-
-## [0.3.0] - 2026-10-25
+## [0.3.0] - 2026-10-28
 
 Release 0.2.0 was withdrawn before all its npm packages were published,
 and npm never accepts a used version number again; everything listed for
@@ -202,6 +144,63 @@ it ships in 0.3.0.
 
 ### Changed
 
+- **The Linux binary is really static now.** It was dynamically linked against
+  glibc (`/lib64/ld-linux-x86-64.so.2`) even with `CGO_ENABLED=0`, because the
+  Ktav binding's root package links the native-library loader (`purego`) that
+  netivri never used; it now imports only the binding's pure-Go subpackage, and a
+  test and the release workflow guard it.
+- **The Linux binary runs on musl (Alpine) as well.** It is a static Go build, so
+  one Linux package serves glibc and musl: the Linux npm packages no longer
+  declare `libc: ["glibc"]`, the launcher no longer detects musl, and
+  `install.sh` no longer refuses Alpine. The release workflow checks that the
+  Linux binary is static and runs the release archive, the installer and the
+  npm packages in Alpine containers (amd64, and arm64 under QEMU) before it
+  publishes anything; this replaces the "Alpine is not supported" limitation.
+
+- **The npm packages move to the `@netivri` organization.** Install with
+  `npm i -g @netivri/proxy` (was `netivri`); the six platform packages
+  are `@netivri/proxy-{linux,darwin,w32}-{x64,arm64}` (`w32` is Windows, `os: win32`; npm refused
+  the name `win32` as spam). The platform
+  packages carry no keywords and a description that sends the reader to the
+  main package, so they stay out of `npm search`. The release tarballs are
+  named `netivri-proxy-*.tgz`. Nothing of 0.3.0 was published under the
+  old names.
+
+- **A failed probe is confirmed before it counts.** The warm-up probe asks
+  `www.gstatic.com`, and one slow or unreachable target made working nodes look
+  down (on one setup real dials succeeded 100% while the probes gave the
+  busiest exit 93.6% uptime, which moved its traffic to a fallback tier). A
+  failed probe is now tried once more at once, against
+  `cp.cloudflare.com/generate_204` and with twice the timeout; only a failure
+  of both counts as a failed probe, makes a node count toward going down and
+  shows in `stats` uptime. In `internal/core`, `WarmOptions` has `ConfirmProbe`,
+  `ConfirmURL` and `ConfirmTimeout`; the angel turns it on.
+- **The log says why a node went down and for how long.** A down line now
+  carries the reason (`2 probe failures (timeout)`, `3 dial failures`) and the
+  time since the node last answered, and a back line the downtime:
+  `node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe
+  failures (timeout), last ok 3m12s ago`, `... is back after 41s down`. When 3
+  or more nodes go down within 10 seconds (a lost network, a shared outage, the
+  first probes after a start) one `WARN` line, `node burst: ...`, sums them up
+  and the nodes of the burst are logged at `INFO`; `node burst over: ...`
+  closes it. `netivri doctor` counts the summary with the node-down reports.
+  The reason is a few words, never an address. In `internal/core`,
+  `Options.OnNodeHealth` now takes a `core.NodeEvent` and `WarmOptions` has
+  `OnProbeError`.
+- **A node that never answers is not a burst.** A node that has not answered a
+  single probe or dial since it was added (a dead entry of the subscription)
+  is logged once as `INFO`, `node ... has never answered: ...`, and counts
+  toward neither a `node burst` nor flapping. Before, the dead nodes of one
+  subscription raised a misleading "likely a lost network" burst at every
+  start. In `internal/core`, `NodeEvent` has `NeverOK`.
+- **A flapping node is one warning.** A node that goes down 3 times within an
+  hour gets one `WARN` (`node ... is flapping: 3 downs within the last hour
+  (...)`); its further down and back lines are `INFO` until it has been quiet
+  for an hour, and it does not count toward a burst. A probe error the log
+  could not name now reads `error: ` and a short excerpt with every word that
+  could be an address, host, port or credential replaced by `<addr>`, and
+  the Windows wording of a timeout and of a reset is recognised.
+
 - **The background process is called the angel.** Every place that said
   daemon now says angel: the `angel` field of `up`, `down` and `status`
   (was `daemon`), the error codes `ANGEL_NOT_RUNNING`,
@@ -241,11 +240,6 @@ it ships in 0.3.0.
   staged version" (npm's registry view can lag a minute) as a version that is
   already published, so a re-run of a failed release goes on to the packages
   that are still missing.
-- **npm: the Windows packages are `netivri-w32-x64` and `netivri-w32-arm64`.**
-  npm refused the name `netivri-win32-x64` as spam on every publish, so the two
-  Windows platform packages are renamed; the launcher still picks them by
-  `process.platform` (`win32`), and the packages keep `os: win32`. Release
-  archives, the installers and the CLI are not affected.
 
 ## [0.1.0] - 2026-10-22
 

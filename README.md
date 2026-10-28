@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/PHPCraftdream/netivri/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/PHPCraftdream/netivri/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/PHPCraftdream/netivri?include_prereleases&sort=semver)](https://github.com/PHPCraftdream/netivri/releases)
+[![npm](https://img.shields.io/npm/v/@netivri/proxy)](https://www.npmjs.com/package/@netivri/proxy)
+[![npm downloads](https://img.shields.io/npm/dm/@netivri/proxy)](https://www.npmjs.com/package/@netivri/proxy)
 [![License: GPL-3.0-only](https://img.shields.io/github/license/PHPCraftdream/netivri)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/goversion/PHPCraftdream/netivri)](go.mod)
 ![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20macos%20%7C%20windows-informational)
