@@ -214,7 +214,10 @@ consecutive failure counters.
 ```
 delay  = mean of the known EWMAs (probe, dial); unknown without samples
 down   = 2 consecutive probe failures or 3 consecutive dial failures;
-         any success clears it
+         any success clears it; data coming back through the node on an open
+         connection (the throughput poller sees download bytes in a window)
+         clears the probe failures and, for 60 s, keeps failed probes from
+         counting; failed dials are not hidden by it
 score  = delay * (1 + 4*failRate) / (1 + min(throughputMiBps, 20) / 20)   lower is better
 ```
 

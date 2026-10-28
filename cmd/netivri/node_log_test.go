@@ -362,3 +362,21 @@ func TestServerID(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeLogNeverAnsweredTwinIsNamed(t *testing.T) {
+	f := twinFixture(t)
+	f.log.event(core.NodeEvent{Label: "own/a", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	f.log.event(core.NodeEvent{Label: "main/a", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	f.log.event(core.NodeEvent{Label: "own/c", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	if got := f.countContaining("same server as own/a"); got != 1 {
+		t.Errorf("%d lines name the twin, want 1: %q", got, f.lines)
+	}
+	if got := f.countContaining("has never answered"); got != 3 {
+		t.Errorf("%d never-answered lines, want 3: %q", got, f.lines)
+	}
+	// A never-answered report is not a down of its twin.
+	f.downLabel("main/a")
+	if got := f.countContaining("is down: 2 probe failures (timeout), same server"); got != 0 {
+		t.Errorf("a down was taken for the twin of a never-answered node: %q", f.lines)
+	}
+}

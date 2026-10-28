@@ -626,8 +626,9 @@ Without a provider list every provider shares one tier per country; without a
 country list the tiers are the providers alone. A `*` in the country list is one more tier at its place: the nodes of every country the list does not name (so `DE,*` is DE first, then all the rest, and `*,DE` the rest first and DE last). A new connection goes to a
 node of the first tier that has a node not marked down (the fastest of them,
 by the usual latency choice), so a later tier is only a fallback; a site that
-is already bound to a node keeps it while it is up, even after a better tier
-recovers. A route is used only for the accounts that name it: there is no
+is already bound to a node keeps it while it is up, until a node of a better
+tier has been up for 5 minutes (the site's next connection then goes back to
+that tier; open connections stay). A route is used only for the accounts that name it: there is no
 fallback to a direct connection or to a country or provider that is not in the
 lists. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.

@@ -21,6 +21,11 @@ const (
 	downProbeFailures = 2
 	downDialFailures  = 3
 
+	// trafficAliveFor is how long data coming back through a node counts as
+	// proof that it is alive: a failed probe within that time is not counted
+	// toward the down rule (a busy node can answer a probe slowly).
+	trafficAliveFor = 60 * time.Second
+
 	// minThroughputWindow is the window size from which the throughput EWMA
 	// is fed (windows of at least 64 KiB).
 	minThroughputWindow = 64 << 10
@@ -73,6 +78,9 @@ type nodeHealth struct {
 	// probe error: they feed the NodeEvent.
 	lastOK    time.Time
 	downSince time.Time
+	// lastTraffic is when data last came back through the node on an open
+	// connection, unix nanoseconds; see trafficAliveFor.
+	lastTraffic atomic.Int64
 	// upSince is when the node was registered or last came back, unix
 	// nanoseconds; with the down flag it tells how long the node has been up.
 	upSince   atomic.Int64
@@ -254,7 +262,34 @@ func plainWord(w string) bool {
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3
 // consecutive dial failures. A success of EITHER kind clears both counters.
+// Data coming back through the node (noteTraffic) clears the probe counter and
+// keeps further probe failures from counting for trafficAliveFor.
 func (h *nodeHealth) Down() bool { return h.downFlag.Load() }
+
+// noteTraffic records that data came back through the node on an open
+// connection: the node answers, whatever its probes say. It forgets the failed
+// probes (so a node that the probes alone declared down is back) but not the
+// failed dials: new connections that cannot be made are a separate signal.
+func (h *nodeHealth) noteTraffic() {
+	h.mu.Lock()
+	h.lastTraffic.Store(h.clock().UnixNano())
+	h.consProbeFail = 0
+	h.probeFail = ""
+	changed := h.recomputeDown()
+	var ev NodeEvent
+	if changed {
+		ev = h.eventLocked()
+	}
+	h.mu.Unlock()
+	h.announce(changed, ev)
+}
+
+// trafficAlive reports whether data came back through the node within
+// trafficAliveFor; the caller holds h.mu or accepts a racy read.
+func (h *nodeHealth) trafficAlive() bool {
+	last := h.lastTraffic.Load()
+	return last != 0 && h.clock().UnixNano()-last < int64(trafficAliveFor)
+}
 
 func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 	h.mu.Lock()
@@ -281,7 +316,7 @@ func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 		} else {
 			h.probeEWMS = ewma(h.probeEWMS, delaySeconds(delay)*1000, probeEWMAAlpha)
 		}
-	} else {
+	} else if !h.trafficAlive() {
 		h.consProbeFail++
 	}
 	h.recordOutcome(alive)
@@ -483,6 +518,7 @@ func (h *nodeHealth) cloneFor(notify func(NodeEvent)) *nodeHealth {
 	}
 	c.downFlag.Store(h.downFlag.Load())
 	c.upSince.Store(h.upSince.Load())
+	c.lastTraffic.Store(h.lastTraffic.Load())
 	c.hedgeUnits.Store(h.hedgeUnits.Load())
 	return c
 }
@@ -507,6 +543,13 @@ func (t *healthTable) noteProbeError(label string, err error) {
 func (t *healthTable) recordDial(label string, ok bool, took time.Duration) {
 	if h := t.entries[label]; h != nil {
 		h.recordDial(ok, took)
+	}
+}
+
+// noteTraffic records data coming back through a node, see nodeHealth.noteTraffic.
+func (t *healthTable) noteTraffic(label string) {
+	if h := t.entries[label]; h != nil {
+		h.noteTraffic()
 	}
 }
 
