@@ -37,18 +37,18 @@ test('resolveBinary reports unsupported platforms with the error envelope fields
 
 test('resolveBinary reports a missing platform package', () => {
   const res = resolveBinary('linux', 'x64', () => {
-    throw new Error("Cannot find module '@phpcraftdream/netivri-linux-x64/package.json'");
+    throw new Error("Cannot find module '@netivri/proxy-linux-x64/package.json'");
   });
   assert.ok(res.error);
   const envelope = errorEnvelope(res.error.message, res.error.hint);
   assert.equal(envelope.error.code, ERROR_CODE);
-  assert.ok(envelope.error.message.includes('@phpcraftdream/netivri-linux-x64'));
-  assert.ok(envelope.error.hint.includes('@phpcraftdream/netivri'));
+  assert.ok(envelope.error.message.includes('@netivri/proxy-linux-x64'));
+  assert.ok(envelope.error.hint.includes('@netivri/proxy'));
   assert.ok(envelope.error.hint.length > 0);
 });
 
 test('resolveBinary resolves the binary next to the platform package.json', () => {
-  const pkgDir = path.join('fake', 'node_modules', '@phpcraftdream', 'netivri-darwin-arm64');
+  const pkgDir = path.join('fake', 'node_modules', '@netivri', 'proxy-darwin-arm64');
   const res = resolveBinary('darwin', 'arm64',
     () => path.join(pkgDir, 'package.json'));
   assert.equal(res.error, undefined);
@@ -57,7 +57,7 @@ test('resolveBinary resolves the binary next to the platform package.json', () =
 });
 
 test('resolveBinary appends .exe on win32', () => {
-  const pkgDir = path.join('fake', '@phpcraftdream', 'netivri-w32-x64');
+  const pkgDir = path.join('fake', '@netivri', 'proxy-w32-x64');
   const res = resolveBinary('win32', 'x64',
     () => path.join(pkgDir, 'package.json'));
   assert.equal(res.bin, path.join(pkgDir, 'bin', 'netivri.exe'));

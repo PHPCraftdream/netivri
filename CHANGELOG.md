@@ -23,12 +23,12 @@ versions; every such change is listed here.
   npm packages in Alpine containers (amd64, and arm64 under QEMU) before it
   publishes anything; this replaces the "Alpine is not supported" limitation.
 
-- **The npm packages move to the `@phpcraftdream` scope.** Install with
-  `npm i -g @phpcraftdream/netivri` (was `netivri`); the six platform packages
-  are `@phpcraftdream/netivri-{linux,darwin,w32}-{x64,arm64}`. The platform
+- **The npm packages move to the `@netivri` organization.** Install with
+  `npm i -g @netivri/proxy` (was `netivri`); the six platform packages
+  are `@netivri/proxy-{linux,darwin,w32}-{x64,arm64}`. The platform
   packages carry no keywords and a description that sends the reader to the
   main package, so they stay out of `npm search`. The release tarballs are
-  named `phpcraftdream-netivri-*.tgz`. Nothing of 0.3.0 was published under the
+  named `netivri-proxy-*.tgz`. Nothing of 0.3.0 was published under the
   old names.
 
 - **A failed probe is confirmed before it counts.** The warm-up probe asks

@@ -6,12 +6,12 @@ const { platformPackage } = require('../netivri/bin/netivri.js');
 
 test('platformPackage maps the six supported platform/arch combos', () => {
   const cases = [
-    ['linux', 'x64', '@phpcraftdream/netivri-linux-x64'],
-    ['linux', 'arm64', '@phpcraftdream/netivri-linux-arm64'],
-    ['darwin', 'x64', '@phpcraftdream/netivri-darwin-x64'],
-    ['darwin', 'arm64', '@phpcraftdream/netivri-darwin-arm64'],
-    ['win32', 'x64', '@phpcraftdream/netivri-w32-x64'],
-    ['win32', 'arm64', '@phpcraftdream/netivri-w32-arm64'],
+    ['linux', 'x64', '@netivri/proxy-linux-x64'],
+    ['linux', 'arm64', '@netivri/proxy-linux-arm64'],
+    ['darwin', 'x64', '@netivri/proxy-darwin-x64'],
+    ['darwin', 'arm64', '@netivri/proxy-darwin-arm64'],
+    ['win32', 'x64', '@netivri/proxy-w32-x64'],
+    ['win32', 'arm64', '@netivri/proxy-w32-arm64'],
   ];
   for (const [platform, arch, expected] of cases) {
     assert.equal(platformPackage(platform, arch), expected, `${platform}-${arch}`);

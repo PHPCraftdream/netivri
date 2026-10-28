@@ -552,11 +552,11 @@ jobs:
           prefix="${RUNNER_TEMP}/npm-global"
           home="${RUNNER_TEMP}/netivri-home"
           npm install -g --prefix "${prefix}" \
-            "${GITHUB_WORKSPACE}/npm-dist/phpcraftdream-netivri-${plat}-${VER}.tgz" \
-            "${GITHUB_WORKSPACE}/npm-dist/phpcraftdream-netivri-${VER}.tgz"
+            "${GITHUB_WORKSPACE}/npm-dist/netivri-proxy-${plat}-${VER}.tgz" \
+            "${GITHUB_WORKSPACE}/npm-dist/netivri-proxy-${VER}.tgz"
           root="$(npm root -g --prefix "${prefix}")"
-          node "${root}/@phpcraftdream/netivri/bin/netivri.js" version
-          node "${root}/@phpcraftdream/netivri/bin/netivri.js" sub list --home "${home}"
+          node "${root}/@netivri/proxy/bin/netivri.js" version
+          node "${root}/@netivri/proxy/bin/netivri.js" sub list --home "${home}"
 
   # The Linux binary is a static Go build, so it must also run on musl. This
   # runs the release archive, the standalone installer and the npm packages in
@@ -639,8 +639,8 @@ jobs:
           set -eu
           test -f /etc/alpine-release
           mkdir -p /tmp/home
-          npm install -g --prefix /tmp/g "/w/npm-dist/phpcraftdream-netivri-linux-${PLAT}-${VER}.tgz" "/w/npm-dist/phpcraftdream-netivri-${VER}.tgz"
-          launcher=/tmp/g/lib/node_modules/@phpcraftdream/netivri/bin/netivri.js
+          npm install -g --prefix /tmp/g "/w/npm-dist/netivri-proxy-linux-${PLAT}-${VER}.tgz" "/w/npm-dist/netivri-proxy-${VER}.tgz"
+          launcher=/tmp/g/lib/node_modules/@netivri/proxy/bin/netivri.js
           node "${launcher}" version
           node "${launcher}" sub list --home /tmp/home
           SCRIPT
@@ -795,7 +795,7 @@ jobs:
           set -euo pipefail
           cd artifacts
           sha256sum netivri_*.zip netivri_*.tar.gz netivri_*.deb netivri_*.rpm \
-            install.sh install.ps1 netivri.json netivri.rb phpcraftdream-netivri-*.tgz > SHA256SUMS
+            install.sh install.ps1 netivri.json netivri.rb netivri-proxy-*.tgz > SHA256SUMS
 
       - name: Upload checksums
         uses: actions/upload-artifact@v7
@@ -819,7 +819,7 @@ jobs:
             artifacts/netivri_*.tar.gz
             artifacts/netivri_*.deb
             artifacts/netivri_*.rpm
-            artifacts/phpcraftdream-netivri-*.tgz
+            artifacts/netivri-proxy-*.tgz
             artifacts/install.sh
             artifacts/install.ps1
             artifacts/netivri.json
@@ -842,5 +842,5 @@ jobs:
             --notes-file release-notes.md \
             "${flags[@]}" \
             artifacts/SHA256SUMS artifacts/netivri_*.zip artifacts/netivri_*.tar.gz \
-            artifacts/netivri_*.deb artifacts/netivri_*.rpm artifacts/phpcraftdream-netivri-*.tgz \
+            artifacts/netivri_*.deb artifacts/netivri_*.rpm artifacts/netivri-proxy-*.tgz \
             artifacts/install.sh artifacts/install.ps1 artifacts/netivri.json artifacts/netivri.rb

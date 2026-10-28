@@ -9,13 +9,13 @@ With Node.js 18 or newer you can install the same binary through npm
 instead:
 
 ```sh
-npm i -g @phpcraftdream/netivri
+npm i -g @netivri/proxy
 ```
 
-npm picks the package of your platform (`@phpcraftdream/netivri-linux-x64`,
-`@phpcraftdream/netivri-darwin-arm64`, `@phpcraftdream/netivri-w32-x64`, ...) by itself; how the packages
+npm picks the package of your platform (`@netivri/proxy-linux-x64`,
+`@netivri/proxy-darwin-arm64`, `@netivri/proxy-w32-x64`, ...) by itself; how the packages
 are laid out and published is in [docs/npm.md](npm.md). Upgrade with
-`npm i -g @phpcraftdream/netivri@latest`, remove with `npm rm -g @phpcraftdream/netivri`.
+`npm i -g @netivri/proxy@latest`, remove with `npm rm -g @netivri/proxy`.
 
 ## One-liners
 
@@ -69,14 +69,14 @@ them listed there and covered by the build provenance):
   your own (`brew tap-new {USER}/netivri`, copy the file to its `Formula`
   directory, `brew install {USER}/netivri/netivri`); Homebrew no longer
   installs a formula straight from a file.
-- `phpcraftdream-netivri-{VERSION}.tgz` and
-  `phpcraftdream-netivri-{PLATFORM}-{VERSION}.tgz` — the npm packages
-  (`@phpcraftdream/netivri` and `@phpcraftdream/netivri-{PLATFORM}`), for an
+- `netivri-proxy-{VERSION}.tgz` and
+  `netivri-proxy-{PLATFORM}-{VERSION}.tgz` — the npm packages
+  (`@netivri/proxy` and `@netivri/proxy-{PLATFORM}`), for an
   install without the registry:
-  `npm i -g phpcraftdream-netivri-{PLATFORM}-{VERSION}.tgz phpcraftdream-netivri-{VERSION}.tgz`
+  `npm i -g netivri-proxy-{PLATFORM}-{VERSION}.tgz netivri-proxy-{VERSION}.tgz`
   (the first file is the package of your platform, for example
-  `@phpcraftdream/netivri-linux-x64`; the Windows ones are
-  `@phpcraftdream/netivri-w32-x64` and `@phpcraftdream/netivri-w32-arm64`).
+  `@netivri/proxy-linux-x64`; the Windows ones are
+  `@netivri/proxy-w32-x64` and `@netivri/proxy-w32-arm64`).
 
 The Scoop manifest and the Homebrew formula are written from the archives of
 the release and checked for syntax; they are not installed by the workflow.

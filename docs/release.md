@@ -50,10 +50,11 @@ minute, goes away: wait a while and re-run the failed `publish to npm` job
 commit). A refusal that repeats on every release is about the name itself:
 npm refused the unscoped `netivri-win32-x64` on every attempt, which is why the
 Windows packages are called `netivri-w32-x64` and `netivri-w32-arm64`. All the
-packages now live in the `@phpcraftdream` scope (`@phpcraftdream/netivri` and
-`@phpcraftdream/netivri-{PLATFORM}`); if npm refuses a scoped name as well, the
-advice above applies. The scope belongs to the npm user `phpcraftdream`: the `NPM_TOKEN` (or
-the Trusted Publisher) must be that account's. The older unscoped
+packages now live in the `@netivri` npm organization (`@netivri/proxy` and
+`@netivri/proxy-{PLATFORM}`); if npm refuses a scoped name as well, the
+advice above applies. The organization is created on npmjs.com (free plan, public
+packages): the `NPM_TOKEN` must belong to a member of it who may publish, and the
+Trusted Publisher is configured on each of the seven packages. The older unscoped
 `netivri-*` packages from earlier attempts stay on the registry; deprecate
 them by hand (`npm deprecate`), the release never touches them. Rename the
 package or ask npm support to release the name.
@@ -74,10 +75,10 @@ environment; it is never printed.
 
 **Switching to Trusted Publishing.** After the first release is on npm:
 
-1. For each of the seven packages (`@phpcraftdream/netivri`,
-   `@phpcraftdream/netivri-linux-x64`, `@phpcraftdream/netivri-linux-arm64`,
-   `@phpcraftdream/netivri-darwin-x64`, `@phpcraftdream/netivri-darwin-arm64`,
-   `@phpcraftdream/netivri-w32-x64`, `@phpcraftdream/netivri-w32-arm64`) open the package on npmjs.com,
+1. For each of the seven packages (`@netivri/proxy`,
+   `@netivri/proxy-linux-x64`, `@netivri/proxy-linux-arm64`,
+   `@netivri/proxy-darwin-x64`, `@netivri/proxy-darwin-arm64`,
+   `@netivri/proxy-w32-x64`, `@netivri/proxy-w32-arm64`) open the package on npmjs.com,
    Settings, Trusted Publisher, and choose GitHub Actions with owner
    `PHPCraftdream`, repository `netivri`, workflow filename `release.yml` and
    an empty environment.

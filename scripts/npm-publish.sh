@@ -21,10 +21,10 @@ mode="${3:?usage: npm-publish.sh <version> <dist-dir> <mode>}"
 # absolute path is always a file.
 dist="$(cd "${dist}" && pwd)"
 
-# Every package is in the author's scope. The Windows packages go first: if npm
-# refuses a new name (spam detection), the run stops before any other package
-# moves on.
-scope="@phpcraftdream"
+# Every package is in the netivri organization: @netivri/proxy and
+# @netivri/proxy-{os}-{cpu}. The Windows packages go first: if npm refuses a new
+# name (spam detection), the run stops before any other package moves on.
+scope="@netivri"
 platforms=(w32-x64 w32-arm64 linux-x64 linux-arm64 darwin-x64 darwin-arm64)
 
 args=(--access public)
@@ -42,9 +42,9 @@ esac
 
 names=()
 for p in "${platforms[@]}"; do
-  names+=("${scope}/netivri-${p}")
+  names+=("${scope}/proxy-${p}")
 done
-names+=("${scope}/netivri")
+names+=("${scope}/proxy")
 
 for name in "${names[@]}"; do
   # npm pack names the tarball scope-name-version.tgz, without "@" and "/".
