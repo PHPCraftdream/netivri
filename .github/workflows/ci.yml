@@ -265,6 +265,79 @@ jobs:
         shell: bash
         run: node --test npm/test/*.test.js
 
+      # The release workflow packs and publishes these packages; this runs the
+      # same build, pack and publish dry-run on fake archives, so a wrong
+      # package or tarball name fails the pull request and not the release.
+      - name: Pack the npm packages and dry-run the publish
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=0.0.0-ci
+          mkdir -p fake-archives npm-dist
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
+            dir="fake-archives/netivri_${ver}_${target}"
+            mkdir -p "${dir}/THIRD_PARTY_LICENSES"
+            bin=netivri
+            case "${target}" in windows_*) bin=netivri.exe ;; esac
+            printf 'binary' > "${dir}/${bin}"
+            cp LICENSE "${dir}/LICENSE"
+            printf 'notices' > "${dir}/THIRD_PARTY_LICENSES/notices.txt"
+          done
+          node npm/scripts/build-packages.js --version "${ver}" --archive-dir fake-archives --out npm-out
+          for d in npm-out/*/; do
+            (cd "${d}" && npm pack --pack-destination "${GITHUB_WORKSPACE}/npm-dist")
+          done
+          ls -l npm-dist
+          bash scripts/npm-publish.sh "${ver}" npm-dist dry-run
+
+  # The Linux binary must stay static: it has to run on musl (Alpine) too. The
+  # release workflow checks it again; here a regression fails the pull request.
+  linux-static:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build and check that the binary is statically linked
+        shell: bash
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          go build -trimpath -o build/netivri ./cmd/netivri
+          file build/netivri
+          file build/netivri | grep -q 'statically linked'
+
+      # The amd64 binary runs in Alpine (musl): start the angel, ask it, stop it.
+      - name: Run the binary in Alpine
+        if: matrix.arch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > alpine-smoke.sh <<'SCRIPT'
+          set -eu
+          test -f /etc/alpine-release
+          mkdir -p /tmp/home
+          printf 'listen.port: 7890\n' > /tmp/home/config.ktav
+          /w/build/netivri version
+          /w/build/netivri sub list --home /tmp/home
+          /w/build/netivri up --port 0 --home /tmp/home
+          /w/build/netivri status --home /tmp/home
+          /w/build/netivri down --home /tmp/home
+          SCRIPT
+          docker run --rm -v "${GITHUB_WORKSPACE}:/w" alpine:3 sh /w/alpine-smoke.sh
+
   licenses:
     runs-on: ubuntu-latest
     steps:
@@ -287,7 +360,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [setup, lint, unit, integration, e2e, bench, npm, licenses]
+    needs: [setup, lint, unit, integration, e2e, bench, npm, linux-static, licenses]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate result

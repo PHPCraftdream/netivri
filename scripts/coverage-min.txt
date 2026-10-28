@@ -10,21 +10,22 @@
 # value seen on ubuntu, windows and macos; raise them when a package grows
 # tests, never lower them to make a run pass.
 default 60
-cmd/netivri 75
-internal/cli 88
+cmd/netivri 87
+internal/cli 92
 internal/auth 90
-internal/config 77
-internal/testutil 90
+internal/config 85
+internal/testutil 97
 internal/subscription 80
+internal/fetch 64
 # Most of the core runs under the integration level (embedded Mihomo, loopback
 # sockets), which this unit-level report does not measure; the floor covers the
 # pure parts (sticky group, health, hedging, binding table). Measured 65.7 %
 # on ubuntu and windows.
-internal/core 60
+internal/core 66
 # The statistics store is unit-tested on a temporary database. Measured 81.9 %
 # on ubuntu and windows.
 internal/stats 78
 # The control server, client and the detached spawn run under the integration
 # and e2e levels (loopback sockets, a real child process); the unit level
 # measures the pure parts only. Ratcheted after the first green run.
-internal/angel 52
+internal/angel 62
