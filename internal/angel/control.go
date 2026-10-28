@@ -109,6 +109,7 @@ type StatsInfo struct {
 type AffinityInfo struct {
 	Bindings  int    `json:"bindings"`
 	Rebinds   uint64 `json:"rebinds"`
+	Returns   uint64 `json:"returns"`    // bindings moved back to a better tier
 	Hedges    uint64 `json:"hedges"`     // hedge attempts started
 	HedgeWins uint64 `json:"hedge_wins"` // dials won by the hedge attempt
 	// Restored is how many persisted bindings were loaded at the latest

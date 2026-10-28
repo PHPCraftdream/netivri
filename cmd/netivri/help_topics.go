@@ -945,7 +945,8 @@ var helpTopics = []helpTopic{
 				"adds the complete warm with nodes[] (name = the internal proxy name, alive, delay_ms, 0 until " +
 				"a probe succeeded, label, provider, country, node_name), stats (path, dropped = samples lost " +
 				"to a full write queue) and affinity (bindings = current site-to-node bindings held, rebinds = " +
-				"how often a binding moved to another node, hedges = hedge dial attempts started, hedge_wins = " +
+				"how often a binding moved to another node because it was down, returns = how often a binding went " +
+				"back to a better tier, hedges = hedge dial attempts started, hedge_wins = " +
 				"dials won by the hedge attempt, restored = persisted bindings loaded at the latest core start " +
 				"or reload, saved_at = RFC3339 UTC of the last successful bindings write, omitted when none). " +
 				"--watch prints one frame per interval: time, active_accounts, accounts[] (login, active, " +

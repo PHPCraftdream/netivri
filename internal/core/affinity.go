@@ -9,11 +9,14 @@ import (
 )
 
 const (
-	defaultAffinityTTL  = 24 * time.Hour
-	provisionalLifetime = 2 * time.Minute
-	maxAffinityBindings = 100000
-	affinityShards      = 16
-	affinityEvictSample = 16
+	defaultAffinityTTL = 24 * time.Hour
+	// defaultTierReturnAfter is how long a node of a better tier must have
+	// been up before bindings in a worse tier are moved back to it.
+	defaultTierReturnAfter = 5 * time.Minute
+	provisionalLifetime    = 2 * time.Minute
+	maxAffinityBindings    = 100000
+	affinityShards         = 16
+	affinityEvictSample    = 16
 )
 
 // FNV-1a 64-bit constants; the shard index is computed without allocating.
@@ -66,12 +69,15 @@ type affinityShard struct {
 // Keys are idle-expired after the TTL (a provisional binding after its
 // shorter lifetime) and bounded per shard, evicting the oldest lastUsed.
 type affinityTable struct {
-	shards    [affinityShards]*affinityShard
-	now       func() time.Time
-	ttl       time.Duration
-	rebinds   atomic.Uint64
-	hedges    atomic.Uint64 // hedge attempts started (all groups share the table)
-	hedgeWins atomic.Uint64 // logical dials won by the hedge attempt
+	shards  [affinityShards]*affinityShard
+	now     func() time.Time
+	ttl     time.Duration
+	rebinds atomic.Uint64
+	returns atomic.Uint64 // bindings moved back to a better tier
+	// returnAfter: see defaultTierReturnAfter; negative disables the return.
+	returnAfter time.Duration
+	hedges      atomic.Uint64 // hedge attempts started (all groups share the table)
+	hedgeWins   atomic.Uint64 // logical dials won by the hedge attempt
 }
 
 // newAffinityTable builds the binding table; now is injectable for tests and
@@ -83,7 +89,7 @@ func newAffinityTable(now func() time.Time, ttl time.Duration) *affinityTable {
 	if ttl == 0 {
 		ttl = defaultAffinityTTL
 	}
-	t := &affinityTable{now: now, ttl: ttl}
+	t := &affinityTable{now: now, ttl: ttl, returnAfter: defaultTierReturnAfter}
 	for i := range t.shards {
 		t.shards[i] = &affinityShard{
 			bindings: make(map[affinityKey]*binding),
@@ -107,27 +113,42 @@ func (t *affinityTable) shardIndex(login, site string) int {
 // real rebind (the shard lock serialises concurrent callers). isDown and pick
 // may read the health table but must not take shard locks.
 func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, pick func() (member int, provisional bool)) (member int, rebound bool) {
+	member, rebound, _ = t.acquireWith(key, isDown, nil, pick)
+	return member, rebound
+}
+
+// acquireWith is acquire plus the return to a better tier: better, when not
+// nil, reports that a node of a better tier than the bound member's has been
+// up long enough, and a live binding whose member is not down is then picked
+// again for this connection (returned is true when the site really moved).
+// Open connections are not touched. like isDown, better runs under the shard
+// lock and must not take shard locks.
+func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) bool, better func(member int, now time.Time) bool, pick func() (member int, provisional bool)) (member int, rebound, returned bool) {
 	now := t.now()
 	shard := t.shards[t.shardIndex(key.login, key.site)]
 	shard.mu.RLock()
-	if b, ok := shard.bindings[key]; ok && !t.expired(b, now) && !isDown(b.member) {
+	if b, ok := shard.bindings[key]; ok && !t.expired(b, now) && !isDown(b.member) && (better == nil || !better(b.member, now)) {
 		b.lastUsed.Store(now.UnixNano())
 		shard.mu.RUnlock()
-		return b.member, false
+		return b.member, false, false
 	}
 	shard.mu.RUnlock()
 
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	b, ok := shard.bindings[key]
-	wasDown, previous := false, 0
+	wasDown, wasWorse, previous := false, false, 0
 	if ok {
 		if !t.expired(b, now) {
-			if !isDown(b.member) {
+			switch {
+			case isDown(b.member):
+				wasDown, previous = true, b.member
+			case better != nil && better(b.member, now):
+				wasWorse, previous = true, b.member
+			default:
 				b.lastUsed.Store(now.UnixNano())
-				return b.member, false
+				return b.member, false, false
 			}
-			wasDown, previous = true, b.member
 		} else {
 			delete(shard.bindings, key)
 		}
@@ -139,13 +160,17 @@ func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, p
 		t.rebinds.Add(1)
 		rebound = true
 	}
+	if wasWorse && member != previous {
+		t.returns.Add(1)
+		returned = true
+	}
 	nb := &binding{member: member, boundAt: now, provisional: provisional}
 	nb.lastUsed.Store(now.UnixNano())
 	shard.bindings[key] = nb
 	if len(shard.bindings) > shard.cap {
 		shard.evictOldest()
 	}
-	return member, rebound
+	return member, rebound, returned
 }
 
 // peek returns the live binding's member without refreshing it or creating
@@ -209,8 +234,27 @@ func (t *affinityTable) count() int {
 // new routing generation replaces.
 func (t *affinityTable) carryCounters(old *affinityTable) {
 	t.rebinds.Store(old.rebinds.Load())
+	t.returns.Store(old.returns.Load())
 	t.hedges.Store(old.hedges.Load())
 	t.hedgeWins.Store(old.hedgeWins.Load())
+}
+
+// returnCount returns how often a binding was moved back to a better tier.
+func (t *affinityTable) returnCount() uint64 {
+	return t.returns.Load()
+}
+
+// setReturnAfter sets the stability time of a better tier from the option:
+// 0 is the default, negative disables the return.
+func (t *affinityTable) setReturnAfter(d time.Duration) {
+	switch {
+	case d == 0:
+		t.returnAfter = defaultTierReturnAfter
+	case d < 0:
+		t.returnAfter = -1
+	default:
+		t.returnAfter = d
+	}
 }
 
 // rebindCount returns how often a binding was replaced because its node was

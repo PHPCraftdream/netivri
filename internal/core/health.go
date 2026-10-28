@@ -73,6 +73,9 @@ type nodeHealth struct {
 	// probe error: they feed the NodeEvent.
 	lastOK    time.Time
 	downSince time.Time
+	// upSince is when the node was registered or last came back, unix
+	// nanoseconds; with the down flag it tells how long the node has been up.
+	upSince   atomic.Int64
 	probeFail string
 
 	// label and notify report a change of the down state; notify may be nil.
@@ -114,6 +117,9 @@ func (h *nodeHealth) recomputeDown() bool {
 	if changed && down {
 		h.downSince = h.clock()
 	}
+	if changed && !down {
+		h.upSince.Store(h.clock().UnixNano())
+	}
 	return changed
 }
 
@@ -151,6 +157,12 @@ func (h *nodeHealth) announce(changed bool, ev NodeEvent) {
 	if changed && h.notify != nil {
 		h.notify(ev)
 	}
+}
+
+// stableFor reports whether the node is not down and has been up for at least
+// d at nowNs (unix nanoseconds). Lock-free: two atomic loads.
+func (h *nodeHealth) stableFor(nowNs int64, d time.Duration) bool {
+	return h != nil && !h.downFlag.Load() && nowNs-h.upSince.Load() >= int64(d)
 }
 
 // noteProbeError remembers the kind of the latest probe error, so the next
@@ -416,6 +428,7 @@ func (t *healthTable) register(labels []string) {
 	for _, label := range labels {
 		if _, ok := t.entries[label]; !ok {
 			h := &nodeHealth{label: label, notify: t.notify, now: t.now}
+			h.upSince.Store(h.clock().UnixNano())
 			h.initHedgeBudget()
 			t.entries[label] = h
 		}
@@ -469,6 +482,7 @@ func (h *nodeHealth) cloneFor(notify func(NodeEvent)) *nodeHealth {
 		now:           h.now,
 	}
 	c.downFlag.Store(h.downFlag.Load())
+	c.upSince.Store(h.upSince.Load())
 	c.hedgeUnits.Store(h.hedgeUnits.Load())
 	return c
 }

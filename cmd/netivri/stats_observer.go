@@ -126,6 +126,7 @@ func affinityInfo(inst coreInstance, routed bool) *angel.AffinityInfo {
 	return &angel.AffinityInfo{
 		Bindings:  s.Bindings,
 		Rebinds:   s.Rebinds,
+		Returns:   s.Returns,
 		Hedges:    s.Hedges,
 		HedgeWins: s.HedgeWins,
 	}

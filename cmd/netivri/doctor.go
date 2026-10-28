@@ -303,7 +303,11 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 		return tiers[i].Country + " (" + strings.Join(tiers[i].Providers, ",") + ")"
 	}
 	if n := aliveIn(first); n > 0 {
-		return doctorCheck{name, doctorOK, fmt.Sprintf("tier %d %s: %d/%d node(s) alive", tiers[first].Tier, tierName(first), n, len(tiers[first].Nodes))}
+		detail := fmt.Sprintf("tier %d %s: %d/%d node(s) alive", tiers[first].Tier, tierName(first), n, len(tiers[first].Nodes))
+		if fb := d.fallbackUse(a.Login, tiers); fb > 0 {
+			detail += fmt.Sprintf("; %d connection(s) still on fallback tiers (new connections of a site go back after the better tier was up for 5 minutes)", fb)
+		}
+		return doctorCheck{name, doctorOK, detail}
 	}
 	for i := first + 1; i < len(tiers); i++ {
 		if len(tiers[i].Nodes) == 0 {
@@ -315,6 +319,32 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 		}
 	}
 	return doctorCheck{name, doctorFail, "no live node on the route"}
+}
+
+// fallbackUse counts the open connections of the account on nodes of the
+// fallback tiers, from the live status.
+func (d *doctorContext) fallbackUse(login string, tiers []accountShowTier) int {
+	fallback := make(map[string]bool)
+	for _, t := range tiers {
+		if !t.Fallback {
+			continue
+		}
+		for _, n := range t.Nodes {
+			fallback[n.Label] = true
+		}
+	}
+	count := 0
+	for _, a := range d.status.Activity {
+		if a.Login != login {
+			continue
+		}
+		for _, n := range a.Nodes {
+			if fallback[n.Node] {
+				count += n.Connections
+			}
+		}
+	}
+	return count
 }
 
 // routeProbed reports whether the angel's warm-up knows any node of the

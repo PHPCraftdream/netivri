@@ -647,3 +647,44 @@ func TestDoctorUsage(t *testing.T) {
 		t.Errorf("stdout = %q, want empty", out.String())
 	}
 }
+
+func TestDoctorNotesConnectionsOnFallbackTiers(t *testing.T) {
+	fixed := doctorFixTime(t)
+	run := func(backupConnections int) doctorCheck {
+		doctorStubAngel(t, func(context.Context, string) (angel.State, angel.Status, error) {
+			return angel.State{}, angel.Status{
+				PID:            42,
+				Listen:         "127.0.0.1:7890",
+				AllowedClients: "*",
+				Warm: &angel.WarmInfo{Nodes: []angel.NodeHealth{
+					{Label: "main/m-de", Alive: true}, {Label: "backup/b-de", Alive: true},
+				}},
+				Activity: []angel.AccountActivity{
+					{Login: "alice", Nodes: []angel.NodeUse{{Node: "main/m-de", Connections: 1}, {Node: "backup/b-de", Connections: backupConnections}}},
+					{Login: "bob", Nodes: []angel.NodeUse{{Node: "backup/b-de", Connections: 9}}},
+				},
+			}, nil
+		})
+		home := t.TempDir()
+		doctorConfig(t, home, func(cfg *config.Config) {
+			cfg.Subscriptions = []config.Subscription{
+				{Name: "main", URL: "https://a.example/sub/x"},
+				{Name: "backup", URL: "https://b.example/sub/y"},
+			}
+			cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "main,backup", ExitCountry: "DE"}}
+		})
+		doctorSnapshot(t, home, "main", subscription.Snapshot{FetchedAt: fixed, Nodes: []subscription.Node{node("m-de", "DE")}})
+		doctorSnapshot(t, home, "backup", subscription.Snapshot{FetchedAt: fixed, Nodes: []subscription.Node{node("b-de", "DE")}})
+		doc, err := doctorRunDoc(t, home)
+		if err != nil {
+			t.Fatalf("doctor = %v, want nil", err)
+		}
+		return doctorFind(t, doc, "account alice")
+	}
+	if c := run(4); c.Status != doctorOK || !strings.Contains(c.Detail, "4 connection(s) still on fallback tiers") {
+		t.Errorf("account with fallback connections = %+v (only alice's own count, never bob's)", c)
+	}
+	if c := run(0); c.Status != doctorOK || strings.Contains(c.Detail, "fallback") {
+		t.Errorf("account without fallback connections = %+v", c)
+	}
+}

@@ -186,3 +186,50 @@ func TestAccountShowNoAngel(t *testing.T) {
 		t.Errorf("node = %+v", n)
 	}
 }
+
+func TestBuildShowTiersMarksFallbackTiers(t *testing.T) {
+	known := map[string]bool{"main": true}
+	snapshots := map[string]*subscription.Snapshot{"main": snap(node("m-de", "DE"), node("m-nl", "NL"), node("m-se", "SE"))}
+	tiers := buildShowTiers(known, snapshots, [][]string{{"ghost"}, {"main"}}, []string{"DE", "NL", "SE"})
+	want := map[string]bool{"DE": false, "NL": true, "SE": true}
+	seen := 0
+	for _, tier := range tiers {
+		if tier.Skipped {
+			if tier.Fallback {
+				t.Errorf("a skipped tier is marked as a fallback: %+v", tier)
+			}
+			continue
+		}
+		seen++
+		if tier.Fallback != want[tier.Country] {
+			t.Errorf("tier %d %s fallback = %v, want %v", tier.Tier, tier.Country, tier.Fallback, want[tier.Country])
+		}
+	}
+	if seen != 3 {
+		t.Fatalf("%d tiers with nodes, want 3: %+v", seen, tiers)
+	}
+}
+
+func TestFallbackConnections(t *testing.T) {
+	one, three, two := 1, 3, 2
+	tiers := []accountShowTier{
+		{Tier: 0, Nodes: []accountShowNode{{Label: "a", Connections: &one}}},
+		{Tier: 1, Fallback: true, Nodes: []accountShowNode{{Label: "b", Connections: &three}, {Label: "c", Connections: &two}}},
+	}
+	if got := fallbackConnections(tiers); got == nil || *got != 5 {
+		t.Errorf("fallbackConnections = %v, want 5", got)
+	}
+	idle := 0
+	tiers[1].Nodes = []accountShowNode{{Label: "b", Connections: &idle}}
+	if got := fallbackConnections(tiers); got == nil || *got != 0 {
+		t.Errorf("fallbackConnections of idle fallback nodes = %v, want 0, not unknown", got)
+	}
+	for ti := range tiers {
+		for ni := range tiers[ti].Nodes {
+			tiers[ti].Nodes[ni].Connections = nil
+		}
+	}
+	if got := fallbackConnections(tiers); got != nil {
+		t.Errorf("fallbackConnections without live data = %v, want nil", *got)
+	}
+}
