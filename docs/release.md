@@ -18,7 +18,7 @@
    - publishes the seven npm packages (see below).
 
 The version embedded in the binary (`netivri status` shows it) is the tag
-name without the leading `v`. A tag with a prerelease part (`v0.2.0-rc.1`)
+name without the leading `v`. A tag with a prerelease part (`v0.1.0-rc.1`)
 makes a GitHub pre-release and goes to the npm dist-tag `next`, not `latest`.
 
 ## Dry run
@@ -63,8 +63,10 @@ A version number is used up on npm for good: "Once `package@version` has
 been used, you can never use it again", even after `npm unpublish`. After
 all versions of a package are unpublished, npm also refuses new versions of
 that package for 24 hours. A withdrawn release therefore comes back with a
-new version number (0.2.0 was withdrawn this way and its content shipped as
-0.3.0).
+new version number, unless none of its packages reached npm. The `@netivri`
+packages start at 0.1.0: the numbers 0.1.0 and 0.2.0 were used under the
+older unscoped names, and their GitHub releases and tags were deleted before
+the first release under the organization.
 
 **First release: token.** Trusted Publishing can only be configured for a
 package that already exists on npm, so the first publish of the seven packages

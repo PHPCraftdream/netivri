@@ -8,11 +8,16 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-28
+## [0.1.0] - 2026-10-28
 
-Release 0.2.0 was withdrawn before all its npm packages were published,
-and npm never accepts a used version number again; everything listed for
-it ships in 0.3.0.
+First release under this number, and the first one published to the `@netivri`
+npm organization. The earlier releases 0.1.0 (22 October) and 0.2.0 were
+withdrawn before all their npm packages were published, a planned 0.3.0 was
+never tagged, and npm never accepts a used version number again; in the new
+organization 0.1.0 is free. Everything that was listed for those releases
+ships here. The sections below describe the
+first public release as a whole; "Changed" lists what differs from the
+withdrawn pre-releases.
 
 ### Added
 
@@ -142,6 +147,79 @@ it ships in 0.3.0.
   covered by the build provenance. The amd64 `.deb` and `.rpm` are installed
   and removed again by the release workflow before it publishes anything.
 
+- **Local proxy.** One port serves SOCKS5, SOCKS4 and HTTP; the protocol is
+  detected from the first byte. It listens on loopback by default.
+- **One self-contained binary.** [Mihomo](https://github.com/MetaCubeX/mihomo)
+  v1.19.32 is embedded as a library and vendored in `third_party/mihomo`, and
+  the Ktav configuration format is read and written by the pure-Go backend of
+  `ktav-lang/golang` v0.8.1: no external core process and no native library
+  next to the binary.
+- **Subscriptions.** `sub add`, `sub list`, `sub update`, `sub rm` and
+  `sub countries`. Clash/Mihomo YAML and base64 lists of share links are
+  accepted; quota and expiry come from the `subscription-userinfo` header.
+  A subscription is always fetched through a strict proxy and never silently
+  directly. Nodes get stable ids. The nodes of a subscription are stored in
+  `subscriptions/{NAME}.ktav`.
+- **Automatic subscription refresh.** A running angel re-fetches every
+  subscription once an hour; `fetch.update_interval` changes the period
+  (`5m` to `168h`) or turns it off (`off`). A fetched list that would leave an
+  account without nodes is rejected and the old one stays. The result is in
+  `status` under `refresh`.
+- **Nodes.** `node list`, with filters by subscription and country.
+- **Accounts.** `account add`, `account list`, `account set-country`,
+  `account set-provider` and `account rm`: several named logins on one port,
+  each with its own provider and exit country, routed independently.
+  `set-country` and `set-provider` take one login, a comma-separated list
+  (`alice,bob`) or `--all`, and `--none` clears the value. Before writing
+  anything they check that every account they change still has a stored node
+  on its route; if one does not, nothing is changed and the command ends with
+  `NO_NODES_FOR_COUNTRY` (exit 5), naming the account.
+- **Proxy authentication.** Passwords are stored as argon2id hashes in the
+  Ktav configuration file. A password written as `init` is claimed on first
+  use: the first password a client presents is hashed and written into the
+  file as it is on disk, so an `account add` made meanwhile is kept.
+- **Angel.** `up`, `down` and `status`, and `up --foreground`. The control
+  channel is a named pipe on Windows and a Unix socket elsewhere, never TCP.
+- **Live apply of changes.** The angel watches `config.ktav` and the stored
+  subscriptions and applies a change to accounts, passwords, nodes or the port
+  within a few seconds, with no `down` and `up`. The listener restarts on the
+  same port, so open connections end; nothing restarts when the nodes are the
+  same, only renamed, or when the angel itself stores a claimed password. An
+  invalid file or an empty route leaves the running configuration in place and
+  is reported in `status` under `reload`. See `docs/design/live-reload.md`.
+- **Warm-up.** Background probes of every node and a pool of pre-dialled
+  connections; the state is part of `status`.
+- **Statistics.** Probe, connection and throughput samples are kept in a
+  local SQLite database; `stats` reports them by node, country or provider.
+- **Sticky group.** An account keeps one exit node per destination site, with
+  health tracking and re-binding when the node degrades.
+- **Hedged dial.** A VLESS handshake that is slower than usual gets a second
+  attempt to the same node, within a small budget; the counters are in
+  `status`.
+- **`diag dial`.** Per-phase latency (DNS, TCP, TLS, first byte) with
+  percentiles, failure classes and idle-connection survival for one account or
+  node.
+- **Installers.** `install.sh` and `install.ps1` verify checksums, upgrade in
+  place even while the angel runs, install from a local directory and can
+  add the install directory to the user `PATH` without changing its registry
+  type.
+- **npm packages.** `npm i -g @netivri/proxy` with six platform packages
+  (`@netivri/proxy-{linux,darwin,w32}-{x64,arm64}`), no postinstall scripts and
+  no downloads at install time.
+- **Release archives** for Linux, macOS and Windows (amd64 and arm64) with
+  `SHA256SUMS`, third-party license notices and a build provenance
+  attestation.
+- **Machine-readable CLI.** Results and errors are documents with the keys
+  `schema_version`, `ok` and `data` or `error`, written as Ktav by default;
+  `--json` after the command, or `NETIVRI_OUTPUT=json`, writes JSON. Exit and
+  error codes are documented, and [`AGENTS.md`](AGENTS.md) explains the
+  contract to AI agents.
+- **Built-in help.** `netivri`, `netivri help`, `--help` and
+  `netivri {COMMAND} --help` print a readable overview or the usage, flags,
+  detailed examples and possible errors of one command, with every placeholder
+  in braces (`{ACCOUNT}`, `{SUBSCRIPTION}`); `--json` gives the same as one
+  JSON object for scripts and agents.
+
 ### Changed
 
 - **Sites go back to the preferred tier.** A binding that sat in a fallback tier
@@ -174,7 +252,7 @@ it ships in 0.3.0.
   the name `win32` as spam). The platform
   packages carry no keywords and a description that sends the reader to the
   main package, so they stay out of `npm search`. The release tarballs are
-  named `netivri-proxy-*.tgz`. Nothing of 0.3.0 was published under the
+  named `netivri-proxy-*.tgz`. Nothing of this release was published under the
   old names.
 
 - **A failed probe is confirmed before it counts.** The warm-up probe asks
@@ -218,7 +296,7 @@ it ships in 0.3.0.
   `ANGEL_START_FAILED`, `ANGEL_START_TIMEOUT` and `ANGEL_STOP_TIMEOUT` (were
   `DAEMON_*`), the `doctor` check `angel`, help and documents. Exit codes and
   the files in `run/` are unchanged, and log lines of older versions are still
-  read. `schema_version` stays 1: 0.3.0 is the first release after the
+  read. `schema_version` stays 1: 0.1.0 is the first release after the
   withdrawn ones.
 - **New nodes no longer cut connections.** When a subscription refresh brings
   a changed node list, or an account gets a new country or provider list, the
@@ -252,84 +330,6 @@ it ships in 0.3.0.
   already published, so a re-run of a failed release goes on to the packages
   that are still missing.
 
-## [0.1.0] - 2026-10-22
-
-First public release.
-
-### Added
-
-- **Local proxy.** One port serves SOCKS5, SOCKS4 and HTTP; the protocol is
-  detected from the first byte. It listens on loopback by default.
-- **One self-contained binary.** [Mihomo](https://github.com/MetaCubeX/mihomo)
-  v1.19.32 is embedded as a library and vendored in `third_party/mihomo`, and
-  the Ktav configuration format is read and written by the pure-Go backend of
-  `ktav-lang/golang` v0.8.1: no external core process and no native library
-  next to the binary.
-- **Subscriptions.** `sub add`, `sub list`, `sub update`, `sub rm` and
-  `sub countries`. Clash/Mihomo YAML and base64 lists of share links are
-  accepted; quota and expiry come from the `subscription-userinfo` header.
-  A subscription is always fetched through a strict proxy and never silently
-  directly. Nodes get stable ids. The nodes of a subscription are stored in
-  `subscriptions/{NAME}.ktav`.
-- **Automatic subscription refresh.** A running daemon re-fetches every
-  subscription once an hour; `fetch.update_interval` changes the period
-  (`5m` to `168h`) or turns it off (`off`). A fetched list that would leave an
-  account without nodes is rejected and the old one stays. The result is in
-  `status` under `refresh`.
-- **Nodes.** `node list`, with filters by subscription and country.
-- **Accounts.** `account add`, `account list`, `account set-country`,
-  `account set-provider` and `account rm`: several named logins on one port,
-  each with its own provider and exit country, routed independently.
-  `set-country` and `set-provider` take one login, a comma-separated list
-  (`alice,bob`) or `--all`, and `--none` clears the value. Before writing
-  anything they check that every account they change still has a stored node
-  on its route; if one does not, nothing is changed and the command ends with
-  `NO_NODES_FOR_COUNTRY` (exit 5), naming the account.
-- **Proxy authentication.** Passwords are stored as argon2id hashes in the
-  Ktav configuration file. A password written as `init` is claimed on first
-  use: the first password a client presents is hashed and written into the
-  file as it is on disk, so an `account add` made meanwhile is kept.
-- **Daemon.** `up`, `down` and `status`, and `up --foreground`. The control
-  channel is a named pipe on Windows and a Unix socket elsewhere, never TCP.
-- **Live apply of changes.** The daemon watches `config.ktav` and the stored
-  subscriptions and applies a change to accounts, passwords, nodes or the port
-  within a few seconds, with no `down` and `up`. The listener restarts on the
-  same port, so open connections end; nothing restarts when the nodes are the
-  same, only renamed, or when the daemon itself stores a claimed password. An
-  invalid file or an empty route leaves the running configuration in place and
-  is reported in `status` under `reload`. See `docs/design/live-reload.md`.
-- **Warm-up.** Background probes of every node and a pool of pre-dialled
-  connections; the state is part of `status`.
-- **Statistics.** Probe, connection and throughput samples are kept in a
-  local SQLite database; `stats` reports them by node, country or provider.
-- **Sticky group.** An account keeps one exit node per destination site, with
-  health tracking and re-binding when the node degrades.
-- **Hedged dial.** A VLESS handshake that is slower than usual gets a second
-  attempt to the same node, within a small budget; the counters are in
-  `status`.
-- **`diag dial`.** Per-phase latency (DNS, TCP, TLS, first byte) with
-  percentiles, failure classes and idle-connection survival for one account or
-  node.
-- **Installers.** `install.sh` and `install.ps1` verify checksums, upgrade in
-  place even while the daemon runs, install from a local directory and can
-  add the install directory to the user `PATH` without changing its registry
-  type.
-- **npm packages.** `npm i -g netivri` with six platform packages, no
-  postinstall scripts and no downloads at install time.
-- **Release archives** for Linux, macOS and Windows (amd64 and arm64) with
-  `SHA256SUMS`, third-party license notices and a build provenance
-  attestation.
-- **Machine-readable CLI.** Results and errors are documents with the keys
-  `schema_version`, `ok` and `data` or `error`, written as Ktav by default;
-  `--json` after the command, or `NETIVRI_OUTPUT=json`, writes JSON. Exit and
-  error codes are documented, and [`AGENTS.md`](AGENTS.md) explains the
-  contract to AI agents.
-- **Built-in help.** `netivri`, `netivri help`, `--help` and
-  `netivri {COMMAND} --help` print a readable overview or the usage, flags,
-  detailed examples and possible errors of one command, with every placeholder
-  in braces (`{ACCOUNT}`, `{SUBSCRIPTION}`); `--json` gives the same as one
-  JSON object for scripts and agents.
-
 ### Security
 
 - Subscription URLs and `--via` proxies are never printed or logged.
@@ -339,14 +339,12 @@ First public release.
 
 ### Known limitations
 
-- `use`, `node test`, `logs`, `doctor` and `schema` are described in
+- `use`, `node test` and `schema` are described in
   [`docs/cli.md`](docs/cli.md) but not implemented yet.
 - Command results are documents only (Ktav by default, JSON with `--json`);
   there is no table view for people yet. Help (`netivri help`) is the one text
   output.
 - No TUN mode and no change of the system proxy settings; these are non-goals
   for the 0.x line.
-- Alpine and other musl-based Linux systems are not supported: the Linux
-  release is built and tested for glibc only.
 - `go install` does not work, because `go.mod` uses a `replace` directive for
   the vendored Mihomo. Use a release archive, the installers or npm.
