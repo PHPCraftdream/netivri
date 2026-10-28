@@ -23,6 +23,10 @@ const (
 	// the window is flapping, which is one warning and not one per drop.
 	flapWindow = time.Hour
 	flapDowns  = 3
+	// twinWindow: the same server listed by two providers has two labels and
+	// is probed twice, so its down reports come together; a second one within
+	// the window is the same event.
+	twinWindow = 10 * time.Second
 )
 
 type logFunc = func(format string, args ...any)
@@ -46,7 +50,9 @@ func nodeHealthLogger(infos []stats.NodeInfo, info, warn logFunc) func(core.Node
 // no part in the rest. A node that keeps going
 // down (flapDowns times within flapWindow) is flapping: one WARN says so, its
 // further down and back lines are INFO until it has been quiet for flapWindow,
-// and it does not count toward a burst. For the others, the first burstNodes-1
+// and it does not count toward a burst. One server under two labels (the same
+// id from two providers) is one node for all of this: its twin's down within
+// twinWindow is an INFO line and counts for nothing. For the others, the first burstNodes-1
 // nodes that go down within burstWindow get a WARN line each. The next one
 // also raises a single WARN summary ("node burst: ...") and from then on the
 // per-node lines of the burst are INFO, so a network loss that takes ten nodes
@@ -59,8 +65,9 @@ type nodeLog struct {
 	started    time.Time
 
 	mu          sync.Mutex
-	drops       map[string][]drop // recent downs per node, within flapWindow
-	flapping    map[string]bool
+	drops       map[string][]drop // recent downs per server, within flapWindow
+	flapping    map[string]bool   // by server
+	lastDown    map[string]drop   // latest counted down per server, with the label
 	windowStart time.Time
 	window      []string       // labels down in the current window
 	kinds       map[string]int // reasons in the current window
@@ -69,10 +76,20 @@ type nodeLog struct {
 	burstStart  time.Time
 }
 
-// drop is one recent down of a node.
+// drop is one recent down of a server; label is the one that reported it.
 type drop struct {
-	at   time.Time
-	kind string
+	at    time.Time
+	kind  string
+	label string
+}
+
+// serverID is the part of a label after the provider: the same id under two
+// providers is one server.
+func serverID(label string) string {
+	if _, id, ok := strings.Cut(label, "/"); ok && id != "" {
+		return id
+	}
+	return label
 }
 
 // newNodeLog returns nil when there are no nodes to report on.
@@ -81,7 +98,7 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 		return nil
 	}
 	l := &nodeLog{info: info, warn: warn, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
-		drops: map[string][]drop{}, flapping: map[string]bool{}}
+		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
 	}
@@ -108,6 +125,10 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	line := l.describe(ev.Label) + " is down: " + ev.Reason
 	if ev.SinceOK > 0 {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
+	}
+	if twin, ok := l.twinOf(ev, now); ok {
+		l.info("%s, same server as %s", line, twin)
+		return
 	}
 	if l.flaps(ev, now) {
 		l.info("%s", line)
@@ -141,23 +162,36 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	}
 }
 
-// flaps records a down of the node and reports whether the node is flapping.
+// twinOf reports whether the same server went down under another label within
+// twinWindow, and which one. Otherwise it remembers this down as the latest
+// one of the server.
+func (l *nodeLog) twinOf(ev core.NodeEvent, now time.Time) (string, bool) {
+	id := serverID(ev.Label)
+	if last, ok := l.lastDown[id]; ok && last.label != ev.Label && now.Sub(last.at) <= twinWindow {
+		return last.label, true
+	}
+	l.lastDown[id] = drop{at: now, label: ev.Label}
+	return "", false
+}
+
+// flaps records a down of the server and reports whether it is flapping.
 // The drop that makes it flap raises the one WARN about it.
 func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
-	recent := l.drops[ev.Label][:0]
-	for _, d := range l.drops[ev.Label] {
+	id := serverID(ev.Label)
+	recent := l.drops[id][:0]
+	for _, d := range l.drops[id] {
 		if now.Sub(d.at) <= flapWindow {
 			recent = append(recent, d)
 		}
 	}
-	recent = append(recent, drop{at: now, kind: reasonKind(ev.Reason)})
-	l.drops[ev.Label] = recent
+	recent = append(recent, drop{at: now, kind: reasonKind(ev.Reason), label: ev.Label})
+	l.drops[id] = recent
 	if len(recent) < flapDowns {
-		delete(l.flapping, ev.Label)
+		delete(l.flapping, id)
 		return false
 	}
-	if !l.flapping[ev.Label] {
-		l.flapping[ev.Label] = true
+	if !l.flapping[id] {
+		l.flapping[id] = true
 		kinds := map[string]int{}
 		for _, d := range recent {
 			kinds[d.kind]++
