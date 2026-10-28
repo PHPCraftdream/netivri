@@ -17,14 +17,16 @@ const path = require('path');
 // purely numeric ones carry no leading zeros.
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
 
-// Every package lives in the author's npm scope, so the platform packages stay
-// out of the unscoped namespace and out of search results.
-const SCOPE = '@phpcraftdream';
-const MAIN_NAME = `${SCOPE}/netivri`;
+// Every package lives in the netivri npm organization, so the platform
+// packages stay out of the unscoped namespace and out of search results. The
+// main package is @netivri/proxy (the binary is still called netivri).
+const SCOPE = '@netivri';
+const MAIN_SLUG = 'proxy';
+const MAIN_NAME = `${SCOPE}/${MAIN_SLUG}`;
 
 // goos/goarch are the Go names used in the archive directory names;
 // os/cpu are the npm field values; pkg is the short name and the output
-// directory, name the scoped npm name (filled in below).
+// directory, name the scoped npm name (filled in below: @netivri/proxy-{os}-{cpu}).
 const PLATFORMS = [
   { goos: 'linux', goarch: 'amd64', os: 'linux', cpu: 'x64', bin: 'netivri', pkg: 'netivri-linux-x64' },
   { goos: 'linux', goarch: 'arm64', os: 'linux', cpu: 'arm64', bin: 'netivri', pkg: 'netivri-linux-arm64' },
@@ -35,7 +37,7 @@ const PLATFORMS = [
 ];
 
 for (const platform of PLATFORMS) {
-  platform.name = `${SCOPE}/${platform.pkg}`;
+  platform.name = `${SCOPE}/${MAIN_SLUG}-${platform.pkg.replace(/^netivri-/, '')}`;
 }
 
 const REPOSITORY = { type: 'git', url: 'git+https://github.com/PHPCraftdream/netivri.git' };

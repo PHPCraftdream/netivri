@@ -12,12 +12,12 @@ const FORWARDED_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'];
 const SIGNAL_NUMBERS = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 };
 
 const PACKAGE_BY_TARGET = {
-  'linux-x64': '@phpcraftdream/netivri-linux-x64',
-  'linux-arm64': '@phpcraftdream/netivri-linux-arm64',
-  'darwin-x64': '@phpcraftdream/netivri-darwin-x64',
-  'darwin-arm64': '@phpcraftdream/netivri-darwin-arm64',
-  'win32-x64': '@phpcraftdream/netivri-w32-x64',
-  'win32-arm64': '@phpcraftdream/netivri-w32-arm64',
+  'linux-x64': '@netivri/proxy-linux-x64',
+  'linux-arm64': '@netivri/proxy-linux-arm64',
+  'darwin-x64': '@netivri/proxy-darwin-x64',
+  'darwin-arm64': '@netivri/proxy-darwin-arm64',
+  'win32-x64': '@netivri/proxy-w32-x64',
+  'win32-arm64': '@netivri/proxy-w32-arm64',
 };
 
 // Pure mapping used by the launcher and the tests. Returns the platform
@@ -35,7 +35,7 @@ function errorEnvelope(message, hint) {
   };
 }
 
-const HINT_MISSING_PKG = 'reinstall the package: npm i -g @phpcraftdream/netivri (do not use --no-optional or --omit=optional)';
+const HINT_MISSING_PKG = 'reinstall the package: npm i -g @netivri/proxy (do not use --no-optional or --omit=optional)';
 
 function unsupportedMessage(platform, arch) {
   return `unsupported platform ${platform}-${arch}`;

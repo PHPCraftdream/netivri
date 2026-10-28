@@ -85,10 +85,10 @@ With Node.js 18 or newer (no build and no download scripts at install time;
 see [`docs/npm.md`](docs/npm.md)):
 
 ```sh
-npm i -g @phpcraftdream/netivri
+npm i -g @netivri/proxy
 ```
 
-Upgrade with `npm i -g @phpcraftdream/netivri@latest`, remove with `npm rm -g @phpcraftdream/netivri`.
+Upgrade with `npm i -g @netivri/proxy@latest`, remove with `npm rm -g @netivri/proxy`.
 
 ### Other options
 

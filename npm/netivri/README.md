@@ -12,11 +12,11 @@ registry traffic.
 ## Install
 
 ```sh
-npm i -g @phpcraftdream/netivri
+npm i -g @netivri/proxy
 ```
 
-Update: `npm update -g @phpcraftdream/netivri` (or `npm i -g @phpcraftdream/netivri@latest`).
-Uninstall: `npm rm -g @phpcraftdream/netivri`.
+Update: `npm update -g @netivri/proxy` (or `npm i -g @netivri/proxy@latest`).
+Uninstall: `npm rm -g @netivri/proxy`.
 
 ## Quick start
 
@@ -48,8 +48,8 @@ JSON.
 
 ## Platforms
 
-The binary ships in a per-platform package (`@phpcraftdream/netivri-linux-x64`,
-`@phpcraftdream/netivri-darwin-arm64`, `@phpcraftdream/netivri-w32-x64`, ...) installed automatically as
+The binary ships in a per-platform package (`@netivri/proxy-linux-x64`,
+`@netivri/proxy-darwin-arm64`, `@netivri/proxy-w32-x64`, ...) installed automatically as
 an optional dependency: Linux, macOS and Windows on x64 and arm64. The Linux
 binary is static, so one package serves glibc and musl (Alpine) distributions.
 

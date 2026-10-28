@@ -71,17 +71,17 @@ test('buildPackages generates the main package with substituted version', (t) =>
   assert.equal(summary.version, VERSION);
   const names = summary.packages.map((p) => p.name).sort();
   assert.deepEqual(names, [
-    '@phpcraftdream/netivri',
-    '@phpcraftdream/netivri-darwin-arm64',
-    '@phpcraftdream/netivri-darwin-x64',
-    '@phpcraftdream/netivri-linux-arm64',
-    '@phpcraftdream/netivri-linux-x64',
-    '@phpcraftdream/netivri-w32-arm64',
-    '@phpcraftdream/netivri-w32-x64',
+    '@netivri/proxy',
+    '@netivri/proxy-darwin-arm64',
+    '@netivri/proxy-darwin-x64',
+    '@netivri/proxy-linux-arm64',
+    '@netivri/proxy-linux-x64',
+    '@netivri/proxy-w32-arm64',
+    '@netivri/proxy-w32-x64',
   ]);
 
   const main = JSON.parse(fs.readFileSync(path.join(out, 'netivri', 'package.json'), 'utf8'));
-  assert.equal(main.name, '@phpcraftdream/netivri');
+  assert.equal(main.name, '@netivri/proxy');
   assert.deepEqual(main.publishConfig, { access: 'public' });
   assert.equal(main.version, VERSION);
   assert.equal(main.license, 'GPL-3.0-only');
@@ -89,12 +89,12 @@ test('buildPackages generates the main package with substituted version', (t) =>
   assert.deepEqual(main.engines, { node: '>=18' });
   assert.equal(Object.keys(main.dependencies).length, 0);
   assert.deepEqual(Object.keys(main.optionalDependencies).sort(), [
-    '@phpcraftdream/netivri-darwin-arm64',
-    '@phpcraftdream/netivri-darwin-x64',
-    '@phpcraftdream/netivri-linux-arm64',
-    '@phpcraftdream/netivri-linux-x64',
-    '@phpcraftdream/netivri-w32-arm64',
-    '@phpcraftdream/netivri-w32-x64',
+    '@netivri/proxy-darwin-arm64',
+    '@netivri/proxy-darwin-x64',
+    '@netivri/proxy-linux-arm64',
+    '@netivri/proxy-linux-x64',
+    '@netivri/proxy-w32-arm64',
+    '@netivri/proxy-w32-x64',
   ]);
   for (const version of Object.values(main.optionalDependencies)) {
     assert.equal(version, VERSION);
@@ -142,11 +142,11 @@ test('buildPackages generates platform packages with os/cpu and files, and no li
     const pkgDir = path.join(out, p.pkg);
     const manifest = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
     assert.equal(manifest.name, p.name);
-    assert.ok(p.name.startsWith('@phpcraftdream/'), `${p.name} is scoped`);
+    assert.ok(p.name.startsWith('@netivri/proxy-'), `${p.name} is in the netivri org`);
     assert.deepEqual(manifest.publishConfig, { access: 'public' });
     // Not for installing by hand: no keywords, and the description points to the main package.
     assert.equal(manifest.keywords, undefined, `${p.name} has no keywords`);
-    assert.ok(manifest.description.includes('@phpcraftdream/netivri'), `${p.name} description`);
+    assert.ok(manifest.description.includes('@netivri/proxy'), `${p.name} description`);
     assert.equal(manifest.version, VERSION);
     assert.deepEqual(manifest.os, [p.os]);
     assert.deepEqual(manifest.cpu, [p.cpu]);
@@ -174,7 +174,7 @@ test('buildPackages works from a single extracted archive directory', (t) => {
 
   assert.equal(summary.ok, true);
   const names = summary.packages.map((p) => p.name).sort();
-  assert.deepEqual(names, ['@phpcraftdream/netivri', '@phpcraftdream/netivri-linux-x64']);
+  assert.deepEqual(names, ['@netivri/proxy', '@netivri/proxy-linux-x64']);
   assert.ok(fs.existsSync(path.join(out, 'netivri-linux-x64', 'bin', 'netivri')));
   // The main package still advertises all six platform packages.
   const main = JSON.parse(fs.readFileSync(path.join(out, 'netivri', 'package.json'), 'utf8'));
