@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
+
+	mihauth "github.com/metacubex/mihomo/component/auth"
 
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/stats"
@@ -82,7 +85,7 @@ func TestConnLogBrokenConnections(t *testing.T) {
 	}
 
 	// A single broken connection among many is INFO, and so is a handful
-	// that is below a tenth of the connections.
+	// that is below a twentieth of the connections.
 	g := newConnLogFixture()
 	g.ended("alice", "main/us", "", 500, 100)
 	g.ended("alice", "main/us", "connection reset", 10, 1)
@@ -95,7 +98,7 @@ func TestConnLogBrokenConnections(t *testing.T) {
 	h.ended("alice", "main/us", "connection reset", 10, 5)
 	h.log.flush()
 	if len(h.lines) != 1 || !strings.HasPrefix(h.lines[0], "INFO ") {
-		t.Fatalf("5 of 105 broken is under a tenth: %q", h.lines)
+		t.Fatalf("5 of 105 broken is under a twentieth: %q", h.lines)
 	}
 }
 
@@ -195,5 +198,41 @@ func TestConnLogRunFlushesOnTickAndAtTheEnd(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the last period was not written when run ended")
+	}
+}
+
+// remoteAuth refuses every client address but loopback before it looks at the
+// password, like the per-account allowed_clients rule.
+type remoteAuth struct{ fakeAuth }
+
+func (a remoteAuth) VerifyFrom(user, pass string, remote net.Addr) bool {
+	if remote == nil || !strings.HasPrefix(remote.String(), "127.0.0.1:") {
+		return false
+	}
+	return a.Verify(user, pass)
+}
+
+// The wrapper must not hide the client-address check of the real
+// authenticator from Mihomo: with it hidden, an account with an
+// allowed_clients rule would accept any address.
+func TestConnLogAuthKeepsTheClientAddressCheck(t *testing.T) {
+	f := newConnLogFixture()
+	auth := f.log.wrapAuth(remoteAuth{fakeAuth{users: map[string]string{"alice": "secret"}}})
+	loopback := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5000}
+	elsewhere := &net.TCPAddr{IP: net.IPv4(10, 1, 2, 3), Port: 5000}
+	if !mihauth.VerifyWithRemote(auth, "alice", "secret", loopback) {
+		t.Fatal("a right login from an allowed address was refused")
+	}
+	if mihauth.VerifyWithRemote(auth, "alice", "secret", elsewhere) {
+		t.Fatal("the client-address check of the inner authenticator was skipped")
+	}
+	f.log.flush()
+	if len(f.lines) != 1 || f.lines[0] != "WARN 1 proxy login failed (alice x1)" {
+		t.Fatalf("lines = %q, want the one refusal reported", f.lines)
+	}
+	// An inner authenticator without the check still works.
+	plain := f.log.wrapAuth(fakeAuth{users: map[string]string{"bob": "pw"}})
+	if !mihauth.VerifyWithRemote(plain, "bob", "pw", elsewhere) {
+		t.Fatal("an authenticator without a client-address check refused a right login")
 	}
 }

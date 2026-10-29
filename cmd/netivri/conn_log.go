@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -18,8 +19,8 @@ const (
 	// connLogEvery is how often the connection reports are written.
 	connLogEvery = time.Minute
 	// connWarnFailures: that many failed dials, or that many broken
-	// connections (at least a tenth of those that ended), in one period are a
-	// warning; fewer are INFO.
+	// connections (at least a twentieth of those that ended), in one period are
+	// a warning; fewer are INFO.
 	connWarnFailures = 3
 )
 
@@ -126,7 +127,20 @@ type loggedAuth struct {
 }
 
 func (a *loggedAuth) Verify(user, pass string) bool {
-	if a.inner.Verify(user, pass) {
+	return a.report(user, a.inner.Verify(user, pass))
+}
+
+// VerifyFrom keeps the inner authenticator's check of the client address (the
+// per-account allowed_clients rule, which must refuse before the password is
+// verified): Mihomo finds it by an interface assertion, which a wrapper would
+// otherwise hide.
+func (a *loggedAuth) VerifyFrom(user, pass string, remote net.Addr) bool {
+	return a.report(user, mihauth.VerifyWithRemote(a.inner, user, pass, remote))
+}
+
+// report counts a failed login and passes the result on.
+func (a *loggedAuth) report(user string, ok bool) bool {
+	if ok {
 		return true
 	}
 	known := false
@@ -199,7 +213,7 @@ func (c *connLog) flush() {
 		if tally.empty > 0 {
 			line += fmt.Sprintf(", %d closed without any data", tally.empty)
 		}
-		c.level(broken >= connWarnFailures && broken*10 >= tally.total)("%s", line)
+		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
 	}
 	moveKeys := make([]siteMove, 0, len(moves))
 	for k := range moves {

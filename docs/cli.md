@@ -316,7 +316,7 @@ node and kind, only when something went wrong, and never with a site, an address
 password: `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
 failures, `INFO` below); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
 x4, timeout x1), 3 closed without any data` (a connection is broken when the node's side of it
-returned an error; `WARN` from 3 broken and at least a tenth of the ended ones);
+returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
 `account alice: 3 sites moved from {NODE} to {NODE}: node down` (`WARN`; `better tier` is `INFO`);
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
