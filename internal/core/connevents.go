@@ -11,6 +11,7 @@ import (
 
 	"github.com/metacubex/mihomo/common/buf"
 	C "github.com/metacubex/mihomo/constant"
+	N "github.com/metacubex/sing/common/network"
 )
 
 // Kinds of ConnEvent.
@@ -142,6 +143,25 @@ func (w *watchConn) noteDeadline(t time.Time) {
 	if !t.IsZero() && time.Until(t) < time.Second {
 		w.interrupted.Store(true)
 	}
+}
+
+// Upstream lets sing and Mihomo see through the wrapper: the headroom a
+// protocol layer below needs in front of the data (VLESS vision asks for 2
+// bytes, and a buffer without it panics) is found by walking the upstream
+// chain, as is a handshake report. The wrapper is deliberately not
+// "replaceable", so a copy still goes through Read and Write and is counted.
+func (w *watchConn) Upstream() any { return w.Conn }
+
+// ReadCached hands on the bytes the connection below already holds (the
+// copy loops ask the source for them first); nil when there are none.
+func (w *watchConn) ReadCached() *buf.Buffer {
+	if cached, ok := w.Conn.(N.CachedReader); ok {
+		if b := cached.ReadCached(); b != nil {
+			w.down.Add(int64(b.Len()))
+			return b
+		}
+	}
+	return nil
 }
 
 func (w *watchConn) Close() error {

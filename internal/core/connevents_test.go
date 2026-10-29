@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/metacubex/mihomo/common/buf"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/sing/common/bufio"
+	N "github.com/metacubex/sing/common/network"
 )
 
 // scriptConn is a C.Conn whose Read and Write return the scripted errors.
@@ -279,5 +282,75 @@ func TestMovesOfSitesAreReported(t *testing.T) {
 	}
 	if got[1].Login != "alice" {
 		t.Errorf("login = %q, want alice", got[1].Login)
+	}
+}
+
+// headroomConn needs 2 bytes in front of what it writes, like the VLESS vision
+// layer: a buffer made without them panics in ExtendHeader.
+type headroomConn struct {
+	scriptConn
+	written int
+}
+
+func (c *headroomConn) FrontHeadroom() int { return 2 }
+
+func (c *headroomConn) WriteBuffer(b *buf.Buffer) error {
+	b.ExtendHeader(2)
+	c.written += b.Len()
+	return nil
+}
+
+// A real node crashed the angel with "buffer overflow: capacity 32768, start
+// 0, need 2" when the wrapper hid the headroom of the layers below it.
+func TestWatchConnShowsTheHeadroomOfTheConnectionBelow(t *testing.T) {
+	inner := &headroomConn{}
+	g := &stickyGroup{events: (&eventSink{}).add}
+	wrapped := g.watch(inner, "alice", "own/a")
+	if got := N.CalculateFrontHeadroom(wrapped); got != 2 {
+		t.Fatalf("headroom through the wrapper = %d, want 2", got)
+	}
+	// The same through a copy, which allocates its buffers from it.
+	n, err := bufio.Copy(wrapped, bytes.NewReader(make([]byte, 100_000)))
+	if err != nil || n != 100_000 {
+		t.Fatalf("Copy = %d, %v", n, err)
+	}
+	if inner.written < 100_000 {
+		t.Errorf("the connection below got %d bytes, want at least 100000", inner.written)
+	}
+}
+
+// cachedConn holds bytes the copy loops must read first.
+type cachedConn struct {
+	scriptConn
+	cache *buf.Buffer
+}
+
+func (c *cachedConn) ReadCached() *buf.Buffer {
+	b := c.cache
+	c.cache = nil
+	return b
+}
+
+func TestWatchConnPassesOnCachedBytes(t *testing.T) {
+	inner := &cachedConn{cache: buf.As([]byte("early"))}
+	g := &stickyGroup{events: (&eventSink{}).add}
+	w, ok := g.watch(inner, "alice", "own/a").(*watchConn)
+	if !ok {
+		t.Fatal("not wrapped")
+	}
+	b := w.ReadCached()
+	if b == nil || string(b.Bytes()) != "early" {
+		t.Fatalf("ReadCached = %v, want the cached bytes", b)
+	}
+	if w.down.Load() != 5 {
+		t.Errorf("down = %d, want the cached bytes counted", w.down.Load())
+	}
+	if again := w.ReadCached(); again != nil {
+		t.Errorf("the cache was handed out twice: %v", again)
+	}
+	// A connection with no cache gives nil.
+	plain, ok := g.watch(&scriptConn{}, "alice", "own/a").(*watchConn)
+	if !ok || plain.ReadCached() != nil {
+		t.Error("a connection with no cache must give nil")
 	}
 }
