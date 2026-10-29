@@ -310,6 +310,15 @@ withdrawn pre-releases.
   flapping` are `WARN` for the nodes of the first tier of some account's route
   and `INFO` for the nodes of later tiers, which no account uses while its first
   tier is up; the burst summary stays a `WARN`.
+- **`doctor` and `account show` follow the routing state.** After a single
+  failed probe `doctor` warned "no live node in tier 0" while the node was in
+  use (the routing takes a node out after two failed probes and keeps it while
+  data flows). The route check now counts the nodes the routing still uses;
+  `account show` and `status --full` carry `down` next to `alive` (the last
+  probe).
+- **An hourly summary per account.** `account alice: last hour: 412
+  connections ended, 0 broken, 3 closed without any data, 0 dials failed`, so
+  that a log without a report of broken connections says "none".
 - **The log reports what happens to connections.** It was silent about the
   things that break a user's connections. Once a minute, one line per account
   and node and kind, only when something went wrong: failed dials with the

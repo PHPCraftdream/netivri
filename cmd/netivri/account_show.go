@@ -33,12 +33,14 @@ type accountShowTier struct {
 // accountShowNode is one node of a tier: its static identity and, when the
 // angel runs, its live probe and traffic state (null otherwise).
 type accountShowNode struct {
-	Label       string `json:"label"`
-	Name        string `json:"name,omitempty"` // display name from the subscription
-	Provider    string `json:"provider"`
-	Country     string `json:"country"`
-	Tier        int    `json:"tier"`
-	Alive       *bool  `json:"alive"`
+	Label    string `json:"label"`
+	Name     string `json:"name,omitempty"` // display name from the subscription
+	Provider string `json:"provider"`
+	Country  string `json:"country"`
+	Tier     int    `json:"tier"`
+	Alive    *bool  `json:"alive"`
+	// Down is the routing state: true when new connections skip the node.
+	Down        *bool  `json:"down"`
 	DelayMS     *int64 `json:"delay_ms"`
 	Connections *int   `json:"connections"`
 }
@@ -267,6 +269,10 @@ func accountShowLive(ctx context.Context, home, login string, tiers []accountSho
 			if h, ok := health[n.Label]; ok {
 				alive, delay := h.Alive, h.DelayMS
 				n.Alive, n.DelayMS = &alive, &delay
+				if h.Down != nil {
+					down := *h.Down
+					n.Down = &down
+				}
 			}
 			if c, ok := uses[n.Label]; ok {
 				n.Connections = &c

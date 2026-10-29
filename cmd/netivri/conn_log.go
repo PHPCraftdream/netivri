@@ -18,6 +18,8 @@ import (
 const (
 	// connLogEvery is how often the connection reports are written.
 	connLogEvery = time.Minute
+	// connBeatEvery is how often the hourly summary of an account is written.
+	connBeatEvery = time.Hour
 	// connWarnFailures: that many failed dials, or that many broken
 	// connections (at least a twentieth of those that ended), in one period are
 	// a warning; fewer are INFO.
@@ -38,12 +40,18 @@ type connLog struct {
 	dials map[loginNode]map[string]int // failed dials by kind
 	ended map[loginNode]*endedTally
 	moves map[siteMove]int
+	// hour sums what the accounts did since the last hourly summary, so that a
+	// quiet log can be told from a counter that does not work.
+	hour map[string]*hourTally
 	// failed proxy logins: configured logins by name, the rest only counted.
 	loginFails    map[string]int
 	unknownLogins int
 }
 
 type loginNode struct{ login, label string }
+
+// hourTally counts the connections of one account for the hourly summary.
+type hourTally struct{ ended, broken, empty, dialsFailed int }
 
 type siteMove struct{ login, from, to, why string }
 
@@ -56,7 +64,7 @@ type endedTally struct {
 func newConnLog(info, warn logFunc) *connLog {
 	return &connLog{info: info, warn: warn, nodes: map[string]stats.NodeInfo{},
 		dials: map[loginNode]map[string]int{}, ended: map[loginNode]*endedTally{},
-		moves: map[siteMove]int{}, loginFails: map[string]int{}}
+		moves: map[siteMove]int{}, loginFails: map[string]int{}, hour: map[string]*hourTally{}}
 }
 
 // setNodes tells which nodes exist (for their names in the lines); a reload
@@ -75,8 +83,14 @@ func (c *connLog) event(ev core.ConnEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := loginNode{ev.Login, ev.Label}
+	tally := c.hour[ev.Login]
+	if tally == nil && ev.Kind != core.ConnSiteMoved {
+		tally = &hourTally{}
+		c.hour[ev.Login] = tally
+	}
 	switch ev.Kind {
 	case core.ConnDialFailed:
+		tally.dialsFailed++
 		kinds := c.dials[key]
 		if kinds == nil {
 			kinds = map[string]int{}
@@ -84,16 +98,19 @@ func (c *connLog) event(ev core.ConnEvent) {
 		}
 		kinds[ev.Why]++
 	case core.ConnStreamEnded:
-		tally := c.ended[key]
-		if tally == nil {
-			tally = &endedTally{broken: map[string]int{}}
-			c.ended[key] = tally
+		ended := c.ended[key]
+		if ended == nil {
+			ended = &endedTally{broken: map[string]int{}}
+			c.ended[key] = ended
 		}
-		tally.total++
+		ended.total++
+		tally.ended++
 		switch {
 		case ev.Why != "":
-			tally.broken[ev.Why]++
+			ended.broken[ev.Why]++
+			tally.broken++
 		case ev.Down == 0:
+			ended.empty++
 			tally.empty++
 		}
 	case core.ConnSiteMoved:
@@ -156,10 +173,13 @@ func (a *loggedAuth) report(user string, ok bool) bool {
 
 func (a *loggedAuth) Users() []string { return a.inner.Users() }
 
-// run writes the reports every period and once more when ctx ends.
-func (c *connLog) run(ctx context.Context, every time.Duration) {
+// run writes the reports every period, the summary of the accounts every beat
+// and the last period when ctx ends.
+func (c *connLog) run(ctx context.Context, every, beat time.Duration) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
+	beats := time.NewTicker(beat)
+	defer beats.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -167,7 +187,31 @@ func (c *connLog) run(ctx context.Context, every time.Duration) {
 			return
 		case <-ticker.C:
 			c.flush()
+		case <-beats.C:
+			c.heartbeat()
 		}
+	}
+}
+
+// heartbeat writes one INFO line per account that had connections or failed
+// dials since the last one: with it a log without a report of broken
+// connections says "none" instead of saying nothing.
+func (c *connLog) heartbeat() {
+	c.mu.Lock()
+	hour := c.hour
+	c.hour = map[string]*hourTally{}
+	c.mu.Unlock()
+	logins := make([]string, 0, len(hour))
+	for login, t := range hour {
+		if t.ended > 0 || t.dialsFailed > 0 {
+			logins = append(logins, login)
+		}
+	}
+	sort.Strings(logins)
+	for _, login := range logins {
+		t := hour[login]
+		c.info("account %s: last hour: %s ended, %d broken, %d closed without any data, %d dials failed",
+			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.dialsFailed)
 	}
 }
 

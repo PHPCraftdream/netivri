@@ -688,3 +688,58 @@ func TestDoctorNotesConnectionsOnFallbackTiers(t *testing.T) {
 		t.Errorf("account without fallback connections = %+v", c)
 	}
 }
+
+func ptrBool(b bool) *bool { return &b }
+
+func doctorOneNodeRoute(t *testing.T, health angel.NodeHealth) (doctorDoc, error) {
+	t.Helper()
+	doctorFixTime(t)
+	doctorAngelUp(t, health)
+	home := t.TempDir()
+	doctorConfig(t, home, func(cfg *config.Config) {
+		cfg.Subscriptions = []config.Subscription{{Name: "main", URL: "https://a.example/sub/x"}}
+		cfg.Accounts = []config.Account{doctorRoutedAccount()}
+	})
+	doctorSnapshot(t, home, "main", subscription.Snapshot{FetchedAt: doctorNow(), Nodes: []subscription.Node{node("m-de", "DE")}})
+	return doctorRunDoc(t, home)
+}
+
+// One failed probe makes a node not alive but the routing keeps using it, and
+// so does the doctor: it was a false warning while 12 connections sat on the
+// node.
+func TestDoctorNodeInServiceDespiteFailedProbe(t *testing.T) {
+	doc, err := doctorOneNodeRoute(t, angel.NodeHealth{Label: "main/m-de", Alive: false, Down: ptrBool(false)})
+	if err != nil {
+		t.Fatalf("doctor = %v, want nil", err)
+	}
+	c := doctorFind(t, doc, "account alice")
+	if c.Status != doctorOK || !strings.Contains(c.Detail, "1/1 node(s) alive") {
+		t.Errorf("account = %+v, want ok with the node in service", c)
+	}
+}
+
+// A node the routing has taken out is not in service whatever its last probe.
+func TestDoctorNodeDownByRoutingIsNotLive(t *testing.T) {
+	doc, err := doctorOneNodeRoute(t, angel.NodeHealth{Label: "main/m-de", Alive: true, Down: ptrBool(true)})
+	doctorAssertFailed(t, err)
+	if c := doctorFind(t, doc, "account alice"); c.Status != doctorFail || !strings.Contains(c.Detail, "no live node") {
+		t.Errorf("account = %+v, want fail", c)
+	}
+}
+
+func TestNodeInServiceFallsBackToTheProbe(t *testing.T) {
+	for name, c := range map[string]struct {
+		h    angel.NodeHealth
+		want bool
+	}{
+		"unknown, probe ok":      {angel.NodeHealth{Alive: true}, true},
+		"unknown, probe failed":  {angel.NodeHealth{Alive: false}, false},
+		"up, probe failed":       {angel.NodeHealth{Alive: false, Down: ptrBool(false)}, true},
+		"down, probe ok":         {angel.NodeHealth{Alive: true, Down: ptrBool(true)}, false},
+		"down, probe failed too": {angel.NodeHealth{Alive: false, Down: ptrBool(true)}, false},
+	} {
+		if got := nodeInService(c.h); got != c.want {
+			t.Errorf("%s: nodeInService = %v, want %v", name, got, c.want)
+		}
+	}
+}

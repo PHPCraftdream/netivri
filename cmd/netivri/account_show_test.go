@@ -233,3 +233,29 @@ func TestFallbackConnections(t *testing.T) {
 		t.Errorf("fallbackConnections without live data = %v, want nil", *got)
 	}
 }
+
+func TestAccountShowLiveCarriesTheRoutingState(t *testing.T) {
+	old := angelProbeLive
+	t.Cleanup(func() { angelProbeLive = old })
+	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{
+			Warm: &angel.WarmInfo{Nodes: []angel.NodeHealth{
+				{Name: "netivri-r0-0", Label: "main/m-de", Alive: false, Down: ptrBool(false), DelayMS: 451},
+				{Name: "netivri-r0-1", Label: "main/m-nl", Alive: true, Down: ptrBool(true)},
+			}},
+		}, nil
+	}
+	known := map[string]bool{"main": true}
+	snapshots := map[string]*subscription.Snapshot{"main": snap(node("m-de", "DE"), node("m-nl", "NL"))}
+	tiers := buildShowTiers(known, snapshots, [][]string{{"main"}}, []string{"DE", "NL"})
+	if !accountShowLive(context.Background(), "whatever-home", "alice", tiers) {
+		t.Fatal("accountShowLive = false, want true")
+	}
+	de, nl := tiers[0].Nodes[0], tiers[1].Nodes[0]
+	if de.Alive == nil || *de.Alive || de.Down == nil || *de.Down {
+		t.Errorf("DE node = %+v, want not alive (last probe) but not down", de)
+	}
+	if nl.Alive == nil || !*nl.Alive || nl.Down == nil || !*nl.Down {
+		t.Errorf("NL node = %+v, want alive (last probe) but down", nl)
+	}
+}

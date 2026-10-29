@@ -363,6 +363,10 @@ func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeI
 			DelayMS: n.Delay.Milliseconds(),
 			Label:   labels[n.Name],
 		}
+		if node.Label != "" {
+			down := n.Down
+			node.Down = &down
+		}
 		if ni, ok := byLabel[node.Label]; ok {
 			node.Provider = ni.Provider
 			node.Country = ni.Country
