@@ -22,8 +22,11 @@ const (
 	downDialFailures  = 3
 	// downDialSites is how many different sites the failed dials of a node
 	// must span: one unreachable destination (three connections of a browser
-	// to a dead site) is not the node's fault.
-	downDialSites = 2
+	// to a dead site) is not the node's fault. A run that never reaches a
+	// second site still brings the node down after downDialFailuresOneSite
+	// failed dials: a dead node used for one site only must fail over too.
+	downDialSites           = 2
+	downDialFailuresOneSite = 10
 
 	// trafficAliveFor is how long data coming back through a node counts as
 	// proof that it is alive: a failed probe within that time is not counted
@@ -130,7 +133,7 @@ func (h *nodeHealth) clock() time.Time {
 // recomputeDown refreshes the atomic flag and reports whether it changed; the
 // caller holds h.mu.
 func (h *nodeHealth) recomputeDown() bool {
-	down := h.consProbeFail >= downProbeFailures || (h.consDialFail >= downDialFailures && h.dialSites >= downDialSites)
+	down := h.consProbeFail >= downProbeFailures || h.consDialFail >= downDialFailuresOneSite || (h.consDialFail >= downDialFailures && h.dialSites >= downDialSites)
 	changed := h.downFlag.Swap(down) != down
 	if changed && down {
 		h.downSince = h.clock()
@@ -273,8 +276,8 @@ func plainWord(w string) bool {
 }
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3
-// consecutive dial failures to at least 2 different sites. A success of
-// EITHER kind clears both counters.
+// consecutive dial failures to at least 2 different sites, or 10 to one site.
+// A success of EITHER kind clears both counters.
 // Data coming back through the node (noteTraffic) clears the probe counter and
 // keeps further probe failures from counting for trafficAliveFor.
 func (h *nodeHealth) Down() bool { return h.downFlag.Load() }

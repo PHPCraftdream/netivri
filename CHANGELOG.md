@@ -301,7 +301,8 @@ withdrawn pre-releases.
   (a browser opening three connections to it): a node that had answered a second
   earlier went down, a burst of four nodes was reported, and the sites bound to
   them moved to a fallback country. Failed dials now count toward the down rule
-  only when they reached at least 2 different sites. The reason of such a down
+  only when they reached at least 2 different sites, or when 10 in a row went
+  to one site (a dead node used for one site still fails over). The reason of such a down
   names the kind of the last error from a fixed list (`3 dial failures
   (timeout)`), never its text, and `refresh failed` of a subscription names
   the kind too (`request failed: timeout`).

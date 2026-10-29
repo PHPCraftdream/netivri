@@ -215,7 +215,9 @@ consecutive failure counters.
 delay  = mean of the known EWMAs (probe, dial); unknown without samples
 down   = 2 consecutive probe failures or 3 consecutive dial failures to at
          least 2 different sites (one dead destination is not the node's
-         fault; a dial with no known site counts as its own site);
+         fault; a dial with no known site counts as its own site) or 10
+         consecutive dial failures to one site (a dead node used for one
+         site only must still fail over);
          any success clears it; data coming back through the node on an open
          connection (the throughput poller sees download bytes in a window)
          clears the probe failures and, for 60 s, keeps failed probes from

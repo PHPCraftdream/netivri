@@ -121,22 +121,37 @@ func dialFail(table *healthTable, label, site string, err error) {
 	table.recordDialAt(label, site, err, 0)
 }
 
-func TestFailedDialsOfOneSiteDoNotBringANodeDown(t *testing.T) {
+func TestFailedDialsToTwoSitesBringANodeDown(t *testing.T) {
 	table, _, events := trafficHealth(t)
 	boom := errors.New("connection refused")
-	for i := 0; i < 10; i++ {
-		dialFail(table, "a", "dead.example", boom)
-	}
+	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "a", "x.example", boom)
 	if table.down("a") {
-		t.Fatal("ten failed dials to one site brought the node down")
+		t.Fatal("three failed dials to one site brought the node down")
 	}
-	dialFail(table, "a", "other.example", boom)
+	dialFail(table, "a", "y.example", boom)
 	if !table.down("a") {
 		t.Fatal("failed dials to two sites did not bring the node down")
 	}
 	got := *events
-	if len(got) != 1 || got[0].Reason != "11 dial failures (connection refused)" {
+	if len(got) != 1 || got[0].Reason != "4 dial failures (connection refused)" {
 		t.Fatalf("events = %+v, want one down with the kind", got)
+	}
+}
+
+func TestFailedDialsOfOneSiteNeedTenToBringANodeDown(t *testing.T) {
+	table, _, _ := trafficHealth(t)
+	boom := errors.New("connection refused")
+	for i := 0; i < downDialFailuresOneSite-1; i++ {
+		dialFail(table, "a", "dead.example", boom)
+	}
+	if table.down("a") {
+		t.Fatal("nine failed dials to one site brought the node down")
+	}
+	dialFail(table, "a", "dead.example", boom)
+	if !table.down("a") {
+		t.Fatal("ten failed dials to one site did not bring the node down")
 	}
 }
 

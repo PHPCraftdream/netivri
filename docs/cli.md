@@ -311,7 +311,7 @@ nodes of later tiers are logged at `INFO`, since no account uses them while its 
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
 `connection closed`, `handshake failed` or `error`); dial failures count only when they reached 2
-different sites. The
+different sites (a run of 10 to one site counts too, so a dead node used for one site still fails over). The
 same node id under two providers is one server: when its twin goes down within 10 seconds,
 that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for
 bursts and flapping. A node
