@@ -310,6 +310,13 @@ withdrawn pre-releases.
   flapping` are `WARN` for the nodes of the first tier of some account's route
   and `INFO` for the nodes of later tiers, which no account uses while its first
   tier is up; the burst summary stays a `WARN`.
+- **The log tells a client that left from a node that never answered.** The
+  summary and the broken-connection lines counted every connection that
+  ended without data from the node as one number; now `closed before any data`
+  (the client sent nothing) is apart from `without an answer` (the client sent
+  data, nothing came back). A node's back line is not repeated for the same
+  server under a second provider: the twin's line says `same server as ...` and
+  is `DEBUG` for fallback nodes.
 - **`doctor` and `account show` follow the routing state.** After a single
   failed probe `doctor` warned "no live node in tier 0" while the node was in
   use (the routing takes a node out after two failed probes and keeps it while

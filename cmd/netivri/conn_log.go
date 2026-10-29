@@ -51,14 +51,16 @@ type connLog struct {
 type loginNode struct{ login, label string }
 
 // hourTally counts the connections of one account for the hourly summary.
-type hourTally struct{ ended, broken, empty, dialsFailed int }
+// empty ended before a byte moved either way (the client left), silent after
+// the client had sent data and the node's side never answered.
+type hourTally struct{ ended, broken, empty, silent, dialsFailed int }
 
 type siteMove struct{ login, from, to, why string }
 
 // endedTally counts the connections that ended through one node.
 type endedTally struct {
-	total, empty int
-	broken       map[string]int // by kind of the first error
+	total, empty, silent int
+	broken               map[string]int // by kind of the first error
 }
 
 func newConnLog(info, warn logFunc) *connLog {
@@ -109,9 +111,12 @@ func (c *connLog) event(ev core.ConnEvent) {
 		case ev.Why != "":
 			ended.broken[ev.Why]++
 			tally.broken++
-		case ev.Down == 0:
+		case ev.Down == 0 && ev.Up == 0:
 			ended.empty++
 			tally.empty++
+		case ev.Down == 0:
+			ended.silent++
+			tally.silent++
 		}
 	case core.ConnSiteMoved:
 		c.moves[siteMove{ev.Login, ev.From, ev.Label, ev.Why}]++
@@ -210,8 +215,8 @@ func (c *connLog) heartbeat() {
 	sort.Strings(logins)
 	for _, login := range logins {
 		t := hour[login]
-		c.info("account %s: last hour: %s ended, %d broken, %d closed without any data, %d dials failed",
-			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.dialsFailed)
+		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer, %d dials failed",
+			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.dialsFailed)
 	}
 }
 
@@ -255,7 +260,10 @@ func (c *connLog) flush() {
 		line := fmt.Sprintf("account %s via %s: %s ended, %d broken (%s)", key.login, describe(key.label),
 			count(tally.total, "connection", "connections"), broken, joinKinds(tally.broken))
 		if tally.empty > 0 {
-			line += fmt.Sprintf(", %d closed without any data", tally.empty)
+			line += fmt.Sprintf(", %d closed before any data", tally.empty)
+		}
+		if tally.silent > 0 {
+			line += fmt.Sprintf(", %d without an answer", tally.silent)
 		}
 		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
 	}
