@@ -317,6 +317,9 @@ withdrawn pre-releases.
   data, nothing came back). A node's back line is not repeated for the same
   server under a second provider: the twin's line says `same server as ...` and
   is `DEBUG` for fallback nodes.
+- **The hourly summary carries the bytes** of the connections that ended
+  (`412.0 MiB down, 38.1 MiB up`), so a count of connections without an
+  answer can be checked against what really moved.
 - **`doctor` and `account show` follow the routing state.** After a single
   failed probe `doctor` warned "no live node in tier 0" while the node was in
   use (the routing takes a node out after two failed probes and keeps it while

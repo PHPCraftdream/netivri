@@ -53,7 +53,12 @@ type loginNode struct{ login, label string }
 // hourTally counts the connections of one account for the hourly summary.
 // empty ended before a byte moved either way (the client left), silent after
 // the client had sent data and the node's side never answered.
-type hourTally struct{ ended, broken, empty, silent, dialsFailed int }
+// up and down are the bytes of the ended connections, so that a count of
+// connections without an answer can be checked against what really moved.
+type hourTally struct {
+	ended, broken, empty, silent, dialsFailed int
+	up, down                                  int64
+}
 
 type siteMove struct{ login, from, to, why string }
 
@@ -107,6 +112,8 @@ func (c *connLog) event(ev core.ConnEvent) {
 		}
 		ended.total++
 		tally.ended++
+		tally.up += ev.Up
+		tally.down += ev.Down
 		switch {
 		case ev.Why != "":
 			ended.broken[ev.Why]++
@@ -215,9 +222,24 @@ func (c *connLog) heartbeat() {
 	sort.Strings(logins)
 	for _, login := range logins {
 		t := hour[login]
-		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer, %d dials failed",
-			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.dialsFailed)
+		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer, %d dials failed, %s down, %s up",
+			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.dialsFailed,
+			humanBytes(t.down), humanBytes(t.up))
 	}
+}
+
+// humanBytes renders a byte count as B, KiB, MiB or GiB.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit && exp < 2; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMG"[exp])
 }
 
 // flush writes the lines of the period and starts a new one.
