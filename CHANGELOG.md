@@ -310,6 +310,18 @@ withdrawn pre-releases.
   flapping` are `WARN` for the nodes of the first tier of some account's route
   and `INFO` for the nodes of later tiers, which no account uses while its first
   tier is up; the burst summary stays a `WARN`.
+- **The log reports what happens to connections.** It was silent about the
+  things that break a user's connections. Once a minute, one line per account
+  and node and kind, only when something went wrong: failed dials with the
+  kind of the error (`3 dials failed (timeout x2, ...)`), connections that the
+  node's side broke (`98 connections ended, 5 broken (connection reset x4,
+  ...)`, plus how many closed without any data), sites moved to another node
+  (`3 sites moved from {NODE} to {NODE}: node down`, `INFO` for a return to a
+  better tier) and failed proxy logins (`4 proxy logins failed (alice x2,
+  unknown logins x2)`, only configured accounts are named). No line holds a
+  site, an address, an error text or a password. `WARN` from 3 failures. In
+  `internal/core`, `Options.OnConnEvent` and `ConnEvent`; connections are
+  wrapped only when it is set.
 - **Fallback nodes no longer fill the log.** The repeated reports of a node no
   account uses (its downs and backs after its `flapping` line, the down of a
   twin of the same server) are written at the new `DEBUG` level, and `netivri

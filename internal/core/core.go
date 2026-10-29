@@ -85,6 +85,12 @@ type Options struct {
 	// on the goroutine that recorded the measurement, so it must return quickly.
 	// nil disables it.
 	OnNodeHealth func(NodeEvent)
+	// OnConnEvent optionally hears what happens to the connections of the
+	// route accounts: failed dials, ended connections (with the kind of the
+	// error that broke them) and sites bound to another node. It is called
+	// from the dialling and closing goroutines, so it must return quickly. nil
+	// disables it, and then connections are not wrapped.
+	OnConnEvent func(ConnEvent)
 	// Observer optionally receives probe, dial and throughput measurements
 	// of the route nodes. nil disables reporting.
 	Observer Observer
@@ -267,7 +273,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if len(plans) > 0 {
 		// The replaced select groups become garbage; their finalizers are
 		// drained by the next Start through drainFinalizers.
-		if err := installStickyGroups(plans, table, health, o.Observer); err != nil {
+		if err := installStickyGroups(plans, table, health, o.Observer, o.OnConnEvent); err != nil {
 			// The filter was already set; restore allow-all on shutdown.
 			executor.Shutdown()
 			resetAllowedClients()

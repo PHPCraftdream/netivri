@@ -389,6 +389,22 @@ a down of the twin label within 10 s of the first is an `INFO` line ending in
 `, same server as {LABEL}` that counts for neither burst nor flapping. `doctor`
 counts the lines, the burst summary and the flapping warning as node-down reports.
 
+## Connection events
+
+`core.Options.OnConnEvent` hears three kinds of `core.ConnEvent`, none of which holds a
+site, an address or an error text: `dial_failed` (the account, the node, the kind of the
+error from the fixed list of `dialErrKind`), `stream_ended` (the account, the node, how
+long it lived, the bytes up and down, and the kind of the first error that came from the
+node's side) and `site_moved` (the node left, the node chosen, `node down` or `better
+tier`; `affinityTable.acquireWith` returns the member left). With a sink the sticky group wraps
+the connection a node returns in a `watchConn`, which counts the bytes and reports once on
+Close; EOF, the proxy closing the connection and the timeout that follows a deadline already due
+(the relay sets one to stop the other direction) are not errors. Without a sink connections
+are not wrapped. `cmd/netivri` sums the events in `connLog` and writes at most one line per
+account, node and kind a minute (and the last period when the angel stops); a failed proxy
+login comes from a wrapper of the authenticator and is counted, naming only configured
+accounts.
+
 ## Wiring (`cmd/netivri`)
 
 - `routePool` also returns labels (`provider/{NODE_ID}`) in node order.

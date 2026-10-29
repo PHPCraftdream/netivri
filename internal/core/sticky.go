@@ -74,7 +74,8 @@ type stickyGroup struct {
 	isDownFn func(member int) bool
 	betterFn func(member int, now time.Time) bool
 	observer Observer
-	hedgeAll bool // test seam: fake members are hedgeable when set
+	events   func(ConnEvent) // optional, see Options.OnConnEvent
+	hedgeAll bool            // test seam: fake members are hedgeable when set
 }
 
 // newStickyGroup builds the group over real Mihomo member proxies.
@@ -116,7 +117,14 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 // creating or keeping the binding as needed. On a healthy binding hit it
 // neither allocates nor builds health views.
 func (g *stickyGroup) choose(login, site string) (int, bool) {
-	member, rebound, _ := g.table.acquireWith(affinityKey{login: login, site: site}, g.isDownFn, g.betterFn, g.pickFor(login, site))
+	member, rebound, returned, from := g.table.acquireWith(affinityKey{login: login, site: site}, g.isDownFn, g.betterFn, g.pickFor(login, site))
+	if g.events != nil && from >= 0 && from < len(g.labels) && member < len(g.labels) {
+		why := MoveNodeDown
+		if returned {
+			why = MoveBetterTier
+		}
+		g.emit(ConnEvent{Kind: ConnSiteMoved, Login: login, From: g.labels[from], Label: g.labels[member], Why: why})
+	}
 	return member, rebound
 }
 
@@ -201,6 +209,9 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
 	if recorded {
 		g.health.recordDialAt(label, site, err, took)
+		if err != nil {
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err)})
+		}
 		g.observeDial(label, err == nil, took)
 		g.observeAccountDial(login, label, err == nil, took)
 		if h := g.healths[index]; h != nil {
@@ -209,7 +220,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	}
 	if err == nil {
 		conn.AppendToChains(g)
-		return conn, nil
+		return g.watch(conn, login, label), nil
 	}
 	if !g.health.down(label) {
 		return nil, err
@@ -224,6 +235,9 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
 	if retryRecorded {
 		g.health.recordDialAt(retryLabel, site, retryErr, retryTook)
+		if retryErr != nil {
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr)})
+		}
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
 		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
 	}
@@ -231,7 +245,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		return nil, retryErr
 	}
 	retryConn.AppendToChains(g)
-	return retryConn, nil
+	return g.watch(retryConn, login, retryLabel), nil
 }
 
 // ListenPacketContext implements C.ProxyAdapter. UDP associations use the
@@ -425,9 +439,9 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 // installStickyGroups replaces every route select group in Mihomo's proxy
 // map with a sticky adapter of the same name, the way the pool replaces the
 // default node. Must run after executor.ApplyConfig.
-func installStickyGroups(plans []routePlan, table *affinityTable, health *healthTable, observer Observer) error {
+func installStickyGroups(plans []routePlan, table *affinityTable, health *healthTable, observer Observer, events func(ConnEvent)) error {
 	proxies := tunnel.Proxies()
-	groups, err := buildStickyGroups(plans, proxies, table, health, observer)
+	groups, err := buildStickyGroups(plans, proxies, table, health, observer, events)
 	if err != nil {
 		return err
 	}
@@ -444,7 +458,7 @@ func installStickyGroups(plans []routePlan, table *affinityTable, health *health
 
 // buildStickyGroups builds the sticky adapter of every plan over the member
 // proxies found in proxies, keyed by group name. It changes nothing global.
-func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *affinityTable, health *healthTable, observer Observer) (map[string]C.Proxy, error) {
+func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *affinityTable, health *healthTable, observer Observer, events func(ConnEvent)) (map[string]C.Proxy, error) {
 	groups := make(map[string]C.Proxy, len(plans))
 	for _, plan := range plans {
 		members := make([]C.Proxy, 0, len(plan.names))
@@ -460,6 +474,7 @@ func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *aff
 		}
 		group := newStickyGroup(plan.group, members, plan.labels, table, health, observer)
 		group.tiers = plan.tiers
+		group.events = events
 		groups[plan.group] = adapter.NewProxy(group)
 	}
 	return groups, nil

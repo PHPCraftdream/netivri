@@ -601,11 +601,8 @@ func (t *healthTable) recordDialAt(label, site string, err error, took time.Dura
 	}
 	kind := ""
 	if err != nil {
-		// Only the fixed kinds: a dial error may name the destination, so the
-		// free text probeFailKind keeps for unknown probe errors is dropped.
-		if kind = probeFailKind(err); strings.HasPrefix(kind, "error") {
-			kind = "error"
-		}
+		// Only the fixed kinds, see dialErrKind.
+		kind = dialErrKind(err)
 	}
 	h.recordDialAt(err == nil, took, site, kind)
 }
