@@ -34,7 +34,7 @@ func runLogs(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	follow := fs.Bool("follow", false, "keep running and print new entries")
-	levelFlag := fs.String("level", "", "only this level and above: debug, info, warn or error")
+	levelFlag := fs.String("level", "", "only this level and above: debug, info (default), warn or error")
 	since := fs.String("since", "", "only the last period, e.g. 10m, 24h or 7d")
 	tail := fs.Int("tail", defaultLogTail, "at most this many of the newest entries, 0 for all")
 	pos, err := parseFlags(fs, rest)
@@ -47,7 +47,8 @@ func runLogs(args []string, stdout io.Writer) error {
 	if *tail < 0 {
 		return cli.Usage("logs: --tail must not be negative")
 	}
-	q := angel.LogQuery{Tail: *tail}
+	// DEBUG lines (repeats of nodes no account uses) only on request.
+	q := angel.LogQuery{Tail: *tail, MinLevel: angel.LevelInfo}
 	if *levelFlag != "" {
 		level, ok := angel.NormalizeLevel(*levelFlag)
 		if !ok {

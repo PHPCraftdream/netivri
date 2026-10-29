@@ -39,6 +39,7 @@ func angelLogf(level string) func(format string, args ...any) {
 }
 
 var (
+	angelDebug = angelLogf(angel.LevelDebug)
 	angelInfo  = angelLogf(angel.LevelInfo)
 	angelWarn  = angelLogf(angel.LevelWarn)
 	angelError = angelLogf(angel.LevelError)

@@ -403,11 +403,12 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 		}
 	}
 	logf, warnf, errorf := leveled(angelInfo), leveled(angelWarn), leveled(angelError)
+	debugf := leveled(angelDebug)
 	store := openStats(opts.Home, pool.infos, warnf)
 	stopRequested := make(chan struct{})
 	requestStop := sync.OnceFunc(func() { close(stopRequested) })
 	live := newLiveAngel(opts, logf, requestStop)
-	live.warnf, live.errorf = warnf, errorf
+	live.warnf, live.errorf, live.debugf = warnf, errorf, debugf
 	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, authenticator, store); err != nil {
 		closeStats(store)
 		return err
