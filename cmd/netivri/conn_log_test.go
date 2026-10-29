@@ -62,7 +62,7 @@ func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
 	}
 	f.lines = nil
 	f.log.heartbeat()
-	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer, 0 dials failed"
+	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer, 0 dials failed, 4.4 KiB down, 2.9 KiB up"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Errorf("lines = %q, want %q", f.lines, want)
 	}
@@ -346,8 +346,8 @@ func TestConnLogHeartbeatSaysNoneInsteadOfNothing(t *testing.T) {
 
 	f.log.heartbeat()
 	want := []string{
-		"INFO account alice: last hour: 43 connections ended, 1 broken, 2 closed before any data, 0 without an answer, 3 dials failed",
-		"INFO account bob: last hour: 7 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 0 dials failed",
+		"INFO account alice: last hour: 43 connections ended, 1 broken, 2 closed before any data, 0 without an answer, 3 dials failed, 19.5 KiB down, 0 B up",
+		"INFO account bob: last hour: 7 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 0 dials failed, 35 B down, 0 B up",
 	}
 	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("lines =\n%s\nwant\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
@@ -360,7 +360,7 @@ func TestConnLogHeartbeatSaysNoneInsteadOfNothing(t *testing.T) {
 	// An account with only failed dials is in the summary too.
 	f.dialFail("dave", "main/us", "timeout", 1)
 	f.log.heartbeat()
-	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "account dave: last hour: 0 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 1 dials failed") {
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "account dave: last hour: 0 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 1 dials failed, 0 B down, 0 B up") {
 		t.Errorf("lines = %q", f.lines)
 	}
 }
@@ -388,6 +388,17 @@ func TestConnLogRunWritesTheHeartbeat(t *testing.T) {
 			}
 		case <-deadline:
 			t.Fatal("no heartbeat within a few periods")
+		}
+	}
+}
+
+func TestHumanBytes(t *testing.T) {
+	for in, want := range map[int64]string{
+		0: "0 B", 35: "35 B", 1023: "1023 B", 1024: "1.0 KiB", 20010: "19.5 KiB",
+		1048576: "1.0 MiB", 432013312: "412.0 MiB", 1073741824: "1.0 GiB", 5 << 40: "5120.0 GiB",
+	} {
+		if got := humanBytes(in); got != want {
+			t.Errorf("humanBytes(%d) = %q, want %q", in, got, want)
 		}
 	}
 }
