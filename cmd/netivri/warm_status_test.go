@@ -30,7 +30,7 @@ func TestWarmInfoOf(t *testing.T) {
 		Probes: 5, ProbeFailures: 2, PoolHits: 3, PoolMisses: 1, PoolDiscards: 4,
 		Nodes: []core.NodeHealth{
 			{Name: "netivri-r0-0", Alive: true, Delay: 48 * time.Millisecond},
-			{Name: "netivri-r1-0"},
+			{Name: "netivri-r1-0", Down: true},
 		},
 	}, map[string]string{"netivri-r0-0": "main/de", "netivri-r1-0": "main/nl"}, []stats.NodeInfo{
 		{Label: "main/de", Provider: "main", Country: "DE", Name: "Germany 1"},
@@ -46,7 +46,18 @@ func TestWarmInfoOf(t *testing.T) {
 		{Name: "netivri-r0-0", Alive: true, DelayMS: 48, Label: "main/de", Provider: "main", Country: "DE", NodeName: "Germany 1"},
 		{Name: "netivri-r1-0", Label: "main/nl", Provider: "main", Country: "NL"},
 	}
-	if len(info.Nodes) != len(want) || info.Nodes[0] != want[0] || info.Nodes[1] != want[1] {
+	// The routing state is carried as a pointer: check it, then compare the rest.
+	if len(info.Nodes) != len(want) {
+		t.Fatalf("nodes = %+v, want %d", info.Nodes, len(want))
+	}
+	if d := info.Nodes[0].Down; d == nil || *d {
+		t.Errorf("node 0 Down = %v, want false", d)
+	}
+	if d := info.Nodes[1].Down; d == nil || !*d {
+		t.Errorf("node 1 Down = %v, want true", d)
+	}
+	info.Nodes[0].Down, info.Nodes[1].Down = nil, nil
+	if info.Nodes[0] != want[0] || info.Nodes[1] != want[1] {
 		t.Errorf("nodes = %+v, want %+v", info.Nodes, want)
 	}
 }
