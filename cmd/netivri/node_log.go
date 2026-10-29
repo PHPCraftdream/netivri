@@ -78,6 +78,7 @@ type nodeLog struct {
 	flapping    map[string]bool   // by server
 	lastDown    map[string]drop   // latest counted down per server, with the label
 	lastNever   map[string]drop   // the same for never-answered reports
+	lastBack    map[string]drop   // the same for backs
 	windowStart time.Time
 	window      []string       // labels down in the current window
 	kinds       map[string]int // reasons in the current window
@@ -108,7 +109,7 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 		return nil
 	}
 	l := &nodeLog{info: info, warn: warn, debug: info, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
-		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}}
+		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}, lastBack: map[string]drop{}}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
 	}
@@ -242,7 +243,9 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	if ev.Downtime > 0 {
 		line += " after " + ev.Downtime.Round(time.Second).String() + " down"
 	}
-	if l.flapping[serverID(ev.Label)] {
+	if twin, ok := l.twinOf(l.lastBack, ev, l.now()); ok {
+		l.repeat(ev.Label, "%s, same server as %s", line, twin)
+	} else if l.flapping[serverID(ev.Label)] {
 		l.repeat(ev.Label, "%s", line)
 	} else {
 		l.info("%s", line)

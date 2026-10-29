@@ -502,3 +502,37 @@ func TestNodeLogWithoutADebugWriterRepeatsAreInfo(t *testing.T) {
 		t.Errorf("without a debug writer the twin line must stay INFO: %q", f.lines)
 	}
 }
+
+func TestNodeLogTwinBackIsOneEvent(t *testing.T) {
+	f := twinFixture(t)
+	f.downLabel("own/a")
+	f.now = f.now.Add(time.Minute)
+	f.log.event(core.NodeEvent{Label: "own/a", Downtime: time.Minute})
+	f.now = f.now.Add(time.Second)
+	f.log.event(core.NodeEvent{Label: "main/a", Downtime: time.Minute})
+	if got := f.countContaining("own/a (provider own, country FI) is back after 1m0s down"); got != 1 {
+		t.Errorf("%d back lines for own/a, want 1: %q", got, f.lines)
+	}
+	if got := f.countContaining("main/a (provider main, country FI) is back after 1m0s down, same server as own/a"); got != 1 {
+		t.Errorf("twin back line has no note: %q", f.lines)
+	}
+	// Late twin, or another server, is its own event.
+	f.now = f.now.Add(twinWindow + time.Second)
+	f.log.event(core.NodeEvent{Label: "own/a", Downtime: time.Minute})
+	f.log.event(core.NodeEvent{Label: "own/b", Downtime: time.Minute})
+	if got := f.countContaining("same server as"); got != 1 {
+		t.Errorf("a later back or another server got the note: %q", f.lines)
+	}
+}
+
+func TestNodeLogTwinBackOfFallbackNodeIsDebug(t *testing.T) {
+	f := twinFixture(t)
+	var debug []string
+	f.log.debug = func(format string, args ...any) { debug = append(debug, fmt.Sprintf(format, args...)) }
+	f.log.first = map[string]bool{}
+	f.log.event(core.NodeEvent{Label: "own/a", Downtime: time.Minute})
+	f.log.event(core.NodeEvent{Label: "main/a", Downtime: time.Minute})
+	if f.countContaining("is back") != 1 || len(debug) != 1 || !strings.Contains(debug[0], "same server as own/a") {
+		t.Errorf("info = %q, debug = %q", f.lines, debug)
+	}
+}

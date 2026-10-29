@@ -43,6 +43,31 @@ func (f *connLogFixture) ended(login, label, why string, down int64, n int) {
 	}
 }
 
+// endedUp is ended with the bytes the client sent to the node.
+func (f *connLogFixture) endedUp(login, label string, up, down int64, n int) {
+	for i := 0; i < n; i++ {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: up, Down: down, Lifetime: time.Second})
+	}
+}
+
+func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
+	f := newConnLogFixture()
+	f.endedUp("alice", "main/us", 0, 0, 6)     // the client left before sending a byte
+	f.endedUp("alice", "main/us", 300, 0, 4)   // the client asked, nothing came back
+	f.endedUp("alice", "main/us", 300, 900, 5) // a normal one
+	f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: "alice", Label: "main/us", Why: "timeout", Up: 300})
+	f.log.flush()
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "16 connections ended, 1 broken (timeout x1), 6 closed before any data, 4 without an answer") {
+		t.Fatalf("lines = %q", f.lines)
+	}
+	f.lines = nil
+	f.log.heartbeat()
+	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer, 0 dials failed"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Errorf("lines = %q, want %q", f.lines, want)
+	}
+}
+
 func TestConnLogSilentWhenNothingWentWrong(t *testing.T) {
 	f := newConnLogFixture()
 	f.ended("alice", "main/us", "", 1000, 50)
@@ -75,11 +100,11 @@ func TestConnLogDialFailuresAreOneLinePerAccountAndNode(t *testing.T) {
 func TestConnLogBrokenConnections(t *testing.T) {
 	f := newConnLogFixture()
 	f.ended("alice", "main/us", "", 500, 90)
-	f.ended("alice", "main/us", "", 0, 3) // closed without any data, not an error
+	f.ended("alice", "main/us", "", 0, 3) // closed before any data, not an error
 	f.ended("alice", "main/us", "connection reset", 10, 4)
 	f.ended("alice", "main/us", "timeout", 10, 1)
 	f.log.flush()
-	want := "WARN account alice via main/us (United States, country US): 98 connections ended, 5 broken (connection reset x4, timeout x1), 3 closed without any data"
+	want := "WARN account alice via main/us (United States, country US): 98 connections ended, 5 broken (connection reset x4, timeout x1), 3 closed before any data"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Fatalf("lines = %q, want [%q]", f.lines, want)
 	}
@@ -321,8 +346,8 @@ func TestConnLogHeartbeatSaysNoneInsteadOfNothing(t *testing.T) {
 
 	f.log.heartbeat()
 	want := []string{
-		"INFO account alice: last hour: 43 connections ended, 1 broken, 2 closed without any data, 3 dials failed",
-		"INFO account bob: last hour: 7 connections ended, 0 broken, 0 closed without any data, 0 dials failed",
+		"INFO account alice: last hour: 43 connections ended, 1 broken, 2 closed before any data, 0 without an answer, 3 dials failed",
+		"INFO account bob: last hour: 7 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 0 dials failed",
 	}
 	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("lines =\n%s\nwant\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
@@ -335,7 +360,7 @@ func TestConnLogHeartbeatSaysNoneInsteadOfNothing(t *testing.T) {
 	// An account with only failed dials is in the summary too.
 	f.dialFail("dave", "main/us", "timeout", 1)
 	f.log.heartbeat()
-	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "account dave: last hour: 0 connections ended, 0 broken, 0 closed without any data, 1 dials failed") {
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "account dave: last hour: 0 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 1 dials failed") {
 		t.Errorf("lines = %q", f.lines)
 	}
 }
