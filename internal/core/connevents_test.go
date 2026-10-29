@@ -12,6 +12,7 @@ import (
 
 	"github.com/metacubex/mihomo/common/buf"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/sing/common"
 	"github.com/metacubex/sing/common/bufio"
 	N "github.com/metacubex/sing/common/network"
 )
@@ -354,3 +355,39 @@ func TestWatchConnPassesOnCachedBytes(t *testing.T) {
 		t.Error("a connection with no cache must give nil")
 	}
 }
+
+// richConn has everything sing consults below a wrapper: headroom in front and
+// behind, a reader and a writer MTU, and bytes already read.
+type richConn struct{ scriptConn }
+
+func (richConn) FrontHeadroom() int { return 3 }
+func (richConn) RearHeadroom() int  { return 5 }
+func (richConn) ReaderMTU() int     { return 1400 }
+func (richConn) WriterMTU() int     { return 1300 }
+
+// Whatever sing computes from a connection must not change when the connection
+// is wrapped: the wrapper is on the path of every connection of the angel, and
+// a layer it hides has already crashed it once.
+func TestWatchConnIsTransparentToSing(t *testing.T) {
+	inner := &richConn{}
+	g := &stickyGroup{events: (&eventSink{}).add}
+	wrapped := g.watch(inner, "alice", "own/a")
+
+	if front, want := N.CalculateFrontHeadroom(wrapped), N.CalculateFrontHeadroom(inner); front != want || want != 3 {
+		t.Errorf("front headroom wrapped %d, bare %d, want both 3", front, want)
+	}
+	if rear, want := N.CalculateRearHeadroom(wrapped), N.CalculateRearHeadroom(inner); rear != want || want != 5 {
+		t.Errorf("rear headroom wrapped %d, bare %d, want both 5", rear, want)
+	}
+	if mtu, want := N.CalculateMTU(wrapped, wrapped), N.CalculateMTU(inner, inner); mtu != want || want == 0 {
+		t.Errorf("MTU wrapped %d, bare %d, want the same and not 0", mtu, want)
+	}
+}
+
+// What the wrapper must stay, checked by the compiler: an ExtendedConn that
+// sing can look through and that hands on cached bytes.
+var (
+	_ C.Conn              = (*watchConn)(nil)
+	_ common.WithUpstream = (*watchConn)(nil)
+	_ N.CachedReader      = (*watchConn)(nil)
+)

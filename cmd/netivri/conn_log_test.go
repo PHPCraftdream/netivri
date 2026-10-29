@@ -236,3 +236,69 @@ func TestConnLogAuthKeepsTheClientAddressCheck(t *testing.T) {
 		t.Fatal("an authenticator without a client-address check refused a right login")
 	}
 }
+
+// What the authenticator wrapper must stay, checked by the compiler: Mihomo
+// finds the client-address check by this interface.
+var (
+	_ mihauth.Authenticator  = (*loggedAuth)(nil)
+	_ mihauth.RemoteVerifier = (*loggedAuth)(nil)
+)
+
+// The options the angel starts the core with must carry the wrapped
+// authenticator with its client-address check intact, and the event hook, also
+// for an angel made as a literal.
+func TestRouteOptionsKeepTheClientAddressCheckAndSetTheHook(t *testing.T) {
+	d := testDesired()
+	inner := remoteAuth{fakeAuth{users: map[string]string{"alice": "secret"}}}
+	o := (&liveAngel{}).coreOptions(d, inner, nil)
+	if o.OnConnEvent == nil {
+		t.Fatal("no connection event hook in the core options")
+	}
+	elsewhere := &net.TCPAddr{IP: net.IPv4(10, 1, 2, 3), Port: 5000}
+	loopback := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 5000}
+	if mihauth.VerifyWithRemote(o.Authenticator, "alice", "secret", elsewhere) {
+		t.Fatal("the core options hide the client-address check of the authenticator")
+	}
+	if !mihauth.VerifyWithRemote(o.Authenticator, "alice", "secret", loopback) {
+		t.Fatal("a right login from an allowed address was refused")
+	}
+	if no := (&liveAngel{}).coreOptions(d, nil, nil); no.Authenticator != nil {
+		t.Error("no authenticator must stay no authenticator")
+	}
+}
+
+func TestConnLogThresholdsAtTheEdge(t *testing.T) {
+	level := func(total, broken int) string {
+		f := newConnLogFixture()
+		f.ended("alice", "main/us", "", 100, total-broken)
+		f.ended("alice", "main/us", "timeout", 10, broken)
+		f.log.flush()
+		if len(f.lines) != 1 {
+			t.Fatalf("total %d broken %d: lines %q", total, broken, f.lines)
+		}
+		return strings.SplitN(f.lines[0], " ", 2)[0]
+	}
+	for _, c := range []struct {
+		total, broken int
+		want          string
+	}{
+		{100, 5, "WARN"}, // exactly a twentieth
+		{101, 5, "INFO"}, // just under it
+		{60, 3, "WARN"},  // the smallest count that can warn
+		{20, 2, "INFO"},  // a tenth, but fewer than three
+		{1000, 3, "INFO"},
+	} {
+		if got := level(c.total, c.broken); got != c.want {
+			t.Errorf("%d broken of %d: %s, want %s", c.broken, c.total, got, c.want)
+		}
+	}
+	// Two failed dials are INFO, three are WARN.
+	for n, want := range map[int]string{2: "INFO", 3: "WARN"} {
+		f := newConnLogFixture()
+		f.dialFail("alice", "main/us", "timeout", n)
+		f.log.flush()
+		if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], want+" ") {
+			t.Errorf("%d failed dials: %q, want one %s", n, f.lines, want)
+		}
+	}
+}
