@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -113,5 +114,62 @@ func TestThroughputPollerNotesTraffic(t *testing.T) {
 	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
 	if health.down("a") {
 		t.Fatal("data came back through the node but it stayed down")
+	}
+}
+
+func dialFail(table *healthTable, label, site string, err error) {
+	table.recordDialAt(label, site, err, 0)
+}
+
+func TestFailedDialsOfOneSiteDoNotBringANodeDown(t *testing.T) {
+	table, _, events := trafficHealth(t)
+	boom := errors.New("connection refused")
+	for i := 0; i < 10; i++ {
+		dialFail(table, "a", "dead.example", boom)
+	}
+	if table.down("a") {
+		t.Fatal("ten failed dials to one site brought the node down")
+	}
+	dialFail(table, "a", "other.example", boom)
+	if !table.down("a") {
+		t.Fatal("failed dials to two sites did not bring the node down")
+	}
+	got := *events
+	if len(got) != 1 || got[0].Reason != "11 dial failures (connection refused)" {
+		t.Fatalf("events = %+v, want one down with the kind", got)
+	}
+}
+
+func TestDialFailuresWithoutASiteCountAsBefore(t *testing.T) {
+	table, _, _ := trafficHealth(t)
+	nodeDown(table, "a")
+	if !table.down("a") {
+		t.Fatal("three failed dials with no site did not bring the node down")
+	}
+}
+
+func TestSuccessForgetsTheSitesOfFailedDials(t *testing.T) {
+	table, _, _ := trafficHealth(t)
+	boom := errors.New("timeout")
+	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "a", "y.example", boom)
+	table.recordDial("a", true, time.Millisecond)
+	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "a", "x.example", boom)
+	if table.down("a") {
+		t.Fatal("the sites of failures before a success were remembered")
+	}
+}
+
+func TestDialFailureKindIsAFixedWord(t *testing.T) {
+	table, _, events := trafficHealth(t)
+	odd := errors.New("dial tcp secret-host: weird failure of kind xyz")
+	for _, site := range []string{"a.example", "b.example", "c.example"} {
+		dialFail(table, "a", site, odd)
+	}
+	got := *events
+	if len(got) != 1 || got[0].Reason != "3 dial failures (error)" {
+		t.Fatalf("events = %+v, want reason with the bare kind 'error'", got)
 	}
 }

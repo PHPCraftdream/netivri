@@ -20,6 +20,10 @@ const (
 
 	downProbeFailures = 2
 	downDialFailures  = 3
+	// downDialSites is how many different sites the failed dials of a node
+	// must span: one unreachable destination (three connections of a browser
+	// to a dead site) is not the node's fault.
+	downDialSites = 2
 
 	// trafficAliveFor is how long data coming back through a node counts as
 	// proof that it is alive: a failed probe within that time is not counted
@@ -72,6 +76,12 @@ type nodeHealth struct {
 
 	consProbeFail int
 	consDialFail  int
+	// dialSites is how many different sites the current run of failed dials
+	// spans (0, 1 or downDialSites for two or more, or an unknown site);
+	// dialSite is the first of them; dialFail the kind of the latest error.
+	dialSites int
+	dialSite  string
+	dialFail  string
 
 	// lastOK is the last successful probe or dial, downSince the moment the
 	// node went down (zero while up) and probeFail the kind of the latest
@@ -120,7 +130,7 @@ func (h *nodeHealth) clock() time.Time {
 // recomputeDown refreshes the atomic flag and reports whether it changed; the
 // caller holds h.mu.
 func (h *nodeHealth) recomputeDown() bool {
-	down := h.consProbeFail >= downProbeFailures || h.consDialFail >= downDialFailures
+	down := h.consProbeFail >= downProbeFailures || (h.consDialFail >= downDialFailures && h.dialSites >= downDialSites)
 	changed := h.downFlag.Swap(down) != down
 	if changed && down {
 		h.downSince = h.clock()
@@ -142,6 +152,8 @@ func (h *nodeHealth) eventLocked() NodeEvent {
 			ev.Reason = fmt.Sprintf("%d probe failures (%s)", h.consProbeFail, h.probeFail)
 		case h.consProbeFail >= downProbeFailures:
 			ev.Reason = fmt.Sprintf("%d probe failures", h.consProbeFail)
+		case h.dialFail != "":
+			ev.Reason = fmt.Sprintf("%d dial failures (%s)", h.consDialFail, h.dialFail)
 		default:
 			ev.Reason = fmt.Sprintf("%d dial failures", h.consDialFail)
 		}
@@ -261,7 +273,8 @@ func plainWord(w string) bool {
 }
 
 // Down reports whether the node is down: 2 consecutive probe failures or 3
-// consecutive dial failures. A success of EITHER kind clears both counters.
+// consecutive dial failures to at least 2 different sites. A success of
+// EITHER kind clears both counters.
 // Data coming back through the node (noteTraffic) clears the probe counter and
 // keeps further probe failures from counting for trafficAliveFor.
 func (h *nodeHealth) Down() bool { return h.downFlag.Load() }
@@ -306,7 +319,7 @@ func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 	if alive {
 		h.consProbeFail = 0
-		h.consDialFail = 0
+		h.clearDialFailures()
 		h.probeFail = ""
 		h.lastOK = h.clock()
 		// The first sample initialises the EWMA instead of averaging into 0.
@@ -323,9 +336,33 @@ func (h *nodeHealth) applyProbe(alive bool, delay time.Duration) bool {
 	return h.recomputeDown()
 }
 
+// clearDialFailures forgets the run of failed dials.
+func (h *nodeHealth) clearDialFailures() {
+	h.consDialFail, h.dialSites, h.dialSite, h.dialFail = 0, 0, "", ""
+}
+
+// noteDialSite adds the site of a failed dial to the run; an unknown site
+// ("") counts as a different one.
+func (h *nodeHealth) noteDialSite(site string) {
+	switch {
+	case site == "":
+		h.dialSites = downDialSites
+	case h.dialSites == 0:
+		h.dialSite, h.dialSites = site, 1
+	case h.dialSites == 1 && h.dialSite != site:
+		h.dialSites = downDialSites
+	}
+}
+
 func (h *nodeHealth) recordDial(ok bool, took time.Duration) {
+	h.recordDialAt(ok, took, "", "")
+}
+
+// recordDialAt is recordDial with the site that was dialled and the kind of
+// the error of a failed dial (both may be empty).
+func (h *nodeHealth) recordDialAt(ok bool, took time.Duration, site, kind string) {
 	h.mu.Lock()
-	changed := h.applyDial(ok, took)
+	changed := h.applyDial(ok, took, site, kind)
 	var ev NodeEvent
 	if changed {
 		ev = h.eventLocked()
@@ -335,9 +372,9 @@ func (h *nodeHealth) recordDial(ok bool, took time.Duration) {
 }
 
 // applyDial is recordDial under h.mu; it reports a change of the down state.
-func (h *nodeHealth) applyDial(ok bool, took time.Duration) bool {
+func (h *nodeHealth) applyDial(ok bool, took time.Duration, site, kind string) bool {
 	if ok {
-		h.consDialFail = 0
+		h.clearDialFailures()
 		h.consProbeFail = 0
 		h.lastOK = h.clock()
 		if !h.hasDial {
@@ -348,6 +385,10 @@ func (h *nodeHealth) applyDial(ok bool, took time.Duration) bool {
 		}
 	} else {
 		h.consDialFail++
+		h.noteDialSite(site)
+		if kind != "" {
+			h.dialFail = kind
+		}
 	}
 	h.recordOutcome(ok)
 	return h.recomputeDown()
@@ -509,6 +550,9 @@ func (h *nodeHealth) cloneFor(notify func(NodeEvent)) *nodeHealth {
 		ringPos:       h.ringPos,
 		consProbeFail: h.consProbeFail,
 		consDialFail:  h.consDialFail,
+		dialSites:     h.dialSites,
+		dialSite:      h.dialSite,
+		dialFail:      h.dialFail,
 		lastOK:        h.lastOK,
 		downSince:     h.downSince,
 		probeFail:     h.probeFail,
@@ -544,6 +588,23 @@ func (t *healthTable) recordDial(label string, ok bool, took time.Duration) {
 	if h := t.entries[label]; h != nil {
 		h.recordDial(ok, took)
 	}
+}
+
+// recordDialAt records a dial of site with its error (nil on success).
+func (t *healthTable) recordDialAt(label, site string, err error, took time.Duration) {
+	h := t.entries[label]
+	if h == nil {
+		return
+	}
+	kind := ""
+	if err != nil {
+		// Only the fixed kinds: a dial error may name the destination, so the
+		// free text probeFailKind keeps for unknown probe errors is dropped.
+		if kind = probeFailKind(err); strings.HasPrefix(kind, "error") {
+			kind = "error"
+		}
+	}
+	h.recordDialAt(err == nil, took, site, kind)
 }
 
 // noteTraffic records data coming back through a node, see nodeHealth.noteTraffic.

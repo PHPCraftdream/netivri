@@ -177,7 +177,7 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		GlobalPost:     d.cfg.Chain.PostSOCKS5,
 		NodeLabels:     d.pool.labels,
 		NodeTiers:      d.pool.tiers,
-		OnNodeHealth:   nodeHealthLogger(d.pool.infos, l.logf, l.warnf),
+		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.logf, l.warnf),
 		Observer:       observer,
 		Warm:           warmOptions(d.pool.nodes),
 		AffinityTTL:    stats.BindingTTL,

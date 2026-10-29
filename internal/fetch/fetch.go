@@ -267,7 +267,34 @@ func classifyErr(err error, t *targetURL) *cli.Error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return fetchFailed(t, "request timed out or canceled")
 	}
+	if kind := failKind(err); kind != "" {
+		return fetchFailed(t, "request failed: "+kind)
+	}
 	return fetchFailed(t, "request failed")
+}
+
+// failKind names the kind of a transport failure from a fixed list, or "" for
+// one it does not know. Never the text of the error, which may hold a host.
+func failKind(err error) string {
+	var netErr net.Error
+	msg := strings.ToLower(err.Error())
+	switch {
+	case errors.As(err, &netErr) && netErr.Timeout(), strings.Contains(msg, "timeout"):
+		return "timeout"
+	case strings.Contains(msg, "refused"):
+		return "connection refused"
+	case strings.Contains(msg, "reset") || strings.Contains(msg, "forcibly closed") || strings.Contains(msg, "broken pipe"):
+		return "connection reset"
+	case strings.Contains(msg, "no such host") || strings.Contains(msg, "lookup"):
+		return "dns failure"
+	case strings.Contains(msg, "unreachable") || strings.Contains(msg, "no route to host") || strings.Contains(msg, "network is down"):
+		return "network unreachable"
+	case errors.Is(err, io.EOF) || strings.Contains(msg, "eof"):
+		return "connection closed"
+	case strings.Contains(msg, "tls") || strings.Contains(msg, "certificate") || strings.Contains(msg, "handshake"):
+		return "handshake failed"
+	}
+	return ""
 }
 
 // redirectPolicy enforces the redirect rules; errors are turned into

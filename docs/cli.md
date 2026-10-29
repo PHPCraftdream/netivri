@@ -305,7 +305,13 @@ failures`. `{WORDS}` is a short excerpt of the error in which every word that co
 an address, host, port, path or credential is replaced by `<addr>`. A node that goes
 down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
 within the last hour (...)`, says so, and its further down and back lines are `INFO`
-until it has been quiet for an hour (a flapping node does not count toward a burst). The
+until it has been quiet for an hour (a flapping node does not count toward a burst). Only
+a node of the first tier of some account's route raises a `WARN` for going down or flapping; the
+nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up.
+The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
+(`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
+`connection closed`, `handshake failed` or `error`); dial failures count only when they reached 2
+different sites. The
 same node id under two providers is one server: when its twin goes down within 10 seconds,
 that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for
 bursts and flapping. A node

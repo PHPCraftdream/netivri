@@ -133,6 +133,28 @@ func inheritChain(account, global string) string {
 	return global
 }
 
+// firstTierLabels returns the labels of the nodes of the first tier of any
+// route: the nodes an account uses while it is healthy, so the ones whose
+// trouble is worth a warning.
+func (p routePool) firstTierLabels() map[string]bool {
+	first := map[string]bool{}
+	for key, tiers := range p.tiers {
+		if len(tiers) == 0 {
+			continue
+		}
+		lowest := tiers[0]
+		for _, t := range tiers {
+			lowest = min(lowest, t)
+		}
+		for i, t := range tiers {
+			if t == lowest && i < len(p.labels[key]) {
+				first[p.labels[key][i]] = true
+			}
+		}
+	}
+	return first
+}
+
 func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string) (routePool, error) {
 	pool := routePool{
 		nodes:         map[string][]map[string]any{},

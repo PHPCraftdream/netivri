@@ -296,6 +296,19 @@ withdrawn pre-releases.
   clears its failed probes and, for 60 seconds, a failed probe does not count
   toward the down rule; failed dials still do. A node that the probes alone
   declared down is back as soon as data flows through it.
+- **One unreachable site no longer takes a node down.** Three failed dials in a
+  row marked a node down even when they were all to the same dead destination
+  (a browser opening three connections to it): a node that had answered a second
+  earlier went down, a burst of four nodes was reported, and the sites bound to
+  them moved to a fallback country. Failed dials now count toward the down rule
+  only when they reached at least 2 different sites. The reason of such a down
+  names the kind of the last error from a fixed list (`3 dial failures
+  (timeout)`), never its text, and `refresh failed` of a subscription names
+  the kind too (`request failed: timeout`).
+- **Only first-tier nodes raise warnings.** `node ... is down` and `... is
+  flapping` are `WARN` for the nodes of the first tier of some account's route
+  and `INFO` for the nodes of later tiers, which no account uses while its first
+  tier is up; the burst summary stays a `WARN`.
 - **One server under two providers is one node in the log.** The same node id
   in two subscriptions (`own/a970e0d9fef1` and `main/a970e0d9fef1`) is one
   server: when its twin goes down within 10 seconds, the second line is `INFO`
