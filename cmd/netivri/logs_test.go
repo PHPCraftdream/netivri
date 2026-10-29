@@ -314,3 +314,19 @@ func TestLogsIsRegisteredAndNotPlanned(t *testing.T) {
 		}
 	}
 }
+
+func TestLogsHidesDebugUnlessAsked(t *testing.T) {
+	home := t.TempDir()
+	seedLog(t, home, logsSample+"2026-10-24T10:08:00Z DEBUG node own/x is down: 2 probe failures (timeout)\n")
+	items, err := logsRun(t, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 4 {
+		t.Fatalf("default level shows %d entries, want 4 without the DEBUG one: %v", len(items), items)
+	}
+	items, err = logsRun(t, home, "--level", "debug")
+	if err != nil || len(items) != 5 {
+		t.Fatalf("--level debug: %d entries (err %v), want 5", len(items), err)
+	}
+}

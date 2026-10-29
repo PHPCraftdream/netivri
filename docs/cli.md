@@ -307,7 +307,9 @@ down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 do
 within the last hour (...)`, says so, and its further down and back lines are `INFO`
 until it has been quiet for an hour (a flapping node does not count toward a burst). Only
 a node of the first tier of some account's route raises a `WARN` for going down or flapping; the
-nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up.
+nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up,
+and what they repeat (the downs and backs of a flapping node after its `flapping` line, the down of a
+twin) at `DEBUG`, which `logs` shows only with `--level debug`.
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
 `connection closed`, `handshake failed` or `error`); dial failures count only when they reached 2
@@ -334,7 +336,7 @@ bigger than 8 MiB; `logs` reads the current file only.
 | Flag | Meaning |
 |---|---|
 | `--follow` | Keep running and print new entries until interrupted; wait for the log when the angel has not started yet. |
-| `--level L` | Only this level and above (default: all). |
+| `--level L` | Only this level and above (default: `info`; `debug` also shows the repeated reports of nodes no account uses). |
 | `--since D` | Only the last period: `90m`, `24h`, `7d`, ... (at most `365d`). |
 | `--tail N` | At most the newest `N` entries (default `100`, `0` for all). With `--follow` it limits the backlog shown first. |
 

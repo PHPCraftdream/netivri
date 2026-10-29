@@ -378,7 +378,10 @@ downs drop below 3 again (checked at its next down), and its downs do not count
 toward a burst. Only a first-tier node (the first tier of some account's
 route, `routePool.firstTierLabels`) is a `WARN` for its down and flapping
 lines; the nodes of fallback tiers are `INFO`, because no account uses them
-while its first tier is up (the burst summary stays a `WARN`). The reason of a
+while its first tier is up (the burst summary stays a `WARN`). For a fallback node the lines that repeat what
+the log already says (the downs and backs of a flapping server after its flapping
+notice, a twin's down) are `DEBUG`, which `netivri logs` hides unless `--level debug`
+is given. The reason of a
 dial-failure down names the kind of the last error from a fixed list (`3 dial
 failures (timeout)`), never its text. The same id under two providers is one server (`serverID`, the
 part of the label after the provider): drops and flapping are kept per server, and

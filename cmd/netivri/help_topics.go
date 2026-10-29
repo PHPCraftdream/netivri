@@ -662,7 +662,8 @@ var helpTopics = []helpTopic{
 			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
 			"reason) or coming back (with the downtime), each with a time and a level. Three or more nodes " +
 			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
-			"hour is one 'flapping' warning, not a warning per drop. It " +
+			"hour is one 'flapping' warning, not a warning per drop; the repeats of nodes no account uses are DEBUG " +
+			"lines, shown only with --level debug. It " +
 			"reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
 			"tokens and subscription URLs are never logged.\n\n" +
 			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +

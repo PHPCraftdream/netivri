@@ -80,6 +80,9 @@ type liveAngel struct {
 	// warnf and errorf write the WARN and ERROR lines; they default to logf.
 	warnf  func(format string, args ...any)
 	errorf func(format string, args ...any)
+	// debugf writes the DEBUG lines (hidden by `logs` unless asked); it
+	// defaults to logf.
+	debugf func(format string, args ...any)
 	stop   func() // asks the angel to shut down; idempotent
 
 	reloadMu sync.Mutex // one reload at a time, held across a restart
@@ -122,7 +125,7 @@ type liveAngel struct {
 }
 
 func newLiveAngel(opts upOptions, logf func(format string, args ...any), stop func()) *liveAngel {
-	l := &liveAngel{opts: opts, logf: logf, warnf: logf, errorf: logf, stop: stop}
+	l := &liveAngel{opts: opts, logf: logf, warnf: logf, errorf: logf, debugf: logf, stop: stop}
 	l.writeBindings = func(store *stats.Store, rows []stats.Binding) error {
 		return store.ReplaceBindings(rows)
 	}
@@ -177,7 +180,7 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		GlobalPost:     d.cfg.Chain.PostSOCKS5,
 		NodeLabels:     d.pool.labels,
 		NodeTiers:      d.pool.tiers,
-		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.logf, l.warnf),
+		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.debugf, l.logf, l.warnf),
 		Observer:       observer,
 		Warm:           warmOptions(d.pool.nodes),
 		AffinityTTL:    stats.BindingTTL,

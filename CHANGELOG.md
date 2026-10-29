@@ -310,6 +310,11 @@ withdrawn pre-releases.
   flapping` are `WARN` for the nodes of the first tier of some account's route
   and `INFO` for the nodes of later tiers, which no account uses while its first
   tier is up; the burst summary stays a `WARN`.
+- **Fallback nodes no longer fill the log.** The repeated reports of a node no
+  account uses (its downs and backs after its `flapping` line, the down of a
+  twin of the same server) are written at the new `DEBUG` level, and `netivri
+  logs` shows `info` and above unless `--level debug` is given. On a real setup
+  four unused nodes wrote about 45 lines in 2.5 hours.
 - **One server under two providers is one node in the log.** The same node id
   in two subscriptions (`own/a970e0d9fef1` and `main/a970e0d9fef1`) is one
   server: when its twin goes down within 10 seconds, the second line is `INFO`

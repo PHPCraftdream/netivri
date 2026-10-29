@@ -430,3 +430,75 @@ func TestFirstTierLabels(t *testing.T) {
 		t.Errorf("firstTierLabels = %v, want %v", got, want)
 	}
 }
+
+// debugFixture is a twin fixture that also collects DEBUG lines, with own/a
+// the only first-tier node.
+func debugFixture(t *testing.T) *burstFixture {
+	t.Helper()
+	f := twinFixture(t)
+	f.log.first = map[string]bool{"own/a": true, "main/a": true}
+	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
+	return f
+}
+
+func TestNodeLogRepeatsOfFlappingFallbackNodesAreDebug(t *testing.T) {
+	f := debugFixture(t)
+	// own/c is a fallback node: three downs make it flap, the rest is DEBUG.
+	for i := 0; i < 5; i++ {
+		f.downLabel("own/c")
+		f.now = f.now.Add(30 * time.Second)
+		f.log.event(core.NodeEvent{Label: "own/c", Downtime: 30 * time.Second})
+		f.now = f.now.Add(3 * time.Minute)
+	}
+	if got := f.countContaining("own/c (provider own, country FI) is flapping"); got != 1 {
+		t.Errorf("%d flapping lines, want 1: %q", got, f.lines)
+	}
+	if got := f.count("WARN"); got != 0 {
+		t.Errorf("a fallback node warned: %q", f.lines)
+	}
+	if got := f.count("DEBUG node own/c"); got != 3+3 {
+		t.Errorf("%d DEBUG lines, want 3 downs and 3 backs after the flapping notice: %q", got, f.lines)
+	}
+	// Two downs and two backs before it flapped were INFO.
+	if got := f.count("INFO node own/c"); got != 2+2+1 {
+		t.Errorf("%d INFO lines, want 2 downs, 2 backs and the flapping notice: %q", got, f.lines)
+	}
+}
+
+func TestNodeLogFirstTierRepeatsStayInfo(t *testing.T) {
+	f := debugFixture(t)
+	for i := 0; i < 5; i++ {
+		f.downLabel("own/a")
+		f.now = f.now.Add(30 * time.Second)
+		f.log.event(core.NodeEvent{Label: "own/a", Downtime: 30 * time.Second})
+		f.now = f.now.Add(3 * time.Minute)
+	}
+	if got := f.count("DEBUG"); got != 0 {
+		t.Errorf("a first-tier node wrote DEBUG lines: %q", f.lines)
+	}
+}
+
+func TestNodeLogTwinOfAFallbackNodeIsDebug(t *testing.T) {
+	f := debugFixture(t)
+	f.downLabel("own/b")
+	f.downLabel("main/b")
+	if got := f.countContaining("same server as own/b"); got != 1 || f.count("DEBUG node main/b") != 1 {
+		t.Errorf("twin of a fallback node must be one DEBUG line: %q", f.lines)
+	}
+	// The twin of a first-tier node stays INFO.
+	f.downLabel("own/a")
+	f.downLabel("main/a")
+	if f.count("INFO node main/a") != 1 || f.count("DEBUG node main/a") != 0 {
+		t.Errorf("twin of a first-tier node must be INFO: %q", f.lines)
+	}
+}
+
+func TestNodeLogWithoutADebugWriterRepeatsAreInfo(t *testing.T) {
+	f := twinFixture(t)
+	f.log.first = map[string]bool{"own/a": true}
+	f.downLabel("own/b")
+	f.downLabel("main/b")
+	if got := f.count("INFO node main/b"); got != 1 {
+		t.Errorf("without a debug writer the twin line must stay INFO: %q", f.lines)
+	}
+}

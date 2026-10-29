@@ -40,10 +40,13 @@ type logFunc = func(format string, args ...any)
 // nodes of the routes: only their downs are warnings, the nodes of fallback
 // tiers (no account uses them while the first tier is up) are INFO. A nil
 // first makes every node a warning.
-func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, info, warn logFunc) func(core.NodeEvent) {
+func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, debug, info, warn logFunc) func(core.NodeEvent) {
 	l := newNodeLog(infos, info, warn, time.Now)
 	if l == nil {
 		return nil
+	}
+	if debug != nil {
+		l.debug = debug
 	}
 	l.first = first
 	return l.event
@@ -64,6 +67,7 @@ func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, info, warn 
 // INFO line closes it.
 type nodeLog struct {
 	info, warn logFunc
+	debug      logFunc // repeats of fallback nodes; INFO unless set
 	now        func() time.Time
 	byLabel    map[string]stats.NodeInfo
 	started    time.Time
@@ -103,7 +107,7 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 	if len(infos) == 0 {
 		return nil
 	}
-	l := &nodeLog{info: info, warn: warn, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
+	l := &nodeLog{info: info, warn: warn, debug: info, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
 		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
@@ -137,11 +141,11 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
 	}
 	if twin, ok := l.twinOf(l.lastDown, ev, now); ok {
-		l.info("%s, same server as %s", line, twin)
+		l.repeat(ev.Label, "%s, same server as %s", line, twin)
 		return
 	}
 	if l.flaps(ev, now) {
-		l.info("%s", line)
+		l.repeat(ev.Label, "%s", line)
 		return
 	}
 	if len(l.window) == 0 || now.Sub(l.windowStart) > burstWindow {
@@ -212,6 +216,17 @@ func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 	return true
 }
 
+// repeat logs a line that adds nothing to what is already in the log (a down
+// of a flapping server, a twin's down): INFO for a first-tier node, DEBUG for
+// the others, so the log of an account is not filled by nodes it never uses.
+func (l *nodeLog) repeat(label, format string, args ...any) {
+	if l.first == nil || l.first[label] {
+		l.info(format, args...)
+		return
+	}
+	l.debug(format, args...)
+}
+
 // nodeWarn logs a per-node line at WARN for a first-tier node and at INFO for
 // the others (see nodeHealthLogger).
 func (l *nodeLog) nodeWarn(label, format string, args ...any) {
@@ -227,7 +242,11 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	if ev.Downtime > 0 {
 		line += " after " + ev.Downtime.Round(time.Second).String() + " down"
 	}
-	l.info("%s", line)
+	if l.flapping[serverID(ev.Label)] {
+		l.repeat(ev.Label, "%s", line)
+	} else {
+		l.info("%s", line)
+	}
 	if _, in := l.burst[ev.Label]; !in {
 		return
 	}
