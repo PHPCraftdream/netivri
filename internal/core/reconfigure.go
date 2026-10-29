@@ -136,7 +136,7 @@ func (i *Instance) Reconfigure(o Options) error {
 	table.setReturnAfter(o.TierReturnAfter)
 	table.carryCounters(old.table)
 	loadInitialBindings(table, plans, o.AccountRoute, sameRouteBindings(old.snapshotBindings(), old.accountRoutes, o.AccountRoute))
-	groups, err := buildStickyGroups(plans, members, table, health, o.Observer)
+	groups, err := buildStickyGroups(plans, members, table, health, o.Observer, o.OnConnEvent)
 	if err != nil {
 		return err
 	}

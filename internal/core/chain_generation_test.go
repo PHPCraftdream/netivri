@@ -106,7 +106,7 @@ func TestDirectRouteBuildStickyGroupUsesBuiltinDirect(t *testing.T) {
 			t.Fatalf("planProxyNames lists the built-in DIRECT: %v", planProxyNames(plans))
 		}
 	}
-	groups, err := buildStickyGroups(plans, map[string]C.Proxy{"DIRECT": direct}, newAffinityTable(nil, 0), newHealthTable(), nil)
+	groups, err := buildStickyGroups(plans, map[string]C.Proxy{"DIRECT": direct}, newAffinityTable(nil, 0), newHealthTable(), nil, nil)
 	if err != nil {
 		t.Fatalf("buildStickyGroups with builtin DIRECT: %v", err)
 	}

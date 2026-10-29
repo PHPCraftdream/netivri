@@ -310,6 +310,15 @@ a node of the first tier of some account's route raises a `WARN` for going down 
 nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up,
 and what they repeat (the downs and backs of a flapping node after its `flapping` line, the down of a
 twin) at `DEBUG`, which `logs` shows only with `--level debug`.
+
+What happens to the connections of the accounts is reported once a minute, one line per account and
+node and kind, only when something went wrong, and never with a site, an address, an error text or a
+password: `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
+failures, `INFO` below); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
+x4, timeout x1), 3 closed without any data` (a connection is broken when the node's side of it
+returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
+`account alice: 3 sites moved from {NODE} to {NODE}: node down` (`WARN`; `better tier` is `INFO`);
+`4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
 `connection closed`, `handshake failed` or `error`); dial failures count only when they reached 2

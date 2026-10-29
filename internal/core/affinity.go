@@ -113,7 +113,7 @@ func (t *affinityTable) shardIndex(login, site string) int {
 // real rebind (the shard lock serialises concurrent callers). isDown and pick
 // may read the health table but must not take shard locks.
 func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, pick func() (member int, provisional bool)) (member int, rebound bool) {
-	member, rebound, _ = t.acquireWith(key, isDown, nil, pick)
+	member, rebound, _, _ = t.acquireWith(key, isDown, nil, pick)
 	return member, rebound
 }
 
@@ -122,15 +122,16 @@ func (t *affinityTable) acquire(key affinityKey, isDown func(member int) bool, p
 // up long enough, and a live binding whose member is not down is then picked
 // again for this connection (returned is true when the site really moved).
 // Open connections are not touched. like isDown, better runs under the shard
-// lock and must not take shard locks.
-func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) bool, better func(member int, now time.Time) bool, pick func() (member int, provisional bool)) (member int, rebound, returned bool) {
+// lock and must not take shard locks. from is the member the site left when
+// rebound or returned is true, otherwise -1.
+func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) bool, better func(member int, now time.Time) bool, pick func() (member int, provisional bool)) (member int, rebound, returned bool, from int) {
 	now := t.now()
 	shard := t.shards[t.shardIndex(key.login, key.site)]
 	shard.mu.RLock()
 	if b, ok := shard.bindings[key]; ok && !t.expired(b, now) && !isDown(b.member) && (better == nil || !better(b.member, now)) {
 		b.lastUsed.Store(now.UnixNano())
 		shard.mu.RUnlock()
-		return b.member, false, false
+		return b.member, false, false, -1
 	}
 	shard.mu.RUnlock()
 
@@ -147,7 +148,7 @@ func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) boo
 				wasWorse, previous = true, b.member
 			default:
 				b.lastUsed.Store(now.UnixNano())
-				return b.member, false, false
+				return b.member, false, false, -1
 			}
 		} else {
 			delete(shard.bindings, key)
@@ -170,7 +171,11 @@ func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) boo
 	if len(shard.bindings) > shard.cap {
 		shard.evictOldest()
 	}
-	return member, rebound, returned
+	from = -1
+	if rebound || returned {
+		from = previous
+	}
+	return member, rebound, returned, from
 }
 
 // peek returns the live binding's member without refreshing it or creating

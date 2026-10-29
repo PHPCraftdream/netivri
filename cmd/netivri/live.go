@@ -83,7 +83,11 @@ type liveAngel struct {
 	// debugf writes the DEBUG lines (hidden by `logs` unless asked); it
 	// defaults to logf.
 	debugf func(format string, args ...any)
-	stop   func() // asks the angel to shut down; idempotent
+	// conns reports what happens to the connections of the accounts; see
+	// connLog().
+	conns     *connLog
+	connsOnce sync.Once
+	stop      func() // asks the angel to shut down; idempotent
 
 	reloadMu sync.Mutex // one reload at a time, held across a restart
 
@@ -167,11 +171,12 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 	if store != nil {
 		observer = statsObserver{store: store}
 	}
+	l.connLog().setNodes(d.pool.infos)
 	return core.Options{
 		HomeDir:        l.opts.Home,
 		Bind:           d.bind,
 		Port:           d.port,
-		Authenticator:  a,
+		Authenticator:  l.connLog().wrapAuth(a),
 		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
 		RouteNodes:     d.pool.nodes,
 		AccountRoute:   d.pool.accountRoutes,
@@ -180,6 +185,7 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		GlobalPost:     d.cfg.Chain.PostSOCKS5,
 		NodeLabels:     d.pool.labels,
 		NodeTiers:      d.pool.tiers,
+		OnConnEvent:    l.connLog().event,
 		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.debugf, l.logf, l.warnf),
 		Observer:       observer,
 		Warm:           warmOptions(d.pool.nodes),
@@ -511,11 +517,23 @@ func (l *liveAngel) watch(ctx context.Context, every time.Duration) {
 	}
 }
 
+// connLog is the connection report, made on first use (a liveAngel built as a
+// literal in a test has none); its writers are looked up at each line, since
+// up.go sets warnf after the angel is made.
+func (l *liveAngel) connLog() *connLog {
+	l.connsOnce.Do(func() {
+		l.conns = newConnLog(
+			func(format string, args ...any) { l.logf(format, args...) },
+			func(format string, args ...any) { l.warnf(format, args...) })
+	})
+	return l.conns
+}
+
 // startLoops starts the file watcher and the subscription refresh.
 func (l *liveAngel) startLoops() {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.loopsCancel = cancel
-	l.loopsRunning.Add(3)
+	l.loopsRunning.Add(4)
 	go func() {
 		defer l.loopsRunning.Done()
 		l.watch(ctx, watchEvery)
@@ -527,6 +545,10 @@ func (l *liveAngel) startLoops() {
 	go func() {
 		defer l.loopsRunning.Done()
 		l.bindingWriterLoop(ctx)
+	}()
+	go func() {
+		defer l.loopsRunning.Done()
+		l.connLog().run(ctx, connLogEvery)
 	}()
 }
 
