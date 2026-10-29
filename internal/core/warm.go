@@ -77,9 +77,13 @@ type WarmOptions struct {
 // NodeHealth is the most recent probe result for one proxy.
 type NodeHealth struct {
 	Name      string
-	Alive     bool
+	Alive     bool // the last probe succeeded
 	Delay     time.Duration
 	CheckedAt time.Time
+	// Down is the routing state of the node (see nodeHealth.Down): false for
+	// a node whose last probe failed once or that carries traffic. Set by
+	// Instance.WarmStats, not by the warmer.
+	Down bool
 }
 
 // WarmStats is a point-in-time copy of warmer counters and health results.

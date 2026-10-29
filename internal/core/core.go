@@ -404,11 +404,25 @@ func (i *Instance) Route() string {
 // WarmStats returns the warm-up counters and node health, and false when the
 // instance runs without Options.Warm.
 func (i *Instance) WarmStats() (WarmStats, bool) {
-	warm := i.state().warm
-	if warm == nil {
+	st := i.state()
+	if st.warm == nil {
 		return WarmStats{}, false
 	}
-	return warm.Stats(), true
+	ws := st.warm.Stats()
+	annotateDown(ws.Nodes, st.health, st.memberLabels)
+	return ws, true
+}
+
+// annotateDown sets NodeHealth.Down from the routing state of the sticky
+// groups: the probe result alone says a node is not alive after one failed
+// probe, while the routing keeps using it until it is down.
+func annotateDown(nodes []NodeHealth, health *healthTable, labels map[string]string) {
+	if health == nil {
+		return
+	}
+	for k := range nodes {
+		nodes[k].Down = health.down(labels[nodes[k].Name])
+	}
 }
 
 // AffinityStats returns the live number of site bindings and the rebind

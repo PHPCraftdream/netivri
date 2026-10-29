@@ -293,7 +293,7 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 	aliveIn := func(i int) int {
 		n := 0
 		for _, node := range tiers[i].Nodes {
-			if h, ok := d.health[node.Label]; ok && h.Alive {
+			if h, ok := d.health[node.Label]; ok && nodeInService(h) {
 				n++
 			}
 		}
@@ -319,6 +319,16 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 		}
 	}
 	return doctorCheck{name, doctorFail, "no live node on the route"}
+}
+
+// nodeInService is whether new connections of an account can use the node: the
+// routing state when the angel reports it (a node whose last probe failed once
+// is still in service), the last probe otherwise.
+func nodeInService(h angel.NodeHealth) bool {
+	if h.Down != nil {
+		return !*h.Down
+	}
+	return h.Alive
 }
 
 // fallbackUse counts the open connections of the account on nodes of the

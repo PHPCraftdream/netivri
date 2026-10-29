@@ -188,3 +188,34 @@ func TestDialFailureKindIsAFixedWord(t *testing.T) {
 		t.Fatalf("events = %+v, want reason with the bare kind 'error'", got)
 	}
 }
+
+// A node whose last probe failed once is not alive but is not down either: the
+// routing keeps using it, and the status has to say so.
+func TestAnnotateDownFollowsTheRoutingState(t *testing.T) {
+	table, _, _ := trafficHealth(t) // node "a", probed ok
+	table.register([]string{"b"})
+	table.recordProbe("b", true, time.Millisecond)
+
+	table.recordProbe("a", false, 0) // one failed probe: not down
+	nodes := []NodeHealth{
+		{Name: "netivri-r0-0", Alive: false},
+		{Name: "netivri-r0-1", Alive: true},
+		{Name: "netivri-r0-9", Alive: true}, // unknown to the groups
+	}
+	labels := map[string]string{"netivri-r0-0": "a", "netivri-r0-1": "b"}
+	annotateDown(nodes, table, labels)
+	if nodes[0].Down || nodes[1].Down || nodes[2].Down {
+		t.Fatalf("after one failed probe: %+v, want nothing down", nodes)
+	}
+
+	table.recordProbe("a", false, 0) // the second: down
+	annotateDown(nodes, table, labels)
+	if !nodes[0].Down || nodes[1].Down || nodes[2].Down {
+		t.Fatalf("after two failed probes: %+v, want only the first down", nodes)
+	}
+
+	annotateDown(nodes, nil, labels) // no groups: the field is left alone
+	if !nodes[0].Down {
+		t.Error("annotateDown without a table cleared Down")
+	}
+}

@@ -168,7 +168,7 @@ func TestConnLogRunFlushesOnTickAndAtTheEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		f.log.run(ctx, 20*time.Millisecond)
+		f.log.run(ctx, 20*time.Millisecond, time.Hour)
 		close(done)
 	}()
 	f.dialFail("alice", "main/us", "timeout", 3)
@@ -299,6 +299,70 @@ func TestConnLogThresholdsAtTheEdge(t *testing.T) {
 		f.log.flush()
 		if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], want+" ") {
 			t.Errorf("%d failed dials: %q, want one %s", n, f.lines, want)
+		}
+	}
+}
+
+func TestConnLogHeartbeatSaysNoneInsteadOfNothing(t *testing.T) {
+	f := newConnLogFixture()
+	f.log.heartbeat() // nothing happened: no line
+	if len(f.lines) != 0 {
+		t.Fatalf("lines for an idle hour: %q", f.lines)
+	}
+
+	f.ended("alice", "main/us", "", 500, 40)
+	f.ended("alice", "own/nl", "", 0, 2)
+	f.ended("alice", "main/us", "timeout", 10, 1)
+	f.dialFail("alice", "main/us", "timeout", 3)
+	f.ended("bob", "own/nl", "", 5, 7)
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "carol", From: "main/us", Label: "own/nl", Why: core.MoveNodeDown})
+	f.log.flush()
+	f.lines = nil // the per-minute lines are not the subject here
+
+	f.log.heartbeat()
+	want := []string{
+		"INFO account alice: last hour: 43 connections ended, 1 broken, 2 closed without any data, 3 dials failed",
+		"INFO account bob: last hour: 7 connections ended, 0 broken, 0 closed without any data, 0 dials failed",
+	}
+	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines =\n%s\nwant\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
+	}
+	f.lines = nil
+	f.log.heartbeat() // the hour is reset
+	if len(f.lines) != 0 {
+		t.Errorf("the hour was not reset: %q", f.lines)
+	}
+	// An account with only failed dials is in the summary too.
+	f.dialFail("dave", "main/us", "timeout", 1)
+	f.log.heartbeat()
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "account dave: last hour: 0 connections ended, 0 broken, 0 closed without any data, 1 dials failed") {
+		t.Errorf("lines = %q", f.lines)
+	}
+}
+
+func TestConnLogRunWritesTheHeartbeat(t *testing.T) {
+	f := newConnLogFixture()
+	lines := make(chan string, 64)
+	f.log.info = func(format string, args ...any) { lines <- fmt.Sprintf(format, args...) }
+	f.log.warn = f.log.info
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		f.log.run(ctx, time.Hour, 20*time.Millisecond)
+		close(done)
+	}()
+	f.ended("alice", "main/us", "", 10, 4)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case line := <-lines:
+			if strings.Contains(line, "account alice: last hour: 4 connections ended") {
+				cancel()
+				<-done
+				return
+			}
+		case <-deadline:
+			t.Fatal("no heartbeat within a few periods")
 		}
 	}
 }

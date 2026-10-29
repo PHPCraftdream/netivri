@@ -548,7 +548,7 @@ func (l *liveAngel) startLoops() {
 	}()
 	go func() {
 		defer l.loopsRunning.Done()
-		l.connLog().run(ctx, connLogEvery)
+		l.connLog().run(ctx, connLogEvery, connBeatEvery)
 	}()
 }
 

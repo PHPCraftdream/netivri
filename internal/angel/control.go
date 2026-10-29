@@ -77,6 +77,10 @@ type NodeHealth struct {
 	// Label is the node label ({PROVIDER}/{NODE_ID}); empty when the
 	// instance runs without account routes.
 	Label string `json:"label,omitempty"`
+	// Down is the routing state of the node: true once its probes or dials
+	// failed enough for new connections to skip it. A single failed probe
+	// makes Alive false but not Down. nil when unknown.
+	Down *bool `json:"down,omitempty"`
 	// Provider, Country and NodeName describe the node behind the label the
 	// way `stats` and `activity` do; empty when unknown.
 	Provider string `json:"provider,omitempty"`

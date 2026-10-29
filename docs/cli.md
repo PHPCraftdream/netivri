@@ -311,6 +311,10 @@ nodes of later tiers are logged at `INFO`, since no account uses them while its 
 and what they repeat (the downs and backs of a flapping node after its `flapping` line, the down of a
 twin) at `DEBUG`, which `logs` shows only with `--level debug`.
 
+Once an hour each account that had connections gets one summary line, `account alice: last hour: 412
+connections ended, 0 broken, 3 closed without any data, 0 dials failed`, so that a log without a report of
+broken connections says "none" and not nothing.
+
 What happens to the connections of the accounts is reported once a minute, one line per account and
 node and kind, only when something went wrong, and never with a site, an address, an error text or a
 password: `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
@@ -450,7 +454,7 @@ The checks:
 | `angel` | An angel runs for this state directory (pid, uptime). |
 | `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
-| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a live node in the first tier that has nodes (`warn` when only a fallback tier is alive, `fail` when none is). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
+| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
 | `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
@@ -508,7 +512,9 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   provider, country and tier index (from 0) and, while the
   angel runs, live data: alive or down with the last probe delay and the
   account's live connections through the node. Without a running angel
-  `live` is false and every live field is null. With one, `alive` and
+  `live` is false and every live field is null. With one, `alive` (the last
+  probe succeeded) and `down` (the routing skips the node for new connections:
+  a single failed probe makes it not alive but not down) and
   `delay_ms` are null for a node the angel's warm-up list does not hold, and
   `connections` is the account's live count (0 for a node it is not using)
   when the angel tracks the account, null when it does not. A (country,
@@ -907,8 +913,9 @@ succeeds again). The short view carries only the summary
 nodes' last probe succeeded, and how many probes ran and failed. With
 `--full`, `warm` has the counters
 `{"probes", "probe_failures", "pool_hits", "pool_misses", "pool_discards",
-"nodes": [{"name", "alive", "delay_ms", "label", "provider", "country",
-"node_name"}]}`. `nodes[].name` is an internal proxy
+"nodes": [{"name", "alive", "down", "delay_ms", "label", "provider", "country",
+"node_name"}]}`. `down` is the routing state (omitted when unknown): a node whose last
+probe failed once is not `alive` but not `down` either. `nodes[].name` is an internal proxy
 name (`netivri-r{R}-{N}`, the route and the node index), never a provider name; `delay_ms` is `0` until a
 probe succeeded. `label` is `{PROVIDER}/{NODE_ID}`, the label of `node list`
 and `stats`; `provider` and `country` name the node's subscription and exit
