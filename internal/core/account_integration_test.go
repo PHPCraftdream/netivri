@@ -286,9 +286,10 @@ func TestAccountRouteAllDeadNodesFailClosed(t *testing.T) {
 
 // One dead and one live node: within a few sequential attempts to the same
 // site one connection succeeds through the live node (the first attempts may
-// fail until the dead node is marked down after 3 failed dials, at which
-// point the same dial is retried once on the live node), and afterwards every
-// further connection to the site succeeds through the live node.
+// fail until the dead node is marked down after 10 failed dials to one site,
+// at which point the same dial is retried once on the live node), and
+// afterwards every further connection to the site succeeds through the live
+// node.
 func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
 	live, liveAddress := startFakeUpstream(t)
 	backend, _ := countEchoServer(t)
@@ -323,13 +324,13 @@ func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
 	target := net.JoinHostPort(domain, mustPort(t, backend))
 
 	succeeded := 0
-	for attempt := 0; attempt < 6 && succeeded == 0; attempt++ {
+	for attempt := 0; attempt < 12 && succeeded == 0; attempt++ {
 		if tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword) == nil {
 			succeeded++
 		}
 	}
 	if succeeded == 0 {
-		t.Fatal("no connection succeeded within 6 attempts")
+		t.Fatal("no connection succeeded within 12 attempts")
 	}
 	if got := live.recorded(); len(got) == 0 || got[0] != target {
 		t.Fatalf("live upstream saw %v, want [%s]", got, target)

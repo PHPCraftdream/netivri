@@ -36,12 +36,16 @@ type logFunc = func(format string, args ...any)
 // the node label, provider and country (never an address or a URL), the reason
 // it went down and how long it was down. Nodes going down together are
 // summed up in one WARN line, see nodeLog. Without route nodes there is nothing
-// to report and it returns nil.
-func nodeHealthLogger(infos []stats.NodeInfo, info, warn logFunc) func(core.NodeEvent) {
+// to report and it returns nil. first holds the labels of the first-tier
+// nodes of the routes: only their downs are warnings, the nodes of fallback
+// tiers (no account uses them while the first tier is up) are INFO. A nil
+// first makes every node a warning.
+func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, info, warn logFunc) func(core.NodeEvent) {
 	l := newNodeLog(infos, info, warn, time.Now)
 	if l == nil {
 		return nil
 	}
+	l.first = first
 	return l.event
 }
 
@@ -63,6 +67,7 @@ type nodeLog struct {
 	now        func() time.Time
 	byLabel    map[string]stats.NodeInfo
 	started    time.Time
+	first      map[string]bool // first-tier labels; nil: every node warns
 
 	mu          sync.Mutex
 	drops       map[string][]drop // recent downs per server, within flapWindow
@@ -146,7 +151,7 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	l.kinds[reasonKind(ev.Reason)]++
 	switch {
 	case len(l.window) < burstNodes:
-		l.warn("%s", line)
+		l.nodeWarn(ev.Label, "%s", line)
 	case len(l.window) == burstNodes:
 		l.warn("%s", l.summary(now))
 		l.info("%s", line)
@@ -201,10 +206,20 @@ func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 		for _, d := range recent {
 			kinds[d.kind]++
 		}
-		l.warn("%s is flapping: %d downs within the last hour (%s); its further down and back reports are INFO",
+		l.nodeWarn(ev.Label, "%s is flapping: %d downs within the last hour (%s); its further down and back reports are INFO",
 			l.describe(ev.Label), len(recent), joinKinds(kinds))
 	}
 	return true
+}
+
+// nodeWarn logs a per-node line at WARN for a first-tier node and at INFO for
+// the others (see nodeHealthLogger).
+func (l *nodeLog) nodeWarn(label, format string, args ...any) {
+	if l.first == nil || l.first[label] {
+		l.warn(format, args...)
+		return
+	}
+	l.info(format, args...)
 }
 
 func (l *nodeLog) back(ev core.NodeEvent) {

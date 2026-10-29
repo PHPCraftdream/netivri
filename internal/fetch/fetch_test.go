@@ -282,3 +282,32 @@ func containsStr(s, sub string) bool {
 }
 
 func redactForTest(s string) string { return "[url]" }
+
+func TestClassifyErrNamesTheKindOfFailure(t *testing.T) {
+	tu, err := parseTarget("https://example.com/secret/token123?tok=abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{errors.New("dial tcp 10.0.0.1:443: i/o timeout"), "request failed: timeout"},
+		{errors.New("dial tcp 10.0.0.1:443: connect: connection refused"), "request failed: connection refused"},
+		{errors.New("read tcp 10.0.0.1:1->10.0.0.2:443: connection reset by peer"), "request failed: connection reset"},
+		{errors.New("dial tcp: lookup example.com: no such host"), "request failed: dns failure"},
+		{errors.New("connect: network is unreachable"), "request failed: network unreachable"},
+		{errors.New("tls: handshake failure"), "request failed: handshake failed"},
+		{errors.New("something nobody expected at example.com"), "request failed"},
+	} {
+		e := classifyErr(c.err, tu)
+		if e.Code != "FETCH_FAILED" || !strings.HasSuffix(e.Message, ": "+c.want) {
+			t.Errorf("classifyErr(%q) = %s %q, want suffix %q", c.err, e.Code, e.Message, c.want)
+		}
+		for _, secret := range []string{"10.0.0.1", "token123"} {
+			if strings.Contains(e.Message, secret) {
+				t.Errorf("message leaks %q: %q", secret, e.Message)
+			}
+		}
+	}
+}

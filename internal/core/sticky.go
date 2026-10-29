@@ -200,7 +200,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 
 	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
 	if recorded {
-		g.health.recordDial(label, err == nil, took)
+		g.health.recordDialAt(label, site, err, took)
 		g.observeDial(label, err == nil, took)
 		g.observeAccountDial(login, label, err == nil, took)
 		if h := g.healths[index]; h != nil {
@@ -223,7 +223,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	retryLabel := g.labels[retry]
 	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
 	if retryRecorded {
-		g.health.recordDial(retryLabel, retryErr == nil, retryTook)
+		g.health.recordDialAt(retryLabel, site, retryErr, retryTook)
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
 		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
 	}

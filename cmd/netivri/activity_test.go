@@ -154,7 +154,7 @@ func TestNodeHealthLoggerWritesDownAndBack(t *testing.T) {
 	hook := nodeHealthLogger([]stats.NodeInfo{
 		{Label: "main/a", Provider: "main", Country: "US"},
 		{Label: "main/b", Provider: "main"},
-	}, info, warn)
+	}, nil, info, warn)
 	if hook == nil {
 		t.Fatal("no hook for a route with nodes")
 	}
@@ -179,7 +179,7 @@ func TestNodeHealthLoggerIncludesTheName(t *testing.T) {
 	warn := func(format string, args ...any) { warnLines = append(warnLines, fmt.Sprintf(format, args...)) }
 	hook := nodeHealthLogger([]stats.NodeInfo{
 		{Label: "own/a970e0d9fef1", Provider: "own", Country: "FI", Name: "Finland 1"},
-	}, info, warn)
+	}, nil, info, warn)
 	if hook == nil {
 		t.Fatal("no hook for a route with nodes")
 	}
@@ -194,7 +194,7 @@ func TestNodeHealthLoggerIncludesTheName(t *testing.T) {
 }
 
 func TestNodeHealthLoggerWithoutNodes(t *testing.T) {
-	if nodeHealthLogger(nil, nil, nil) != nil {
+	if nodeHealthLogger(nil, nil, nil, nil) != nil {
 		t.Fatal("a hook for a route without nodes")
 	}
 }

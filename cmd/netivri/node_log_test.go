@@ -380,3 +380,53 @@ func TestNodeLogNeverAnsweredTwinIsNamed(t *testing.T) {
 		t.Errorf("a down was taken for the twin of a never-answered node: %q", f.lines)
 	}
 }
+
+func TestNodeLogOnlyFirstTierNodesWarn(t *testing.T) {
+	f := newBurstFixture(t, 4)
+	f.log.first = map[string]bool{"p/n0": true}
+	f.down(0, "2 probe failures (timeout)")
+	f.down(1, "2 probe failures (timeout)")
+	if got := f.count("WARN node p/n0"); got != 1 {
+		t.Errorf("first-tier node: %d warnings, want 1: %q", got, f.lines)
+	}
+	if got := f.count("INFO node p/n1"); got != 1 || f.count("WARN node p/n1") != 0 {
+		t.Errorf("fallback node must be INFO: %q", f.lines)
+	}
+	// Flapping of a fallback node is INFO too.
+	for i := 0; i < 3; i++ {
+		f.now = f.now.Add(time.Minute)
+		f.down(2, "2 probe failures (timeout)")
+	}
+	if got := f.count("WARN node p/n2"); got != 0 {
+		t.Errorf("fallback node warned: %q", f.lines)
+	}
+	if got := f.countContaining("p/n2 (provider p, country DE) is flapping"); got != 1 {
+		t.Errorf("flapping line of the fallback node missing: %q", f.lines)
+	}
+	// With no tier information every node still warns.
+	g := newBurstFixture(t, 2)
+	g.down(1, "2 probe failures (timeout)")
+	if got := g.count("WARN node p/n1"); got != 1 {
+		t.Errorf("nil first-tier set: %q", g.lines)
+	}
+}
+
+func TestFirstTierLabels(t *testing.T) {
+	pool := routePool{
+		labels: map[string][]string{
+			"k1": {"own/a", "main/b", "own/c"},
+			"k2": {"own/c", "main/d"},
+			"k3": {},
+		},
+		tiers: map[string][]int{
+			"k1": {0, 0, 1},
+			"k2": {2, 3}, // the lowest tier of a route is its first one
+			"k3": {},
+		},
+	}
+	got := pool.firstTierLabels()
+	want := map[string]bool{"own/a": true, "main/b": true, "own/c": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("firstTierLabels = %v, want %v", got, want)
+	}
+}

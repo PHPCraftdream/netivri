@@ -213,7 +213,11 @@ consecutive failure counters.
 
 ```
 delay  = mean of the known EWMAs (probe, dial); unknown without samples
-down   = 2 consecutive probe failures or 3 consecutive dial failures;
+down   = 2 consecutive probe failures or 3 consecutive dial failures to at
+         least 2 different sites (one dead destination is not the node's
+         fault; a dial with no known site counts as its own site) or 10
+         consecutive dial failures to one site (a dead node used for one
+         site only must still fail over);
          any success clears it; data coming back through the node on an open
          connection (the throughput poller sees download bytes in a window)
          clears the probe failures and, for 60 s, keeps failed probes from
@@ -371,7 +375,12 @@ start. A node with 3
 downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
 the reason kinds), then its down and back lines are `INFO` until its recent
 downs drop below 3 again (checked at its next down), and its downs do not count
-toward a burst. The same id under two providers is one server (`serverID`, the
+toward a burst. Only a first-tier node (the first tier of some account's
+route, `routePool.firstTierLabels`) is a `WARN` for its down and flapping
+lines; the nodes of fallback tiers are `INFO`, because no account uses them
+while its first tier is up (the burst summary stays a `WARN`). The reason of a
+dial-failure down names the kind of the last error from a fixed list (`3 dial
+failures (timeout)`), never its text. The same id under two providers is one server (`serverID`, the
 part of the label after the provider): drops and flapping are kept per server, and
 a down of the twin label within 10 s of the first is an `INFO` line ending in
 `, same server as {LABEL}` that counts for neither burst nor flapping. `doctor`

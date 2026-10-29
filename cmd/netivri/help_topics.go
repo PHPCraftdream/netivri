@@ -901,7 +901,8 @@ var helpTopics = []helpTopic{
 			"angel stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
 			"describes the affinity counters.\n\n" +
 			"The angel probes the route nodes in the background. A node is marked down after 2 consecutive " +
-			"failed probes or 3 consecutive failed dials; a failed probe does not count while data has come back " +
+			"failed probes or 3 consecutive failed dials to at least 2 different sites (one unreachable " +
+			"destination is not the node's fault) or 10 to one site; a failed probe does not count while data has come back " +
 			"through the node within the last minute. A single failed dial is returned to the client as an " +
 			"error and the client retries; the connection is not moved on the spot, unless the node just went " +
 			"down with that failure, in which case the angel re-binds and retries once on the node it now " +
