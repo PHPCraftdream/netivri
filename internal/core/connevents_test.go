@@ -82,7 +82,7 @@ func watched(t *testing.T, inner *scriptConn) (*watchConn, *eventSink) {
 	t.Helper()
 	sink := &eventSink{}
 	g := &stickyGroup{events: sink.add}
-	w, ok := g.watch(inner, "alice", "own/a").(*watchConn)
+	w, ok := g.watch(inner, "alice", "own/a", nil).(*watchConn)
 	if !ok {
 		t.Fatal("watch did not wrap the connection")
 	}
@@ -199,7 +199,7 @@ func TestWatchConnDeadlineToInterruptIsNotATimeout(t *testing.T) {
 func TestWatchOnlyWrapsWhenSomeoneListens(t *testing.T) {
 	inner := &scriptConn{}
 	g := &stickyGroup{}
-	if got := g.watch(inner, "alice", "own/a"); got != C.Conn(inner) {
+	if got := g.watch(inner, "alice", "own/a", nil); got != C.Conn(inner) {
 		t.Fatal("a connection was wrapped with no sink")
 	}
 }
@@ -306,7 +306,7 @@ func (c *headroomConn) WriteBuffer(b *buf.Buffer) error {
 func TestWatchConnShowsTheHeadroomOfTheConnectionBelow(t *testing.T) {
 	inner := &headroomConn{}
 	g := &stickyGroup{events: (&eventSink{}).add}
-	wrapped := g.watch(inner, "alice", "own/a")
+	wrapped := g.watch(inner, "alice", "own/a", nil)
 	if got := N.CalculateFrontHeadroom(wrapped); got != 2 {
 		t.Fatalf("headroom through the wrapper = %d, want 2", got)
 	}
@@ -335,7 +335,7 @@ func (c *cachedConn) ReadCached() *buf.Buffer {
 func TestWatchConnPassesOnCachedBytes(t *testing.T) {
 	inner := &cachedConn{cache: buf.As([]byte("early"))}
 	g := &stickyGroup{events: (&eventSink{}).add}
-	w, ok := g.watch(inner, "alice", "own/a").(*watchConn)
+	w, ok := g.watch(inner, "alice", "own/a", nil).(*watchConn)
 	if !ok {
 		t.Fatal("not wrapped")
 	}
@@ -350,7 +350,7 @@ func TestWatchConnPassesOnCachedBytes(t *testing.T) {
 		t.Errorf("the cache was handed out twice: %v", again)
 	}
 	// A connection with no cache gives nil.
-	plain, ok := g.watch(&scriptConn{}, "alice", "own/a").(*watchConn)
+	plain, ok := g.watch(&scriptConn{}, "alice", "own/a", nil).(*watchConn)
 	if !ok || plain.ReadCached() != nil {
 		t.Error("a connection with no cache must give nil")
 	}
@@ -371,7 +371,7 @@ func (richConn) WriterMTU() int     { return 1300 }
 func TestWatchConnIsTransparentToSing(t *testing.T) {
 	inner := &richConn{}
 	g := &stickyGroup{events: (&eventSink{}).add}
-	wrapped := g.watch(inner, "alice", "own/a")
+	wrapped := g.watch(inner, "alice", "own/a", nil)
 
 	if front, want := N.CalculateFrontHeadroom(wrapped), N.CalculateFrontHeadroom(inner); front != want || want != 3 {
 		t.Errorf("front headroom wrapped %d, bare %d, want both 3", front, want)
@@ -391,3 +391,31 @@ var (
 	_ common.WithUpstream = (*watchConn)(nil)
 	_ N.CachedReader      = (*watchConn)(nil)
 )
+
+func TestWatchConnCarriesThePortAndAHashOfTheSite(t *testing.T) {
+	end := func(md *C.Metadata) ConnEvent {
+		sink := &eventSink{}
+		g := &stickyGroup{events: sink.add}
+		_ = g.watch(&scriptConn{}, "alice", "own/a", md).Close()
+		evs := sink.all()
+		if len(evs) != 1 {
+			t.Fatalf("%d events, want 1", len(evs))
+		}
+		return evs[0]
+	}
+	a := end(&C.Metadata{Host: "www.example.com", DstPort: 443})
+	b := end(&C.Metadata{Host: "api.example.com", DstPort: 80})
+	c := end(&C.Metadata{Host: "www.example.org", DstPort: 443})
+	if a.Port != 443 || b.Port != 80 {
+		t.Errorf("ports %d, %d, want 443, 80", a.Port, b.Port)
+	}
+	if a.Site == 0 || a.Site != b.Site {
+		t.Errorf("the same site under two hosts: %d and %d, want one non-zero hash", a.Site, b.Site)
+	}
+	if c.Site == a.Site {
+		t.Errorf("two sites share the hash %d", c.Site)
+	}
+	if none := end(nil); none.Port != 0 || none.Site != 0 {
+		t.Errorf("without metadata: port %d site %d, want zeros", none.Port, none.Site)
+	}
+}

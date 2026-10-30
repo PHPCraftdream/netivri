@@ -58,6 +58,83 @@ type loginNode struct{ login, label string }
 type hourTally struct {
 	ended, broken, empty, silent, dialsFailed int
 	up, down                                  int64
+	// what the connections without an answer have in common: the sites they
+	// went to (hashes), their ports and how long they waited.
+	sites  map[uint64]struct{}
+	ports  map[uint16]int
+	waited []time.Duration
+}
+
+const (
+	// silentSiteCap and silentWaitedCap bound what an hour keeps about the
+	// connections without an answer.
+	silentSiteCap   = 10000
+	silentWaitedCap = 8192
+)
+
+// noteSilent records a connection that sent data and got no answer.
+func (t *hourTally) noteSilent(ev core.ConnEvent) {
+	t.silent++
+	if t.sites == nil {
+		t.sites, t.ports = map[uint64]struct{}{}, map[uint16]int{}
+	}
+	if len(t.sites) < silentSiteCap {
+		t.sites[ev.Site] = struct{}{}
+	}
+	t.ports[ev.Port]++
+	if len(t.waited) < silentWaitedCap {
+		t.waited = append(t.waited, ev.Lifetime)
+	}
+}
+
+// silentDetail says where the connections without an answer went and how long
+// they waited, without naming a site: " (41 sites; ports 443 x340, 80 x23;
+// waited 2.3s median, 15s longest)".
+func (t *hourTally) silentDetail() string {
+	if t.silent == 0 || len(t.waited) == 0 {
+		return ""
+	}
+	sites := count(len(t.sites), "site", "sites")
+	if len(t.sites) >= silentSiteCap {
+		sites = fmt.Sprintf("more than %d sites", silentSiteCap)
+	}
+	ports := make([]uint16, 0, len(t.ports))
+	for p := range t.ports {
+		ports = append(ports, p)
+	}
+	sort.Slice(ports, func(i, j int) bool {
+		if t.ports[ports[i]] != t.ports[ports[j]] {
+			return t.ports[ports[i]] > t.ports[ports[j]]
+		}
+		return ports[i] < ports[j]
+	})
+	var parts []string
+	other := 0
+	for i, p := range ports {
+		if i < 3 {
+			parts = append(parts, fmt.Sprintf("%d x%d", p, t.ports[p]))
+		} else {
+			other += t.ports[p]
+		}
+	}
+	if other > 0 {
+		parts = append(parts, fmt.Sprintf("other x%d", other))
+	}
+	waited := append([]time.Duration(nil), t.waited...)
+	sort.Slice(waited, func(i, j int) bool { return waited[i] < waited[j] })
+	return fmt.Sprintf(" (%s; ports %s; waited %s median, %s longest)", sites, strings.Join(parts, ", "),
+		waitText(waited[len(waited)/2]), waitText(waited[len(waited)-1]))
+}
+
+// waitText renders a wait: tenths of a second below 10 s, whole seconds above.
+func waitText(d time.Duration) string {
+	if d < 100*time.Millisecond {
+		return "<0.1s"
+	}
+	if d = d.Round(100 * time.Millisecond); d < 10*time.Second {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return d.Round(time.Second).String()
 }
 
 type siteMove struct{ login, from, to, why string }
@@ -123,7 +200,7 @@ func (c *connLog) event(ev core.ConnEvent) {
 			tally.empty++
 		case ev.Down == 0:
 			ended.silent++
-			tally.silent++
+			tally.noteSilent(ev)
 		}
 	case core.ConnSiteMoved:
 		c.moves[siteMove{ev.Login, ev.From, ev.Label, ev.Why}]++
@@ -222,8 +299,8 @@ func (c *connLog) heartbeat() {
 	sort.Strings(logins)
 	for _, login := range logins {
 		t := hour[login]
-		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer, %d dials failed, %s down, %s up",
-			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.dialsFailed,
+		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up",
+			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up))
 	}
 }

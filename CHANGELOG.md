@@ -317,6 +317,10 @@ withdrawn pre-releases.
   data, nothing came back). A node's back line is not repeated for the same
   server under a second provider: the twin's line says `same server as ...` and
   is `DEBUG` for fallback nodes.
+- **The hourly summary says where the connections without an answer went.**
+  How many different sites (counted by a hash, never named), the ports and how
+  long they waited (median and longest), so one dead site that is retried from
+  many connections can be told from a node that answers nothing.
 - **The hourly summary carries the bytes** of the connections that ended
   (`412.0 MiB down, 38.1 MiB up`), so a count of connections without an
   answer can be checked against what really moved.
