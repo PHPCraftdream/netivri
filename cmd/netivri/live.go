@@ -101,15 +101,17 @@ type liveAngel struct {
 	store      *stats.Store
 	actualPort int
 
-	reloads      uint64
-	lastReload   time.Time
-	reloadErr    string
-	refreshOK    uint64
-	refreshFail  uint64
-	lastRefresh  time.Time
-	refreshErr   string
-	loopsCancel  context.CancelFunc
-	loopsRunning sync.WaitGroup
+	reloads     uint64
+	lastReload  time.Time
+	reloadErr   string
+	refreshOK   uint64
+	refreshFail uint64
+	lastRefresh time.Time
+	refreshErr  string
+	// refreshStreaks counts the failed refreshes in a row by subscription.
+	refreshStreaks map[string]int
+	loopsCancel    context.CancelFunc
+	loopsRunning   sync.WaitGroup
 
 	// Persisted site bindings: when the stored set was last written, how
 	// many bindings the latest core start loaded, and the test seams of the
