@@ -1,0 +1,3 @@
+# Files that a test of another package reads: a change of the file runs that
+# package (scripts/ci-scope.sh). One "path-prefix ./package" per line.
+docs/cli.md ./cmd/netivri
