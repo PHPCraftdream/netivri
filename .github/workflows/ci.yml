@@ -46,26 +46,73 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PACKAGES: ${{ github.event_name == 'workflow_dispatch' && inputs.packages || './...' }}
   TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.tags || '' }}
-  RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.run || '' }}
   RACE: ${{ (github.event_name != 'workflow_dispatch' || inputs.race) && '1' || '0' }}
 
 jobs:
+  # What the test jobs run is chosen by scripts/ci-scope.sh: a push or pull
+  # request tests the packages its diff touches and what imports them, the
+  # commit message line "ci: full" or a manual run tests everything.
   setup:
     runs-on: ubuntu-latest
     outputs:
+      packages: ${{ steps.cfg.outputs.packages }}
+      run: ${{ steps.cfg.outputs.run }}
+      full: ${{ steps.cfg.outputs.full }}
       matrix_os: ${{ steps.cfg.outputs.matrix_os }}
+      matrix_os_e2e: ${{ steps.cfg.outputs.matrix_os_e2e }}
     steps:
-      - name: Compute OS matrix
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Choose the scope
         id: cfg
         shell: bash
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_PUSH_MESSAGE: ${{ github.event.head_commit.message }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          CI_PUSH_BEFORE: ${{ github.event.before }}
+          CI_PUSH_AFTER: ${{ github.event.after }}
+          GH_TOKEN: ${{ github.token }}
+          CI_IN_PACKAGES: ${{ inputs.packages }}
+          CI_IN_RUN: ${{ inputs.run }}
+          CI_IN_OS: ${{ inputs.os }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.os }}" ] && [ "${{ inputs.os }}" != "all" ]; then
-            echo 'matrix_os=["${{ inputs.os }}-latest"]' >> "$GITHUB_OUTPUT"
-          else
-            echo 'matrix_os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          range=""
+          CI_MESSAGE=""
+          case "${CI_EVENT}" in
+            pull_request)
+              CI_MESSAGE="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${CI_PR_HEAD}" --jq .commit.message)"
+              range="${CI_PR_BASE}...${CI_PR_HEAD}"
+              ;;
+            push)
+              CI_MESSAGE="${CI_PUSH_MESSAGE}"
+              range="${CI_PUSH_BEFORE}..${CI_PUSH_AFTER}"
+              ;;
+          esac
+          export CI_MESSAGE
+          # No diff (a new branch, a forced push) leaves CI_CHANGED unset:
+          # everything runs.
+          if [ -n "${range}" ] && changed="$(git diff --name-only "${range}" 2>/dev/null)"; then
+            export CI_CHANGED="${changed}"
           fi
+          CI_MODULE="$(go list -m)"
+          CI_PKGS="$(go list -tags integration,e2e,bench ./...)"
+          CI_GRAPH="$(go list -tags integration,e2e,bench -test -f '{{.ImportPath}}{{"\t"}}{{join .Deps " "}}' ./...)"
+          export CI_MODULE CI_PKGS CI_GRAPH
+          bash scripts/ci-scope.sh | tee -a "${GITHUB_OUTPUT}"
+          {
+            echo "### Test scope"
+            grep '^note=' "${GITHUB_OUTPUT}" | tail -1 | cut -d= -f2-
+          } >> "${GITHUB_STEP_SUMMARY}"
 
   lint:
     runs-on: ubuntu-latest
@@ -108,8 +155,14 @@ jobs:
         shell: bash
         run: bash scripts/test-release-notes.sh
 
+      # Which tests a run executes is decided by this script.
+      - name: CI scope script
+        shell: bash
+        run: bash scripts/test-ci-scope.sh
+
   unit:
     needs: setup
+    if: needs.setup.outputs.packages != ''
     strategy:
       fail-fast: false
       matrix:
@@ -125,11 +178,11 @@ jobs:
       - name: Unit tests
         shell: bash
         env:
-          CI_PACKAGES: ${{ env.PACKAGES }}
+          CI_PACKAGES: ${{ needs.setup.outputs.packages }}
           # Unit stays hermetic: user tags are ignored here, and the
           # coverage floors measure unit tests only.
           CI_TAGS: ""
-          CI_RUN: ${{ env.RUN }}
+          CI_RUN: ${{ needs.setup.outputs.run }}
           CI_RACE: ${{ env.RACE }}
           CI_COVER: "1"
         run: bash scripts/ci-test.sh
@@ -142,12 +195,13 @@ jobs:
           if-no-files-found: ignore
 
       - name: Check coverage floors
-        if: env.PACKAGES == './...' && env.RUN == ''
+        if: needs.setup.outputs.full == 'true'
         shell: bash
         run: bash scripts/check-coverage.sh coverage.out | tee "${GITHUB_STEP_SUMMARY}"
 
   integration:
     needs: setup
+    if: needs.setup.outputs.packages != ''
     strategy:
       fail-fast: false
       matrix:
@@ -163,18 +217,20 @@ jobs:
       - name: Integration tests
         shell: bash
         env:
-          CI_PACKAGES: ${{ env.PACKAGES }}
-          CI_RUN: ${{ env.RUN }}
+          CI_PACKAGES: ${{ needs.setup.outputs.packages }}
+          CI_RUN: ${{ needs.setup.outputs.run }}
           CI_RACE: ${{ matrix.os != 'windows-latest' && env.RACE || '0' }}
           CI_COVER: "0"
           CI_TAGS: integration${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}
         run: bash scripts/ci-test.sh
 
   e2e:
+    needs: setup
+    if: needs.setup.outputs.packages != '' && needs.setup.outputs.matrix_os_e2e != '[]'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.setup.outputs.matrix_os_e2e) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -185,9 +241,12 @@ jobs:
 
       - name: E2E tests
         shell: bash
+        env:
+          CI_SCOPE_PACKAGES: ${{ needs.setup.outputs.packages }}
+          CI_SCOPE_RUN: ${{ needs.setup.outputs.run }}
         run: |
           set -euo pipefail
-          targets="${{ env.PACKAGES }}"
+          targets="${CI_SCOPE_PACKAGES}"
           if [ -z "${targets}" ]; then
             targets="./..."
           fi
@@ -207,7 +266,7 @@ jobs:
           if [ -n "${pkgs}" ]; then
             export CI_PACKAGES="${pkgs# }"
             export CI_TAGS="e2e${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}"
-            export CI_RUN="${{ env.RUN }}"
+            export CI_RUN="${CI_SCOPE_RUN}"
             export CI_RACE="0"
             export CI_COVER="0"
             bash scripts/ci-test.sh
@@ -233,7 +292,7 @@ jobs:
           if [ -z "${bt}" ]; then
             bt="1x"
           fi
-          go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchmem -benchtime "${bt}" -count=1 ${{ env.PACKAGES }} | tee "${RUNNER_TEMP}/bench-output.txt"
+          go test -tags "${{ env.TAGS }}" -run '^$' -bench . -benchmem -benchtime "${bt}" -count=1 ${{ inputs.packages }} | tee "${RUNNER_TEMP}/bench-output.txt"
           {
             echo '```'
             grep '^Benchmark' "${RUNNER_TEMP}/bench-output.txt" || true
@@ -242,6 +301,7 @@ jobs:
 
   npm:
     needs: setup
+    if: needs.setup.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -294,6 +354,8 @@ jobs:
   # The Linux binary must stay static: it has to run on musl (Alpine) too. The
   # release workflow checks it again; here a regression fails the pull request.
   linux-static:
+    needs: setup
+    if: needs.setup.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:

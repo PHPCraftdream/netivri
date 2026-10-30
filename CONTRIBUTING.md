@@ -16,7 +16,8 @@ Thank you for helping. This page is the short version; the details live in
 
 Builds, tests, benchmarks and install checks run in GitHub Actions on Linux,
 macOS and Windows, and a pull request is accepted when CI is green (the
-`ci-ok` job summarises it). The maintainers verify only through CI and run
+`ci-ok` job summarises it; a pull request runs the tests its diff touches, and
+a line `ci: full` in the head commit message runs all of them). The maintainers verify only through CI and run
 nothing but formatting and static checks locally; AI agents working in this
 repository must do the same (see the main rule in [`AGENTS.md`](AGENTS.md)).
 The checks are:

@@ -8,6 +8,16 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Changed
+
+- **CI tests what the diff touches.** A push or pull request runs the tests of
+  the packages the diff changes and of every package that imports them; a
+  change that is not a file of one package (`go.mod`, workflows, scripts,
+  `third_party`, npm, packaging) runs everything, and documents alone run no
+  test. A line `ci: full` in the head commit message, or a manual run of the
+  `CI` workflow (inputs `packages`, `tags`, `run`, `os`, `race`), runs
+  everything. Coverage floors and the packaging jobs run only on a full run.
+
 ## [0.1.0] - 2026-10-28
 
 First release under this number, and the first one published to the `@netivri`

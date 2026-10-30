@@ -82,3 +82,8 @@ See [`docs/testing.md`](docs/testing.md) for the full strategy. Hard rules:
 - Scopes are **package** (AREA: `go test ./internal/foo/...`) plus **level**
   (build tags: unit = no tag, `integration`, `e2e`, `bench`).
 - Tests run only in GitHub CI — never locally (see the main rule above).
+- CI runs the tests of the packages the diff touches and of what imports them;
+  a change outside one package runs everything. A full run is asked for with a
+  line `ci: full` in the head commit message (the end of a sprint, a release,
+  a change you are unsure about) or by running the `CI` workflow by hand; see
+  [`docs/testing.md`](docs/testing.md).

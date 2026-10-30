@@ -60,7 +60,28 @@ Manual runs use `workflow_dispatch` inputs:
 - `benchtime` — `go test -benchtime` for the bench job, e.g. `1x`,
   `2s`, `5x` (default `1x`).
 
-Push and pull_request events use the defaults (`./...`, all levels, all OS).
+A push or pull request does not take those inputs: `scripts/ci-scope.sh` picks the
+packages from the diff (`setup` job, its choice is in the job summary):
+
+- the packages whose files changed, plus every package that imports them
+  (their tests included, from `go list -test`), at all levels and on all OS;
+- a change that is not a file below the directory of one Go package (`go.mod`,
+  `go.sum`, workflows, scripts, `third_party`, `npm`, `packaging`, the
+  installers) runs **everything**; documents (`*.md`, `docs/`, `LICENSE`) run
+  no test, except a file that a test reads, listed in
+  `scripts/ci-scope-owners.txt` (`docs/cli.md` runs `./cmd/netivri`);
+- the line `ci: full` in the message of the head commit runs **everything**
+  (a bullet or indentation before it is fine, the case is not); it is the only
+  thing the message can ask for. It is how the full run at the end of a sprint
+  or before a release is asked for. For a merge to `main` by squash the line
+  has to be in the squash message;
+- the diff is unknown (a new branch, a forced push): everything.
+
+A manual run of the `CI` workflow (Actions, *Run workflow*) uses the inputs
+above and defaults to everything. The coverage floors, the npm checks and the
+static Linux builds run only when everything runs (they need the whole
+suite); `lint` and `licenses` always run. `scripts/test-ci-scope.sh` (in
+`lint`) tests the selection.
 
 Each CI job selects its own tags:
 
