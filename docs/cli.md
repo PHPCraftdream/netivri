@@ -811,8 +811,15 @@ itself up to date. The angel re-fetches every subscription once per
 it is `off`; see [config.md](config.md)); `ok` and `failed` count those
 refreshes, `last_at` is the time of the latest one (RFC3339 UTC) and
 `last_error` its failure (`CODE: message`, never a URL), empty after a success.
-A fetched list that would leave an account without nodes is rejected and the
-old list stays. `reload.count` is how many times the angel applied changed
+A fetch that fails on the way (a timeout, a reset) is tried once more after 5
+seconds; a failed refresh is tried again after 10 minutes (sooner than the
+interval). While the stored list is younger than twice the interval, the failure
+is an `INFO` line (`subscription main: refresh failed after 30.1s (two tries):
+FETCH_FAILED: ...; the list of 41m ago stays, next try in 10m`); it is a `WARN`
+with the third failure in a row, with a list older than twice the interval, or
+without any list, so `doctor` warns only for a failure that lasts. A successful
+refresh says how long it took (`refreshed, 22 nodes in 4.2s`). A fetched list
+that would leave an account without nodes is rejected and the old list stays. `reload.count` is how many times the angel applied changed
 files: new nodes and routes in place, keeping the open connections, and
 accounts, passwords or the port by restarting its listener; `last_at` the
 latest of them, and `last_error` why the newest files are not applied

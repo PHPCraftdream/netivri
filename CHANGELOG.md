@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **A failed subscription refresh is quiet while it does not matter.** A fetch
+  that fails on the way is tried once more after 5 seconds. A failure is an
+  `INFO` line saying what stays and when the next try is while the stored list
+  is recent, and a `WARN` only with the third failure in a row, a list older
+  than twice the interval or no list, so `doctor` no longer warns for a
+  timeout that the next try fixes. A successful refresh says how long it took.
 - **CI tests what the diff touches.** A push or pull request runs the tests of
   the packages the diff changes and of every package that imports them; a
   change that is not a file of one package (`go.mod`, workflows, scripts,
