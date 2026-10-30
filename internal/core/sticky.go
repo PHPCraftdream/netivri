@@ -220,7 +220,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	}
 	if err == nil {
 		conn.AppendToChains(g)
-		return g.watch(conn, login, label), nil
+		return g.watch(conn, login, label, metadata), nil
 	}
 	if !g.health.down(label) {
 		return nil, err
@@ -245,7 +245,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		return nil, retryErr
 	}
 	retryConn.AppendToChains(g)
-	return g.watch(retryConn, login, retryLabel), nil
+	return g.watch(retryConn, login, retryLabel, metadata), nil
 }
 
 // ListenPacketContext implements C.ProxyAdapter. UDP associations use the

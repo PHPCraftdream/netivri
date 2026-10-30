@@ -62,9 +62,56 @@ func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
 	}
 	f.lines = nil
 	f.log.heartbeat()
-	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer, 0 dials failed, 4.4 KiB down, 2.9 KiB up"
+	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer (1 site; ports 0 x4; waited 1.0s median, 1.0s longest), 0 dials failed, 4.4 KiB down, 2.9 KiB up"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Errorf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+// endedSilent ends connections that sent 300 bytes to a site on a port and got
+// nothing back after the given wait.
+func (f *connLogFixture) endedSilent(login, label string, port uint16, site uint64, wait time.Duration, n int) {
+	for i := 0; i < n; i++ {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 300, Port: port, Site: site, Lifetime: wait})
+	}
+}
+
+func TestConnLogSaysWhereTheSilentConnectionsWent(t *testing.T) {
+	f := newConnLogFixture()
+	f.endedSilent("alice", "main/us", 443, 1, 2*time.Second, 3)
+	f.endedSilent("alice", "main/us", 443, 2, 3*time.Second, 1)
+	f.endedSilent("alice", "main/us", 80, 3, 15*time.Second, 1)
+	f.endedSilent("alice", "main/us", 5222, 4, time.Second, 1)
+	f.endedSilent("alice", "main/us", 8080, 5, time.Second, 1)
+	f.endedSilent("alice", "main/us", 9, 6, time.Second, 1)
+	f.endedUp("alice", "main/us", 300, 900, 4) // answered: not part of the detail
+	f.log.heartbeat()
+	want := "INFO account alice: last hour: 12 connections ended, 0 broken, 0 closed before any data, " +
+		"8 without an answer (6 sites; ports 443 x4, 9 x1, 80 x1, other x2; waited 2.0s median, 15s longest), " +
+		"0 dials failed, 3.5 KiB down, 3.5 KiB up"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+	if strings.Contains(f.lines[0], "example") {
+		t.Errorf("the line names a site: %q", f.lines[0])
+	}
+	// The detail starts afresh with the next hour.
+	f.lines = nil
+	f.endedSilent("alice", "main/us", 443, 7, 500*time.Millisecond, 1)
+	f.log.heartbeat()
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "1 without an answer (1 site; ports 443 x1; waited 0.5s median, 0.5s longest)") {
+		t.Errorf("lines = %q", f.lines)
+	}
+}
+
+func TestWaitText(t *testing.T) {
+	for in, want := range map[time.Duration]string{
+		40 * time.Millisecond: "<0.1s", 2300 * time.Millisecond: "2.3s", 9960 * time.Millisecond: "10s",
+		15400 * time.Millisecond: "15s", 61 * time.Second: "1m1s",
+	} {
+		if got := waitText(in); got != want {
+			t.Errorf("waitText(%v) = %q, want %q", in, got, want)
+		}
 	}
 }
 

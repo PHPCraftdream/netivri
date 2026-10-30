@@ -312,11 +312,15 @@ and what they repeat (the downs and backs of a flapping node after its `flapping
 twin) at `DEBUG`, which `logs` shows only with `--level debug`.
 
 Once an hour each account that had connections gets one summary line, `account alice: last hour: 412
-connections ended, 0 broken, 30 closed before any data, 3 without an answer, 0 dials failed, 412.0 MiB down, 38.1 MiB up`, so that a log
+connections ended, 0 broken, 30 closed before any data, 3 without an answer (3 sites; ports 443 x3; waited 2.0s median, 15s longest), 0 dials failed,
+412.0 MiB down, 38.1 MiB up`, so that a log
 without a report of broken connections says "none" and not nothing. The bytes are those of the connections that
 ended in that hour, so that a count of connections without an answer can be checked against what moved. `closed before any data` is a client that
 left without sending a byte (browsers and messengers open connections they do not use); `without an answer` is a
-client that sent data and got nothing back from the node's side, the one to watch.
+client that sent data and got nothing back from the node's side, the one to watch; the line says how many
+different sites they went to (by hash, never named), their ports (the three most used, the rest as `other`) and how
+long they waited (median and longest), which tells one dead site that is retried from many, and a client that
+gives up quickly from a wait that ran into a timeout.
 
 What happens to the connections of the accounts is reported once a minute, one line per account and
 node and kind, only when something went wrong, and never with a site, an address, an error text or a

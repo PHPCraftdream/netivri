@@ -2,6 +2,7 @@ package core
 
 import (
 	"errors"
+	"hash/fnv"
 	"io"
 	"net"
 	"strings"
@@ -35,7 +36,8 @@ const (
 
 // ConnEvent is one thing that happened to a connection of an account, for
 // Options.OnConnEvent. It never holds a site, an address or an error text:
-// only the account, the node labels and a kind from a fixed list.
+// only the account, the node labels, a kind from a fixed list, a port and a
+// hash of the site that can only be compared.
 type ConnEvent struct {
 	Kind  string
 	Login string
@@ -46,6 +48,11 @@ type ConnEvent struct {
 	// went up to and came back from the node.
 	Lifetime time.Duration
 	Up, Down int64
+	// ConnStreamEnded only: the destination port and a hash of the destination
+	// site (0 when unknown), to count how many sites a number of connections
+	// went to without naming one.
+	Port uint16
+	Site uint64
 }
 
 // dialErrKind names the kind of a dial or stream error from a fixed list (the
@@ -68,11 +75,20 @@ func (g *stickyGroup) emit(ev ConnEvent) {
 
 // watch wraps the connection a node returned so that its end is reported, or
 // returns it as it is when nobody listens.
-func (g *stickyGroup) watch(conn C.Conn, login, label string) C.Conn {
+func (g *stickyGroup) watch(conn C.Conn, login, label string, md *C.Metadata) C.Conn {
 	if g.events == nil {
 		return conn
 	}
-	return &watchConn{Conn: conn, events: g.events, login: login, label: label, start: time.Now()}
+	w := &watchConn{Conn: conn, events: g.events, login: login, label: label, start: time.Now()}
+	if md != nil {
+		w.port = md.DstPort
+		if site := siteKey(md.Host, md.DstIP); site != "" {
+			h := fnv.New64a()
+			_, _ = h.Write([]byte(site))
+			w.site = h.Sum64()
+		}
+	}
+	return w
 }
 
 // watchConn reports one ConnStreamEnded when the connection is closed: the
@@ -85,6 +101,8 @@ type watchConn struct {
 	events       func(ConnEvent)
 	login, label string
 	start        time.Time
+	port         uint16
+	site         uint64
 
 	up, down    atomic.Int64
 	interrupted atomic.Bool
@@ -168,7 +186,7 @@ func (w *watchConn) Close() error {
 	err := w.Conn.Close()
 	w.once.Do(func() {
 		ev := ConnEvent{Kind: ConnStreamEnded, Login: w.login, Label: w.label,
-			Lifetime: time.Since(w.start), Up: w.up.Load(), Down: w.down.Load()}
+			Lifetime: time.Since(w.start), Up: w.up.Load(), Down: w.down.Load(), Port: w.port, Site: w.site}
 		if kind := w.failure.Load(); kind != nil {
 			ev.Why = *kind
 		}
