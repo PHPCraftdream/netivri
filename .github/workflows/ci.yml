@@ -99,15 +99,23 @@ jobs:
               ;;
           esac
           export CI_MESSAGE
-          # No diff (a new branch, a forced push) leaves CI_CHANGED unset:
-          # everything runs.
-          if [ -n "${range}" ] && changed="$(git diff --name-only "${range}" 2>/dev/null)"; then
-            export CI_CHANGED="${changed}"
+          # No diff (a new branch, a forced push) leaves CI_CHANGED_FILE
+          # unset: everything runs. The package lists go through files, an
+          # environment is too small for the dependency graph.
+          if [ -n "${range}" ] && git diff --name-only "${range}" > "${RUNNER_TEMP}/changed.txt" 2>/dev/null; then
+            export CI_CHANGED_FILE="${RUNNER_TEMP}/changed.txt"
           fi
           CI_MODULE="$(go list -m)"
-          CI_PKGS="$(go list -tags integration,e2e,bench ./...)"
-          CI_GRAPH="$(go list -tags integration,e2e,bench -test -f '{{.ImportPath}}{{"\t"}}{{join .Deps " "}}' ./...)"
-          export CI_MODULE CI_PKGS CI_GRAPH
+          export CI_MODULE
+          go list -tags integration,e2e,bench ./... > "${RUNNER_TEMP}/pkgs.txt"
+          # Only the module's own packages matter as dependencies.
+          go list -tags integration,e2e,bench -test -f '{{.ImportPath}}{{"\t"}}{{join .Deps " "}}' ./... |
+            awk -F'\t' -v m="${CI_MODULE}" '{
+              n = split($2, deps, " "); out = ""
+              for (i = 1; i <= n; i++) if (index(deps[i], m) == 1) out = out (out == "" ? "" : " ") deps[i]
+              print $1 "\t" out
+            }' > "${RUNNER_TEMP}/graph.txt"
+          export CI_PKGS_FILE="${RUNNER_TEMP}/pkgs.txt" CI_GRAPH_FILE="${RUNNER_TEMP}/graph.txt"
           bash scripts/ci-scope.sh | tee -a "${GITHUB_OUTPUT}"
           {
             echo "### Test scope"

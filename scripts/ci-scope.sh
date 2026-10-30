@@ -27,6 +27,9 @@
 #   CI_MODULE      the Go module path
 #   CI_PKGS        import paths of every package of the module, one per line
 #   CI_GRAPH       `go list -test -f '{{.ImportPath}}<TAB>{{join .Deps " "}}'`
+#   CI_CHANGED_FILE, CI_PKGS_FILE, CI_GRAPH_FILE
+#                  the same three as files (an environment has a size limit,
+#                  the graph of the module's dependencies exceeds it)
 #   CI_OWNERS      file of "path-prefix ./package" lines: files that a test of
 #                  another package reads (default scripts/ci-scope-owners.txt)
 #   CI_IN_PACKAGES, CI_IN_RUN, CI_IN_OS   workflow_dispatch inputs
@@ -106,9 +109,23 @@ diff_scope() {
     note="full run (the commit message says ci: full)"
     return
   fi
-  if [[ -z "${CI_CHANGED+x}" ]]; then
+  local changed_text="" pkgs_text="${CI_PKGS:-}" graph_text="${CI_GRAPH:-}" have_diff=""
+  if [[ -n "${CI_CHANGED_FILE:-}" && -f "${CI_CHANGED_FILE}" ]]; then
+    changed_text="$(< "${CI_CHANGED_FILE}")"
+    have_diff=1
+  elif [[ -n "${CI_CHANGED+x}" ]]; then
+    changed_text="${CI_CHANGED}"
+    have_diff=1
+  fi
+  if [[ -z "${have_diff}" ]]; then
     note="full run (the diff is unknown)"
     return
+  fi
+  if [[ -n "${CI_PKGS_FILE:-}" ]]; then
+    pkgs_text="$(< "${CI_PKGS_FILE}")"
+  fi
+  if [[ -n "${CI_GRAPH_FILE:-}" ]]; then
+    graph_text="$(< "${CI_GRAPH_FILE}")"
   fi
   local module="${CI_MODULE:?CI_MODULE}" owners="${CI_OWNERS:-scripts/ci-scope-owners.txt}"
   local -A dir_of=() known=() changed=() selected=()
@@ -123,7 +140,7 @@ diff_scope() {
     if [[ -n "${rel}" ]]; then
       dir_of["${rel}"]="${path}"
     fi
-  done <<< "${CI_PKGS:-}"
+  done <<< "${pkgs_text}"
   [[ ${total} -gt 0 ]] || fail "CI_PKGS is empty"
 
   while IFS= read -r f; do
@@ -161,7 +178,7 @@ diff_scope() {
       *.md | docs/* | LICENSE) ;;
       *) other="${f}" ;;
     esac
-  done <<< "${CI_CHANGED}"
+  done <<< "${changed_text}"
 
   if [[ -n "${other}" ]]; then
     note="full run (${other} is not a file of one package)"
@@ -186,7 +203,7 @@ diff_scope() {
         break
       fi
     done
-  done <<< "${CI_GRAPH:-}"
+  done <<< "${graph_text}"
 
   if [[ ${#selected[@]} -eq ${total} ]]; then
     note="full run (the diff reaches all ${total} packages)"
