@@ -41,6 +41,9 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   global and per account, each a `socks5://`, `http://` (HTTP CONNECT) or
   `https://` proxy; an account value overrides the global one and `none`
   cancels it.
+- **Separate runs.** `--local` makes `./.netivri` its own state directory
+  (settings, tokens, subscriptions, statistics, angel), found again without a
+  flag from that directory; `--home {DIR}` names any directory.
 - **Client address rules.** `listen.allowed_clients` limits which client
   addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
   an account can narrow it with its own rule, checked before its password.

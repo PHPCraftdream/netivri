@@ -76,6 +76,9 @@ func TestConnEventsOverARealRelay(t *testing.T) {
 	if ev.Port == 0 || ev.Site == 0 {
 		t.Errorf("port %d site %d, want the destination of the connection", ev.Port, ev.Site)
 	}
+	if ev.Answer <= 0 || ev.Answer > testTimeout {
+		t.Errorf("answer %v, want the time the echo took to start coming back", ev.Answer)
+	}
 	for _, ev := range sink.all() {
 		if ev.Kind == ConnDialFailed {
 			t.Errorf("a dial failure was reported for a working node: %+v", ev)

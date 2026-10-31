@@ -447,7 +447,7 @@ Failed requests are not errors: they are counted in `failures`.
 ### `doctor`
 
 ```
-netivri doctor [--home {DIR}]
+netivri doctor [--home {DIR} | --local]
 ```
 
 Runs every check once and prints one document on stdout, in Ktav or with
@@ -467,8 +467,12 @@ subscription URLs, passwords and hashes are never printed.
    {"name": "subscriptions", "status": "ok", "detail": "every configured subscription has a usable snapshot"},
    {"name": "account alice", "status": "ok", "detail": "tier 0 DE (main): 1/1 node(s) alive"},
    {"name": "log", "status": "ok", "detail": "no warn or error entries in the last hour"}],
- "summary": {"ok": 6, "warn": 0, "fail": 0}}
+ "summary": {"ok": 6, "warn": 0, "fail": 0},
+ "home": "/home/me/.config/netivri", "home_source": "user config directory"}
 ```
+
+`home` is the state directory the checks looked at and `home_source` how it was
+chosen (see [Separate state directories](#separate-state-directories)).
 
 The checks:
 
@@ -841,7 +845,8 @@ Short view:
  "data": {"angel": "running", "foreground": false, "pid": 12345,
           "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
-          "allowed_clients": "*",
+          "allowed_clients": "*", "home": "/home/me/.config/netivri",
+          "home_source": "user config directory",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
           "uptime_seconds": 3721, "version": "0.1.0",
           "active_accounts": 0, "activity": [],
@@ -854,13 +859,15 @@ Short view:
 Exactly these fields exist in the short view: `angel` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
-`version` (the angel binary's version), `allowed_clients` (which client
+`version` (the angel binary's version), `home` and `home_source` (the state
+directory this command asked and how it was chosen, see [Separate state
+directories](#separate-state-directories)), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
 record is `{"login", "provider", "exit_country", "allowed_clients", "chain"}`,
 sorted by login; `chain` is `{"pre_socks5", "pre_socks5_source",
 "pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}`,
-the SOCKS5 proxies of the running core, redacted to `socks5://host:port` or
-`none`, `source` being `account`, `global` or `none` and `auth` whether the URL
+the proxies of the running core (`socks5://`, `http://` or `https://`),
+redacted to `scheme://host:port` or `none`, `source` being `account`, `global` or `none` and `auth` whether the URL
 had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
 and `reload`. The full view (`--full`) adds, next to everything above: the full
 `warm` (the pool counters and `nodes[]`), `stats` and `affinity`. The selection

@@ -790,3 +790,18 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 		t.Error("node list name is the provider's node name, not the internal proxy name")
 	}
 }
+
+// The help of `logs` says what the log holds, including the lines that were added
+// later: a drift guard for the text people read without the repository.
+func TestHelpLogsDescribesWhatTheLogHolds(t *testing.T) {
+	tp := findHelpTopic("logs")
+	if tp == nil {
+		t.Fatal("no logs topic")
+	}
+	text := conceptText(tp)
+	for _, want := range []string{"node burst", "flapping", "once an hour", "start answering", "slept", "proxy auth failed", "proxy refused", "slow answers"} {
+		if !strings.Contains(strings.ToLower(text), strings.ToLower(want)) {
+			t.Errorf("the logs help does not mention %q", want)
+		}
+	}
+}

@@ -50,12 +50,17 @@ To verify a change, push it and read the CI result.
   routing and the fields of every command without the repository.
 - Never print or log subscription URLs; they are credentials. SOCKS5 chain
   URLs (`pre_socks5`, `post_socks5`) are credentials too.
-- SOCKS5 around the VPN node: `chain.pre_socks5` / `chain.post_socks5` in
-  `config.ktav`, per account `netivri account set-socks5 {ACCOUNT} --pre
+- Proxy hops around the VPN node (`socks5://`, `http://` for an HTTP CONNECT
+  proxy, `https://` over TLS; the names say `socks5` for history):
+  `chain.pre_socks5` / `chain.post_socks5` in `config.ktav`, per account `netivri account set-socks5 {ACCOUNT} --pre
   {URL|none|inherit} --post {URL|none|inherit}` (also `account add
   --pre-socks5/--post-socks5`); an account value overrides the global one,
   `none` cancels it. `account show` and `status` show the redacted effective
   values.
+- A separate run is a separate state directory: `--local` (`./.netivri`,
+  created, git-ignored; also used on its own when it exists in the current
+  directory) or `--home {DIR}`. Never point a test or an experiment at the
+  user's own state directory; `status` and `doctor` print `home`.
 - Do not bind the proxy to anything other than `127.0.0.1` unless the user
   asked for it.
 
