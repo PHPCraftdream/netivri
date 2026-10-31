@@ -129,10 +129,19 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 	_, nodeAddr := startChainRecorder(t)
 	post, postAddr := startHTTPHop(t, "alice:s3cret")
 	backend := echoServer(t)
+	var mu sync.Mutex
+	var kinds []string
 	inst, err := Start(context.Background(), Options{
 		HomeDir: testutil.TempHome(t), Authenticator: aliceAuthenticator(),
 		RouteNodes: map[string][]map[string]any{"de": {nodeMap(nodeAddr)}}, AccountRoute: map[string]string{"alice": "de"},
 		RoutePost: map[string]string{"de": "http://alice:wrong@" + postAddr},
+		OnConnEvent: func(ev ConnEvent) {
+			if ev.Kind == ConnDialFailed {
+				mu.Lock()
+				kinds = append(kinds, ev.Why)
+				mu.Unlock()
+			}
+		},
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -143,5 +152,11 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 	}
 	if got, _ := post.snapshot(); len(got) == 0 {
 		t.Error("the post hop was never asked")
+	}
+	// The log says what went wrong with the hop, not just "error".
+	mu.Lock()
+	defer mu.Unlock()
+	if len(kinds) == 0 || kinds[0] != "proxy auth failed" {
+		t.Errorf("failed dial kinds = %q, want proxy auth failed", kinds)
 	}
 }

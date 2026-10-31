@@ -300,7 +300,9 @@ provider and the country, the reason and how long it was silent, as in
 and the downtime when it is back (`... is back after 41s down`). The reason is `2 probe
 failures` with the kind of the last probe error (`timeout`, `connection refused`,
 `connection reset`, `dns failure`, `network unreachable`, `connection closed`,
-`handshake failed`, `error: {WORDS}` for a cause it does not know, or none) or `3 dial
+`handshake failed`, `proxy auth failed` when a proxy hop or the node did not take the credentials,
+`proxy refused` when a proxy answered but would not connect, `error: {WORDS}` for a cause it does not
+know, or none) or `3 dial
 failures`. `{WORDS}` is a short excerpt of the error in which every word that could be
 an address, host, port, path or credential is replaced by `<addr>`. A node that goes
 down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
@@ -335,7 +337,7 @@ when the sites of one account moved between several pairs of nodes in that minut
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
-`connection closed`, `handshake failed` or `error`); dial failures count only when they reached 2
+`connection closed`, `handshake failed`, `proxy auth failed`, `proxy refused` or `error`); dial failures count only when they reached 2
 different sites (a run of 10 to one site counts too, so a dead node used for one site still fails over). The
 same node id under two providers is one server: when its twin goes down within 10 seconds,
 that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for

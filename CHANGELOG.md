@@ -15,7 +15,9 @@ versions; every such change is listed here.
   `http://` (an HTTP CONNECT proxy, such as Privoxy or Burp) and `https://` (the
   same over TLS, certificate checked) as well as `socks5://`; the port stays
   required and the setting names are unchanged. The listening port already
-  speaks SOCKS5, SOCKS4 and HTTP on one socket.
+  speaks SOCKS5, SOCKS4 and HTTP on one socket. A hop that does not take the
+  credentials or will not connect shows in the log as `proxy auth failed` or
+  `proxy refused`, not as an unknown `error`.
 - **The log tells when the computer slept.** The angel is frozen while the
   computer sleeps, so hours of sleep looked like hours of silence and the
   nodes seemed to fail all at once afterwards. The angel now notices the jump
