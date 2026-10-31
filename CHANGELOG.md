@@ -10,6 +10,14 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The log says which stage of a route failed.** For a route with a `pre_socks5`
+  or `post_socks5` hop, the failed dials of a minute are one line per stage
+  (`account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`,
+  with `pre hop`, `node` or `unknown hop`), and the reason a node went down
+  carries it too (`3 dial failures (timeout, post hop)`). The stage is found
+  from the address Mihomo names in the error, or from the one stage that speaks
+  the protocol of an address-less refusal; the address itself is never printed.
+  A route that is only a node reads as before.
 - **A separate state directory for a separate run.** `--local` makes `.netivri`
   in the current directory the state directory (created, owner-only, with a
   `.gitignore` that ignores everything in it), and once that directory exists

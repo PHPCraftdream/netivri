@@ -356,7 +356,9 @@ probe; the core keeps the kind of the error on the node (`timeout`,
 `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
 `connection closed`, `handshake failed`, `proxy auth failed` and `proxy refused`
 for a proxy hop that did not take the credentials or would not connect, else
-`error: ` and a scrubbed excerpt)
+`error: ` and a scrubbed excerpt; for a node whose route has a pre or post hop the stage
+follows after a comma, `timeout, post hop`, found by the address that the error names, see
+`internal/core/hops.go`)
 so the next down event can name it. A success clears it. The excerpt keeps only
 lowercase plain words and numbers of up to three digits, every other word
 (anything with a dot, a colon, a slash, an `@`, a letter next to a digit or a

@@ -499,6 +499,9 @@ func (h *nodeHealth) view(label string) memberHealthView {
 // lock; measurements on unknown labels are ignored.
 type healthTable struct {
 	entries map[string]*nodeHealth
+	// hops is the chain of every node that has a pre or post hop, by label; set
+	// when the groups are built, before the table is used (see hopSet).
+	hops map[string]hopSet
 	// notify, set before the first register, hears every change of a node's
 	// down state with the node label. It may be nil.
 	notify func(NodeEvent)
@@ -591,7 +594,7 @@ func (t *healthTable) recordProbe(label string, alive bool, delay time.Duration)
 // result is recorded.
 func (t *healthTable) noteProbeError(label string, err error) {
 	if h := t.entries[label]; h != nil {
-		h.noteProbeError(probeFailKind(err))
+		h.noteProbeError(withHop(probeFailKind(err), t.hopOf(label, err)))
 	}
 }
 
@@ -609,8 +612,8 @@ func (t *healthTable) recordDialAt(label, site string, err error, took time.Dura
 	}
 	kind := ""
 	if err != nil {
-		// Only the fixed kinds, see dialErrKind.
-		kind = dialErrKind(err)
+		// Only the fixed kinds, see dialErrKind, and the stage of the chain.
+		kind = withHop(dialErrKind(err), t.hopOf(label, err))
 	}
 	h.recordDialAt(err == nil, took, site, kind)
 }

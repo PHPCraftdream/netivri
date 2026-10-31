@@ -137,7 +137,7 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 	post, postAddr := startHTTPHop(t, "alice:s3cret")
 	backend := echoServer(t)
 	var mu sync.Mutex
-	var kinds []string
+	var kinds, hops []string
 	inst, err := Start(context.Background(), Options{
 		HomeDir: testutil.TempHome(t), Authenticator: aliceAuthenticator(),
 		RouteNodes: map[string][]map[string]any{"de": {nodeMap(nodeAddr)}}, AccountRoute: map[string]string{"alice": "de"},
@@ -146,6 +146,7 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 			if ev.Kind == ConnDialFailed {
 				mu.Lock()
 				kinds = append(kinds, ev.Why)
+				hops = append(hops, ev.Hop)
 				mu.Unlock()
 			}
 		},
@@ -165,6 +166,9 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 	defer mu.Unlock()
 	if len(kinds) == 0 || kinds[0] != "proxy auth failed" {
 		t.Errorf("failed dial kinds = %q, want proxy auth failed", kinds)
+	}
+	if len(hops) == 0 || hops[0] != HopPost {
+		t.Errorf("failed dial stages = %q, want the post hop (the only HTTP stage of the chain)", hops)
 	}
 }
 
@@ -213,7 +217,7 @@ func TestHTTPSHopWithAnUntrustedCertificateFails(t *testing.T) {
 	post, postAddr := startTLSHTTPHop(t)
 	backend := echoServer(t)
 	var mu sync.Mutex
-	var kinds []string
+	var kinds, hops []string
 	inst, err := Start(context.Background(), Options{
 		HomeDir: testutil.TempHome(t), Authenticator: aliceAuthenticator(),
 		RouteNodes: map[string][]map[string]any{"de": {nodeMap(nodeAddr)}}, AccountRoute: map[string]string{"alice": "de"},
@@ -222,6 +226,7 @@ func TestHTTPSHopWithAnUntrustedCertificateFails(t *testing.T) {
 			if ev.Kind == ConnDialFailed {
 				mu.Lock()
 				kinds = append(kinds, ev.Why)
+				hops = append(hops, ev.Hop)
 				mu.Unlock()
 			}
 		},
@@ -240,5 +245,8 @@ func TestHTTPSHopWithAnUntrustedCertificateFails(t *testing.T) {
 	defer mu.Unlock()
 	if len(kinds) == 0 || kinds[0] != "handshake failed" {
 		t.Errorf("failed dial kinds = %q, want handshake failed", kinds)
+	}
+	if len(hops) == 0 || hops[0] != HopPost {
+		t.Errorf("failed dial stages = %q, want the post hop whose address the TLS error names", hops)
 	}
 }
