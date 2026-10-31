@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The log says how slow the answers are.** The hourly summary of an account
+  ends with how long the node's side took to start answering (median and 95th
+  percentile, from the first bytes the client sent to the first byte back), and
+  a minute in which at least 10 connections got an answer with a median of 2
+  seconds or more gets an `INFO` line `slow answers`. The summary of moved sites
+  names a side that is a single node.
 - **HTTP and HTTPS proxies as hops.** `pre_socks5` and `post_socks5` (global
   and per account, `account set-socks5`, `--pre-socks5`, `--post-socks5`) take
   `http://` (an HTTP CONNECT proxy, such as Privoxy or Burp) and `https://` (the

@@ -53,6 +53,10 @@ type ConnEvent struct {
 	// went to without naming one.
 	Port uint16
 	Site uint64
+	// ConnStreamEnded only: how long the node's side took to start answering,
+	// from the first bytes the client sent to the first byte that came back; 0
+	// when nothing came back, or the node spoke first.
+	Answer time.Duration
 }
 
 // dialErrKind names the kind of a dial or stream error from a fixed list (the
@@ -105,21 +109,53 @@ type watchConn struct {
 	site         uint64
 
 	up, down    atomic.Int64
+	firstUp     atomic.Int64 // unix nanoseconds of the first bytes sent to the node; 0 before
+	answer      atomic.Int64 // nanoseconds from firstUp to the first bytes back; 0 before, -1 when the node spoke first
 	interrupted atomic.Bool
 	failure     atomic.Pointer[string] // the first error kind
 	once        sync.Once
 }
 
+// noteUp counts bytes sent to the node and remembers when the first went.
+func (w *watchConn) noteUp(n int) {
+	if n <= 0 {
+		return
+	}
+	w.up.Add(int64(n))
+	if w.firstUp.Load() == 0 {
+		w.firstUp.CompareAndSwap(0, time.Now().UnixNano())
+	}
+}
+
+// noteDown counts bytes that came back and, for the first ones after the
+// client sent something, how long the node took to answer (a node that spoke
+// before the client did has no answer time). One atomic load on the usual
+// path; the clock is read once.
+func (w *watchConn) noteDown(n int) {
+	if n <= 0 {
+		return
+	}
+	w.down.Add(int64(n))
+	if w.answer.Load() != 0 {
+		return
+	}
+	if first := w.firstUp.Load(); first != 0 {
+		w.answer.CompareAndSwap(0, max(1, time.Now().UnixNano()-first))
+	} else {
+		w.answer.CompareAndSwap(0, -1)
+	}
+}
+
 func (w *watchConn) Read(b []byte) (int, error) {
 	n, err := w.Conn.Read(b)
-	w.down.Add(int64(n))
+	w.noteDown(n)
 	w.fail(err)
 	return n, err
 }
 
 func (w *watchConn) Write(b []byte) (int, error) {
 	n, err := w.Conn.Write(b)
-	w.up.Add(int64(n))
+	w.noteUp(n)
 	w.fail(err)
 	return n, err
 }
@@ -127,9 +163,7 @@ func (w *watchConn) Write(b []byte) (int, error) {
 func (w *watchConn) ReadBuffer(b *buf.Buffer) error {
 	before := b.Len()
 	err := w.Conn.ReadBuffer(b)
-	if got := b.Len() - before; got > 0 {
-		w.down.Add(int64(got))
-	}
+	w.noteDown(b.Len() - before)
 	w.fail(err)
 	return err
 }
@@ -138,7 +172,7 @@ func (w *watchConn) WriteBuffer(b *buf.Buffer) error {
 	size := b.Len()
 	err := w.Conn.WriteBuffer(b)
 	if err == nil {
-		w.up.Add(int64(size))
+		w.noteUp(size)
 	}
 	w.fail(err)
 	return err
@@ -175,7 +209,7 @@ func (w *watchConn) Upstream() any { return w.Conn }
 func (w *watchConn) ReadCached() *buf.Buffer {
 	if cached, ok := w.Conn.(N.CachedReader); ok {
 		if b := cached.ReadCached(); b != nil {
-			w.down.Add(int64(b.Len()))
+			w.noteDown(b.Len())
 			return b
 		}
 	}
@@ -186,7 +220,11 @@ func (w *watchConn) Close() error {
 	err := w.Conn.Close()
 	w.once.Do(func() {
 		ev := ConnEvent{Kind: ConnStreamEnded, Login: w.login, Label: w.label,
-			Lifetime: time.Since(w.start), Up: w.up.Load(), Down: w.down.Load(), Port: w.port, Site: w.site}
+			Lifetime: time.Since(w.start), Up: w.up.Load(), Down: w.down.Load(), Port: w.port, Site: w.site,
+		}
+		if answer := w.answer.Load(); answer > 0 {
+			ev.Answer = time.Duration(answer)
+		}
 		if kind := w.failure.Load(); kind != nil {
 			ev.Why = *kind
 		}

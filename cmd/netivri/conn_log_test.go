@@ -449,3 +449,80 @@ func TestHumanBytes(t *testing.T) {
 		}
 	}
 }
+
+// answered ends connections that got an answer after the given time.
+func (f *connLogFixture) answered(login, label string, after time.Duration, n int) {
+	for i := 0; i < n; i++ {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 100, Down: 900, Answer: after, Lifetime: time.Second})
+	}
+}
+
+func TestAnswerTimesMedianAndNinetyFifth(t *testing.T) {
+	var a answerTimes
+	if a.median() != 0 || a.p95() != 0 || a.detail() != "" {
+		t.Fatalf("empty: %v %v %q", a.median(), a.p95(), a.detail())
+	}
+	a.add(time.Second)
+	if a.median() != time.Second || a.p95() != time.Second {
+		t.Errorf("one: %v %v", a.median(), a.p95())
+	}
+	a = nil
+	for _, ms := range []int{500, 100, 300, 200, 400} { // unsorted on purpose
+		a.add(time.Duration(ms) * time.Millisecond)
+	}
+	if a.median() != 300*time.Millisecond || a.p95() != 500*time.Millisecond {
+		t.Errorf("five: median %v 95th %v", a.median(), a.p95())
+	}
+	a = nil
+	for i := 1; i <= 100; i++ {
+		a.add(time.Duration(i) * time.Millisecond)
+	}
+	if a.p95() != 95*time.Millisecond {
+		t.Errorf("hundred: 95th %v, want 95ms", a.p95())
+	}
+	for i := 0; i < 2*answerCap; i++ {
+		a.add(time.Millisecond)
+	}
+	if len(a) != answerCap {
+		t.Errorf("kept %d times, want the cap %d", len(a), answerCap)
+	}
+}
+
+func TestHourlySummaryCarriesHowLongAnswersTookToStart(t *testing.T) {
+	f := newConnLogFixture()
+	f.answered("alice", "main/us", 200*time.Millisecond, 8)
+	f.answered("alice", "main/us", 4*time.Second, 2)
+	f.log.heartbeat()
+	want := "INFO account alice: last hour: 10 connections ended, 0 broken, 0 closed before any data, 0 without an answer, 0 dials failed, 8.8 KiB down, 1000 B up, answers started after 0.2s median, 4.0s 95th"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Errorf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+func TestMinuteLineSaysWhenAnswersAreSlow(t *testing.T) {
+	f := newConnLogFixture()
+	f.answered("alice", "main/us", 3*time.Second, 12) // slow, enough of them
+	f.answered("alice", "own/nl", 3*time.Second, 5)   // slow, too few to say
+	f.answered("bob", "main/us", 300*time.Millisecond, 40)
+	f.log.flush()
+	want := "INFO account alice via main/us (United States, country US): slow answers: started after 3.0s median, 3.0s 95th, over 12 connections"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+func TestMovedSitesSummaryNamesASingleNode(t *testing.T) {
+	f := newConnLogFixture()
+	move := func(from string, n int) {
+		for i := 0; i < n; i++ {
+			f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: from, Label: "own/nl", Why: core.MoveNodeDown})
+		}
+	}
+	move("main/us", 2)
+	move("own/de", 1)
+	f.log.flush()
+	want := "WARN account alice: 3 sites moved from 2 nodes to own/nl (country NL): node down"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+}

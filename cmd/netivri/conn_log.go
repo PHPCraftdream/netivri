@@ -20,6 +20,11 @@ const (
 	connLogEvery = time.Minute
 	// connBeatEvery is how often the hourly summary of an account is written.
 	connBeatEvery = time.Hour
+	// slowAnswerMin and slowAnswerMedian: a node whose answers started after a
+	// median of at least this long, over at least that many connections of a
+	// minute, gets a line saying the answers are slow.
+	slowAnswerMin    = 10
+	slowAnswerMedian = 2 * time.Second
 	// connWarnFailures: that many failed dials, or that many broken
 	// connections (at least a twentieth of those that ended), in one period are
 	// a warning; fewer are INFO.
@@ -68,6 +73,45 @@ type hourTally struct {
 	sites  map[uint64]struct{}
 	ports  map[uint16]int
 	waited []time.Duration
+	// how long the node took to start answering, of the connections that got
+	// an answer.
+	answers answerTimes
+}
+
+// answerTimes are the times the node took to start answering (see
+// core.ConnEvent.Answer); an hour keeps at most answerCap of them.
+type answerTimes []time.Duration
+
+const answerCap = 8192
+
+func (a *answerTimes) add(d time.Duration) {
+	if len(*a) < answerCap {
+		*a = append(*a, d)
+	}
+}
+
+// median and p95 are the middle and the 95th percentile of the times; zero
+// for none.
+func (a answerTimes) median() time.Duration { return a.percentile(50) }
+func (a answerTimes) p95() time.Duration    { return a.percentile(95) }
+
+func (a answerTimes) percentile(p int) time.Duration {
+	if len(a) == 0 {
+		return 0
+	}
+	sorted := append([]time.Duration(nil), a...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	idx := (p*len(sorted)+99)/100 - 1
+	return sorted[min(max(idx, 0), len(sorted)-1)]
+}
+
+// detail says how long the answers took to start: ", answers started after
+// 0.4s median, 1.8s 95th"; nothing when no connection got one.
+func (a answerTimes) detail() string {
+	if len(a) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", answers started after %s median, %s 95th", waitText(a.median()), waitText(a.p95()))
 }
 
 const (
@@ -148,6 +192,7 @@ type siteMove struct{ login, from, to, why string }
 type endedTally struct {
 	total, empty, silent int
 	broken               map[string]int // by kind of the first error
+	answers              answerTimes
 }
 
 func newConnLog(info, warn logFunc) *connLog {
@@ -196,6 +241,10 @@ func (c *connLog) event(ev core.ConnEvent) {
 		tally.ended++
 		tally.up += ev.Up
 		tally.down += ev.Down
+		if ev.Answer > 0 {
+			ended.answers.add(ev.Answer)
+			tally.answers.add(ev.Answer)
+		}
 		switch {
 		case ev.Why != "":
 			ended.broken[ev.Why]++
@@ -304,9 +353,9 @@ func (c *connLog) heartbeat() {
 	sort.Strings(logins)
 	for _, login := range logins {
 		t := hour[login]
-		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up",
+		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
 			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(), t.dialsFailed,
-			humanBytes(t.down), humanBytes(t.up))
+			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
 	}
 }
 
@@ -357,6 +406,10 @@ func (c *connLog) flush() {
 	}
 	for _, key := range sortedKeys(ended) {
 		tally := ended[key]
+		if n := len(tally.answers); n >= slowAnswerMin && tally.answers.median() >= slowAnswerMedian {
+			c.info("account %s via %s: slow answers: started after %s median, %s 95th, over %s", key.login, describe(key.label),
+				waitText(tally.answers.median()), waitText(tally.answers.p95()), count(n, "connection", "connections"))
+		}
 		broken := sumCounts(tally.broken)
 		if broken == 0 {
 			continue
@@ -425,8 +478,16 @@ func (c *connLog) writeMoves(moves map[siteMove]int, describe func(string) strin
 			c.debug("account %s: %s moved from %s to %s: %s", k.login, count(moves[k], "site", "sites"),
 				describe(k.from), describe(k.to), k.why)
 		}
+		nodes := func(set map[string]struct{}) string {
+			for label := range set {
+				if len(set) == 1 {
+					return describe(label)
+				}
+			}
+			return count(len(set), "node", "nodes")
+		}
 		c.level(serious)("account %s: %s moved from %s to %s: %s", g.login, count(total, "site", "sites"),
-			count(len(from), "node", "nodes"), count(len(to), "node", "nodes"), g.why)
+			nodes(from), nodes(to), g.why)
 	}
 }
 
