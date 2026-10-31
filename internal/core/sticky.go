@@ -210,7 +210,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	if recorded {
 		g.health.recordDialAt(label, site, err, took)
 		if err != nil {
-			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err)})
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err), Hop: g.health.hopOf(label, err)})
 		}
 		g.observeDial(label, err == nil, took)
 		g.observeAccountDial(login, label, err == nil, took)
@@ -236,7 +236,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	if retryRecorded {
 		g.health.recordDialAt(retryLabel, site, retryErr, retryTook)
 		if retryErr != nil {
-			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr)})
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr), Hop: g.health.hopOf(retryLabel, retryErr)})
 		}
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
 		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
@@ -319,6 +319,7 @@ type routePlan struct {
 	names  []string // internal proxy names, member order
 	labels []string // statistics labels, member order
 	tiers  []int    // priority tier per member, lower first; nil = one tier
+	hops   []hopSet // the chain of every member, to say where a failure came from
 }
 
 // checkedTiers validates the tiers of a route of n nodes: none, or one
@@ -407,6 +408,7 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 			plans = append(plans, plan)
 			continue
 		}
+		plan.hops = routeHops(nodes, o.RoutePre[key], o.RoutePost[key])
 		for node := range nodes {
 			name := memberProxyName(gen, index, node)
 			if o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) {
@@ -461,6 +463,14 @@ func installStickyGroups(plans []routePlan, table *affinityTable, health *health
 func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *affinityTable, health *healthTable, observer Observer, events func(ConnEvent)) (map[string]C.Proxy, error) {
 	groups := make(map[string]C.Proxy, len(plans))
 	for _, plan := range plans {
+		for i, hs := range plan.hops {
+			if hs.chained() && i < len(plan.labels) {
+				if health.hops == nil {
+					health.hops = make(map[string]hopSet)
+				}
+				health.hops[plan.labels[i]] = hs
+			}
+		}
 		members := make([]C.Proxy, 0, len(plan.names))
 		for _, memberName := range plan.names {
 			proxy, ok := proxies[memberName]

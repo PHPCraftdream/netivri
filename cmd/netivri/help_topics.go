@@ -683,7 +683,9 @@ var helpTopics = []helpTopic{
 			"minutes are INFO. A failure names its kind from a fixed list: timeout, connection refused, " +
 			"connection reset, dns failure, network unreachable, connection closed, handshake failed, " +
 			"proxy auth failed (a hop did not take the credentials), proxy refused (a hop would not connect) or " +
-			"error. It reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
+			"error. For a route with a pre or post hop a failed dial also says which stage of the route it came from " +
+			"(pre hop, node, post hop, or unknown hop when the error does not tell), also in the reason a node went " +
+			"down. It reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
 			"tokens and subscription URLs are never logged.\n\n" +
 			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +
 			"running and prints new entries as lines until Ctrl+C; with --json each line is one JSON object (NDJSON).",

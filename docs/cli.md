@@ -331,7 +331,9 @@ is what "slow" means when nothing failed.
 What happens to the connections of the accounts is reported once a minute, one line per account and
 node and kind, only when something went wrong, and never with a site, an address, an error text or a
 password: `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
-failures, `INFO` below); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
+failures, `INFO` below; for a route that has a `pre_socks5` or `post_socks5` hop the line says which stage the
+failure came from, `account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`, one line per
+stage: `pre hop`, `node`, `post hop`, or `unknown hop` when the error does not tell); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
 x4, timeout x1), 3 closed before any data, 2 without an answer` (a connection is broken when the node's side of it
 returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
 `account alice via {NODE}: slow answers: started after 3.0s median, 8.0s 95th, over 40 connections` (`INFO`;
@@ -344,8 +346,14 @@ and the pairs are `DEBUG` lines;
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
-`connection closed`, `handshake failed`, `proxy auth failed`, `proxy refused` or `error`); dial failures count only when they reached 2
+`connection closed`, `handshake failed`, `proxy auth failed`, `proxy refused` or `error`, followed for a node with a pre or post hop by the stage after a comma:
+`3 dial failures (timeout, post hop)`, `2 probe failures (connection refused, pre hop)`); dial failures count only when they reached 2
 different sites (a run of 10 to one site counts too, so a dead node used for one site still fails over). The
+stage is found from the address that Mihomo names in the error (each stage wraps the one below it, so the one
+named last failed); an error without an address, such as a proxy refusing the credentials, is put down to the one
+stage that speaks that protocol (an HTTP proxy's `need auth` to the only HTTP stage), otherwise it is
+`unknown hop`. A route that is only a node has no stage in its lines, and a connection that breaks while it
+runs is not attributed. The address is matched, never printed. The
 same node id under two providers is one server: when its twin goes down within 10 seconds,
 that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for
 bursts and flapping. A node

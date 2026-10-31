@@ -58,7 +58,9 @@ type connLog struct {
 	unknownLogins int
 }
 
-type loginNode struct{ login, label string }
+// loginNode is what the lines of a period are kept by: the account and the
+// node, and for failed dials the stage of the route the failure came from.
+type loginNode struct{ login, label, hop string }
 
 // hourTally counts the connections of one account for the hourly summary.
 // empty ended before a byte moved either way (the client left), silent after
@@ -216,7 +218,7 @@ func (c *connLog) setNodes(infos []stats.NodeInfo) {
 func (c *connLog) event(ev core.ConnEvent) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := loginNode{ev.Login, ev.Label}
+	key := loginNode{login: ev.Login, label: ev.Label}
 	tally := c.hour[ev.Login]
 	if tally == nil && ev.Kind != core.ConnSiteMoved {
 		tally = &hourTally{}
@@ -225,6 +227,7 @@ func (c *connLog) event(ev core.ConnEvent) {
 	switch ev.Kind {
 	case core.ConnDialFailed:
 		tally.dialsFailed++
+		key.hop = ev.Hop
 		kinds := c.dials[key]
 		if kinds == nil {
 			kinds = map[string]int{}
@@ -401,7 +404,7 @@ func (c *connLog) flush() {
 	for _, key := range sortedKeys(dials) {
 		kinds := dials[key]
 		total := sumCounts(kinds)
-		line := fmt.Sprintf("account %s via %s: %s failed (%s)", key.login, describe(key.label), count(total, "dial", "dials"), joinKinds(kinds))
+		line := fmt.Sprintf("account %s via %s%s: %s failed (%s)", key.login, describe(key.label), hopText(key.hop), count(total, "dial", "dials"), joinKinds(kinds))
 		c.level(total >= connWarnFailures)("%s", line)
 	}
 	for _, key := range sortedKeys(ended) {
@@ -500,6 +503,15 @@ func (c *connLog) level(serious bool) logFunc {
 	return c.info
 }
 
+// hopText names the stage of the route a failure came from after the node
+// of a line: ", post hop"; nothing when the route is only a node.
+func hopText(hop string) string {
+	if hop == "" {
+		return ""
+	}
+	return ", " + hop
+}
+
 func count(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one
@@ -533,7 +545,10 @@ func sortedKeys[V any](m map[loginNode]V) []loginNode {
 		if out[i].login != out[j].login {
 			return out[i].login < out[j].login
 		}
-		return out[i].label < out[j].label
+		if out[i].label != out[j].label {
+			return out[i].label < out[j].label
+		}
+		return out[i].hop < out[j].hop
 	})
 	return out
 }

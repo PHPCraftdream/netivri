@@ -53,6 +53,9 @@ type ConnEvent struct {
 	// went to without naming one.
 	Port uint16
 	Site uint64
+	// ConnDialFailed only: the stage of the route the failure came from (HopPre,
+	// HopNode, HopPost or HopUnknown), empty when the route is only a node.
+	Hop string
 	// ConnStreamEnded only: how long the node's side took to start answering,
 	// from the first bytes the client sent to the first byte that came back; 0
 	// when nothing came back, or the node spoke first.
