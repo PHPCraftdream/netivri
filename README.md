@@ -36,9 +36,10 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
-- **SOCKS5 before and after the VPN.** Optional `pre_socks5` (how netivri
+- **A proxy before and after the VPN.** Optional `pre_socks5` (how netivri
   reaches the VPN node) and `post_socks5` (where the traffic goes after it),
-  global and per account; an account value overrides the global one and `none`
+  global and per account, each a `socks5://`, `http://` (HTTP CONNECT) or
+  `https://` proxy; an account value overrides the global one and `none`
   cancels it.
 - **Client address rules.** `listen.allowed_clients` limits which client
   addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
@@ -128,9 +129,11 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
 
-### SOCKS5 before and after the VPN
+### A proxy before and after the VPN
 
-Two optional SOCKS5 proxies wrap the VPN node: `pre_socks5` is what netivri
+Two optional proxies wrap the VPN node (`socks5://`, `http://` for an HTTP
+CONNECT proxy such as Privoxy or Burp, or `https://` for one reached over TLS;
+the names say `socks5` for historical reasons): `pre_socks5` is what netivri
 connects through to reach the node, `post_socks5` is where the traffic goes
 after the node (client → netivri → pre → VPN node → post → destination). Set
 them for everyone in `config.ktav` and override them per account:
@@ -154,6 +157,7 @@ accounts: [
 netivri account set-socks5 alice --post none        # alice skips the global post
 netivri account set-socks5 alice --post inherit     # back to the global value
 netivri account add bob --provider main --country NL --pre-socks5 socks5://pre2.example:1080
+netivri account set-socks5 bob --post http://proxy.example:8080   # an HTTP proxy as the post hop
 netivri account show alice                          # effective values, never the credentials
 ```
 

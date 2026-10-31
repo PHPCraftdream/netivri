@@ -31,7 +31,7 @@ not preserved, so keep personal notes elsewhere.
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
-| `chain.pre_socks5` | string | *(empty)* | Default SOCKS5 proxy netivri connects through to reach a VPN node: `socks5://[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
+| `chain.pre_socks5` | string | *(empty)* | Default proxy netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
 | `chain.post_socks5` | string | *(empty)* | Default SOCKS5 proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format. An account's own `post_socks5` overrides it. |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, or an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). |
@@ -46,7 +46,8 @@ not preserved, so keep personal notes elsewhere.
 ## SOCKS5 chain
 
 `chain.pre_socks5` and `chain.post_socks5` (global) and `pre_socks5` and
-`post_socks5` of an account put SOCKS5 proxies around the VPN node:
+`post_socks5` of an account put proxies around the VPN node (the names say
+SOCKS5, the value may also be an HTTP or HTTPS proxy):
 
 ```text
 client -> netivri -> [pre] -> VPN node -> [post] -> destination
@@ -62,8 +63,9 @@ client -> netivri -> [pre] -> VPN node -> [post] -> destination
   goes to the post proxy directly) and to unauthenticated traffic (the global
   value).
 
-A value is `socks5://[user:password@]host:port`: scheme `socks5` only
-(case-insensitive), a host (name, IPv4 or `[IPv6]`), a **required** port
+A value is `{SCHEME}://[user:password@]host:port` with the scheme `socks5`,
+`http` (an HTTP CONNECT proxy) or `https` (an HTTP CONNECT proxy reached over
+TLS, certificate checked), case-insensitive, a host (name, IPv4 or `[IPv6]`), a **required** port
 1..65535, optional percent-encoded user name and password, no path, query or
 fragment. `none` is also accepted. Anything else is `CONFIG_INVALID`; the
 message names the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and

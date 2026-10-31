@@ -206,9 +206,11 @@ func TestWatchOnlyWrapsWhenSomeoneListens(t *testing.T) {
 
 func TestDialErrKindIsAFixedWord(t *testing.T) {
 	for in, want := range map[string]string{
-		"dial tcp 10.0.0.1:443: i/o timeout":      "timeout",
-		"connect: connection refused":             "connection refused",
-		"dial tcp secret-host: weird failure xyz": "error",
+		"dial tcp 10.0.0.1:443: i/o timeout":          "timeout",
+		"connect: connection refused":                 "connection refused",
+		"10.0.0.1:8080 connect error: HTTP need auth": "proxy auth failed",
+		"403 Forbidden":                               "proxy refused",
+		"dial tcp secret-host: weird failure xyz":     "error",
 	} {
 		if got := dialErrKind(errors.New(in)); got != want {
 			t.Errorf("dialErrKind(%q) = %q, want %q", in, got, want)

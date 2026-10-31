@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
 )
 
@@ -205,5 +206,26 @@ func TestConnLogWhenQuietKeepsWarningsAsInfo(t *testing.T) {
 	f.log.flush()
 	if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], "WARN ") {
 		t.Errorf("lines = %q, want the failed login as WARN", f.lines)
+	}
+}
+
+// The hook that the core is started with is the one that goes quiet after a
+// wake-up: the watch of the angel and the node log are wired together.
+func TestCoreOptionsHookIsQuietRightAfterWaking(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	f.l.mu.Lock()
+	label := f.l.applied.pool.infos[0].Label
+	f.l.mu.Unlock()
+	hook := f.script.call(0).OnNodeHealth
+	hook(core.NodeEvent{Label: label, Down: true, Reason: "2 probe failures (timeout)"})
+	if strings.Contains(f.logText(), "woke up") {
+		t.Fatalf("quiet without a sleep: %q", f.logText())
+	}
+	now := time.Now()
+	f.l.sleep().note(now.Add(-time.Hour), now)
+	hook(core.NodeEvent{Label: label, Down: false, Downtime: time.Second})
+	hook(core.NodeEvent{Label: label, Down: true, Reason: "2 probe failures (timeout)"})
+	if !strings.Contains(f.logText(), "right after the computer woke up") {
+		t.Errorf("a down right after waking is not marked: %q", f.logText())
 	}
 }

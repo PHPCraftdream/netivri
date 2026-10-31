@@ -349,13 +349,13 @@ var helpTopics = []helpTopic{
 			"existing true; any difference for an existing login is ACCOUNT_EXISTS (use set-country or " +
 			"set-provider to change it). " +
 			"A running angel applies the new account within a few seconds. Optional --pre-socks5 and --post-socks5 set " +
-			"account-specific SOCKS5 transport hops; see 'netivri help routing' for order and inheritance.",
+			"account-specific proxy hops (socks5://, http:// or https://); see 'netivri help routing' for order and inheritance.",
 		Flags: []helpFlag{
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
 			{"--clients {RULES}", "Client addresses that may use this account: an allowed-clients rule list (e.g. 10.0.0.0/8, 192.168.1.*, loopback, *). Default: no account restriction."},
-			{"--pre-socks5 {URL}", "SOCKS5 hop before the selected netivri exit. Use socks5://[user:password@]host:port; the port is required; credentials are never shown."},
-			{"--post-socks5 {URL}", "SOCKS5 hop after the selected netivri exit. Use socks5://[user:password@]host:port; the port is required; credentials are never shown."},
+			{"--pre-socks5 {URL}", "Proxy hop before the selected netivri exit. Use socks5://, http:// (an HTTP CONNECT proxy) or https:// (the same over TLS) as scheme://[user:password@]host:port; the port is required; credentials are never shown."},
+			{"--post-socks5 {URL}", "Proxy hop after the selected netivri exit. Use socks5://, http:// (an HTTP CONNECT proxy) or https:// (the same over TLS) as scheme://[user:password@]host:port; the port is required; credentials are never shown."},
 		},
 		Examples: []helpExample{
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
@@ -544,22 +544,23 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account set-socks5",
 		Group:   groupAccount,
-		Summary: "Set or inherit account SOCKS5 hops",
+		Summary: "Set or inherit account proxy hops",
 		Usage: []string{
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --pre {URL|none|inherit}",
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --post {URL|none|inherit}",
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --pre {VALUE} --post {VALUE}",
 		},
-		Description: "Updates one or more accounts' SOCKS5 chain sides. Set a side to a socks5://user:password@host:port " +
-			"URL (port required), none to explicitly disable that hop, or inherit to use the global chain setting. " +
+		Description: "Updates one or more accounts' chain sides. Set a side to a socks5://, http:// or https:// " +
+			"user:password@host:port URL (port required; http is an HTTP CONNECT proxy, https the same over TLS), none to explicitly disable that hop, or inherit to use the global chain setting. " +
 			"Unspecified sides are unchanged. The sides are independent; URLs are credentials and are never printed. " +
 			"Changes are applied by a running angel within a few seconds.",
 		Flags: []helpFlag{
-			{"--pre {VALUE}", "Set the pre-hop SOCKS5 URL (port required), or none/inherit."},
-			{"--post {VALUE}", "Set the post-hop SOCKS5 URL (port required), or none/inherit."},
+			{"--pre {VALUE}", "Set the pre-hop proxy URL (socks5://, http:// or https://; port required), or none/inherit."},
+			{"--post {VALUE}", "Set the post-hop proxy URL (socks5://, http:// or https://; port required), or none/inherit."},
 		},
 		Examples: []helpExample{
 			{"Set a pre-hop", "netivri account set-socks5 alice --pre socks5://user:secret@proxy.example:1080"},
+			{"Set an HTTP proxy as the post-hop", "netivri account set-socks5 alice --post http://proxy.example:8080"},
 			{"Disable the inherited post-hop", "netivri account set-socks5 alice --post none"},
 			{"Return to the global pre-hop", "netivri account set-socks5 alice --pre inherit"},
 		},
@@ -829,9 +830,10 @@ var helpTopics = []helpTopic{
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
-			"chain.pre_socks5 and chain.post_socks5 are optional global SOCKS5 defaults. Each account may " +
+			"chain.pre_socks5 and chain.post_socks5 are optional global hop defaults; despite the names they take " +
+			"socks5://, http:// (an HTTP CONNECT proxy) or https:// (the same over TLS) URLs. Each account may " +
 			"set accounts.pre_socks5 and accounts.post_socks5; each side cascades independently: absent/empty or inherit uses the " +
-			"global value, while none explicitly disables that hop. SOCKS5 URLs require a port (1 to 65535) " +
+			"global value, while none explicitly disables that hop. Hop URLs require a port (1 to 65535) " +
 			"and may include optional percent-encoded username:password userinfo; these are credentials and are " +
 			"never printed. See 'netivri help routing'.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
@@ -888,9 +890,9 @@ var helpTopics = []helpTopic{
 			"fallback. There is no fallback beyond the lists: no direct connection, and no country or provider " +
 			"the account does not name. An account with neither a provider nor a country uses the default route, " +
 			"which is direct until a node is selected.\n\n" +
-			"A SOCKS5 chain has up to three hops: an optional pre_socks5 hop, the selected subscription exit, " +
+			"A chain has up to three hops: an optional pre_socks5 hop, the selected subscription exit, " +
 			"and an optional post_socks5 hop. The order is client -> pre-hop -> selected exit -> post-hop -> target; " +
-			"each SOCKS5 URL requires a port. Account pre/post settings cascade independently: inherit uses the " +
+			"each hop URL (socks5://, http:// or https://) requires a port. Account pre/post settings cascade independently: inherit uses the " +
 			"corresponding global chain setting, while none disables it. Credentials in URLs are redacted in help " +
 			"output and account show. Use 'netivri help config' for configuration keys and 'netivri help account " +
 			"set-socks5' to change account hops.\n\n" +

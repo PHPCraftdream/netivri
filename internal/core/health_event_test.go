@@ -162,6 +162,14 @@ func TestProbeFailKindNamesAFewCausesWithoutTheAddress(t *testing.T) {
 		{errors.New("dial tcp 203.0.113.9:443: connectex: A connection attempt failed because the connected party did not properly respond after a period of time"), "timeout"},
 		{errors.New("wsarecv: An existing connection was forcibly closed by the remote host."), "connection reset"},
 		{errors.New("connect: no route to host"), "network unreachable"},
+		{errors.New("127.0.0.1:8080 connect error: HTTP need auth"), "proxy auth failed"},
+		{errors.New("rejected username/password"), "proxy auth failed"},
+		{errors.New("SOCKS need auth"), "proxy auth failed"},
+		{errors.New("127.0.0.1:3128 connect error: CONNECT method not allowed by proxy"), "proxy refused"},
+		{errors.New("403 Forbidden"), "proxy refused"},
+		{errors.New("502 Bad Gateway"), "proxy refused"},
+		{errors.New("can not connect remote err code: 503"), "proxy refused"},
+		{errors.New("connect: connection refused"), "connection refused"}, // a refused connection is not a refusing proxy
 		{errors.New("something odd with 203.0.113.9"), "error: something odd with <addr>"},
 	}
 	for _, c := range cases {

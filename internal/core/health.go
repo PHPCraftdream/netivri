@@ -196,7 +196,7 @@ func (h *nodeHealth) noteProbeError(kind string) {
 	h.mu.Unlock()
 }
 
-// probeFailKind names a probe error in a few words, without any address. A
+// probeFailKind names a probe or dial error in a few words, without any address. A
 // cause it does not know is "error: " and a scrubbed excerpt of the message.
 func probeFailKind(err error) string {
 	var netErr net.Error
@@ -205,6 +205,14 @@ func probeFailKind(err error) string {
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout") ||
 		strings.Contains(msg, "did not properly respond") || strings.Contains(msg, "failed to respond"):
 		return "timeout"
+	case strings.Contains(msg, "need auth") || strings.Contains(msg, "rejected username") || strings.Contains(msg, "auth failed") ||
+		strings.Contains(msg, "proxy authentication"):
+		// A proxy (an HTTP or SOCKS5 hop, or the node) did not take the credentials.
+		return "proxy auth failed"
+	case strings.Contains(msg, "not allowed by proxy") || strings.Contains(msg, "forbidden") || strings.Contains(msg, "bad gateway") ||
+		strings.Contains(msg, "err code"):
+		// A proxy answered but would not connect to the destination.
+		return "proxy refused"
 	case strings.Contains(msg, "refused"):
 		return "connection refused"
 	case strings.Contains(msg, "reset") || strings.Contains(msg, "forcibly closed") || strings.Contains(msg, "broken pipe"):
