@@ -37,8 +37,10 @@ description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 
 ## Configuration and cascade
 
-A value is `socks5://[user:password@]host:port`, or `none`. The scheme is
-`socks5` (any case), the host a name, an IPv4 address or `[IPv6]`, the port is
+A value is `{scheme}://[user:password@]host:port`, or `none`. The scheme is
+`socks5`, `http` (an HTTP CONNECT proxy) or `https` (the same over TLS, with the
+certificate checked), any case, and is rendered as a Mihomo `socks5` or `http`
+outbound (`tls: true` for `https`); the setting names keep `socks5`. The host a name, an IPv4 address or `[IPv6]`, the port is
 **required** (1..65535), the user name and password are percent-encoded, no
 path, query or fragment. Validation (`internal/config`) fails with
 `CONFIG_INVALID` naming the key (`chain.pre_socks5`, `accounts[N].post_socks5`)

@@ -105,7 +105,7 @@ docs/config.md.)
 | `provider` | Optional: the name of a subscription (`subscriptions[].name`, 1..64 characters of `A-Za-z0-9._-`), or a comma-separated list of names in priority order (at most 16). Empty or missing = every provider. Config validation checks the shape only; `up` and the `account` commands check that the provider exists. |
 | `exit_country` | Optional ISO 3166-1 alpha-2 code, stored upper case (`de` is normalised to `DE`), or a comma-separated list of codes in priority order (at most 32). Empty or missing = default route. |
 
-Accounts also take optional `pre_socks5` and `post_socks5` (SOCKS5 proxy URLs
+Accounts also take optional `pre_socks5` and `post_socks5` (proxy URLs, `socks5://`, `http://` or `https://`,
 or `none`), which override the global `chain.*` values side by side; see
 [socks5-chain.md](socks5-chain.md).
 

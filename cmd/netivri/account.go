@@ -76,8 +76,8 @@ func runAccount(args []string, stdout io.Writer) error {
 		country := fs.String("country", "", "exit country")
 		provider := fs.String("provider", "", "subscription (provider) the account exits through")
 		clients := fs.String("clients", "", "client addresses that may use this account (allowed-clients rules)")
-		pre := fs.String("pre-socks5", "", "pre-hop SOCKS5 URL")
-		post := fs.String("post-socks5", "", "post-hop SOCKS5 URL")
+		pre := fs.String("pre-socks5", "", "pre-hop proxy URL (socks5://, http:// or https://)")
+		post := fs.String("post-socks5", "", "post-hop proxy URL (socks5://, http:// or https://)")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
 			return usage("invalid flags")

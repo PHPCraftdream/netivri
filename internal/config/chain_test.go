@@ -5,8 +5,9 @@ import (
 	"testing"
 )
 
-func TestSOCKS5ChainValidation(t *testing.T) {
-	valid := []string{"", "none", "NONE", "SoCkS5://proxy.example:1080", "socks5://user:p%40ss@[2001:db8::1]:1080"}
+func TestChainValidation(t *testing.T) {
+	valid := []string{"", "none", "NONE", "SoCkS5://proxy.example:1080", "socks5://user:p%40ss@[2001:db8::1]:1080",
+		"http://proxy.example:8080", "HTTP://user:p%40ss@proxy.example:3128", "https://proxy.example:8443", "http://[::1]:3128"}
 	for _, value := range valid {
 		c := Default()
 		c.Chain = Chain{PreSOCKS5: value, PostSOCKS5: value}
@@ -15,13 +16,13 @@ func TestSOCKS5ChainValidation(t *testing.T) {
 			t.Errorf("accepted %q: %v", value, err)
 		}
 	}
-	for _, value := range []string{"http://proxy.example", "socks5h://proxy.example:1080", "socks5://", "socks5://proxy.example", "socks5://proxy.example:1080/path", "socks5://proxy.example:1080?token=x", "socks5://proxy.example:1080#fragment", "socks5://proxy.example:bad", "socks5://user:%ZZ@proxy.example:1080", " socks5://proxy.example"} {
+	for _, value := range []string{"http://proxy.example", "https://proxy.example", "http://proxy.example:8080/path", "http://proxy.example:0", "https://proxy.example:70000", "ftp://proxy.example:21", "socks4://proxy.example:1080", "socks5h://proxy.example:1080", "socks5://", "socks5://proxy.example", "socks5://proxy.example:1080/path", "socks5://proxy.example:1080?token=x", "socks5://proxy.example:1080#fragment", "socks5://proxy.example:bad", "socks5://user:%ZZ@proxy.example:1080", " socks5://proxy.example"} {
 		c := Default()
 		c.Chain.PreSOCKS5 = value
 		if err := c.Validate(); err == nil {
 			t.Errorf("accepted %q", value)
-		} else if leak := strings.ReplaceAll(value, "socks5://", ""); leak != "" && strings.Contains(err.Error(), leak) {
-			// The fixed message itself names the scheme, which is not a leak.
+		} else if _, leak, _ := strings.Cut(value, "://"); leak != "" && strings.Contains(err.Error(), leak) {
+			// The fixed message itself names the schemes, which is not a leak.
 			t.Errorf("error leaked value %q: %v", value, err)
 		}
 	}

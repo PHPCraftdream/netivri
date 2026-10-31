@@ -491,7 +491,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   from: one comma-separated allowed-clients rule list (same grammar as
   `listen.allowed_clients`; see [config.md](config.md), "Allowed clients").
   `--pre-socks5 {URL}` and `--post-socks5 {URL}` give the account its own
-  SOCKS5 proxy before and after the VPN node, each `socks5://[user:password@]host:port`
+  proxy before and after the VPN node, each `{socks5|http|https}://[user:password@]host:port`
   with a required port or `none` (see `set-socks5`). Repeating
   `add` with the same providers and countries in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
@@ -581,8 +581,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `--pre {VALUE}` is the proxy netivri connects through to reach the VPN node,
   `--post {VALUE}` the proxy the traffic goes to after the node. At least one
   of the two is required (exit 2 otherwise); a side that is not given stays as
-  it is. `{VALUE}` is `socks5://[user:password@]host:port` (scheme `socks5`
-  only, a host, a required port 1..65535, optional percent-encoded
+  it is. `{VALUE}` is `{socks5|http|https}://[user:password@]host:port` (`http`
+  is an HTTP CONNECT proxy, `https` the same over TLS, a host, a required port 1..65535, optional percent-encoded
   credentials, no path or query), or `none` to cancel the global value of that
   side for these accounts, or `inherit` to remove the account's own value so
   that the global `chain.pre_socks5` / `chain.post_socks5` of `config.ktav`

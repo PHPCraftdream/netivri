@@ -76,7 +76,7 @@ func TestAccountSOCKS5DispatchSetAndErrors(t *testing.T) {
 		wantMessage := "account set-socks5: requires --pre and/or --post"
 		switch {
 		case strings.Contains(strings.Join(args, " "), "invalid.example"):
-			wantCode, wantMessage = "CONFIG_INVALID", "invalid --pre SOCKS5 URL"
+			wantCode, wantMessage = "CONFIG_INVALID", "invalid --pre proxy URL: use socks5://, http:// or https:// with a host and port"
 		case strings.Contains(strings.Join(args, " "), "--unknown"):
 			wantMessage = "account set-socks5: requires ACCOUNT[,ACCOUNT...] and --pre and/or --post"
 		case strings.Contains(strings.Join(args, " "), "missing"):
@@ -108,10 +108,10 @@ func TestAccountSOCKS5TopLevelErrorsAreRedactedAndDoNotWrite(t *testing.T) {
 		exit          int
 	}{
 		{"no flags", "set-socks5 alice", "USAGE", "account set-socks5: requires --pre and/or --post", cli.ExitUsage},
-		{"bad --pre URL", "set-socks5 alice --pre http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --pre SOCKS5 URL", cli.ExitUsage},
-		{"bad --post URL", "set-socks5 alice --post http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --post SOCKS5 URL", cli.ExitUsage},
-		{"bad --pre-socks5 URL", "add bob --pre-socks5 http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --pre-socks5 SOCKS5 URL", cli.ExitUsage},
-		{"bad --post-socks5 URL", "add bob --post-socks5 http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --post-socks5 SOCKS5 URL", cli.ExitUsage},
+		{"bad --pre URL", "set-socks5 alice --pre http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --pre proxy URL: use socks5://, http:// or https:// with a host and port", cli.ExitUsage},
+		{"bad --post URL", "set-socks5 alice --post http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --post proxy URL: use socks5://, http:// or https:// with a host and port", cli.ExitUsage},
+		{"bad --pre-socks5 URL", "add bob --pre-socks5 http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --pre-socks5 proxy URL: use socks5://, http:// or https:// with a host and port", cli.ExitUsage},
+		{"bad --post-socks5 URL", "add bob --post-socks5 http://user:" + secret + "@invalid.example", "CONFIG_INVALID", "invalid --post-socks5 proxy URL: use socks5://, http:// or https:// with a host and port", cli.ExitUsage},
 		{"unknown flag", "set-socks5 alice --unknown x", "USAGE", "account set-socks5: requires ACCOUNT[,ACCOUNT...] and --pre and/or --post", cli.ExitUsage},
 		{"missing account", "set-socks5 missing --pre inherit", "ACCOUNT_NOT_FOUND", "account not found: missing", cli.ExitNotFound},
 	}

@@ -226,10 +226,10 @@ func (c *Config) Validate() error {
 	if err := validateUpdateInterval(c.Fetch.UpdateInterval); err != nil {
 		return err
 	}
-	if err := validateSOCKS5URL("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
+	if err := validateChainURL("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
 		return err
 	}
-	if err := validateSOCKS5URL("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
+	if err := validateChainURL("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
 		return err
 	}
 	first := make(map[string]int, len(c.Subscriptions))
@@ -329,13 +329,13 @@ func (c *Config) Validate() error {
 		if err := checkScalar(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
 			return err
 		}
-		if err := validateSOCKS5URL(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
+		if err := validateChainURL(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
 			return err
 		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
 			return err
 		}
-		if err := validateSOCKS5URL(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
+		if err := validateChainURL(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
 			return err
 		}
 	}
@@ -382,27 +382,37 @@ func validateBind(bind string) error {
 	return nil
 }
 
-func validateSOCKS5URL(field, raw string) error {
+// isChainScheme reports whether scheme names a proxy that a chain hop may be:
+// socks5, http (an HTTP CONNECT proxy) or https (the same over TLS).
+func isChainScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "socks5", "http", "https":
+		return true
+	}
+	return false
+}
+
+func validateChainURL(field, raw string) error {
 	if raw == "" || strings.EqualFold(raw, "none") {
 		return nil
 	}
 	u, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(u.Scheme, "socks5") || u.Opaque != "" || u.Hostname() == "" || hasInvalidEscapes(raw) || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
-		return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+	if err != nil || !isChainScheme(u.Scheme) || u.Opaque != "" || u.Hostname() == "" || hasInvalidEscapes(raw) || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
+		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 	}
 	port := u.Port()
 	if port == "" {
-		return invalid("%s must be empty, none, or a valid socks5:// URL with a host and port", field)
+		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 	}
 	if port != "" {
 		for _, r := range port {
 			if r < '0' || r > '9' {
-				return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+				return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 			}
 		}
 		p, err := strconv.Atoi(port)
 		if err != nil || p < 1 || p > 65535 {
-			return invalid("%s must be empty, none, or a valid socks5:// URL with a host", field)
+			return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 		}
 	}
 	return nil

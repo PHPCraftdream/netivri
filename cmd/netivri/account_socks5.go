@@ -13,8 +13,8 @@ import (
 func accountSetSOCKS5(cfg *config.Config, rest []string, save func() error, stdout io.Writer) error {
 	fs := flag.NewFlagSet("account set-socks5", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	pre := fs.String("pre", "", "pre-hop SOCKS5 URL or inherit")
-	post := fs.String("post", "", "post-hop SOCKS5 URL or inherit")
+	pre := fs.String("pre", "", "pre-hop proxy URL (socks5://, http:// or https://), none or inherit")
+	post := fs.String("post", "", "post-hop proxy URL (socks5://, http:// or https://), none or inherit")
 	pos, err := parseFlags(fs, rest)
 	if err != nil || len(pos) != 1 {
 		return cli.Usage("account set-socks5: requires ACCOUNT[,ACCOUNT...] and --pre and/or --post")
@@ -79,7 +79,7 @@ func validateCLIChain(s, flagName string) error {
 	c := config.Default()
 	c.Chain.PreSOCKS5 = s
 	if err := c.Validate(); err != nil {
-		return &cli.Error{Code: config.CodeConfigInvalid, Message: "invalid " + flagName + " SOCKS5 URL", Exit: cli.ExitUsage}
+		return &cli.Error{Code: config.CodeConfigInvalid, Message: "invalid " + flagName + " proxy URL: use socks5://, http:// or https:// with a host and port", Exit: cli.ExitUsage}
 	}
 	return nil
 }
