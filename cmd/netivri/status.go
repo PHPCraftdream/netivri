@@ -20,7 +20,7 @@ import (
 // runStatus reports the live angel state; exit 4 (ANGEL_NOT_RUNNING)
 // when nothing is running.
 func runStatus(args []string, stdout io.Writer) error {
-	home, rest, err := parseHomeArgs("status", args)
+	home, homeSource, rest, err := parseHomeArgsFrom("status", args)
 	if err != nil {
 		return err
 	}
@@ -90,6 +90,8 @@ func runStatus(args []string, stdout io.Writer) error {
 		return &cli.Error{Code: "INTERNAL", Message: err.Error(), Exit: cli.ExitInternal}
 	}
 	data["angel"] = "running"
+	data["home"] = home
+	data["home_source"] = homeSource
 	data["allowed_clients"] = allowedClientsLabel(st.AllowedClients)
 	data["accounts"] = accs
 	data["uptime_seconds"] = uptimeSeconds(st.StartedAt)

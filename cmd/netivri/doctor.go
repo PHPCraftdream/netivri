@@ -60,7 +60,7 @@ var doctorListen = func(addr string) error {
 // to anything but the local angel and the local port, and never prints a
 // subscription URL, a password or a hash.
 func runDoctor(args []string, stdout io.Writer) error {
-	home, rest, err := parseHomeArgs("doctor", args)
+	home, homeSource, rest, err := parseHomeArgsFrom("doctor", args)
 	if err != nil {
 		return err
 	}
@@ -80,7 +80,7 @@ func runDoctor(args []string, stdout io.Writer) error {
 		}
 	}
 	// stdout always carries the document; the error (if any) goes to stderr.
-	cli.Success(stdout, map[string]any{"checks": checks, "summary": summary})
+	cli.Success(stdout, map[string]any{"checks": checks, "summary": summary, "home": home, "home_source": homeSource})
 	if summary.Fail > 0 {
 		return &cli.Error{
 			Code:    "DOCTOR_FAILED",

@@ -398,7 +398,7 @@ func topicFor(line string) *helpTopic {
 }
 
 func documentedFlags(t *helpTopic) map[string]bool {
-	ok := map[string]bool{"--home": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true}
+	ok := map[string]bool{"--home": true, "--local": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true}
 	for _, f := range t.Flags {
 		for _, part := range strings.Split(f.Name, ",") {
 			if fields := strings.Fields(part); len(fields) > 0 {

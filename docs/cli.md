@@ -9,7 +9,8 @@ scripts, AI agents). Changing anything here is a breaking change and bumps
 | Flag | Meaning |
 |---|---|
 | `--json` | Write results and errors as JSON instead of Ktav, the default (see [Output](#output)). Env: `NETIVRI_OUTPUT=json`. |
-| `--home {DIR}` | State directory. Default: `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. Env: `NETIVRI_HOME`. |
+| `--home {DIR}` | State directory. Default: a `.netivri` directory in the current directory if there is one, else `$NETIVRI_HOME`, else `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. See [Separate state directories](#separate-state-directories). |
+| `--local` | Use `./.netivri` in the current directory as the state directory, creating it. Cannot be combined with `--home`. |
 | `--quiet` | No human-oriented output on stderr. |
 | `--no-color` | No ANSI. Implied when not a TTY or `NO_COLOR` is set. |
 | `-h`, `--help` | Help for the command; see [`help`](#help). |
@@ -51,7 +52,7 @@ netivri use {NODE}                        (planned)
 netivri use --country {COUNTRY} [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
 
-netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR}]
+netivri up [--foreground] [--port {PORT}] [--bind {ADDR}] [--home {DIR} | --local]
 netivri down
 netivri status [--full] [--watch] [--interval {DURATION}]
 
@@ -743,10 +744,56 @@ Windows; never print it. `auth` is one of:
 
 Credentials, hashes and the config file content are never printed or logged.
 
+### Separate state directories
+
+Everything netivri keeps lives in one state directory: `config.ktav`, the
+subscriptions with their URLs (credentials), `stats.db`, the site bindings and
+`run/` with the angel's state file, control token and log. A second state
+directory is a second, independent netivri: its own settings, tokens, nodes,
+statistics and angel, nothing shared with the first. The command line picks the
+directory, first match wins:
+
+| # | Source | Directory |
+|---|---|---|
+| 1 | `--home {DIR}` | `{DIR}`, as given |
+| 2 | `--local` | `./.netivri`, created if missing |
+| 3 | nothing given, and `./.netivri` is a directory | `./.netivri` |
+| 4 | `$NETIVRI_HOME` is set | its value |
+| 5 | otherwise | `%APPDATA%\netivri`, `~/.config/netivri` or `~/Library/Application Support/netivri` |
+
+`--home` and `--local` together are a usage error (exit 2). Only the current
+directory is looked at in step 3, not its parents, and only a directory counts,
+not a file with that name. `--local` creates `./.netivri` with access for the
+owner only and a `.gitignore` that ignores everything in it (it holds
+credentials); a directory that exists is left as it is. `up` records the
+absolute path in the angel it starts, so the angel keeps using that directory
+whatever the current directory of later commands is.
+
+`status` and `doctor` print `home` (the directory) and `home_source` (`--home`,
+`--local`, `./.netivri`, `NETIVRI_HOME` or `user config directory`), so it is
+visible which one a command looked at, which matters once a `.netivri` is picked
+up on its own.
+
+```sh
+cd ~/work/experiment
+netivri up --local --port 0      # a separate angel; ./.netivri is created, any free port
+netivri status                   # found through ./.netivri, no flag needed
+netivri sub add https://provider.example/sub/{TOKEN} --name main
+netivri down                     # stops this directory's angel only
+
+netivri up --home /srv/netivri-a --port 7891   # an explicit directory, any place
+netivri status --home /srv/netivri-a
+```
+
+A new state directory starts with the defaults, which include port 7890: when
+another angel already listens there, give the new one `--port {PORT}` (0 takes
+any free port, and `status` shows the address) or set `listen.port` in its
+`config.ktav`.
+
 ### Flags vs configuration
 
-`up` reads `config.ktav` from the state directory (`--home`, `NETIVRI_HOME`,
-or the user config dir; see [docs/config.md](config.md)). A missing file is
+`up` reads `config.ktav` from the state directory (see [Separate state
+directories](#separate-state-directories); [docs/config.md](config.md)). A missing file is
 not an error: defaults apply, no proxy authentication, and **no config file
 is created**. Explicit `--port` / `--bind` flags override `listen.port` /
 `listen.bind`; otherwise the config values are used. Without a config the
@@ -777,7 +824,9 @@ Loopback means `127.0.0.0/8`, `::1` and `localhost`.
 
 ### `status`
 
-Reports the live status of the running instance.
+Reports the live status of the running instance. `home` and `home_source`
+say which state directory it asked (see [Separate state
+directories](#separate-state-directories)).
 
 The default answer is **short**: enough for people and scripts that want to
 know the angel is up and what it serves. The complete view — with the warm

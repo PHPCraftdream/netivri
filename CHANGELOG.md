@@ -10,6 +10,17 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **A separate state directory for a separate run.** `--local` makes `.netivri`
+  in the current directory the state directory (created, owner-only, with a
+  `.gitignore` that ignores everything in it), and once that directory exists
+  every command run from there uses it with no flag; the current directory
+  only, not its parents. `--home {DIR}` still names any directory, and the two
+  cannot be combined. Order: `--home`, `--local`, an existing `./.netivri`,
+  `$NETIVRI_HOME`, the user config directory. Settings, tokens, subscriptions,
+  statistics and the angel of each directory are independent, so a second
+  angel runs next to the first (give it `--port`, a new directory has the
+  default port 7890). `status` and `doctor` print `home` and `home_source`.
+
 - **The log says how slow the answers are.** The hourly summary of an account
   ends with how long the node's side took to start answering (median and 95th
   percentile, from the first bytes the client sent to the first byte back), and

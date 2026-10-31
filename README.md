@@ -129,6 +129,21 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
 
+### A separate copy in this directory
+
+Settings, subscriptions, tokens, statistics and the angel all live in one state
+directory. `--local` makes `./.netivri` of the current directory that
+directory, and once it exists every command run from there uses it with no flag
+(`--home {DIR}` names any directory). The user-level installation is not
+touched:
+
+```sh
+cd ~/work/experiment
+netivri up --local --port 0     # a separate angel; any free port, so it does not clash with port 7890
+netivri status                  # home: ./.netivri
+netivri down
+```
+
 ### A proxy before and after the VPN
 
 Two optional proxies wrap the VPN node (`socks5://`, `http://` for an HTTP
