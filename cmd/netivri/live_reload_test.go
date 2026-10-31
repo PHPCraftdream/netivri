@@ -39,6 +39,7 @@ type fakeCore struct {
 	mu        sync.Mutex
 	closed    bool
 	reconfs   []core.Options // every Reconfigure call
+	probed    int            // ProbeNow calls
 }
 
 func (f *fakeCore) Addr() string                      { return f.addr }
@@ -54,6 +55,7 @@ func (f *fakeCore) SnapshotBindings() []core.BindingRecord {
 	f.snapAtClose = f.closed
 	return f.snap
 }
+func (f *fakeCore) ProbeNow()               { f.mu.Lock(); f.probed++; f.mu.Unlock() }
 func (f *fakeCore) sawClosedSnapshot() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.snapAtClose }
 func (f *fakeCore) RestoredBindings() int   { return f.restored }
 func (f *fakeCore) Close() error            { f.mu.Lock(); f.closed = true; f.mu.Unlock(); return nil }

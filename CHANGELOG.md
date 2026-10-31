@@ -10,6 +10,16 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The log tells when the computer slept.** The angel is frozen while the
+  computer sleeps, so hours of sleep looked like hours of silence and the
+  nodes seemed to fail all at once afterwards. The angel now notices the jump
+  of the clock, writes one `INFO` line with the length of the sleep, probes
+  every node at once and treats failures in the next 2 minutes as expected:
+  `INFO` lines, no burst, no flapping, no `WARN` in the per-minute connection
+  lines.
+- **Moved sites are one line a minute.** Sites of one account that moved
+  between several pairs of nodes for one reason (a node went down) are one line
+  with the counts instead of one line per pair; the pairs are `DEBUG`.
 - **A failed subscription refresh is quiet while it does not matter.** A fetch
   that fails on the way is tried once more after 5 seconds. A failure is an
   `INFO` line saying what stays and when the next try is while the stored list

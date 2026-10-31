@@ -329,6 +329,9 @@ failures, `INFO` below); `account alice via {NODE}: 98 connections ended, 5 brok
 x4, timeout x1), 3 closed before any data, 2 without an answer` (a connection is broken when the node's side of it
 returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
 `account alice: 3 sites moved from {NODE} to {NODE}: node down` (`WARN`; `better tier` is `INFO`);
+when the sites of one account moved between several pairs of nodes in that minute for one reason
+(a node went down and its sites were spread over the rest), it is one line with the counts,
+`account alice: 41 sites moved from 12 nodes to 9 nodes: node down`, and the pairs are `DEBUG` lines;
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
@@ -345,8 +348,13 @@ outage, or the first probes after a start) the third one raises a single `WARN`,
 `node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
 lost network or a shared outage` (with `, right after start` in the first minute), the
 nodes of the burst are logged at `INFO` from then on, and `node burst over: 9 nodes
-were down, all back after 41s` closes it when the last one is back. It reads the
-file, so it works while the angel runs and after it stopped or failed to start.
+were down, all back after 41s` closes it when the last one is back. When the computer
+sleeps the angel is frozen and writes nothing; when it wakes, one `INFO` line,
+`the computer was asleep for 26h22m0s (or its clock jumped forward); probing the nodes again at once,
+failures in the next 2 minutes are expected`, says so, every node is probed at once, and for the next
+2 minutes the failures are `INFO` lines: a node that is down ends with `, right after the computer woke
+up`, counts toward neither a burst nor flapping, and the per-minute connection lines are not `WARN`.
+It reads the file, so it works while the angel runs and after it stopped or failed to start.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry

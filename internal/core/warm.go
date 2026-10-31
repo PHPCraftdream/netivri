@@ -142,6 +142,7 @@ type probeSchedule struct {
 type warmer struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
+	kick          chan struct{} // asks for a probe round now, see probeNow
 	once          sync.Once
 	mu            sync.RWMutex
 	stats         WarmStats
@@ -216,7 +217,7 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 	if clock == nil || probe == nil {
 		return nil, errors.New("core: warm clock and probe are required")
 	}
-	w := &warmer{done: make(chan struct{}), options: o, clock: clock, probe: probe, down: o.Down}
+	w := &warmer{done: make(chan struct{}), kick: make(chan struct{}, 1), options: o, clock: clock, probe: probe, down: o.Down}
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	// Replace first so the initial probe observes the dialer-hook adapter.
@@ -299,7 +300,27 @@ func (w *warmer) run(ctx context.Context) {
 			return
 		case <-ticker.Chan():
 			w.probeAll(ctx)
+		case <-w.kick:
+			w.probeAll(ctx)
 		}
+	}
+}
+
+// probeNow makes the next round probe every node, down ones included, at once
+// instead of when its interval is up: after the computer slept every schedule
+// is stale. A round that is already running finishes first. Nil-safe.
+func (w *warmer) probeNow() {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	for i := range w.backoff {
+		w.backoff[i].nextDue = time.Time{}
+	}
+	w.mu.Unlock()
+	select {
+	case w.kick <- struct{}{}:
+	default:
 	}
 }
 

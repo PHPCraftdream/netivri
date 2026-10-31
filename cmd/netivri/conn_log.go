@@ -34,6 +34,11 @@ const (
 // site, an address, an error text or a password.
 type connLog struct {
 	info, warn logFunc
+	// debug takes the detail that the summary lines leave out; nothing by default.
+	debug logFunc
+	// quiet, when it says true (the computer woke up a moment ago), turns the
+	// warnings of a period into INFO lines; nil is never quiet.
+	quiet func() bool
 
 	mu    sync.Mutex
 	nodes map[string]stats.NodeInfo
@@ -146,7 +151,7 @@ type endedTally struct {
 }
 
 func newConnLog(info, warn logFunc) *connLog {
-	return &connLog{info: info, warn: warn, nodes: map[string]stats.NodeInfo{},
+	return &connLog{info: info, warn: warn, debug: func(string, ...any) {}, nodes: map[string]stats.NodeInfo{},
 		dials: map[loginNode]map[string]int{}, ended: map[loginNode]*endedTally{},
 		moves: map[siteMove]int{}, loginFails: map[string]int{}, hour: map[string]*hourTally{}}
 }
@@ -366,19 +371,7 @@ func (c *connLog) flush() {
 		}
 		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
 	}
-	moveKeys := make([]siteMove, 0, len(moves))
-	for k := range moves {
-		moveKeys = append(moveKeys, k)
-	}
-	sort.Slice(moveKeys, func(i, j int) bool {
-		a, b := moveKeys[i], moveKeys[j]
-		return fmt.Sprint(a) < fmt.Sprint(b)
-	})
-	for _, k := range moveKeys {
-		line := fmt.Sprintf("account %s: %s moved from %s to %s: %s", k.login, count(moves[k], "site", "sites"),
-			describe(k.from), describe(k.to), k.why)
-		c.level(k.why == core.MoveNodeDown)("%s", line)
-	}
+	c.writeMoves(moves, describe)
 	if failed := sumCounts(fails) + unknown; failed > 0 {
 		var parts []string
 		for _, login := range sortedStrings(fails) {
@@ -391,9 +384,56 @@ func (c *connLog) flush() {
 	}
 }
 
-// level picks the writer of a line: WARN when serious, INFO otherwise.
+// writeMoves writes the moved sites of the period. Moves of one account for one
+// reason between a single pair of nodes are one line naming both; between
+// several pairs (a node went down and its sites were spread over the rest) they
+// are one line with the counts, and the pairs go to DEBUG.
+func (c *connLog) writeMoves(moves map[siteMove]int, describe func(string) string) {
+	type group struct {
+		login, why string
+		pairs      []siteMove
+	}
+	var groups []*group
+	byKey := map[[2]string]*group{}
+	keys := make([]siteMove, 0, len(moves))
+	for k := range moves {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
+	for _, k := range keys {
+		g := byKey[[2]string{k.login, k.why}]
+		if g == nil {
+			g = &group{login: k.login, why: k.why}
+			byKey[[2]string{k.login, k.why}] = g
+			groups = append(groups, g)
+		}
+		g.pairs = append(g.pairs, k)
+	}
+	for _, g := range groups {
+		serious := g.why == core.MoveNodeDown
+		if len(g.pairs) == 1 {
+			k := g.pairs[0]
+			c.level(serious)("account %s: %s moved from %s to %s: %s", k.login, count(moves[k], "site", "sites"),
+				describe(k.from), describe(k.to), k.why)
+			continue
+		}
+		total := 0
+		from, to := map[string]struct{}{}, map[string]struct{}{}
+		for _, k := range g.pairs {
+			total += moves[k]
+			from[k.from], to[k.to] = struct{}{}, struct{}{}
+			c.debug("account %s: %s moved from %s to %s: %s", k.login, count(moves[k], "site", "sites"),
+				describe(k.from), describe(k.to), k.why)
+		}
+		c.level(serious)("account %s: %s moved from %s to %s: %s", g.login, count(total, "site", "sites"),
+			count(len(from), "node", "nodes"), count(len(to), "node", "nodes"), g.why)
+	}
+}
+
+// level picks the writer of a line: WARN when serious, INFO otherwise, and
+// always INFO right after the computer woke up.
 func (c *connLog) level(serious bool) logFunc {
-	if serious {
+	if serious && (c.quiet == nil || !c.quiet()) {
 		return c.warn
 	}
 	return c.info
