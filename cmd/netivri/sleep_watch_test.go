@@ -229,3 +229,58 @@ func TestCoreOptionsHookIsQuietRightAfterWaking(t *testing.T) {
 		t.Errorf("a down right after waking is not marked: %q", f.logText())
 	}
 }
+
+// The loop the angel starts: a jump of the clock reaches woke, which logs it and
+// probes the nodes of the running core.
+func TestWatchSleepProbesTheNodesAfterAJumpOfTheClock(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	l := newLiveAngel(upOptions{}, func(format string, args ...any) {
+		mu.Lock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}, func() {})
+	f := &fakeCore{}
+	l.inst = f
+	var clockMu sync.Mutex
+	at := time.Unix(1_000_000, 0)
+	calls := 0
+	every := 5 * time.Millisecond
+	w := l.sleep()
+	w.every = every
+	w.now = func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		calls++
+		at = at.Add(every)
+		if calls == 4 {
+			at = at.Add(2 * time.Hour) // the computer slept
+		}
+		return at
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { l.watchSleep(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f.mu.Lock()
+		probed := f.probed
+		f.mu.Unlock()
+		if probed >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatal("the nodes were not probed after the clock jumped")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) != 1 || !strings.Contains(lines[0], "asleep for 2h0m0s") {
+		t.Errorf("lines = %q, want one line about 2h of sleep", lines)
+	}
+}

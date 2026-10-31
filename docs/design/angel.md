@@ -62,7 +62,8 @@ full-view only (`netivri status --full`) (docs/design/node-stats.md).
 
 The angel parent spawns the same executable
 (`os.Executable()`) with the user's `up` arguments (verbatim, minus the
-compatibility flags, with `--home` normalized) plus
+compatibility flags and `--local`, with `--home` replaced by the resolved
+absolute directory) plus
 `--foreground --handshake {PATH}`. The child:
 
 1. starts the proxy and the control server,

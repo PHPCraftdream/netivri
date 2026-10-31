@@ -675,8 +675,15 @@ var helpTopics = []helpTopic{
 			"hour is one 'flapping' warning, not a warning per drop; the repeats of nodes no account uses are DEBUG " +
 			"lines, shown only with --level debug. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
-			"failed proxy logins), without sites, addresses, error texts or passwords. It " +
-			"reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
+			"failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
+			"passwords, and once an hour a summary per account: connections ended, broken, closed before any data " +
+			"or without an answer (with how many sites, which ports and how long they waited), failed dials, " +
+			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
+			"slept, one line says for how long, the nodes are probed at once and their failures for the next two " +
+			"minutes are INFO. A failure names its kind from a fixed list: timeout, connection refused, " +
+			"connection reset, dns failure, network unreachable, connection closed, handshake failed, " +
+			"proxy auth failed (a hop did not take the credentials), proxy refused (a hop would not connect) or " +
+			"error. It reads the file, so it works while the angel runs and after it stopped or failed to start. Passwords, " +
 			"tokens and subscription URLs are never logged.\n\n" +
 			"Without --follow the result is one document with the newest entries. With --follow the command keeps " +
 			"running and prints new entries as lines until Ctrl+C; with --json each line is one JSON object (NDJSON).",

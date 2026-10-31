@@ -447,7 +447,7 @@ Failed requests are not errors: they are counted in `failures`.
 ### `doctor`
 
 ```
-netivri doctor [--home {DIR}]
+netivri doctor [--home {DIR} | --local]
 ```
 
 Runs every check once and prints one document on stdout, in Ktav or with
@@ -467,8 +467,12 @@ subscription URLs, passwords and hashes are never printed.
    {"name": "subscriptions", "status": "ok", "detail": "every configured subscription has a usable snapshot"},
    {"name": "account alice", "status": "ok", "detail": "tier 0 DE (main): 1/1 node(s) alive"},
    {"name": "log", "status": "ok", "detail": "no warn or error entries in the last hour"}],
- "summary": {"ok": 6, "warn": 0, "fail": 0}}
+ "summary": {"ok": 6, "warn": 0, "fail": 0},
+ "home": "/home/me/.config/netivri", "home_source": "user config directory"}
 ```
+
+`home` is the state directory the checks looked at and `home_source` how it was
+chosen (see [Separate state directories](#separate-state-directories)).
 
 The checks:
 
@@ -523,9 +527,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `--password init` when that matters. `{SOURCE}` is not changed.
 - `list` reports `login`, `provider`, `exit_country`, `allowed_clients`
   (empty when the account has no rule of its own), `pre_socks5` and
-  `post_socks5` (the effective SOCKS5 proxy of each side, see `set-socks5`)
+  `post_socks5` (the effective proxy of each side, `socks5://`, `http://` or
+  `https://`, see `set-socks5`)
   and `password_set` (`false` until the placeholder is claimed); it never
-  returns a password, a hash or the credentials of a SOCKS5 URL.
+  returns a password, a hash or the credentials of a proxy URL.
 - `show {ACCOUNT}` reports one account: its login, its configured provider
   and `exit_country` lists, and its route as ordered tiers (countries in
   list order, inside a country the providers in list order, so a tier is the
@@ -550,7 +555,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   such tiers (null without a running angel): traffic sits there while the
   better tiers were down, and a site goes back for its next connection once a
   node of a better tier has been up for 5 minutes. `pre_socks5`
-  and `post_socks5` give the effective SOCKS5 proxy of each side (see
+  and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` they also carry `own`, the account's own value
   (`none`, or a redacted URL), and no `own` when the account has none. The
   document:
@@ -585,7 +590,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   allowed by neither is refused before the password is verified, so an
   `init` account cannot be claimed from a disallowed address. A running
   angel applies the change within a few seconds.
-- `set-socks5` sets the SOCKS5 proxies of one or several accounts (`{ACCOUNT}`
+- `set-socks5` sets the proxy hops (`socks5://`, `http://` or `https://`) of one or several accounts (`{ACCOUNT}`
   is one login or several separated by commas, as in `set-clients`):
   `--pre {VALUE}` is the proxy netivri connects through to reach the VPN node,
   `--post {VALUE}` the proxy the traffic goes to after the node. At least one
@@ -831,7 +836,7 @@ directories](#separate-state-directories)).
 The default answer is **short**: enough for people and scripts that want to
 know the angel is up and what it serves. The complete view — with the warm
 node list, the warm pool counters, `stats` and `affinity` — needs
-`netivri status --full`. Both forms accept `--home` and `--json`; unknown
+`netivri status --full`. Both forms accept `--home` (or `--local`) and `--json`; unknown
 flags are usage errors.
 
 Short view:
@@ -841,7 +846,8 @@ Short view:
  "data": {"angel": "running", "foreground": false, "pid": 12345,
           "listen": "127.0.0.1:7890",
           "protocols": ["socks5", "socks4", "http"], "auth": "none",
-          "allowed_clients": "*",
+          "allowed_clients": "*", "home": "/home/me/.config/netivri",
+          "home_source": "user config directory",
           "accounts": [], "route": "direct", "started_at": "2026-10-20T10:00:00Z",
           "uptime_seconds": 3721, "version": "0.1.0",
           "active_accounts": 0, "activity": [],
@@ -854,13 +860,15 @@ Short view:
 Exactly these fields exist in the short view: `angel` (always `running` on success),
 `foreground`, `pid`, `listen`, `protocols`, `auth`, `route` (`direct` or
 `node`), `started_at` (RFC3339 UTC), `uptime_seconds` (whole seconds),
-`version` (the angel binary's version), `allowed_clients` (which client
+`version` (the angel binary's version), `home` and `home_source` (the state
+directory this command asked and how it was chosen, see [Separate state
+directories](#separate-state-directories)), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
 record is `{"login", "provider", "exit_country", "allowed_clients", "chain"}`,
 sorted by login; `chain` is `{"pre_socks5", "pre_socks5_source",
 "pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}`,
-the SOCKS5 proxies of the running core, redacted to `socks5://host:port` or
-`none`, `source` being `account`, `global` or `none` and `auth` whether the URL
+the proxies of the running core (`socks5://`, `http://` or `https://`),
+redacted to `scheme://host:port` or `none`, `source` being `account`, `global` or `none` and `auth` whether the URL
 had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
 and `reload`. The full view (`--full`) adds, next to everything above: the full
 `warm` (the pool counters and `nodes[]`), `stats` and `affinity`. The selection

@@ -1,6 +1,8 @@
-# SOCKS5 proxies before and after the VPN
+# Proxies before and after the VPN
 
-Two optional SOCKS5 proxies wrap the VPN node of a route:
+Two optional proxies wrap the VPN node of a route (`socks5://`, `http://` for an
+HTTP CONNECT proxy, or `https://` for one reached over TLS; the settings are
+still called `pre_socks5` and `post_socks5`):
 
 - `pre_socks5` is the proxy netivri uses to **reach** the VPN node.
 - `post_socks5` is the proxy the traffic is handed to **after** the VPN node;

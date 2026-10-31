@@ -354,7 +354,9 @@ type NodeEvent struct {
 `WarmOptions.OnProbeError(name, err)` runs just before `OnProbe` for a failed
 probe; the core keeps the kind of the error on the node (`timeout`,
 `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
-`connection closed`, `handshake failed`, else `error: ` and a scrubbed excerpt)
+`connection closed`, `handshake failed`, `proxy auth failed` and `proxy refused`
+for a proxy hop that did not take the credentials or would not connect, else
+`error: ` and a scrubbed excerpt)
 so the next down event can name it. A success clears it. The excerpt keeps only
 lowercase plain words and numbers of up to three digits, every other word
 (anything with a dot, a colon, a slash, an `@`, a letter next to a digit or a
@@ -367,7 +369,10 @@ state, the time it began and the time of the last answer are carried over by a
 seconds are one burst: the first two get a `WARN` line each, the third raises
 one `WARN` summary (`node burst: ...`, with the reason kinds, and "right after
 start" in the first minute), the others and the third's own line are `INFO`,
-and an `INFO` line closes the burst when its last node is back. A node that has
+and an `INFO` line closes the burst when its last node is back. For 2 minutes
+after the computer woke up (the angel notices a jump of the wall clock, probes
+every node at once and writes one `INFO` line with the length of the sleep) a
+down is a plain `INFO` line that counts toward neither a burst nor flapping. A node that has
 never answered (`NeverOK`: it did not go down, it never came up) is one `INFO`
 line, `... has never answered: ...`, and counts toward neither a burst nor
 flapping, so the dead nodes of a subscription do not raise a burst at every
