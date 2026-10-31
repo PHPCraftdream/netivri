@@ -413,6 +413,12 @@ func (i *Instance) WarmStats() (WarmStats, bool) {
 	return ws, true
 }
 
+// ProbeNow probes every node again at once (see warmer.probeNow); without
+// Options.Warm it does nothing.
+func (i *Instance) ProbeNow() {
+	i.state().warm.probeNow()
+}
+
 // annotateDown sets NodeHealth.Down from the routing state of the sticky
 // groups: the probe result alone says a node is not alive after one failed
 // probe, while the routing keeps using it until it is down.

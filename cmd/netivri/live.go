@@ -41,6 +41,8 @@ type coreInstance interface {
 	MemberLabels() map[string]string
 	SnapshotBindings() []core.BindingRecord
 	RestoredBindings() int
+	// ProbeNow probes every node again at once; see core.Instance.ProbeNow.
+	ProbeNow()
 	// Reconfigure takes new routes without closing the listener; see
 	// core.Instance.Reconfigure.
 	Reconfigure(o core.Options) error
@@ -87,7 +89,10 @@ type liveAngel struct {
 	// connLog().
 	conns     *connLog
 	connsOnce sync.Once
-	stop      func() // asks the angel to shut down; idempotent
+	// sleeper notices that the computer slept; made on first use.
+	sleeper     *sleepWatch
+	sleeperOnce sync.Once
+	stop        func() // asks the angel to shut down; idempotent
 
 	reloadMu sync.Mutex // one reload at a time, held across a restart
 
@@ -188,7 +193,7 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		NodeLabels:     d.pool.labels,
 		NodeTiers:      d.pool.tiers,
 		OnConnEvent:    l.connLog().event,
-		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.debugf, l.logf, l.warnf),
+		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf),
 		Observer:       observer,
 		Warm:           warmOptions(d.pool.nodes),
 		AffinityTTL:    stats.BindingTTL,
@@ -527,15 +532,36 @@ func (l *liveAngel) connLog() *connLog {
 		l.conns = newConnLog(
 			func(format string, args ...any) { l.logf(format, args...) },
 			func(format string, args ...any) { l.warnf(format, args...) })
+		l.conns.debug = func(format string, args ...any) { l.debugf(format, args...) }
+		l.conns.quiet = l.sleep().quiet
 	})
 	return l.conns
+}
+
+// sleep is the watch for the computer's sleep, made on first use.
+func (l *liveAngel) sleep() *sleepWatch {
+	l.sleeperOnce.Do(func() { l.sleeper = newSleepWatch() })
+	return l.sleeper
+}
+
+// woke is called when the computer woke up after sleeping for slept: the nodes
+// are probed again at once and the failures of the next minutes are expected.
+func (l *liveAngel) woke(slept time.Duration) {
+	l.logf("the computer was asleep for %s (or its clock jumped forward); probing the nodes again at once, failures in the next %d minutes are expected",
+		slept, int(l.sleep().grace/time.Minute))
+	l.mu.Lock()
+	inst := l.inst
+	l.mu.Unlock()
+	if inst != nil {
+		inst.ProbeNow()
+	}
 }
 
 // startLoops starts the file watcher and the subscription refresh.
 func (l *liveAngel) startLoops() {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.loopsCancel = cancel
-	l.loopsRunning.Add(4)
+	l.loopsRunning.Add(5)
 	go func() {
 		defer l.loopsRunning.Done()
 		l.watch(ctx, watchEvery)
@@ -551,6 +577,10 @@ func (l *liveAngel) startLoops() {
 	go func() {
 		defer l.loopsRunning.Done()
 		l.connLog().run(ctx, connLogEvery, connBeatEvery)
+	}()
+	go func() {
+		defer l.loopsRunning.Done()
+		l.sleep().run(ctx, l.woke)
 	}()
 }
 

@@ -39,8 +39,10 @@ type logFunc = func(format string, args ...any)
 // to report and it returns nil. first holds the labels of the first-tier
 // nodes of the routes: only their downs are warnings, the nodes of fallback
 // tiers (no account uses them while the first tier is up) are INFO. A nil
-// first makes every node a warning.
-func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, debug, info, warn logFunc) func(core.NodeEvent) {
+// first makes every node a warning. quiet, when it says true (the computer
+// woke up a moment ago), turns the downs into plain INFO lines that count for
+// nothing else; nil is never quiet.
+func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, quiet func() bool, debug, info, warn logFunc) func(core.NodeEvent) {
 	l := newNodeLog(infos, info, warn, time.Now)
 	if l == nil {
 		return nil
@@ -49,6 +51,7 @@ func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, debug, info
 		l.debug = debug
 	}
 	l.first = first
+	l.quiet = quiet
 	return l.event
 }
 
@@ -72,6 +75,7 @@ type nodeLog struct {
 	byLabel    map[string]stats.NodeInfo
 	started    time.Time
 	first      map[string]bool // first-tier labels; nil: every node warns
+	quiet      func() bool     // true right after the computer woke up; may be nil
 
 	mu          sync.Mutex
 	drops       map[string][]drop // recent downs per server, within flapWindow
@@ -143,6 +147,10 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	}
 	if twin, ok := l.twinOf(l.lastDown, ev, now); ok {
 		l.repeat(ev.Label, "%s, same server as %s", line, twin)
+		return
+	}
+	if l.quiet != nil && l.quiet() {
+		l.info("%s, right after the computer woke up", line)
 		return
 	}
 	if l.flaps(ev, now) {
