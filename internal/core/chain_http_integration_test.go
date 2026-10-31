@@ -5,8 +5,15 @@ package core
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"sync"
@@ -158,5 +165,80 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 	defer mu.Unlock()
 	if len(kinds) == 0 || kinds[0] != "proxy auth failed" {
 		t.Errorf("failed dial kinds = %q, want proxy auth failed", kinds)
+	}
+}
+
+// startTLSHTTPHop is an HTTP CONNECT proxy behind TLS with a self-signed
+// certificate for 127.0.0.1, which no client trusts.
+func startTLSHTTPHop(t *testing.T) (*httpHop, string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "hop"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := tls.NewListener(raw, &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}})
+	t.Cleanup(func() { _ = ln.Close() })
+	h := &httpHop{}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go h.serve(c)
+		}
+	}()
+	return h, raw.Addr().String()
+}
+
+// An https hop is reached over TLS with the certificate checked: one that no
+// client trusts fails the connection before anything is sent through it, and
+// the log names it a failed handshake.
+func TestHTTPSHopWithAnUntrustedCertificateFails(t *testing.T) {
+	_, nodeAddr := startChainRecorder(t)
+	post, postAddr := startTLSHTTPHop(t)
+	backend := echoServer(t)
+	var mu sync.Mutex
+	var kinds []string
+	inst, err := Start(context.Background(), Options{
+		HomeDir: testutil.TempHome(t), Authenticator: aliceAuthenticator(),
+		RouteNodes: map[string][]map[string]any{"de": {nodeMap(nodeAddr)}}, AccountRoute: map[string]string{"alice": "de"},
+		RoutePost: map[string]string{"de": "https://" + postAddr},
+		OnConnEvent: func(ev ConnEvent) {
+			if ev.Kind == ConnDialFailed {
+				mu.Lock()
+				kinds = append(kinds, ev.Why)
+				mu.Unlock()
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = inst.Close() })
+	if err := tryDialAccountSOCKS5(t, inst.Addr(), "127.0.0.1", backend, "alice", alicePassword); err == nil {
+		t.Fatal("the connection went through an https hop with an untrusted certificate")
+	}
+	if got, _ := post.snapshot(); len(got) != 0 {
+		t.Errorf("the hop got CONNECTs %v although the certificate was not trusted", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(kinds) == 0 || kinds[0] != "handshake failed" {
+		t.Errorf("failed dial kinds = %q, want handshake failed", kinds)
 	}
 }
