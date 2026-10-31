@@ -527,9 +527,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `--password init` when that matters. `{SOURCE}` is not changed.
 - `list` reports `login`, `provider`, `exit_country`, `allowed_clients`
   (empty when the account has no rule of its own), `pre_socks5` and
-  `post_socks5` (the effective SOCKS5 proxy of each side, see `set-socks5`)
+  `post_socks5` (the effective proxy of each side, `socks5://`, `http://` or
+  `https://`, see `set-socks5`)
   and `password_set` (`false` until the placeholder is claimed); it never
-  returns a password, a hash or the credentials of a SOCKS5 URL.
+  returns a password, a hash or the credentials of a proxy URL.
 - `show {ACCOUNT}` reports one account: its login, its configured provider
   and `exit_country` lists, and its route as ordered tiers (countries in
   list order, inside a country the providers in list order, so a tier is the
@@ -554,7 +555,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   such tiers (null without a running angel): traffic sits there while the
   better tiers were down, and a site goes back for its next connection once a
   node of a better tier has been up for 5 minutes. `pre_socks5`
-  and `post_socks5` give the effective SOCKS5 proxy of each side (see
+  and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` they also carry `own`, the account's own value
   (`none`, or a redacted URL), and no `own` when the account has none. The
   document:
@@ -589,7 +590,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   allowed by neither is refused before the password is verified, so an
   `init` account cannot be claimed from a disallowed address. A running
   angel applies the change within a few seconds.
-- `set-socks5` sets the SOCKS5 proxies of one or several accounts (`{ACCOUNT}`
+- `set-socks5` sets the proxy hops (`socks5://`, `http://` or `https://`) of one or several accounts (`{ACCOUNT}`
   is one login or several separated by commas, as in `set-clients`):
   `--pre {VALUE}` is the proxy netivri connects through to reach the VPN node,
   `--post {VALUE}` the proxy the traffic goes to after the node. At least one
@@ -835,7 +836,7 @@ directories](#separate-state-directories)).
 The default answer is **short**: enough for people and scripts that want to
 know the angel is up and what it serves. The complete view — with the warm
 node list, the warm pool counters, `stats` and `affinity` — needs
-`netivri status --full`. Both forms accept `--home` and `--json`; unknown
+`netivri status --full`. Both forms accept `--home` (or `--local`) and `--json`; unknown
 flags are usage errors.
 
 Short view:

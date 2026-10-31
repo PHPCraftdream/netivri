@@ -580,8 +580,14 @@ func (l *liveAngel) startLoops() {
 	}()
 	go func() {
 		defer l.loopsRunning.Done()
-		l.sleep().run(ctx, l.woke)
+		l.watchSleep(ctx)
 	}()
+}
+
+// watchSleep runs the sleep watch until ctx ends; a wake-up probes the nodes
+// again (see woke).
+func (l *liveAngel) watchSleep(ctx context.Context) {
+	l.sleep().run(ctx, l.woke)
 }
 
 // close stops the loops, then the core and the statistics store.

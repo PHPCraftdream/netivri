@@ -34,7 +34,7 @@ not preserved, so keep personal notes elsewhere.
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `chain.pre_socks5` | string | *(empty)* | Default proxy netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
-| `chain.post_socks5` | string | *(empty)* | Default SOCKS5 proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format. An account's own `post_socks5` overrides it. |
+| `chain.post_socks5` | string | *(empty)* | Default proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format (`socks5://`, `http://` or `https://`). An account's own `post_socks5` overrides it. |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, or an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
@@ -286,8 +286,8 @@ Subscription URLs contain secrets and are never printed in full. Logs,
 errors and status output show them redacted: scheme + host + `/****`
 (path and query dropped). Proxy URLs with credentials keep only the
 username with the password masked: `socks5://user:****@host:port`.
-SOCKS5 chain URLs are redacted harder: the whole user name and password are
-dropped, `socks5://host:port` is all that is shown.
+Chain hop URLs are redacted harder: the whole user name and password are
+dropped, `scheme://host:port` (`socks5`, `http` or `https`) is all that is shown.
 Parse errors are reported only from the parser's structured fields
 (error class, reason, line number, spec section, key path) and never
 contain document text, so passwords and URLs cannot leak through them.
