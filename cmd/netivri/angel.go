@@ -49,8 +49,9 @@ var (
 var angelProtocols = []string{"socks5", "socks4", "http"}
 
 // filterUpArgs builds the angel child's command line: `up`, the user's
-// arguments verbatim minus the global compatibility flags and any --home,
-// and the resolved --home so the child uses the same state directory.
+// arguments verbatim minus the global compatibility flags and any --home or
+// --local, and the resolved --home so the child uses the same state directory
+// whatever its own current directory is.
 func filterUpArgs(args []string, home string) []string {
 	out := []string{"up"}
 	skipNext := false
@@ -63,10 +64,10 @@ func filterUpArgs(args []string, home string) []string {
 		case "--home", "-home":
 			skipNext = true
 			continue
-		case "--json", "-json", "--quiet", "-quiet", "--no-color", "-no-color":
+		case "--json", "-json", "--quiet", "-quiet", "--no-color", "-no-color", "--local", "-local":
 			continue
 		}
-		if strings.HasPrefix(a, "--home=") || strings.HasPrefix(a, "-home=") {
+		if strings.HasPrefix(a, "--home=") || strings.HasPrefix(a, "-home=") || strings.HasPrefix(a, "--local=") || strings.HasPrefix(a, "-local=") {
 			continue
 		}
 		out = append(out, a)

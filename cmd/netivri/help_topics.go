@@ -46,9 +46,15 @@ var helpQuickStart = []string{
 
 var helpGlobalFlags = []helpFlag{
 	{"--home {DIR}", `State directory with config.ktav, subscriptions/, run/ and stats.db. ` +
-		`Default: $NETIVRI_HOME, else the user config directory plus /netivri ` +
+		`Default: a .netivri directory in the current directory if there is one, else $NETIVRI_HOME, ` +
+		`else the user config directory plus /netivri ` +
 		`(%APPDATA%\netivri on Windows, ~/.config/netivri on Linux, ` +
 		`~/Library/Application Support/netivri on macOS).`},
+	{"--local", `Use ./.netivri in the current directory as the state directory and create it ` +
+		`(owner-only, with a .gitignore that ignores everything in it). A separate directory is a ` +
+		`separate netivri: its own settings, tokens, subscriptions, statistics and angel. ` +
+		`Once ./.netivri exists, commands run from that directory use it without the flag. ` +
+		`Cannot be combined with --home. Only the current directory is looked at, not its parents.`},
 	{"--json", "Print results and errors as JSON instead of Ktav (the default). Setting NETIVRI_OUTPUT=json does the same for every run. For help it selects the machine-readable form."},
 	{"--quiet", "Accepted for compatibility; changes nothing today."},
 	{"--no-color", "Accepted for compatibility; there is no color output."},
@@ -84,7 +90,7 @@ var helpTopics = []helpTopic{
 		Name:    "up",
 		Group:   groupService,
 		Summary: "Start the proxy (a background angel by default)",
-		Usage:   []string{"netivri up [--port {N}] [--bind {ADDR}] [--foreground] [--home {DIR}]"},
+		Usage:   []string{"netivri up [--port {N}] [--bind {ADDR}] [--foreground] [--home {DIR} | --local]"},
 		Description: "Starts the local proxy: SOCKS5, SOCKS4/4a and HTTP (plain requests and CONNECT) on one TCP port, " +
 			"told apart by the first byte of each connection. Without --foreground it starts a detached background " +
 			"angel and returns at once; running it again is safe and reports the running instance.\n\n" +
@@ -99,12 +105,15 @@ var helpTopics = []helpTopic{
 			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication (an account, or auth.login and auth.password in config.ktav; an init password also needs auth.allow_init_remote: true), otherwise up fails with AUTH_REQUIRED."},
 			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when an angel is running."},
 			{"--home {DIR}", "State directory (see the global flags in 'netivri help')."},
+			{"--local", "Use ./.netivri in the current directory as the state directory, creating it; a separate angel with its own settings. A new directory has the default port 7890, so give it --port when another angel uses that."},
 		},
 		Examples: []helpExample{
 			{"Start in the background on 127.0.0.1:7890", "netivri up"},
 			{"Take any free port and read it from the output", "netivri up --port 0"},
 			{"Run in the foreground, for example under a service manager", "netivri up --foreground"},
 			{"Keep a separate profile with its own config, subscriptions and statistics", "netivri up --home ./work-profile"},
+			{"A separate copy in this directory (./.netivri), on any free port, next to your usual one", "netivri up --local --port 0"},
+			{"Then, from the same directory, with no flag (the directory is found on its own)", "netivri status"},
 			{"Listen on every interface (needs an account or auth.login and auth.password in config.ktav)", "netivri up --bind 0.0.0.0"},
 			{"Check that the angel applied your latest account and subscription changes (see reload)", "netivri status"},
 		},
@@ -804,7 +813,8 @@ var helpTopics = []helpTopic{
 		Summary: "The config.ktav file and every key it accepts",
 		Usage:   []string{"netivri help config"},
 		Description: "netivri keeps its settings in config.ktav inside the state directory: the directory given by " +
-			"--home {DIR} or $NETIVRI_HOME, else the user config directory plus /netivri (%APPDATA%\\netivri on " +
+			"--home {DIR}; else ./.netivri when --local is given or that directory exists in the current directory; " +
+			"else $NETIVRI_HOME; else the user config directory plus /netivri (%APPDATA%\\netivri on " +
 			"Windows, ~/.config/netivri on Linux, ~/Library/Application Support/netivri on macOS). A missing file " +
 			"is not an error: safe defaults apply (proxy on 127.0.0.1:7890, every client address allowed, no " +
 			"authentication, manual selection). Every command that changes settings writes this file; a running " +

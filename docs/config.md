@@ -13,9 +13,11 @@ not preserved, so keep personal notes elsewhere.
 
 - `netivri config path` prints it; it is always
   `{HOME}/config.ktav`.
-- `{HOME}` is `$NETIVRI_HOME` if set, otherwise
-  `%APPDATA%\netivri` (Windows) or `$XDG_CONFIG_HOME/netivri`
-  (`os.UserConfigDir()`).
+- `{HOME}` is, first match wins: `--home {DIR}`; `./.netivri` with `--local`
+  (created) or when that directory exists in the current directory; `$NETIVRI_HOME`;
+  otherwise `%APPDATA%\netivri` (Windows) or `$XDG_CONFIG_HOME/netivri`
+  (`os.UserConfigDir()`). A separate directory is a separate netivri, see
+  [cli.md](cli.md), "Separate state directories".
 - A missing file is not an error: safe defaults apply
   (`netivri config get` shows the effective values).
 

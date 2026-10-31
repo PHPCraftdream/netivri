@@ -90,15 +90,22 @@ func runSub(args []string, stdout io.Writer) error {
 	}
 }
 
-// parseHomeArgs extracts the global --home flag and strips the --json,
-// --quiet and --no-color compatibility flags (output is always JSON without
-// ANSI; --quiet suppresses nothing today). Everything else, command flags
-// and positional arguments alike, is returned untouched and in order for
-// the subcommand's own parser. Home resolves exactly like `up`: --home,
-// then NETIVRI_HOME, then the user config dir. A bare "--" ends the scan.
+// parseHomeArgs extracts the global --home and --local flags and strips the
+// --json, --quiet and --no-color compatibility flags (output is always JSON
+// without ANSI; --quiet suppresses nothing today). Everything else, command
+// flags and positional arguments alike, is returned untouched and in order for
+// the subcommand's own parser. Home resolves exactly like `up` (resolveHome).
+// A bare "--" ends the scan.
 func parseHomeArgs(name string, args []string) (string, []string, error) {
-	var home string
-	var rest []string
+	home, _, rest, err := parseHomeArgsFrom(name, args)
+	return home, rest, err
+}
+
+// parseHomeArgsFrom is parseHomeArgs that also says where the state directory
+// came from (see resolveHome).
+func parseHomeArgsFrom(name string, args []string) (home, source string, rest []string, err error) {
+	var flagHome string
+	var local bool
 scan:
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -108,14 +115,23 @@ scan:
 			break scan
 		case a == "--home" || a == "-home":
 			if i+1 >= len(args) {
-				return "", nil, cli.Usage("%s: flag needs an argument: --home", name)
+				return "", "", nil, cli.Usage("%s: flag needs an argument: --home", name)
 			}
-			home = args[i+1]
+			flagHome = args[i+1]
 			i++
 		case strings.HasPrefix(a, "--home="):
-			home = strings.TrimPrefix(a, "--home=")
+			flagHome = strings.TrimPrefix(a, "--home=")
 		case strings.HasPrefix(a, "-home="):
-			home = strings.TrimPrefix(a, "-home=")
+			flagHome = strings.TrimPrefix(a, "-home=")
+		case a == "--local" || a == "-local":
+			local = true
+		case strings.HasPrefix(a, "--local=") || strings.HasPrefix(a, "-local="):
+			_, value, _ := strings.Cut(a, "=")
+			v, err := strconv.ParseBool(value)
+			if err != nil {
+				return "", "", nil, cli.Usage("%s: invalid value %q for flag --local", name, value)
+			}
+			local = v
 		case a == "--json" || a == "-json" || a == "--quiet" || a == "-quiet" ||
 			a == "--no-color" || a == "-no-color":
 			// Accepted for compatibility, no effect.
@@ -123,14 +139,11 @@ scan:
 			rest = append(rest, a)
 		}
 	}
-	if home == "" {
-		h, err := defaultHome(os.Getenv, os.UserConfigDir)
-		if err != nil {
-			return "", nil, &cli.Error{Code: "INTERNAL", Message: "resolve home directory: " + err.Error(), Exit: cli.ExitInternal}
-		}
-		home = h
+	home, source, err = resolveHome(flagHome, local, os.Getenv, os.UserConfigDir)
+	if err != nil {
+		return "", "", nil, err
 	}
-	return home, rest, nil
+	return home, source, rest, nil
 }
 
 // parseFlags parses flags that may also appear after positional

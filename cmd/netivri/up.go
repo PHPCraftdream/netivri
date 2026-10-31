@@ -64,7 +64,8 @@ func parseUp(args []string, env func(string) string, userConfigDir func() (strin
 	fs.StringVar(&opts.Bind, "bind", "127.0.0.1", "bind address")
 	// Internal, not part of the CLI contract: set only by angel.Spawn.
 	fs.StringVar(&opts.Handshake, "handshake", "", "internal: startup handshake file (requires --foreground)")
-	homeFlag := fs.String("home", "", "state directory (default NETIVRI_HOME or user config dir)")
+	homeFlag := fs.String("home", "", "state directory (default ./.netivri if it exists, NETIVRI_HOME, or the user config dir)")
+	localFlag := fs.Bool("local", false, "use ./.netivri in the current directory as the state directory, creating it")
 	// Global flags from docs/cli.md, accepted for compatibility: --json and
 	// --no-color are no-ops (output is always JSON without ANSI); --quiet
 	// suppresses nothing today.
@@ -89,14 +90,11 @@ func parseUp(args []string, env func(string) string, userConfigDir func() (strin
 			opts.BindSet = true
 		}
 	})
-	opts.Home = *homeFlag
-	if opts.Home == "" {
-		h, err := defaultHome(env, userConfigDir)
-		if err != nil {
-			return opts, &cli.Error{Code: "INTERNAL", Message: "resolve home directory: " + err.Error(), Exit: cli.ExitInternal}
-		}
-		opts.Home = h
+	home, _, err := resolveHome(*homeFlag, *localFlag, env, userConfigDir)
+	if err != nil {
+		return opts, err
 	}
+	opts.Home = home
 	return opts, nil
 }
 
