@@ -421,3 +421,62 @@ func TestWatchConnCarriesThePortAndAHashOfTheSite(t *testing.T) {
 		t.Errorf("without metadata: port %d site %d, want zeros", none.Port, none.Site)
 	}
 }
+
+// The answer time runs from the client's first bytes to the first bytes that
+// come back; later reads do not change it.
+func TestWatchConnMeasuresHowLongTheNodeTookToAnswer(t *testing.T) {
+	w, sink := watched(t, &scriptConn{})
+	if _, err := w.Write([]byte("GET / HTTP/1.1")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	b := make([]byte, 16)
+	if _, err := w.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+	_, _ = w.Read(b)
+	_, _ = w.Write([]byte("more"))
+	_ = w.Close()
+	got := sink.all()
+	if len(got) != 1 || got[0].Answer < 30*time.Millisecond || got[0].Answer > 5*time.Second {
+		t.Fatalf("events = %+v, want one with an answer time of at least 30ms", got)
+	}
+}
+
+func TestWatchConnAnswerIsZeroWithoutAnAnswerOrWhenTheNodeSpokeFirst(t *testing.T) {
+	silent, sinkSilent := watched(t, &scriptConn{})
+	_, _ = silent.Write([]byte("hello?"))
+	_ = silent.Close()
+	if got := sinkSilent.all(); len(got) != 1 || got[0].Answer != 0 {
+		t.Errorf("a connection with no answer: %+v, want Answer 0", got)
+	}
+
+	first, sinkFirst := watched(t, &scriptConn{})
+	_, _ = first.Read(make([]byte, 8)) // a banner before the client said anything
+	_, _ = first.Write([]byte("EHLO"))
+	time.Sleep(5 * time.Millisecond)
+	_, _ = first.Read(make([]byte, 8))
+	_ = first.Close()
+	if got := sinkFirst.all(); len(got) != 1 || got[0].Answer != 0 {
+		t.Errorf("a node that spoke first: %+v, want Answer 0", got)
+	}
+}
+
+// The buffer paths measure the answer too.
+func TestWatchConnAnswerCountsTheBufferPaths(t *testing.T) {
+	w, sink := watched(t, &scriptConn{})
+	if err := w.WriteBuffer(buf.As([]byte("ping"))); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	rb := buf.New()
+	defer rb.Release()
+	if err := w.ReadBuffer(rb); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	if got := sink.all(); len(got) != 1 || got[0].Answer < 10*time.Millisecond {
+		t.Fatalf("events = %+v, want an answer time of at least 10ms", got)
+	}
+}

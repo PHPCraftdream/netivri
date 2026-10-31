@@ -315,14 +315,17 @@ twin) at `DEBUG`, which `logs` shows only with `--level debug`.
 
 Once an hour each account that had connections gets one summary line, `account alice: last hour: 412
 connections ended, 0 broken, 30 closed before any data, 3 without an answer (3 sites; ports 443 x3; waited 2.0s median, 15s longest), 0 dials failed,
-412.0 MiB down, 38.1 MiB up`, so that a log
+412.0 MiB down, 38.1 MiB up, answers started after 0.4s median, 1.8s 95th`, so that a log
 without a report of broken connections says "none" and not nothing. The bytes are those of the connections that
 ended in that hour, so that a count of connections without an answer can be checked against what moved. `closed before any data` is a client that
 left without sending a byte (browsers and messengers open connections they do not use); `without an answer` is a
 client that sent data and got nothing back from the node's side, the one to watch; the line says how many
 different sites they went to (by hash, never named), their ports (the three most used, the rest as `other`) and how
 long they waited (median and longest), which tells one dead site that is retried from many, and a client that
-gives up quickly from a wait that ran into a timeout.
+gives up quickly from a wait that ran into a timeout. The last part says how long the node's side took to
+start answering, from the first bytes the client sent to the first byte that came back (median and 95th
+percentile over the connections that got an answer; a node that spoke before the client did has none), which
+is what "slow" means when nothing failed.
 
 What happens to the connections of the accounts is reported once a minute, one line per account and
 node and kind, only when something went wrong, and never with a site, an address, an error text or a
@@ -330,10 +333,13 @@ password: `account alice via {NODE}: 3 dials failed (timeout x2, connection rese
 failures, `INFO` below); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
 x4, timeout x1), 3 closed before any data, 2 without an answer` (a connection is broken when the node's side of it
 returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
+`account alice via {NODE}: slow answers: started after 3.0s median, 8.0s 95th, over 40 connections` (`INFO`;
+only when at least 10 connections of the minute got an answer and the median is 2 seconds or more);
 `account alice: 3 sites moved from {NODE} to {NODE}: node down` (`WARN`; `better tier` is `INFO`);
 when the sites of one account moved between several pairs of nodes in that minute for one reason
 (a node went down and its sites were spread over the rest), it is one line with the counts,
-`account alice: 41 sites moved from 12 nodes to 9 nodes: node down`, and the pairs are `DEBUG` lines;
+`account alice: 41 sites moved from 12 nodes to 9 nodes: node down` (a side that is a single node is named),
+and the pairs are `DEBUG` lines;
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
