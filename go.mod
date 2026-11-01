@@ -6,6 +6,8 @@ require (
 	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/google/uuid v1.6.0
 	github.com/ktav-lang/golang v0.8.1
+	github.com/metacubex/jls-quic-go v0.0.0-20260727080412-732f2fc9a34d
+	github.com/metacubex/jls-tls v0.0.0-20260723084315-67adc0e2f796
 	github.com/metacubex/mihomo v1.19.32
 	github.com/metacubex/quic-go v0.61.1-0.20260727080200-2548683b76f4
 	github.com/metacubex/sing v0.5.8
@@ -77,8 +79,6 @@ require (
 	github.com/metacubex/hkdf v0.1.0 // indirect
 	github.com/metacubex/hpke v0.1.0 // indirect
 	github.com/metacubex/http v0.1.8 // indirect
-	github.com/metacubex/jls-quic-go v0.0.0-20260727080412-732f2fc9a34d // indirect
-	github.com/metacubex/jls-tls v0.0.0-20260723084315-67adc0e2f796 // indirect
 	github.com/metacubex/jsonv2 v0.0.0-20260721082349-16b4998c8f89 // indirect
 	github.com/metacubex/kcp-go v0.0.0-20260105040817-550693377604 // indirect
 	github.com/metacubex/mhurl v0.1.0 // indirect
