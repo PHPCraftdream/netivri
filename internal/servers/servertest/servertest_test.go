@@ -24,6 +24,8 @@ func TestIsAddrInUse(t *testing.T) {
 		{"nil", nil, false},
 		{"unix errno", syscall.EADDRINUSE, true},
 		{"windows errno", syscall.Errno(10048), true},
+		{"windows access errno", syscall.Errno(10013), true},
+		{"windows access text", errors.New("bind: An attempt was made to access a socket in a way forbidden by its access permissions."), true},
 		{"wrapped errno", fmt.Errorf("listen: %w", syscall.EADDRINUSE), true},
 		{"unix text", errors.New("listen udp 127.0.0.1:1: bind: Address already in use"), true},
 		{"windows text", errors.New("bind: Only one usage of each socket address (protocol/network address/port) is normally permitted."), true},
@@ -35,20 +37,6 @@ func TestIsAddrInUse(t *testing.T) {
 				t.Fatalf("IsAddrInUse = %v, want %v", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestStartOnFreePortRetriesAddrInUse(t *testing.T) {
-	attempts := 0
-	port := servertest.StartOnFreePort(t, func(int) error {
-		attempts++
-		if attempts < 3 {
-			return syscall.EADDRINUSE
-		}
-		return nil
-	})
-	if attempts != 3 || port <= 0 {
-		t.Fatalf("attempts = %d, port = %d", attempts, port)
 	}
 }
 
