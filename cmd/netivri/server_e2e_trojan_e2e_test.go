@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -320,7 +321,16 @@ func e2eTrojanAuthRejected(err error) bool {
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return false
 	}
-	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	// Windows reports a closed peer as WSAECONNRESET/WSAECONNABORTED, which
+	// does not match syscall.ECONNRESET there.
+	if errors.Is(err, syscall.Errno(10054)) || errors.Is(err, syscall.Errno(10053)) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "forcibly closed") || strings.Contains(text, "connection reset") || strings.Contains(text, "connection was aborted")
 }
 
 type e2eTrojanFeed struct {
