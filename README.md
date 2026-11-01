@@ -33,7 +33,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   order, `--provider main,backup --country DE,NL`) and is routed only through
   matching nodes, with no fallback to a direct connection or a country it does
   not name.
-- **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link`. See [`docs/servers/`](docs/servers/README.md).
+- **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. Only Trojan, AnyTLS, TrustTunnel and VLESS-Reality can share a TCP port using explicit protocol-owned SNI/ALPN matching; one default handles valid unmatched TLS but cannot resolve overlaps. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link`. See [`docs/servers/`](docs/servers/README.md).
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
@@ -135,13 +135,14 @@ every subscription once an hour (`fetch.update_interval`).
 
 ### Run your own server
 
-After `netivri up`, add an endpoint for an existing account, inspect it, and
+After `netivri up`, add two endpoints on the SAME `{PORT}`: a Trojan default that accepts valid unmatched TLS using host-derived SNI, and AnyTLS with an explicit `{ANYTLS_SNI}`. Both use existing account `alice`; inspect them, and
 generate a client link. Links contain credentials; handle them privately. A
 loopback bind such as `127.0.0.1` is local only; use a reachable bind only
 intentionally when remote clients should connect.
 
 ```sh
-netivri server add --protocol shadowsocks --name {NAME} --account alice --port 8388 --bind 127.0.0.1 --public-host {HOST} --param cipher=aes-128-gcm
+netivri server add --protocol trojan --name {NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --default
+netivri server add --protocol anytls --name {OTHER_NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --param sni={ANYTLS_SNI}
 netivri server list
 netivri server link {NAME} --account alice --host {HOST}
 netivri server link {NAME} --account alice --host {HOST} --format mihomo

@@ -60,6 +60,12 @@ func ktavLoadsIntoConfig(src string) (*Config, error) {
 					case "public_host":
 						s.PublicHost = text
 					}
+				case "default":
+					value, ok := v.(bool)
+					if !ok {
+						return nil, invalid("servers[%d].default must be a boolean", i)
+					}
+					s.Default = value
 				case "port":
 					var err error
 					s.Port, err = strconvValue(v)

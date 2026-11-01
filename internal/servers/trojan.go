@@ -62,6 +62,10 @@ func (e trojanStartError) Is(target error) bool { return errors.Is(e.cause, targ
 
 type trojanServer struct{}
 
+func (trojanServer) MatchKeys(params map[string]string) ([]string, []string, bool) {
+	return tlsMatchKeyValues(params["sni"], params["alpn"], params["sni"] != "")
+}
+
 func init() { Register(trojanServer{}) }
 
 func (trojanServer) Name() string     { return "trojan" }

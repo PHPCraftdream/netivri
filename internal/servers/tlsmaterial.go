@@ -27,6 +27,32 @@ const (
 	tlsFingerprintKey    = "fingerprint"
 )
 
+// tlsMatchKeyValues normalizes configured TLS routing values without interpreting protocol parameters.
+func tlsMatchKeyValues(sniValue, alpnValue string, explicit bool) ([]string, []string, bool) {
+	sni := strings.Split(sniValue, ",")
+	for i := range sni {
+		sni[i] = strings.ToLower(strings.TrimSpace(sni[i]))
+	}
+	if len(sni) == 1 && sni[0] == "" {
+		sni = []string{""}
+	}
+	alpn := strings.Split(alpnValue, ",")
+	for i := range alpn {
+		alpn[i] = strings.TrimSpace(alpn[i])
+	}
+	if len(alpn) == 1 && alpn[0] == "" {
+		alpn = nil
+	}
+	// A key that no TLS client puts on the wire (an IP literal is never sent as
+	// SNI) cannot route a link to its server: it is not an explicit key.
+	for _, name := range sni {
+		if name == "" || net.ParseIP(name) != nil {
+			explicit = false
+		}
+	}
+	return sni, alpn, explicit
+}
+
 // ValidateTLSParams validates shared TLS listener parameters without interpreting
 // protocol-specific fields.
 func ValidateTLSParams(params map[string]string) error {

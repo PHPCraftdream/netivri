@@ -38,7 +38,7 @@ func TestStatusWatchServersTextAndJSON(t *testing.T) {
 func TestLiveStatusServerInfoMapping(t *testing.T) {
 	f := newReloadFixture(t, upOptions{})
 	fake := &statusServerCore{coreInstance: f.script.inst(0), infos: []servers.Info{
-		{Name: "zeta", Protocol: "vmess", Listen: "127.0.0.1:2", Accounts: []string{"bob"}, Connections: 4, DroppedClients: 8},
+		{Name: "zeta", Protocol: "vmess", Listen: "127.0.0.1:2", Accounts: []string{"bob"}, Connections: 4, DroppedClients: 8, Members: []string{"zeta", "alpha"}, Default: true, Unclassified: 3, SlowFirstByte: 2},
 		{Name: "alpha", Protocol: "ss", Listen: "127.0.0.1:1", Accounts: []string{"alice"}, Connections: 1, DroppedClients: 2},
 	}}
 	f.l.inst = fake
@@ -48,6 +48,9 @@ func TestLiveStatusServerInfoMapping(t *testing.T) {
 	}
 	if got[0].Connections != 1 || got[0].DroppedClients != 2 || got[0].Accounts[0] != "alice" {
 		t.Fatalf("server mapping: %#v", got[0])
+	}
+	if got[1].Default != true || got[1].Unclassified != 3 || got[1].SlowFirstByte != 2 || !reflect.DeepEqual(got[1].Members, []string{"alpha", "zeta"}) {
+		t.Fatalf("multiport status mapping: %#v", got[1])
 	}
 	got[0].Accounts[0] = "changed"
 	if fake.infos[1].Accounts[0] != "alice" {
@@ -74,9 +77,9 @@ func TestLiveStatusOmitsServersWithoutOptionalSource(t *testing.T) {
 func TestRunStatusPreservesServerJSON(t *testing.T) {
 	old := angelProbeLive
 	t.Cleanup(func() { angelProbeLive = old })
-	st := angel.Status{Servers: []angel.ServerInfo{{Name: "edge", Protocol: "ss", Listen: "127.0.0.1:9", Accounts: []string{"alice"}, Connections: 2, DroppedClients: 3}}}
+	st := angel.Status{Servers: []angel.ServerInfo{{Name: "edge", Protocol: "ss", Listen: "127.0.0.1:9", Accounts: []string{"alice"}, Connections: 2, DroppedClients: 3, Members: []string{"edge"}, Default: true, Unclassified: 4, SlowFirstByte: 5}}}
 	angelProbeLive = func(_ context.Context, _ string) (angel.State, angel.Status, error) { return angel.State{}, st, nil }
-	const want = `[{"name":"edge","protocol":"ss","listen":"127.0.0.1:9","accounts":["alice"],"connections":2,"dropped_clients":3}]`
+	const want = `[{"name":"edge","protocol":"ss","listen":"127.0.0.1:9","accounts":["alice"],"connections":2,"dropped_clients":3,"members":["edge"],"default":true,"unclassified":4,"slow_first_byte":5}]`
 	home := t.TempDir()
 	for _, args := range [][]string{{"--home", home, "--json"}, {"--home", home, "--json", "--full"}} {
 		var out bytes.Buffer

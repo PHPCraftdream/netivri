@@ -30,6 +30,7 @@ func (UserSecrets) GoString() string { return "<redacted>" }
 type Spec struct {
 	Name, Protocol, Bind string
 	Port                 int
+	Default              bool
 	Accounts             []string
 	Params               map[string]string
 	Material             SecretMap
@@ -37,7 +38,7 @@ type Spec struct {
 }
 
 func (s Spec) String() string {
-	return fmt.Sprintf("{Name:%q Protocol:%q Bind:%q Port:%d Accounts:%q Params:<redacted> Material:%s Users:%s}", s.Name, s.Protocol, s.Bind, s.Port, s.Accounts, SecretMap{}.String(), UserSecrets{}.String())
+	return fmt.Sprintf("{Name:%q Protocol:%q Bind:%q Port:%d Default:%t Accounts:%q Params:<redacted> Material:%s Users:%s}", s.Name, s.Protocol, s.Bind, s.Port, s.Default, s.Accounts, SecretMap{}.String(), UserSecrets{}.String())
 }
 
 func (s Spec) GoString() string { return s.String() }
@@ -77,7 +78,7 @@ func cloneMap(in map[string]string) map[string]string {
 
 // Equal compares all public configuration and secret fields without formatting them.
 func (s Spec) Equal(other Spec) bool {
-	return s.Name == other.Name && s.Protocol == other.Protocol && s.Bind == other.Bind && s.Port == other.Port && equalStrings(s.Accounts, other.Accounts) && equalMap(s.Params, other.Params) && equalMap(s.Material, other.Material) && equalUsers(s.Users, other.Users)
+	return s.Name == other.Name && s.Protocol == other.Protocol && s.Bind == other.Bind && s.Port == other.Port && s.Default == other.Default && equalStrings(s.Accounts, other.Accounts) && equalMap(s.Params, other.Params) && equalMap(s.Material, other.Material) && equalUsers(s.Users, other.Users)
 }
 
 func equalStrings(a, b []string) bool {
@@ -196,6 +197,10 @@ func (r *Running) Close() error {
 type Info struct {
 	Name, Protocol, Listen string
 	Accounts               []string
+	Members                []string
+	Default                bool
+	Unclassified           uint64
+	SlowFirstByte          uint64
 	Connections            int
 	DroppedClients         uint64
 }

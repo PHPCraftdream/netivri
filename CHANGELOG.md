@@ -17,6 +17,7 @@ versions; every such change is listed here.
   Mihomo YAML; server allowlists filter clients. UDP-bound listeners have a
   restart lifecycle, and UDP relay payloads are dropped and counted. See
   [`docs/servers/README.md`](docs/servers/README.md).
+- **TLS server listeners can share a TCP port.** Only Trojan, AnyTLS, TrustTunnel and VLESS-Reality share; protocol-declared explicit match keys must match exported links. Trojan and AnyTLS require `sni` unless the server is the default; Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. Explicit `sni` is recommended for certificate-TLS members; a no-`sni` default link may have unmatched host-derived SNI and fall back. A default handles valid unmatched TLS only, never overlapping matches. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap). See the server CLI reference for `--default` and errors.
 
 ### Changed
 

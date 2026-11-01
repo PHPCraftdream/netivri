@@ -49,6 +49,7 @@ func serverTestHome(t *testing.T) string {
 	}
 	return home
 }
+
 func TestServerCommandsGoldenJSON(t *testing.T) {
 	home := serverTestHome(t)
 	cases := []struct {
@@ -110,6 +111,7 @@ func TestServerCommandsGoldenJSON(t *testing.T) {
 		})
 	}
 }
+
 func TestServerCommandErrorsAndSubcommandFlags(t *testing.T) {
 	home := serverTestHome(t)
 	cases := []struct {
@@ -138,6 +140,93 @@ func TestServerCommandErrorsAndSubcommandFlags(t *testing.T) {
 		} else if ce.Code != tc.code || ce.Exit != tc.exit {
 			t.Errorf("%s: code/exit=%s/%d want %s/%d", tc.name, ce.Code, ce.Exit, tc.code, tc.exit)
 		}
+	}
+}
+
+// A TCP and a UDP server may share one port number; two servers of the same
+// transport on overlapping binds may not.
+func TestServerAddAmbiguousTLSReturnsDedicatedError(t *testing.T) {
+	home := serverTestHome(t)
+	for _, args := range [][]string{
+		{"add", "--protocol", "trojan", "--name", "tls-a", "--account", "alice", "--port", "38511", "--bind", "127.0.0.1", "--param", "sni=one.example"},
+		{"add", "--protocol", "anytls", "--name", "tls-b", "--account", "alice", "--port", "38511", "--bind", "127.0.0.1", "--param", "sni=two.example"},
+	} {
+		if _, _, err := serverDispatch(t, home, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertConflict := func(args ...string) {
+		t.Helper()
+		err := serverCommandError(t, home, args...)
+		var ce *cli.Error
+		if !errors.As(err, &ce) || ce.Code != "SERVER_PORT_AMBIGUOUS" || ce.Exit != cli.ExitConflict || ce.Hint == "" {
+			t.Fatalf("error=%v, want hinted SERVER_PORT_AMBIGUOUS", err)
+		}
+	}
+	assertConflict("add", "--protocol", "trojan", "--name", "tls-c", "--account", "alice", "--port", "38511", "--bind", "127.0.0.1", "--param", "sni=one.example")
+	if _, _, err := serverDispatch(t, home, "add", "--protocol", "trojan", "--name", "tls-default", "--account", "alice", "--port", "38511", "--bind", "127.0.0.1", "--default", "--param", "sni=three.example"); err != nil {
+		t.Fatalf("distinct SNI default server was refused: %v", err)
+	}
+	assertConflict("add", "--protocol", "trojan", "--name", "tls-default-two", "--account", "alice", "--port", "38511", "--bind", "127.0.0.1", "--default", "--param", "sni=four.example")
+}
+
+func TestServerAddMissingSNISharedTLSValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		second  []string
+		wantErr bool
+	}{
+		{"shared no SNI refused", []string{"add", "--protocol", "anytls", "--name", "named", "--account", "alice", "--port", "38514", "--bind", "127.0.0.1", "--param", "sni=any.example"}, true},
+		{"default permits missing SNI", []string{"add", "--protocol", "anytls", "--name", "named", "--account", "alice", "--port", "38515", "--bind", "127.0.0.1", "--param", "sni=any.example"}, false},
+		{"explicit pair accepted", []string{"add", "--protocol", "anytls", "--name", "named", "--account", "alice", "--port", "38516", "--bind", "127.0.0.1", "--param", "sni=any.example"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := serverTestHome(t)
+			first := []string{"add", "--protocol", "trojan", "--name", "plain", "--account", "alice", "--port", "38514", "--bind", "127.0.0.1"}
+			if tc.name == "default permits missing SNI" {
+				first = []string{"add", "--protocol", "trojan", "--name", "plain", "--account", "alice", "--port", "38515", "--bind", "127.0.0.1", "--default"}
+			}
+			if tc.name == "explicit pair accepted" {
+				first = []string{"add", "--protocol", "trojan", "--name", "plain", "--account", "alice", "--port", "38516", "--bind", "127.0.0.1", "--param", "sni=trojan.example"}
+			}
+			if _, _, err := serverDispatch(t, home, first...); err != nil {
+				t.Fatal(err)
+			}
+			_, _, err := serverDispatch(t, home, tc.second...)
+			if tc.wantErr {
+				var ce *cli.Error
+				if !errors.As(err, &ce) || ce.Code != "SERVER_PORT_AMBIGUOUS" || ce.Hint != "set sni on plain or mark it as the default" {
+					t.Fatalf("err=%v, want specific SERVER_PORT_AMBIGUOUS hint", err)
+				}
+			} else if err != nil {
+				t.Fatalf("valid shared servers refused: %v", err)
+			}
+		})
+	}
+	// A lone server with no SNI is allowed.
+	home := serverTestHome(t)
+	if _, _, err := serverDispatch(t, home, "add", "--protocol", "trojan", "--name", "solo", "--account", "alice", "--port", "38517", "--bind", "127.0.0.1"); err != nil {
+		t.Fatalf("solo no-SNI server refused: %v", err)
+	}
+}
+
+func TestServerAddNonSnifferPortConflict(t *testing.T) {
+	home := serverTestHome(t)
+	if _, _, err := serverDispatch(t, home, "add", "--protocol", "shadowsocks", "--name", "ss-one", "--account", "alice", "--port", "38513", "--bind", "127.0.0.1", "--param", "cipher=aes-128-gcm"); err != nil {
+		t.Fatal(err)
+	}
+	err := serverCommandError(t, home, "add", "--protocol", "trojan", "--name", "trojan-one", "--account", "alice", "--port", "38513", "--bind", "127.0.0.1", "--param", "sni=one.example")
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "PORT_IN_USE" || ce.Exit != cli.ExitConflict {
+		t.Fatalf("error=%v, want PORT_IN_USE", err)
+	}
+}
+
+func TestServerPublicListsSortedSharedEndpointPeers(t *testing.T) {
+	cfg := &config.Config{Servers: []config.Server{{Name: "zeta", Protocol: "trojan", Bind: "127.0.0.1", Port: 38512}, {Name: "alpha", Protocol: "anytls", Bind: "127.0.0.1", Port: 38512, Default: true}}}
+	got := serverPublic(cfg, cfg.Servers[0])
+	if strings.Join(got.Members, ",") != "alpha,zeta" || len(got.Members) != 2 || !serverPublic(cfg, cfg.Servers[1]).Default {
+		t.Fatalf("shared endpoint view: %#v", got)
 	}
 }
 

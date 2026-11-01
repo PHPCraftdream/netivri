@@ -923,10 +923,13 @@ func (l *liveAngel) status(startedAt string) angel.Status {
 		infos := source.Servers()
 		st.Servers = make([]angel.ServerInfo, 0, len(infos))
 		for _, info := range infos {
+			members := append([]string(nil), info.Members...)
+			sort.Strings(members)
 			st.Servers = append(st.Servers, angel.ServerInfo{
 				Name: info.Name, Protocol: info.Protocol, Listen: info.Listen,
 				Accounts: append([]string(nil), info.Accounts...), Connections: info.Connections,
-				DroppedClients: info.DroppedClients,
+				DroppedClients: info.DroppedClients, Members: members,
+				Default: info.Default, Unclassified: info.Unclassified, SlowFirstByte: info.SlowFirstByte,
 			})
 		}
 		sort.Slice(st.Servers, func(i, j int) bool { return st.Servers[i].Name < st.Servers[j].Name })
