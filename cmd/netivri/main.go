@@ -22,6 +22,7 @@ var commands = map[string]func(args []string, stdout io.Writer) error{
 	"sub":     runSub,
 	"node":    runNode,
 	"account": runAccount,
+	"server":  runServer,
 	"stats":   runStats,
 	"logs":    runLogs,
 	"diag":    runDiag,

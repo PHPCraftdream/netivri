@@ -23,6 +23,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
+	"github.com/PHPCraftdream/netivri/internal/servers"
 	"github.com/PHPCraftdream/netivri/internal/stats"
 )
 
@@ -65,10 +66,11 @@ var portRetryWait = 100 * time.Millisecond
 
 // desiredState is everything the running core is built from.
 type desiredState struct {
-	cfg  *config.Config
-	bind string
-	port int
-	pool routePool
+	cfg     *config.Config
+	bind    string
+	port    int
+	pool    routePool
+	servers []servers.Spec
 }
 
 // liveAngel keeps the running core in step with the files in the state
@@ -133,6 +135,10 @@ type liveAngel struct {
 	bindingsMu       sync.Mutex
 	bindingsGen      atomic.Uint64
 	writeBindings    func(*stats.Store, []stats.Binding) error
+
+	serverTickerC   <-chan time.Time
+	serverLogMu     sync.Mutex
+	serverPrevDrops map[string]uint64
 }
 
 func newLiveAngel(opts upOptions, logf func(format string, args ...any), stop func()) *liveAngel {
@@ -180,23 +186,25 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 	}
 	l.connLog().setNodes(d.pool.infos)
 	return core.Options{
-		HomeDir:        l.opts.Home,
-		Bind:           d.bind,
-		Port:           d.port,
-		Authenticator:  l.connLog().wrapAuth(a),
-		AllowedClients: config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
-		RouteNodes:     d.pool.nodes,
-		AccountRoute:   d.pool.accountRoutes,
-		RoutePre:       d.pool.routePre,
-		RoutePost:      d.pool.routePost,
-		GlobalPost:     d.cfg.Chain.PostSOCKS5,
-		NodeLabels:     d.pool.labels,
-		NodeTiers:      d.pool.tiers,
-		OnConnEvent:    l.connLog().event,
-		OnNodeHealth:   nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf),
-		Observer:       observer,
-		Warm:           warmOptions(d.pool.nodes),
-		AffinityTTL:    stats.BindingTTL,
+		HomeDir:               l.opts.Home,
+		Bind:                  d.bind,
+		Port:                  d.port,
+		Authenticator:         l.connLog().wrapAuth(a),
+		AllowedClients:        config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
+		RouteNodes:            d.pool.nodes,
+		AccountRoute:          d.pool.accountRoutes,
+		RoutePre:              d.pool.routePre,
+		RoutePost:             d.pool.routePost,
+		GlobalPost:            d.cfg.Chain.PostSOCKS5,
+		Servers:               cloneServerSpecs(d.servers),
+		AccountAllowedClients: accountAllowedClients(d.cfg),
+		NodeLabels:            d.pool.labels,
+		NodeTiers:             d.pool.tiers,
+		OnConnEvent:           l.connLog().event,
+		OnNodeHealth:          nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf),
+		Observer:              observer,
+		Warm:                  warmOptions(d.pool.nodes),
+		AffinityTTL:           stats.BindingTTL,
 	}
 }
 
@@ -216,6 +224,7 @@ func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authent
 	l.actualPort = port
 	l.noteBindingsRestored(inst)
 	l.mu.Unlock()
+	l.logServerDelta(nil, d.servers)
 	return nil
 }
 
@@ -234,7 +243,18 @@ func (l *liveAngel) load() (desiredState, error) {
 	if err != nil {
 		return desiredState{}, err
 	}
-	return desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, nil
+	resolved, err := cfg.ResolveServers()
+	if err != nil {
+		return desiredState{}, err
+	}
+	store := servers.NewStore(l.opts.Home)
+	for i := range resolved {
+		resolved[i], err = store.EnsureSecrets(resolved[i])
+		if err != nil {
+			return desiredState{}, err
+		}
+	}
+	return desiredState{cfg: cfg, bind: bind, port: port, pool: pool, servers: resolved}, nil
 }
 
 // nodesWithoutNames drops the display name of every node: the core replaces
@@ -261,7 +281,7 @@ func nodesWithoutNames(routes map[string][]map[string]any) map[string][]map[stri
 // fingerprint identifies all settings a core is built from. Settings the core
 // does not read (subscription URLs and refresh interval) are left out.
 func fingerprint(d desiredState) string {
-	return listenerFingerprint(d) + routesFingerprint(d)
+	return listenerFingerprint(d) + routesFingerprint(d) + serverFingerprint(d.servers)
 }
 
 // routesFingerprint covers nodes, labels, tiers, account routes and SOCKS5
@@ -334,7 +354,7 @@ func (l *liveAngel) reload(ctx context.Context) {
 	same := fingerprint(l.applied) == fingerprint(d)
 	globalPostChanged := l.applied.cfg.Chain.PostSOCKS5 != d.cfg.Chain.PostSOCKS5
 	inPlace := !same && !globalPostChanged && listenerFingerprint(l.applied) == listenerFingerprint(d) &&
-		(len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)
+		(((len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)) || (serverFingerprint(l.applied.servers) != serverFingerprint(d.servers) && routesFingerprint(l.applied) == routesFingerprint(d)))
 	if same {
 		l.reloadErr = ""
 	}
@@ -355,9 +375,15 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	l.mu.Lock()
 	inst, store, auth := l.inst, l.store, l.startOpts.Authenticator
 	l.mu.Unlock()
-	// A core without routes has no sticky groups to replace (it answers
-	// ErrReconfigureUnsupported); its restart also opens the statistics store.
-	if inst == nil || len(d.pool.accountRoutes) == 0 {
+	if inst == nil {
+		return false
+	}
+	l.mu.Lock()
+	oldServers := cloneServerSpecs(l.applied.servers)
+	serverChanged := serverFingerprint(oldServers) != serverFingerprint(d.servers)
+	serverOnly := serverChanged && routesFingerprint(l.applied) == routesFingerprint(d)
+	l.mu.Unlock()
+	if len(d.pool.accountRoutes) == 0 && !serverOnly {
 		return false
 	}
 	if store != nil && len(d.pool.infos) > 0 {
@@ -367,6 +393,10 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	}
 	o := l.routeOptions(d, auth, store)
 	if err := inst.Reconfigure(o); err != nil {
+		if serverOnly {
+			l.noteReloadError("server configuration not applied", err)
+			return true
+		}
 		if !errors.Is(err, core.ErrReconfigureUnsupported) {
 			l.warnf("routes not updated in place, restarting the listener: %s", errText(err))
 		}
@@ -383,6 +413,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.logServerDelta(oldServers, d.servers)
 	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	return true
 }
@@ -435,6 +466,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 		return
 	}
 	prev := l.startOpts
+	oldServers := cloneServerSpecs(l.applied.servers)
 	if l.inst != nil {
 		// The last snapshot is taken while the instance still runs and is
 		// on disk before it closes; the new core loads it as InitialBindings.
@@ -470,10 +502,11 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.logf("configuration applied: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
+	l.logServerDelta(oldServers, d.servers)
 }
 
-// watchSignature condenses the size and modification time of config.ktav and
-// of every stored subscription.
+// watchSignature condenses the size and modification time of config.ktav,
+// server secrets and every stored subscription.
 func watchSignature(home string) string {
 	var b strings.Builder
 	add := func(path string) {
@@ -485,6 +518,7 @@ func watchSignature(home string) string {
 		fmt.Fprintf(&b, "%s:%d:%d;", filepath.Base(path), fi.Size(), fi.ModTime().UnixNano())
 	}
 	add(config.ConfigPath(home))
+	add(servers.NewStore(home).Path())
 	dir := filepath.Join(home, "subscriptions")
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
@@ -561,7 +595,7 @@ func (l *liveAngel) woke(slept time.Duration) {
 func (l *liveAngel) startLoops() {
 	ctx, cancel := context.WithCancel(context.Background())
 	l.loopsCancel = cancel
-	l.loopsRunning.Add(5)
+	l.loopsRunning.Add(6)
 	go func() {
 		defer l.loopsRunning.Done()
 		l.watch(ctx, watchEvery)
@@ -582,6 +616,10 @@ func (l *liveAngel) startLoops() {
 		defer l.loopsRunning.Done()
 		l.watchSleep(ctx)
 	}()
+	go func() {
+		defer l.loopsRunning.Done()
+		l.serverDiagnosticsLoop(ctx)
+	}()
 }
 
 // watchSleep runs the sleep watch until ctx ends; a wake-up probes the nodes
@@ -600,10 +638,12 @@ func (l *liveAngel) close() {
 	l.closed = true
 	inst, store := l.inst, l.store
 	l.inst = nil
+	oldServers := cloneServerSpecs(l.applied.servers)
 	l.mu.Unlock()
 	// The last snapshot is taken while the instance still runs and is on
 	// disk before the store is closed (the shutdown order in up.go).
 	l.writeBindingsFinal(inst, store)
+	l.logServerDelta(oldServers, nil)
 	if inst != nil {
 		_ = inst.Close()
 	}
@@ -647,6 +687,18 @@ func (l *liveAngel) status(startedAt string) angel.Status {
 	st.Activity = activityInfo(st.Accounts, l.inst.Activity(), l.applied.pool.infos)
 	st.Warm = warmInfo(l.inst, l.applied.pool.infos)
 	st.Affinity = affinityInfo(l.inst, len(l.applied.pool.accountRoutes) > 0)
+	if source, ok := l.inst.(serverInfoSource); ok {
+		infos := source.Servers()
+		st.Servers = make([]angel.ServerInfo, 0, len(infos))
+		for _, info := range infos {
+			st.Servers = append(st.Servers, angel.ServerInfo{
+				Name: info.Name, Protocol: info.Protocol, Listen: info.Listen,
+				Accounts: append([]string(nil), info.Accounts...), Connections: info.Connections,
+				DroppedClients: info.DroppedClients,
+			})
+		}
+		sort.Slice(st.Servers, func(i, j int) bool { return st.Servers[i].Name < st.Servers[j].Name })
+	}
 	if st.Affinity != nil {
 		st.Affinity.Restored = l.bindingsRestored
 		if !l.bindingsSavedAt.IsZero() {

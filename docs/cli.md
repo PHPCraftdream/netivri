@@ -48,6 +48,14 @@ netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--si
 
 netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
+netivri server protocols
+netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--param {KEY=VALUE} ...]
+netivri server list
+netivri server show {NAME}
+netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr]
+netivri server rotate {NAME} [--account {ACCOUNT}]
+netivri server remove {NAME}
+
 netivri use {NODE}                        (planned)
 netivri use --country {COUNTRY} [--fastest | --auto]
 netivri use --fastest | --auto            --auto keeps re-selecting by latency
@@ -127,7 +135,8 @@ not on stderr, not in error messages. The same holds for `--via` proxies.
 
 `netivri logs --follow` and `netivri status --watch` are the streaming commands;
 with `--json` they print one JSON object per line (NDJSON) instead of frames
-or log lines.
+or log lines. `status --watch` includes the optional `servers` array on each
+frame when listeners are running; see [`status`](#status).
 
 ### `help`
 
@@ -286,6 +295,13 @@ created before this version (schema v1) has no account data.
 
 When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 `--by` or `--country`: usage error, exit 2.
+
+### `server`
+
+The server command contract and operational behavior are documented in
+[`servers/cli.md`](servers/cli.md). For completeness, its name errors are
+`SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6)
+for an already configured name; port conflicts return `PORT_IN_USE` (exit 6).
 
 ### `logs`
 
@@ -879,9 +895,23 @@ the proxies of the running core (`socks5://`, `http://` or `https://`),
 redacted to `scheme://host:port` or `none`, `source` being `account`, `global` or `none` and `auth` whether the URL
 had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
 and `reload`. The full view (`--full`) adds, next to everything above: the full
-`warm` (the pool counters and `nodes[]`), `stats` and `affinity`. The selection
+`warm` (the pool counters and `nodes[]`), `stats` and `affinity`. `servers` is
+an optional array in both short and full views: omitted when no server is
+running. Each item has `name`, `protocol`, `listen`, `accounts` (account login
+array), `connections` (integer active connections), `dropped_clients` (unsigned
+integer count combining clients rejected by allowed-client policy and dropped UDP
+packets). The selection
 fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+Example server item (the same shape appears in short, full and watch JSON):
+
+```json
+{"name":"edge","protocol":"shadowsocks","listen":"127.0.0.1:8388","accounts":["alice"],"connections":2,"dropped_clients":0}
+```
+
+Text watch adds a `Servers` table for running listeners. Watch JSON includes `servers` only when nonempty. Server
+status contains operational details, not credentials.
 
 Scripts that read `warm.nodes`, `stats` or `affinity` must pass `--full`.
 

@@ -312,6 +312,9 @@ func runUp(args []string, stdout io.Writer) error {
 	if _, err := accountRoutePool(opts.Home, cfg); err != nil {
 		return failStartup(opts.Handshake, err)
 	}
+	if _, err := resolveServerSpecs(opts.Home, cfg); err != nil {
+		return failStartup(opts.Handshake, err)
+	}
 	if !opts.Foreground {
 		return runUpAngel(opts, args, stdout)
 	}
@@ -368,6 +371,10 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	if err != nil {
 		return err
 	}
+	serverSpecs, err := resolveServerSpecs(opts.Home, cfg)
+	if err != nil {
+		return err
+	}
 	// Foreground cannot be idempotent: refuse a second instance in one home.
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	_, err = angelProbe(probeCtx, opts.Home)
@@ -407,7 +414,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	requestStop := sync.OnceFunc(func() { close(stopRequested) })
 	live := newLiveAngel(opts, logf, requestStop)
 	live.warnf, live.errorf, live.debugf = warnf, errorf, debugf
-	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool}, authenticator, store); err != nil {
+	if err := live.start(ctx, desiredState{cfg: cfg, bind: bind, port: port, pool: pool, servers: serverSpecs}, authenticator, store); err != nil {
 		closeStats(store)
 		return err
 	}
