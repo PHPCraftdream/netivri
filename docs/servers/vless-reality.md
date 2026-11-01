@@ -53,11 +53,12 @@ The vendored Mihomo Reality builder sets `Log = log.Debugln`; Reality/uTLS creat
 
 The loopback integration test is CI-only under the `integration` build tag. Its local TLS 1.3 camouflage target uses a large RSA certificate and a 4096-byte randomized `SessionState.Extra` ticket extension to provide record-size margin against Reality's regenerated handshake messages. The ticket padding uses Go's `WrapSession`/`EncryptTicket`; the standard server-side TLS 1.3 ticket encoding does not include the server certificate. This test fixture is not a runtime certificate requirement or a confirmed explanation for any CI failure.
 
-Source inspection of vendored Mihomo v1.19.32 found Reality `Config.Build` uses `inner.HandleTcp` for camouflage. That tunnel metadata is `C.INNER` without `SrcIP` or `InUser`; when global `listen.allowed_clients` is configured, the shared server policy refuses the camouflage connection because it has no client address. Thus unauthenticated visitors (including allowlisted sources) are dropped instead of camouflaged; without a global list this filter does not refuse it. Do not assume valid clients are unaffected, since source flow may send handshakes through that target. The integration exercises unrestricted global policy, then an Alice account policy.
 
+The camouflage callback is configured with `Proxy: "DIRECT"`. Vendored Mihomo builds Reality camouflage via `inner.HandleTcp(tunnel, address, c.Proxy)`; the inner metadata is `C.INNER` and has no `SrcIP` or `InUser`, and `SpecialProxy` is set only when the proxy name is nonempty. Explicit `DIRECT` routes camouflage directly without applying client-address or account policy and without client-route counters. This is distinct from authenticated VLESS clients, which still enter normal account routing and are subject to the server client-policy behavior. The integration test includes a loopback client allowed by global `listen.allowed_clients`; this documents intended source behavior, not a CI result.
 
 ## Decisions
 
-Consider patching the vendored Reality builder to drop the callback, following `third_party/README.md`'s patch process.
+Consider patching the vendored Reality builder to drop the callback, following `third_party/README.md`'s patch process, to address its secret-bearing debug events described above. This logging concern is separate from camouflage routing, which uses the explicit built-in `DIRECT` proxy and needs no vendored patch.
+
 
 The Reality listener's lifecycle and race behavior during shutdown has not been dynamically verified; CI race-enabled integration results are needed before drawing conclusions. Do not interpret the plain `closed` field in isolation as proof of a race, since the listener wrapper and its accept path may provide synchronization. This change does not patch vendored Mihomo.

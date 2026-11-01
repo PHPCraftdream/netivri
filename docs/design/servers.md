@@ -44,7 +44,7 @@ subscriptions, TUN, protocols that need a domain fronting service, a GUI.
   user's `Username`. Mihomo's Shadowsocks server has a single password, so it
   needs one listener per account, each started with `inbound.WithInUser(login)`.
   Protocols differ here, see the matrix.
-- **The global IP filter does not cover these listeners.** Mihomo's `inbound.SetAllowedIPs` (`listen.allowed_clients`) is consulted by HTTP, SOCKS and mixed listeners, not the Shadowsocks server. Core therefore enforces the global and per-account allowlists in the wrapped tunnel before forwarding, using `metadata.SrcIP` and `metadata.InUser`. A nil policy pointer is unrestricted; with a configured policy, nil global/account slices mean unrestricted and empty non-nil slices deny all.
+- **The global IP filter does not cover these listeners.** Mihomo's `inbound.SetAllowedIPs` (`listen.allowed_clients`) is consulted by HTTP, SOCKS and mixed listeners, not the Shadowsocks server. Core therefore enforces the global and per-account allowlists in the wrapped tunnel before forwarding, using `metadata.SrcIP` and `metadata.InUser`. A nil policy pointer is unrestricted; with a configured policy, nil global/account slices mean unrestricted and empty non-nil slices deny all. VLESS Reality camouflage explicitly uses built-in `DIRECT`; its `INNER` metadata has no client IP or account and therefore bypasses these filters and client-route counters. Authenticated VLESS clients continue through normal account routing and policy enforcement.
 
 ## Model
 

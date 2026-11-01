@@ -261,6 +261,30 @@ func (c *tlsRecordObserverConn) Write(p []byte) (int, error) {
 	return written, err
 }
 
+func (o *realityTargetObservation) acceptedCount() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.accepted
+}
+
+func waitRealityTargetAccepted(t *testing.T, o *realityTargetObservation) int {
+	t.Helper()
+	timer := time.NewTimer(vlessTestTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if accepted := o.acceptedCount(); accepted > 0 {
+			return accepted
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			return 0
+		}
+	}
+}
+
 func (o *realityTargetObservation) snapshot() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -405,6 +429,17 @@ func assertVlessRouteCounts(t *testing.T, alice, bob *vlessNodeRecorder, aliceWa
 	}
 }
 
+func assertVlessNoCamouflageRoute(t *testing.T, alice, bob *vlessNodeRecorder, dest string) {
+	t.Helper()
+	for name, targets := range map[string][]string{"alice": alice.snapshot(), "bob": bob.snapshot()} {
+		for _, target := range targets {
+			if target == dest {
+				t.Errorf("Reality camouflage destination %q was routed through %s node recorder", dest, name)
+			}
+		}
+	}
+}
+
 func waitVlessConnections(t *testing.T, inst *core.Instance) {
 	t.Helper()
 	timer := time.NewTimer(vlessTestTimeout)
@@ -456,7 +491,7 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	}
 	home := testutil.TempHome(t)
 	options := func(spec servers.Spec, accountPolicy map[string][]netip.Prefix) core.Options {
-		return core.Options{HomeDir: home, RouteNodes: map[string][]map[string]any{
+		return core.Options{HomeDir: home, Node: map[string]any{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(aliceAddr)}, AllowedClients: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, RouteNodes: map[string][]map[string]any{
 			"alice": {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(aliceAddr)}},
 			"bob":   {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(bobAddr)}},
 		}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob"}, Servers: []servers.Spec{spec}, AccountAllowedClients: accountPolicy}
@@ -566,11 +601,20 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 			})
 		}
 	}
-	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
-		t.Errorf("Alice echo stage %s: %v; camouflage target stages: %s", result.stage, result.err, targetObservation.snapshot())
+	if firstResult := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); firstResult.err != nil {
+		if accepted := waitRealityTargetAccepted(t, targetObservation); accepted == 0 {
+			t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", targetObservation.snapshot())
+		}
+		assertVlessNoCamouflageRoute(t, aliceNode, bobNode, dest)
+		assertVlessRouteCounts(t, aliceNode, bobNode, 0, 0, backend)
+		t.Errorf("Alice echo stage %s: %v; camouflage target stages: %s", firstResult.stage, firstResult.err, targetObservation.snapshot())
 		runDiagnosticMatrix()
 		return
 	} else {
+		if accepted := waitRealityTargetAccepted(t, targetObservation); accepted == 0 {
+			t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", targetObservation.snapshot())
+		}
+		assertVlessNoCamouflageRoute(t, aliceNode, bobNode, dest)
 		waitVlessConnections(t, inst)
 		assertVlessRouteCounts(t, aliceNode, bobNode, 1, 0, backend)
 	}

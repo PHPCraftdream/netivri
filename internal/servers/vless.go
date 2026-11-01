@@ -222,6 +222,7 @@ func (vlessReality) Start(spec Spec, env Env) (io.Closer, error) {
 			PrivateKey:  spec.Material["private_key"],
 			ShortID:     ids,
 			ServerNames: []string{realitySNI(spec.Params)},
+			Proxy:       "DIRECT",
 		},
 	}
 	started, err := sing_vless.New(config, prepared, env.Tunnel, inbound.WithInName(spec.Name))
