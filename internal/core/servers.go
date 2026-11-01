@@ -1,7 +1,9 @@
 package core
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"sort"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/servers"
+	inbound "github.com/metacubex/mihomo/adapter/inbound"
 	C "github.com/metacubex/mihomo/constant"
 )
 
@@ -42,11 +45,26 @@ type serverTransaction struct {
 	stage      *socketStage
 	next       map[string]*serverEntry
 	old        map[string]*serverEntry
+	udp        map[string]servers.Protocol
+	specs      map[string]servers.Spec
+	tunnel     C.Tunnel
 	policy     *clientPolicy
 	committed  bool
 	rolledBack bool
 }
+type serverUDPListenConfig struct{ listen C.InboundListenConfig }
 
+func (c serverUDPListenConfig) Listen(context.Context, string, string) (net.Listener, error) {
+	return nil, errors.New("TCP listening is unsupported for UDP-bound server")
+}
+func (c serverUDPListenConfig) ListenPacket(ctx context.Context, n, a string) (net.PacketConn, error) {
+	switch n {
+	case "udp", "udp4", "udp6":
+	default:
+		return nil, errors.New("UDP-bound server requires UDP network")
+	}
+	return c.listen.ListenPacket(ctx, n, a)
+}
 func (t *serverTunnel) HandleTCPConn(c net.Conn, m *C.Metadata) {
 	p := t.policy.Load()
 	if !permitsServerClient(p, m) {
@@ -107,6 +125,10 @@ func newClientPolicy(global []netip.Prefix, accounts map[string][]netip.Prefix) 
 	}
 	return &clientPolicy{global: clonePrefixes(global), accounts: out}
 }
+func protocolUDPBound(p servers.Protocol) bool {
+	c, ok := p.(servers.UDPBound)
+	return ok && c.UDPBound()
+}
 func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []netip.Prefix, accounts map[string][]netip.Prefix) (*serverTransaction, error) {
 	s.mu.RLock()
 	old := s.items
@@ -116,6 +138,7 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 	}
 	want := make(map[string]servers.Spec, len(specs))
 	endpoints := map[string]string{}
+	udp := map[string]servers.Protocol{}
 	for _, sp := range specs {
 		if err := sp.Validate(); err != nil {
 			return nil, err
@@ -123,8 +146,17 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 		if _, ok := want[sp.Name]; ok {
 			return nil, errors.New("duplicate server name")
 		}
+		p, ok := servers.Lookup(sp.Protocol)
+		if !ok {
+			return nil, errors.New("unknown server protocol")
+		}
+		transport := "tcp"
+		if protocolUDPBound(p) {
+			transport = "udp"
+			udp[sp.Name] = p
+		}
 		want[sp.Name] = sp.Clone()
-		key := sp.ListenAddress()
+		key := transport + "\x00" + sp.ListenAddress()
 		if name, ok := endpoints[key]; ok {
 			return nil, errors.New("server endpoint conflict: " + name + " and " + sp.Name)
 		}
@@ -133,16 +165,16 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 	stage := s.broker.stage()
 	next := make(map[string]*serverEntry, len(want))
 	policy := newClientPolicy(global, accounts)
-	tx := &serverTransaction{set: s, stage: stage, next: next, old: old, policy: policy}
+	tx := &serverTransaction{set: s, stage: stage, next: next, old: old, udp: udp, specs: want, tunnel: tunnel, policy: policy}
 	rollback := func(err error) (*serverTransaction, error) { tx.rollback(); return nil, err }
 	for name, sp := range want {
 		if e := old[name]; e != nil && e.spec.Equal(sp) {
 			next[name] = e
 			continue
 		}
-		p, ok := servers.Lookup(sp.Protocol)
-		if !ok {
-			return rollback(errors.New("unknown server protocol"))
+		p, _ := servers.Lookup(sp.Protocol)
+		if protocolUDPBound(p) {
+			continue
 		}
 		e := &serverEntry{spec: sp.Clone(), counters: &serverCounters{}}
 		if previous := old[name]; previous != nil {
@@ -159,10 +191,29 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 			}
 			return rollback(err)
 		}
-		e.running = servers.Running{Name: sp.Name, Protocol: sp.Protocol, Listen: sp.ListenAddress(), Accounts: append([]string(nil), sp.Accounts...), Closer: r}
+		e.running = serverRunning(sp, r)
 		next[name] = e
 	}
 	return tx, nil
+}
+func serverRunning(sp servers.Spec, c interface{ Close() error }) servers.Running {
+	return servers.Running{Name: sp.Name, Protocol: sp.Protocol, Listen: sp.ListenAddress(), Accounts: append([]string(nil), sp.Accounts...), Closer: c}
+}
+func (tx *serverTransaction) startUDP(name string, sp servers.Spec, p servers.Protocol) (*serverEntry, error) {
+	e := &serverEntry{spec: sp.Clone(), counters: &serverCounters{}}
+	if old := tx.old[name]; old != nil {
+		e.counters = old.counters
+	}
+	tw := &serverTunnel{inner: tx.tunnel, entry: e, policy: &tx.set.policy}
+	r, err := p.Start(sp, servers.Env{Tunnel: tw, ListenConfig: serverUDPListenConfig{listen: inbound.NewListenConfig()}})
+	if err != nil {
+		if r != nil {
+			_ = r.Close()
+		}
+		return nil, err
+	}
+	e.running = serverRunning(sp, r)
+	return e, nil
 }
 func (tx *serverTransaction) rollback() {
 	if tx == nil || tx.committed || tx.rolledBack {
@@ -180,6 +231,13 @@ func (tx *serverTransaction) rollback() {
 // commit activates prepared listeners. Callers hold lifecycleMu, so broker
 // closure cannot race this preflight/activation; policy is published first so
 // no newly accepted server connection observes an unfiltered nil policy.
+func isUDPEntry(e *serverEntry) bool {
+	if e == nil {
+		return false
+	}
+	p, ok := servers.Lookup(e.spec.Protocol)
+	return ok && protocolUDPBound(p)
+}
 func (tx *serverTransaction) commit() error {
 	tx.set.mu.Lock()
 	previousPolicy := tx.set.policy.Load()
@@ -191,13 +249,80 @@ func (tx *serverTransaction) commit() error {
 		tx.set.mu.Unlock()
 		return err
 	}
+	changed := make([]string, 0)
+	for name, e := range tx.old {
+		if tx.next[name] != e && isUDPEntry(e) {
+			changed = append(changed, name)
+		}
+	}
+	sort.Strings(changed)
+	for _, n := range changed {
+		_ = tx.old[n].running.Close()
+	}
+	names := make([]string, 0)
+	for n := range tx.udp {
+		if e := tx.old[n]; e == nil || !e.spec.Equal(tx.specs[n]) {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	var failure error
+	for _, n := range names {
+		e, err := tx.startUDP(n, tx.specs[n], tx.udp[n])
+		if err != nil {
+			failure = err
+			break
+		}
+		tx.next[n] = e
+	}
+	if failure != nil {
+		tx.stage.rollbackActivation()
+		tx.stage.rollback()
+		for n, e := range tx.next {
+			if tx.old[n] != e {
+				_ = e.running.Close()
+			}
+		}
+		tx.set.mu.Lock()
+		tx.set.policy.Store(previousPolicy)
+		tx.set.mu.Unlock()
+		restoreFailed := false
+		for _, n := range changed {
+			old := tx.old[n]
+			p, ok := servers.Lookup(old.spec.Protocol)
+			if !ok {
+				restoreFailed = true
+				continue
+			}
+			r, err := tx.startUDP(n, old.spec, p)
+			if err != nil {
+				restoreFailed = true
+				continue
+			}
+			tx.set.mu.Lock()
+			old.running = r.running
+			tx.set.mu.Unlock()
+		}
+		tx.set.mu.Lock()
+		tx.set.items = tx.old
+		tx.set.mu.Unlock()
+		tx.rolledBack = true
+		var ce *cli.Error
+		if isAddrInUse(failure) && !errors.As(failure, &ce) {
+			failure = &cli.Error{Code: "PORT_IN_USE", Message: "server listen port is already in use", Exit: cli.ExitConflict}
+		}
+		if restoreFailed {
+			return fmt.Errorf("%w (previous servers not fully restored)", failure)
+		}
+		return fmt.Errorf("%w (previous servers restored)", failure)
+	}
 	tx.set.mu.Lock()
 	tx.set.items = tx.next
 	tx.set.mu.Unlock()
 	tx.committed = true
-	for name, e := range tx.old {
-		if tx.next[name] != e {
-			_ = e.running.Close()
+	for n, old := range tx.old {
+		if tx.next[n] != old && !isUDPEntry(old) {
+			_ = old.running.Close()
 		}
 	}
 	return nil

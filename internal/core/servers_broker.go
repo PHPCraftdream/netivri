@@ -48,6 +48,8 @@ type socketStage struct {
 	mu           sync.Mutex
 	leases       []*socketLease
 	finished     bool
+	activated    bool
+	previous     map[*socketEndpoint]*socketLease
 	endpointKeys map[string]struct{}
 }
 type socketLease struct {
@@ -106,6 +108,10 @@ func (b *socketBroker) newLease(s *socketStage, n, a string) (*socketLease, erro
 	return l, nil
 }
 func signalEndpoint(ep *socketEndpoint) { close(ep.changed); ep.changed = make(chan struct{}) }
+func containsLease(leases map[*socketLease]struct{}, target *socketLease) bool {
+	_, ok := leases[target]
+	return ok
+}
 func (s *socketStage) commit() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -124,11 +130,43 @@ func (s *socketStage) commit() error {
 		}
 	}
 	for _, l := range s.leases {
+		if !containsLease(l.endpoint.leases, l) {
+			return errors.New("listener stage lease is closed")
+		}
+	}
+	s.previous = make(map[*socketEndpoint]*socketLease, len(s.leases))
+	for _, l := range s.leases {
+		s.previous[l.endpoint] = l.endpoint.active
+	}
+	for _, l := range s.leases {
 		l.endpoint.active = l
 		signalEndpoint(l.endpoint)
 	}
+	s.activated = true
 	s.finished = true
 	return nil
+}
+func (s *socketStage) rollbackActivation() {
+	s.mu.Lock()
+	if !s.activated {
+		s.mu.Unlock()
+		return
+	}
+	b := s.broker
+	b.mu.Lock()
+	for ep, previous := range s.previous {
+		if !ep.closed {
+			ep.active = previous
+			signalEndpoint(ep)
+		}
+	}
+	b.mu.Unlock()
+	s.activated = false
+	leases := append([]*socketLease(nil), s.leases...)
+	s.mu.Unlock()
+	for _, l := range leases {
+		l.close()
+	}
 }
 func (s *socketStage) rollback() {
 	s.mu.Lock()
