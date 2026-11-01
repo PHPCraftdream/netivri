@@ -159,20 +159,27 @@ func TestE2EServerTrustTunnelLifecycle(t *testing.T) {
 		}
 		probeCtx, stop := context.WithTimeout(ctx, 3*time.Second)
 		defer stop()
+		started := time.Now()
+		// The classified error hides the cause; the log (shown only when the
+		// test fails) names the stage, the error type and its redacted text.
+		classify := func(stage string, err error) error {
+			t.Logf("TrustTunnel probe %q failed at %s after %s: %T: %s", payload, stage, time.Since(started).Round(time.Millisecond), err, e2eRedactDiagnostic(err.Error()))
+			return e2eTrustTunnelClassify(err, probeCtx)
+		}
 		conn, err := outbound.DialContext(probeCtx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(n)})
 		if err != nil {
-			return e2eTrustTunnelClassify(err, probeCtx)
+			return classify("dial", err)
 		}
 		defer conn.Close()
 		if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-			return e2eTrustTunnelClassify(err, probeCtx)
+			return classify("deadline", err)
 		}
 		if _, err := io.WriteString(conn, payload); err != nil {
-			return e2eTrustTunnelClassify(err, probeCtx)
+			return classify("write", err)
 		}
 		got := make([]byte, len(payload))
 		if _, err := io.ReadFull(conn, got); err != nil {
-			return e2eTrustTunnelClassify(err, probeCtx)
+			return classify("read", err)
 		}
 		if string(got) != payload {
 			return fmt.Errorf("unexpected echo")
