@@ -154,7 +154,7 @@ func upProcReport(home string) string {
 		state = "angel process: exited"
 	}
 	p.exitMu.Unlock()
-	return state + "\n" + e2eTail("stderr", p.Stderr(), 15) + "\n" + e2eTail("stdout", p.Stdout(), 5)
+	return state + "\n" + e2eTail("stderr", p.Stderr(), 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
 }
 
 var e2eURLPattern = regexp.MustCompile(`\S*://\S+`)
@@ -213,7 +213,9 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	t.Helper()
 	full := append([]string{"up", "--foreground"}, args...)
 	cmd := exec.Command(netivriBin, full...)
-	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
+	// The angel log goes to stderr, so a failure report can show what the
+	// angel did (a foreground run has no log file).
+	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, logStderrEnv+"=1")
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)

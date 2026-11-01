@@ -591,3 +591,12 @@ func TestRunUpAngelControlTimeoutDoesNotSpawn(t *testing.T) {
 		t.Errorf("stdout must stay empty on failure, got %q", out.String())
 	}
 }
+
+func TestForegroundLogRequested(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "0": false, "1": true, "debug": true} {
+		t.Setenv(logStderrEnv, value)
+		if got := foregroundLogRequested(); got != want {
+			t.Errorf("%s=%q: got %v, want %v", logStderrEnv, value, got, want)
+		}
+	}
+}

@@ -808,7 +808,11 @@ listen address (an explicit `--port 0` means "don't care"), `up` fails with
 
 Runs the proxy in the foreground: prints one document on stdout (the same
 shape as above, without `already_running`; one line with `--json`), then blocks until SIGINT /
-SIGTERM or `netivri down`, then exits 0. It writes nothing to stderr. A
+SIGTERM or `netivri down`, then exits 0. It writes nothing to stderr unless the
+environment variable `NETIVRI_LOG_STDERR` is set to anything but `0`: then it
+writes the angel log (the lines `netivri logs` shows for a background angel,
+plus the debug lines) to stderr, for service managers and for diagnosing a
+run without a log file (`NETIVRI_LOG_STDERR=1 netivri up --foreground`). A
 foreground `up` is not idempotent: with an angel already running in the same
 home it fails with `ALREADY_RUNNING` (exit 6).
 

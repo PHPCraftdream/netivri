@@ -58,6 +58,15 @@ var (
 	angelError = angelLogf(angel.LevelError)
 )
 
+// logStderrEnv, set to anything but "" or "0", makes `up --foreground` write
+// the angel log to stderr like the background angel writes its log file.
+const logStderrEnv = "NETIVRI_LOG_STDERR"
+
+func foregroundLogRequested() bool {
+	v := os.Getenv(logStderrEnv)
+	return v != "" && v != "0"
+}
+
 // angelProtocols are the protocols the mixed port speaks.
 var angelProtocols = []string{"socks5", "socks4", "http"}
 
