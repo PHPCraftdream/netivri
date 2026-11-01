@@ -127,6 +127,49 @@ type upProc struct {
 	stderrEOF chan struct{}
 	stdoutR   *os.File
 	stderrR   *os.File
+	exitMu    sync.Mutex
+	exited    bool
+	exitErr   error
+}
+
+var (
+	upProcsMu sync.Mutex
+	upProcs   = map[string]*upProc{} // home -> the latest angel started for it
+)
+
+// upProcReport says whether the angel started for home is still running
+// (else how it exited) and shows the tail of its stdout and stderr without
+// links or credentials, to name why the angel stopped answering.
+func upProcReport(home string) string {
+	upProcsMu.Lock()
+	p := upProcs[home]
+	upProcsMu.Unlock()
+	if p == nil {
+		return "angel process: not started by this test"
+	}
+	p.exitMu.Lock()
+	state := "angel process: running"
+	if p.exited {
+		state = fmt.Sprintf("angel process: exited (%v)", p.exitErr)
+	}
+	p.exitMu.Unlock()
+	return state + "\n" + e2eTail("stderr", p.Stderr(), 15) + "\n" + e2eTail("stdout", p.Stdout(), 5)
+}
+
+// e2eTail returns the last n lines of text that carry no link or secret.
+func e2eTail(name, text string, n int) string {
+	var kept []string
+	for _, line := range strings.Split(text, "\n") {
+		lower := strings.ToLower(line)
+		if strings.TrimSpace(line) == "" || strings.Contains(line, "://") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) > n {
+		kept = kept[len(kept)-n:]
+	}
+	return name + " tail:\n" + strings.Join(kept, "\n")
 }
 
 // startUp spawns `netivri up --foreground <args...>` with
@@ -170,6 +213,9 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	// Cleanup registered immediately after Start: any failure below must
 	// not leave the child running.
 	t.Cleanup(p.Stop)
+	upProcsMu.Lock()
+	upProcs[home] = p
+	upProcsMu.Unlock()
 	// The parent keeps only the read ends.
 	if err := stdoutW.Close(); err != nil {
 		t.Errorf("close stdout write end: %v", err)
@@ -196,7 +242,11 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 		_, _ = io.Copy(p.stdoutBuf, br)
 	}()
 	go func() {
-		p.waitCh <- cmd.Wait()
+		err := cmd.Wait()
+		p.exitMu.Lock()
+		p.exited, p.exitErr = true, err
+		p.exitMu.Unlock()
+		p.waitCh <- err
 	}()
 	select {
 	case res := <-lineCh:
