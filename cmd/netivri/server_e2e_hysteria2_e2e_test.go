@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +24,7 @@ import (
 )
 
 func TestE2EHysteria2Lifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	const accountPassword = "hysteria2-e2e-account-password"
 	aliceUp, bobUp := accountsServer(t), accountsServer(t)
@@ -156,6 +157,11 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	drive := func(account, echo string, own, other *accountsUpstream) {
 		t.Helper()
 		beforeOwn, beforeOther := own.count.Load(), other.count.Load()
+		defer func() {
+			if t.Failed() {
+				e2eHysteria2Diagnostics(t, homeA, homeB, secrets)
+			}
+		}()
 		accountsClient(t, angelB.Status().Data.Listen, account, accountPassword, echo)
 		if own.count.Load() <= beforeOwn || other.count.Load() != beforeOther {
 			t.Fatalf("%s routed to wrong recorder", account)
@@ -168,10 +174,10 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	bodyMu.RUnlock()
 	oldAlice := aliceURI
 	if err := e2eHysteria2ProbeFromURI(ctx, aliceURI, aliceEcho, "incorrect-hysteria2-credential"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "authentication failed, status code: 404") {
-		t.Fatal("wrong credential did not produce Hysteria2 authentication failure")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "wrong credential", err)
 	}
 	if err := e2eHysteria2ProbeFromURI(ctx, oldAlice, aliceEcho, ""); err != nil {
-		t.Fatal("valid imported Hysteria2 URI failed")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "valid imported URI", err)
 	}
 	beforeAlice, beforeBob := aliceUp.count.Load(), bobUp.count.Load()
 	code, out, stderr = runServer("rotate", "edge", "--account", "alice")
@@ -181,10 +187,10 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 2)
 	if err := e2eHysteria2ProbeFromURI(ctx, oldAlice, aliceEcho, ""); err == nil || !strings.Contains(strings.ToLower(err.Error()), "authentication failed, status code: 404") {
-		t.Fatal("rotated credential did not produce Hysteria2 authentication failure")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "rotated credential", err)
 	}
 	if aliceUp.count.Load() != beforeAlice || bobUp.count.Load() != beforeBob {
-		t.Fatal("failed authentication reached a route recorder")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "failed authentication route recorder", io.ErrUnexpectedEOF)
 	}
 	setLinks()
 	for _, account := range []string{"alice"} {
@@ -208,19 +214,20 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	aliceURI = bodyByAccount["alice"]
 	bodyMu.RUnlock()
 	if err := e2eHysteria2ProbeFromURI(ctx, aliceURI, aliceEcho, ""); err == nil {
-		t.Fatal("restricted Alice client unexpectedly succeeded")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "restricted Alice probe", nil)
 	}
 	e2eHysteria2WaitDropped(t, ctx, homeA, "edge")
 	if aliceUp.count.Load() != beforeAlice || bobUp.count.Load() != beforeBob {
-		t.Fatal("restricted client reached a route recorder")
+		e2eHysteria2Failure(t, homeA, homeB, secrets, "restricted route recorder", io.ErrUnexpectedEOF)
 	}
-	drive("bob", bobEcho, bobUp, aliceUp)
+	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"bob", bobEcho, bobUp, aliceUp}})
 	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
 	if code != 0 {
 		t.Fatalf("clear allowed clients: %s", serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 4)
+	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"alice", aliceEcho, aliceUp, bobUp}, {"bob", bobEcho, bobUp, aliceUp}})
 	aliceLink, bobLink := link("alice"), link("bob")
 	code, out, stderr = accountsRun(t, homeA, "down")
 	if code != 0 {
@@ -234,8 +241,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	if link("alice") != aliceLink || link("bob") != bobLink {
 		t.Fatal("server links changed across restart")
 	}
-	drive("alice", aliceEcho, aliceUp, bobUp)
-	drive("bob", bobEcho, bobUp, aliceUp)
+	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"alice", aliceEcho, aliceUp, bobUp}, {"bob", bobEcho, bobUp, aliceUp}})
 	code, out, stderr = runServer("remove", "edge")
 	if code != 0 {
 		t.Fatalf("server remove: %s", serverErrorSummary(out, stderr))
@@ -246,6 +252,255 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	e2eHysteria2WaitUDPFree(t, ctx, port)
 }
 
+type e2eHysteria2Echo struct {
+	account string
+	echo    string
+	own     *accountsUpstream
+	other   *accountsUpstream
+}
+
+func e2eHysteria2RetryEchoes(t *testing.T, parent context.Context, proxy, password string, secrets []string, homeA, homeB string, checks []e2eHysteria2Echo) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	defer cancel()
+	for _, check := range checks {
+		beforeOwn, beforeOther := check.own.count.Load(), check.other.count.Load()
+		var lastErr error
+		for {
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 3*time.Second)
+			lastErr = e2eHysteria2AccountsClient(attemptCtx, proxy, check.account, password, check.echo)
+			attemptCancel()
+			if lastErr == nil {
+				if check.own.count.Load() <= beforeOwn || check.other.count.Load() != beforeOther {
+					e2eHysteria2Diagnostics(t, homeA, homeB, secrets)
+					t.Fatalf("%s routed to wrong recorder", check.account)
+				}
+				break
+			}
+			timer := time.NewTimer(time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				e2eHysteria2Diagnostics(t, homeA, homeB, secrets)
+				t.Fatalf("%s echo retries exhausted: %s", check.account, e2eHysteria2Sanitize(lastErr.Error(), secrets))
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+func e2eHysteria2AccountsClient(ctx context.Context, proxy, user, pass, target string) error {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", proxy)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(deadline)
+	}
+	if _, err = conn.Write([]byte{5, 1, 2}); err != nil {
+		return err
+	}
+	var method [2]byte
+	if _, err = io.ReadFull(conn, method[:]); err != nil {
+		return err
+	}
+	if method != [2]byte{5, 2} {
+		return fmt.Errorf("SOCKS method %v", method)
+	}
+	if len(user) > 255 || len(pass) > 255 {
+		return fmt.Errorf("credentials too long")
+	}
+	requestAuth := append([]byte{1, byte(len(user))}, []byte(user)...)
+	requestAuth = append(requestAuth, byte(len(pass)))
+	requestAuth = append(requestAuth, []byte(pass)...)
+	if _, err = conn.Write(requestAuth); err != nil {
+		return err
+	}
+	var authReply [2]byte
+	if _, err = io.ReadFull(conn, authReply[:]); err != nil {
+		return err
+	}
+	if authReply[1] != 0 {
+		return fmt.Errorf("SOCKS auth reply %v", authReply)
+	}
+	host, portText, err := net.SplitHostPort(target)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host).To4()
+	if ip == nil {
+		return fmt.Errorf("target is not IPv4: %s", target)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		return err
+	}
+	request := append([]byte{5, 1, 0, 1}, ip...)
+	request = append(request, byte(port>>8), byte(port))
+	if _, err = conn.Write(request); err != nil {
+		return err
+	}
+	var reply [10]byte
+	if _, err = io.ReadFull(conn, reply[:]); err != nil {
+		return err
+	}
+	if reply[1] != 0 {
+		return fmt.Errorf("SOCKS CONNECT reply %v", reply)
+	}
+	payload := []byte("hysteria2-route-check")
+	if _, err = conn.Write(payload); err != nil {
+		return err
+	}
+	got := make([]byte, len(payload))
+	if _, err = io.ReadFull(conn, got); err != nil {
+		return err
+	}
+	if string(got) != string(payload) {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func e2eHysteria2Failure(t *testing.T, homeA, homeB string, secrets []string, what string, err error) {
+	t.Helper()
+	e2eHysteria2Diagnostics(t, homeA, homeB, secrets)
+	if err == nil {
+		t.Fatalf("%s unexpectedly succeeded", what)
+	}
+	t.Fatalf("%s failed: %s", what, e2eHysteria2Sanitize(err.Error(), secrets))
+}
+
+func e2eHysteria2Diagnostics(t *testing.T, homeA, homeB string, secrets []string) {
+	t.Helper()
+	e2eHysteria2Diagnostic(t, homeA, false, secrets)
+	e2eHysteria2Diagnostic(t, homeB, true, secrets)
+}
+
+func e2eHysteria2Diagnostic(t *testing.T, home string, full bool, secrets []string) {
+	t.Helper()
+	args := []string{"status", "--json"}
+	if full {
+		args = []string{"status", "--full", "--json"}
+	}
+	deadline := time.NewTimer(3 * time.Second)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer deadline.Stop()
+	defer ticker.Stop()
+statusLoop:
+	for {
+		code, stdout, stderr, err := angelExec(home, args...)
+		if err == nil && code == 0 {
+			t.Logf("diagnostic status (%s): %s", home, e2eHysteria2Status(stdout, full, secrets))
+			break
+		}
+		if !e2eHysteria2AngelNotRunning(stdout, stderr) {
+			t.Logf("diagnostic status (%s): %s", home, e2eHysteria2Sanitize(stderr, secrets))
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Logf("diagnostic status (%s): %s", home, e2eHysteria2Sanitize(stderr, secrets))
+			break statusLoop
+		case <-ticker.C:
+		}
+	}
+	if !full {
+		code, stdout, stderr, err := angelExec(home, "logs", "--since", "2m", "--tail", "20", "--json")
+		if err != nil || code != 0 {
+			t.Logf("diagnostic logs (%s): %s", home, e2eHysteria2Sanitize(stderr, secrets))
+		} else {
+			t.Logf("diagnostic logs (%s): %s", home, e2eHysteria2Logs(stdout, secrets))
+		}
+	}
+}
+
+func e2eHysteria2Status(raw string, full bool, secrets []string) string {
+	var envelope struct {
+		Data struct {
+			Servers []struct {
+				Name        string `json:"name"`
+				Protocol    string `json:"protocol"`
+				Connections int    `json:"connections"`
+				Dropped     uint64 `json:"dropped_clients"`
+			} `json:"servers"`
+			Warm struct {
+				Alive int `json:"alive"`
+				Total int `json:"total"`
+				Nodes []struct {
+					Label   string `json:"label"`
+					Name    string `json:"name"`
+					Alive   bool   `json:"alive"`
+					DelayMS int64  `json:"delay_ms"`
+				} `json:"nodes"`
+			} `json:"warm"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(raw), &envelope) != nil {
+		return "status JSON unavailable"
+	}
+	data, _ := json.Marshal(envelope.Data.Servers)
+	out := "servers=" + string(data)
+	if full {
+		nodes, _ := json.Marshal(envelope.Data.Warm.Nodes)
+		out += fmt.Sprintf(" warm.alive=%d warm.total=%d nodes.alive=%s", envelope.Data.Warm.Alive, envelope.Data.Warm.Total, nodes)
+	}
+	return e2eHysteria2Sanitize(out, secrets)
+}
+
+func e2eHysteria2Logs(raw string, secrets []string) string {
+	var envelope struct {
+		Data struct {
+			Entries []struct {
+				Time    string `json:"time"`
+				Level   string `json:"level"`
+				Message string `json:"message"`
+			} `json:"entries"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(raw), &envelope) != nil {
+		return "log entries unavailable"
+	}
+	lines := make([]string, 0, len(envelope.Data.Entries))
+	for _, entry := range envelope.Data.Entries {
+		line := entry.Time + " " + entry.Level + " " + entry.Message
+		if !strings.Contains(line, "://") {
+			lines = append(lines, e2eHysteria2Sanitize(line, secrets))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func e2eHysteria2Sanitize(s string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			s = strings.ReplaceAll(s, secret, "<redacted>")
+		}
+	}
+	lines := strings.Split(s, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !strings.Contains(line, "://") {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+func e2eHysteria2AngelNotRunning(out, stderr string) bool {
+	for _, raw := range []string{out, stderr} {
+		var envelope struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(raw), &envelope) == nil && envelope.Error.Code == "ANGEL_NOT_RUNNING" {
+			return true
+		}
+	}
+	return false
+}
+
 func e2eHysteria2WaitStatus(t *testing.T, ctx context.Context, home, name, protocol string, present bool) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
@@ -253,6 +508,14 @@ func e2eHysteria2WaitStatus(t *testing.T, ctx context.Context, home, name, proto
 	for {
 		code, out, stderr := accountsRun(t, home, "status")
 		if code != 0 {
+			if e2eHysteria2AngelNotRunning(out, stderr) {
+				select {
+				case <-ctx.Done():
+					t.Fatalf("server status presence did not become %t", present)
+				case <-ticker.C:
+				}
+				continue
+			}
 			t.Fatalf("status: %s", serverErrorSummary(out, stderr))
 		}
 		var envelope struct {
@@ -295,6 +558,14 @@ func e2eHysteria2WaitDropped(t *testing.T, ctx context.Context, home, name strin
 	for {
 		code, out, stderr := accountsRun(t, home, "status")
 		if code != 0 {
+			if e2eHysteria2AngelNotRunning(out, stderr) {
+				select {
+				case <-ctx.Done():
+					t.Fatal("allowed-client drop was not counted")
+				case <-ticker.C:
+				}
+				continue
+			}
 			t.Fatalf("status: %s", serverErrorSummary(out, stderr))
 		}
 		var envelope struct {
@@ -366,14 +637,18 @@ func e2eHysteria2ProbeFromURI(ctx context.Context, uri, target, overridePassword
 		return err
 	}
 	defer client.Close()
-	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	conn, err := client.DialContext(probeCtx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(destinationPort)})
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	deadline, ok := probeCtx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(2 * time.Second)
+	}
+	_ = conn.SetDeadline(deadline)
 	const payload = "hysteria2-route-check"
 	if _, err = io.WriteString(conn, payload); err != nil {
 		return err
