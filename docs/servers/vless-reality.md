@@ -49,9 +49,10 @@ The vendored Mihomo Reality builder sets `Log = log.Debugln`; Reality/uTLS creat
 
 ## Verification status and implementation notes
 
-The loopback integration test belongs to CI under the `integration` build tag; it was not run locally under the repository's CI-only build/test policy. No runtime-success claim is made here.
+The loopback integration test is CI-only under the `integration` build tag. Its local TLS 1.3 camouflage target uses a large RSA certificate and a 4096-byte randomized `SessionState.Extra` ticket extension to provide record-size margin against Reality's regenerated handshake messages. The ticket padding uses Go's `WrapSession`/`EncryptTicket`; the standard server-side TLS 1.3 ticket encoding does not include the server certificate. This test fixture is not a runtime certificate requirement or a confirmed explanation for any CI failure.
 
-Source inspection of vendored Mihomo v1.19.32 found that Reality's server-side `Config.Build` uses `inner.HandleTcp` to reach the configured camouflage destination. That tunnel metadata is `C.INNER` and does not set `SrcIP` or `InUser`. When global `listen.allowed_clients` is configured, netivri's shared server tunnel policy sees no client address and refuses that camouflage connection. Consequently unauthenticated visitors, including visitors whose source address is on the global allowed list, are dropped instead of receiving camouflage; without a global list this particular filter does not refuse it. Do not infer that valid Reality clients are unaffected: source flow may send all handshakes through the configured target. The integration test exercises unrestricted global policy, and later applies an Alice account policy.
+Source inspection of vendored Mihomo v1.19.32 found Reality `Config.Build` uses `inner.HandleTcp` for camouflage. That tunnel metadata is `C.INNER` without `SrcIP` or `InUser`; when global `listen.allowed_clients` is configured, the shared server policy refuses the camouflage connection because it has no client address. Thus unauthenticated visitors (including allowlisted sources) are dropped instead of camouflaged; without a global list this filter does not refuse it. Do not assume valid clients are unaffected, since source flow may send handshakes through that target. The integration exercises unrestricted global policy, then an Alice account policy.
+
 
 ## Decisions
 

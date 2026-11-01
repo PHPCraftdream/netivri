@@ -5,9 +5,8 @@ package servers_test
 import (
 	"context"
 	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -15,6 +14,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -225,46 +225,142 @@ func startVlessEcho(t *testing.T) (netip.Addr, uint16) {
 	return netip.MustParseAddr("127.0.0.1"), uint16(a.Port)
 }
 
-func startRealityCamouflageTarget(t *testing.T) string {
+type realityTargetObservation struct {
+	mu          sync.Mutex
+	accepted    int
+	handshakes  int
+	serverNames []string
+	alpn        [][]string
+	versions    []uint16
+	errors      []string
+	records     []string
+}
+
+type tlsRecordObserverConn struct {
+	net.Conn
+	mu          sync.Mutex
+	pending     []byte
+	observation *realityTargetObservation
+}
+
+func (c *tlsRecordObserverConn) Write(p []byte) (int, error) {
+	written, err := c.Conn.Write(p)
+	c.mu.Lock()
+	c.pending = append(c.pending, p[:written]...)
+	for len(c.pending) >= 5 {
+		recordLen := 5 + int(binary.BigEndian.Uint16(c.pending[3:5]))
+		if len(c.pending) < recordLen {
+			break
+		}
+		c.observation.mu.Lock()
+		c.observation.records = append(c.observation.records, fmt.Sprintf("type=%d version=%04x length=%d", c.pending[0], binary.BigEndian.Uint16(c.pending[1:3]), recordLen-5))
+		c.observation.mu.Unlock()
+		c.pending = c.pending[recordLen:]
+	}
+	c.mu.Unlock()
+	return written, err
+}
+
+func (o *realityTargetObservation) snapshot() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return fmt.Sprintf("accepted=%d handshakes=%d sni=%v alpn=%v tls_versions=%v handshake_errors=%v target_records=%v", o.accepted, o.handshakes, o.serverNames, o.alpn, o.versions, o.errors, o.records)
+}
+
+func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservation) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tmpl := x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "reality.test"}, DNSNames: []string{"reality.test"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	dnsNames := make([]string, 33)
+	dnsNames[0] = "reality.test"
+	for i := 1; i < len(dnsNames); i++ {
+		dnsNames[i] = fmt.Sprintf("reality-camouflage-%02d-%s.test", i, strings.Repeat("x", 40))
+	}
+	tmpl := x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "reality.test"}, DNSNames: dnsNames, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cert := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
+	if len(der) < 2048 || len(der)+13+22 <= 512 || len(der)+13+22 >= 16384 {
+		t.Fatalf("camouflage certificate DER size %d outside intended record margin", len(der))
+	}
+	t.Logf("camouflage certificate DER=%d bytes; TLS 1.3 Certificate handshake message=%d bytes; minimum encrypted record size=%d bytes (actual records are observed separately)", len(der), len(der)+13, len(der)+13+22)
+	// Reality pads to target lengths: the certificate and RSA signature add room;
+	// 4096 ticket bytes cover its synthetic ticket, while Finished uses the same hash.
+	ticketPadding := make([]byte, 4096)
+	if _, err := rand.Read(ticketPadding); err != nil {
+		t.Fatal(err)
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tlsLn := tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, CurvePreferences: []tls.CurveID{tls.X25519}})
+	obs := new(realityTargetObservation)
+	tlsConfig := &tls.Config{
+		Certificates:           []tls.Certificate{cert},
+		MinVersion:             tls.VersionTLS13,
+		MaxVersion:             tls.VersionTLS13,
+		CurvePreferences:       []tls.CurveID{tls.X25519},
+		NextProtos:             []string{"h2"},
+		SessionTicketsDisabled: false,
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			obs.mu.Lock()
+			obs.serverNames = append(obs.serverNames, hello.ServerName)
+			obs.alpn = append(obs.alpn, append([]string(nil), hello.SupportedProtos...))
+			obs.mu.Unlock()
+			return nil, nil
+		},
+	}
+	tlsConfig.WrapSession = func(cs tls.ConnectionState, state *tls.SessionState) ([]byte, error) {
+		state.Extra = append(state.Extra, ticketPadding)
+		return tlsConfig.EncryptTicket(cs, state)
+	}
 	var workers sync.WaitGroup
 	var conns sync.Map
 	acceptDone := make(chan struct{})
 	go func() {
 		defer close(acceptDone)
 		for {
-			c, err := tlsLn.Accept()
+			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			conns.Store(c, struct{}{})
+			rawConn := &tlsRecordObserverConn{Conn: c, observation: obs}
+			tc := tls.Server(rawConn, tlsConfig)
+			obs.mu.Lock()
+			obs.accepted++
+			obs.mu.Unlock()
+			conns.Store(tc, struct{}{})
 			workers.Add(1)
-			go func(c net.Conn) {
+			go func(conn net.Conn) {
 				defer workers.Done()
-				defer conns.Delete(c)
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(vlessTestTimeout))
-				_, _ = io.Copy(io.Discard, c)
-			}(c)
+				defer conns.Delete(conn)
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(vlessTestTimeout))
+				if tlsConn, ok := conn.(*tls.Conn); ok {
+					err := tlsConn.Handshake()
+					state := tlsConn.ConnectionState()
+					obs.mu.Lock()
+					if err == nil {
+						obs.handshakes++
+						obs.versions = append(obs.versions, state.Version)
+					} else {
+						obs.errors = append(obs.errors, err.Error())
+					}
+					obs.mu.Unlock()
+					if err != nil {
+						return
+					}
+				}
+				_, _ = io.Copy(io.Discard, conn)
+			}(tc)
 		}
 	}()
 	t.Cleanup(func() {
-		_ = tlsLn.Close()
+		_ = ln.Close()
 		select {
 		case <-acceptDone:
 		case <-time.After(vlessTestTimeout):
@@ -275,7 +371,7 @@ func startRealityCamouflageTarget(t *testing.T) string {
 			t.Errorf("Reality target workers: %v", err)
 		}
 	})
-	return ln.Addr().String()
+	return ln.Addr().String(), obs
 }
 
 func serverPort(t *testing.T) int {
@@ -336,7 +432,7 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	bobNode, bobAddr := startVlessNodeRecorder(t)
 	targetIP, targetPort := startVlessEcho(t)
 	backend := net.JoinHostPort(targetIP.String(), strconv.Itoa(int(targetPort)))
-	dest := startRealityCamouflageTarget(t)
+	dest, targetObservation := startRealityCamouflageTarget(t)
 	protocol, ok := servers.Lookup("vless-reality")
 	if !ok {
 		t.Fatal("VLESS Reality protocol is not registered")
@@ -404,42 +500,82 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	publicKey := material["public_key"]
 	shortIDs := strings.Split(material["short_ids"], ",")
 	shortID := shortIDs[0]
-	dial := func(uuid, sid, pub string) error {
+	successfulDiagnosticCalls := 0
+	type diagnosticResult struct {
+		stage string
+		err   error
+	}
+	dial := func(uuid, sid, pub, flow, sni string) diagnosticResult {
 		ctx, cancel := context.WithTimeout(context.Background(), vlessTestTimeout)
 		defer cancel()
-		client, err := outbound.NewVless(outbound.VlessOption{Name: "loopback-vless", Server: "127.0.0.1", Port: port, UUID: uuid, Flow: "xtls-rprx-vision", TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: "reality.test", RealityOpts: outbound.RealityOptions{PublicKey: pub, ShortID: sid}})
+		client, err := outbound.NewVless(outbound.VlessOption{Name: "loopback-vless", Server: "127.0.0.1", Port: port, UUID: uuid, Flow: flow, TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: sni, RealityOpts: outbound.RealityOptions{PublicKey: pub, ShortID: sid}})
 		if err != nil {
-			return err
+			return diagnosticResult{"new outbound", err}
 		}
 		defer client.Close()
 		conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: targetIP, DstPort: targetPort})
 		if err != nil {
-			return err
+			return diagnosticResult{"outbound connect", err}
 		}
 		defer conn.Close()
 		if err = conn.SetDeadline(time.Now().Add(vlessTestTimeout)); err != nil {
-			return err
+			return diagnosticResult{"set deadline", err}
 		}
 		payload := []byte("vless-reality-route-echo")
 		if _, err = conn.Write(payload); err != nil {
-			return err
+			return diagnosticResult{"echo write", err}
 		}
 		got := make([]byte, len(payload))
 		if _, err = io.ReadFull(conn, got); err != nil {
-			return err
+			return diagnosticResult{"echo read", err}
 		}
 		if string(got) != string(payload) {
-			return io.ErrUnexpectedEOF
+			return diagnosticResult{"echo contents", io.ErrUnexpectedEOF}
 		}
-		return nil
+		return diagnosticResult{"echo complete", nil}
 	}
-	if err := dial(users["alice"]["uuid"], shortID, publicKey); err != nil {
-		t.Fatalf("Alice echo: %v", err)
+	var runDiagnosticMatrix func()
+	runDiagnosticMatrix = func() {
+		paddedShortID := shortID + "00000000"
+		cases := []struct {
+			name string
+			flow string
+			sid  string
+			sni  string
+			want bool
+		}{
+			{"vision baseline", "xtls-rprx-vision", shortID, "reality.test", true},
+			{"flow off", "", shortID, "reality.test", true},
+			{"zero padded short ID", "xtls-rprx-vision", paddedShortID, "reality.test", true},
+			{"wrong SNI", "xtls-rprx-vision", shortID, "wrong.test", false},
+		}
+		for _, tc := range cases {
+			t.Run("diagnostic/"+tc.name, func(t *testing.T) {
+				result := dial(users["alice"]["uuid"], tc.sid, publicKey, tc.flow, tc.sni)
+				if tc.want && result.err == nil {
+					successfulDiagnosticCalls++
+					waitVlessConnections(t, inst)
+				}
+				if tc.want && result.err != nil {
+					t.Errorf("expected success; failed at %s: %v", result.stage, result.err)
+				}
+				if !tc.want && (result.stage != "outbound connect" || result.err == nil) {
+					t.Errorf("wrong SNI should fail outbound connect, got stage=%s err=%v", result.stage, result.err)
+				}
+				t.Logf("target stages: %s", targetObservation.snapshot())
+			})
+		}
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 0, backend)
-	if err := dial(users["bob"]["uuid"], shortID, publicKey); err != nil {
-		t.Fatalf("Bob echo: %v", err)
+	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+		t.Errorf("Alice echo stage %s: %v; camouflage target stages: %s", result.stage, result.err, targetObservation.snapshot())
+		runDiagnosticMatrix()
+		return
+	} else {
+		waitVlessConnections(t, inst)
+		assertVlessRouteCounts(t, aliceNode, bobNode, 1, 0, backend)
+	}
+	if result := dial(users["bob"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+		t.Fatalf("Bob echo at %s: %v", result.stage, result.err)
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
@@ -473,8 +609,15 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 		{"short ID", [3]string{users["alice"]["uuid"], wrongShortID, publicKey}},
 		{"public key", [3]string{users["alice"]["uuid"], shortID, wrongPublic}},
 	} {
-		if err := dial(args.args[0], args.args[1], args.args[2]); err == nil {
-			t.Errorf("wrong %s completed echo", args.name)
+		result := dial(args.args[0], args.args[1], args.args[2], "xtls-rprx-vision", "reality.test")
+		if result.err == nil {
+			t.Errorf("wrong %s completed echo at %s", args.name, result.stage)
+		} else if args.name == "UUID" && result.stage != "echo read" && result.stage != "echo write" {
+			t.Errorf("wrong UUID was rejected before VLESS auth response stage: %s: %v", result.stage, result.err)
+		} else if (args.name == "short ID" || args.name == "public key") && result.stage != "outbound connect" {
+			t.Errorf("wrong %s should fail Reality transport at outbound connect, got %s: %v", args.name, result.stage, result.err)
+		} else {
+			t.Logf("wrong %s rejected at %s: %v; target stages: %s", args.name, result.stage, result.err, targetObservation.snapshot())
 		}
 		waitVlessConnections(t, inst)
 	}
@@ -484,16 +627,19 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	if err := inst.Reconfigure(denied); err != nil {
 		t.Fatalf("deny Alice client: %v", err)
 	}
-	if err := dial(users["alice"]["uuid"], shortID, publicKey); err == nil {
+	droppedBefore := inst.Servers()[0].DroppedClients
+	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
 		t.Fatal("Alice account allowlist accepted loopback")
+	} else if result.stage != "echo write" && result.stage != "echo read" {
+		t.Errorf("Alice account allowlist rejection stage = %s; want VLESS request stage", result.stage)
 	}
 	waitVlessConnections(t, inst)
-	if dropped := inst.Servers()[0].DroppedClients; dropped == 0 {
+	if dropped := inst.Servers()[0].DroppedClients; dropped <= droppedBefore {
 		t.Fatal("Alice denial did not increment dropped-client counter")
 	}
 	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
-	if err := dial(users["bob"]["uuid"], shortID, publicKey); err != nil {
-		t.Fatalf("Bob while Alice policy denies: %v", err)
+	if result := dial(users["bob"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+		t.Fatalf("Bob while Alice policy denies at %s: %v", result.stage, result.err)
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 2, backend)
@@ -501,8 +647,8 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	if err := inst.Reconfigure(allowed); err != nil {
 		t.Fatalf("restore Alice client policy: %v", err)
 	}
-	if err := dial(users["alice"]["uuid"], shortID, publicKey); err != nil {
-		t.Fatalf("Alice after policy restore: %v", err)
+	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+		t.Fatalf("Alice after policy restore at %s: %v", result.stage, result.err)
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 2, 2, backend)
@@ -515,17 +661,21 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	if err := inst.Reconfigure(options(makeSpec(rotatedUsers), nil)); err != nil {
 		t.Fatalf("rotate Alice UUID: %v", err)
 	}
-	if err := dial(oldAliceUUID, shortID, publicKey); err == nil {
+	if result := dial(oldAliceUUID, shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
 		t.Fatal("old Alice UUID still works after rotation")
+	} else if result.stage != "echo read" && result.stage != "echo write" {
+		t.Errorf("old Alice UUID rejected before VLESS authentication stage: %s: %v", result.stage, result.err)
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 2, 2, backend)
-	if err := dial(rotatedUsers["alice"]["uuid"], shortID, publicKey); err != nil {
-		t.Fatalf("rotated Alice UUID: %v", err)
+	if result := dial(rotatedUsers["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+		t.Fatalf("rotated Alice UUID at %s: %v", result.stage, result.err)
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 3, 2, backend)
 	users = rotatedUsers
+	runDiagnosticMatrix()
+	assertVlessRouteCounts(t, aliceNode, bobNode, 3+successfulDiagnosticCalls, 2, backend)
 
 	waitVlessConnections(t, inst)
 	if err := inst.Close(); err != nil {
