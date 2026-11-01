@@ -448,19 +448,22 @@ func e2eMieruExtractPassword(t *testing.T, body string) string {
 	return password
 }
 
+// Mieru is probe resistant: a client with a wrong credential gets no answer at
+// all and sees a timeout, so a timeout counts as a refusal here. Every refusal
+// check follows a successful probe that proves the server is up.
 func e2eMieruRejectedError(err error) bool {
-	if err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
 	var networkError net.Error
-	if errors.As(err, &networkError) && networkError.Timeout() {
-		return false
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.Errno(10054)) || errors.Is(err, syscall.Errno(10053)) {
 		return true
 	}
 	message := strings.ToLower(err.Error())
-	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted"} {
+	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted", "timeout"} {
 		if strings.Contains(message, phrase) {
 			return true
 		}
