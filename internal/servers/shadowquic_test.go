@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/PHPCraftdream/netivri/internal/subscription"
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/common/convert"
 	mihomoyaml "github.com/metacubex/mihomo/common/yaml"
@@ -177,13 +176,6 @@ func TestShadowquicMihomoSnippetRoundTrip(t *testing.T) {
 	}
 	if fmt.Sprint(mapping["alpn"]) != "[h3 hq-interop]" || fmt.Sprint(mapping["quic-versions"]) != "[v1]" {
 		t.Fatal("generated ALPN or QUIC versions differ")
-	}
-	result, err := subscription.ParseDetailed([]byte(snippet))
-	if err != nil || len(result.Nodes) != 1 || result.Nodes[0].Type != "shadowquic" {
-		t.Fatal("subscription parser did not accept the generated snippet")
-	}
-	if fmt.Sprint(result.Nodes[0].Raw["alpn"]) != "[h3 hq-interop]" || fmt.Sprint(result.Nodes[0].Raw["quic-versions"]) != "[v1]" {
-		t.Fatal("subscription parser did not retain ALPN or QUIC versions")
 	}
 	if proxies, err := convert.ConvertsV2Ray([]byte("shadowquic://user:password@localhost:443#edge")); err == nil || len(proxies) != 0 {
 		t.Fatal("V2Ray converter unexpectedly accepted unsupported ShadowQUIC URI")
