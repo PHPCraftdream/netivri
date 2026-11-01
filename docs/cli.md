@@ -48,13 +48,13 @@ netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--si
 
 netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
-netivri server protocols
-netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--param {KEY=VALUE} ...]
-netivri server list
-netivri server show {NAME}
-netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr]
-netivri server rotate {NAME} [--account {ACCOUNT}]
-netivri server remove {NAME}
+netivri server protocols [--json]
+netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--param {KEY=VALUE} ...] [--json]
+netivri server list [--json]
+netivri server show {NAME} [--json]
+netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr] [--json]
+netivri server rotate {NAME} [--account {ACCOUNT}] [--json]
+netivri server remove {NAME} [--json]
 
 netivri use {NODE}                        (planned)
 netivri use --country {COUNTRY} [--fastest | --auto]
@@ -298,10 +298,11 @@ When no database exists yet: `STATS_UNAVAILABLE`, exit 5. Invalid `--since`,
 
 ### `server`
 
-The server command contract and operational behavior are documented in
-[`servers/cli.md`](servers/cli.md). For completeness, its name errors are
-`SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6)
-for an already configured name; port conflicts return `PORT_IN_USE` (exit 6).
+The server command contract and operational behavior are documented in [`servers/cli.md`](servers/cli.md), including every subcommand, command-specific flags, secret handling, server account routing, client allowlists, and UDP listener lifecycle. Server protocol rows and transport distinctions are in the [server protocol index](servers/README.md). All seven subcommands are implemented: `protocols`, `add`, `list`, `show`, `link`, `rotate`, and `remove`; they accept the global `--home {DIR}` or `--local` state-directory options and `--json` output.
+
+Server connection filtering requires the global and (when present) account `allowed_clients` policies to allow the peer. Account allowlist-only changes are applied hot to server policy without restarting listeners; existing connections survive. This covers mixed authentication and server endpoints, including when no account route is configured. Changing global policy, account credentials/membership, bind, port, or server definition requires listener restart/reconfiguration. A failed core replacement can leave the angel alive and retrying the last good configuration; see [configuration](config.md#server-listeners).
+
+Server name errors are `SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6) for an already configured name; port conflicts return `PORT_IN_USE` (exit 6). UDP-bound QUIC listeners restart with a brief gap and end existing sessions; UDP relay payloads are dropped and counted. Core listeners are bound per transport, so TCP and UDP can share a numeric port in the core. Current configuration validation and `server add` reject overlapping bind/port pairs regardless of transport, so the CLI does not support cross-transport port sharing.
 
 ### `logs`
 

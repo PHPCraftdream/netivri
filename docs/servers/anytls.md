@@ -4,7 +4,7 @@ AnyTLS is a multi-user, TLS-protected TCP server. Each account has its own gener
 
 ## Configure and run
 
-The command lines below describe the planned product interface, not an implemented CLI:
+Typical commands (see the [server CLI reference](cli.md)):
 
 ```text
 netivri server add --protocol anytls --name edge --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST}
@@ -62,7 +62,7 @@ proxies:
 
 The `sni` line is emitted even when empty in the snippet. The snippet's explicit `udp: false` is important because the vendor converter sets UDP true. Disable UDP in imported client configurations because netivri server UDP is dropped.
 
-Mihomo's AnyTLS client adapter and `hpkp` conversion are supported by inspected vendored source. This establishes bundled Mihomo compatibility, not runtime verification; the tests are CI-only. Mihomo-based clients such as Mihomo Party or Clash Verge Rev may work when their bundled Mihomo supports AnyTLS and fingerprint pinning; no runtime claim is made for those applications. Other clients need AnyTLS plus `hpkp` pin support, or a certificate trusted through the normal CA system.
+Mihomo's AnyTLS client adapter and `hpkp` conversion are supported by inspected vendored source. This establishes bundled Mihomo compatibility; the real-binary e2e test (`cmd/netivri/server_e2e_anytls_e2e_test.go`) imports the generated link, with its `hpkp` pin, into a second angel and routes traffic through it. Mihomo-based clients such as Mihomo Party or Clash Verge Rev may work when their bundled Mihomo supports AnyTLS and fingerprint pinning; no runtime claim is made for those applications. Other clients need AnyTLS plus `hpkp` pin support, or a certificate trusted through the normal CA system.
 
 ## TLS security
 

@@ -1,6 +1,6 @@
 # Server CLI
 
-`netivri server` manages registered inbound protocol listeners. The commands accept `--home {DIR}` or `--local`; results use the standard versioned CLI envelope (`--json` selects JSON). No command prompts.
+`netivri server` manages registered inbound protocol listeners. The commands accept `--home {DIR}` or `--local`; each also accepts `--json`. `protocols`, `list`, `show`, `add`, `link`, `rotate` and `remove` are implemented. Use `--help` for command usage. Results use the standard versioned CLI envelope; no command prompts.
 
 ## Commands
 
@@ -16,11 +16,11 @@ netivri server remove {NAME}
 
 `protocols` lists registered protocols and `single_user`. The protocol interface currently has no parameter metadata, so `params` is an empty list; the parent `server` help topic dynamically lists this build's registered protocol names.
 
-`add` requires a registered protocol, account selection and a port 1–65535. `*` expands to all configured accounts for multi-user protocols; single-user protocols require exactly one account. Bind defaults to `0.0.0.0`; name defaults to `ss-{PORT}` for Shadowsocks, otherwise `{PROTOCOL}-{PORT}`. Repeat `--param key=value` for protocol parameters. The full configuration is validated before secret generation/persistence. Name conflicts return `SERVER_EXISTS`; overlapping configured binds on a port return `PORT_IN_USE`.
+`add` requires a registered protocol, account selection and a port 1–65535. `*` expands to all configured accounts for multi-user protocols; single-user protocols require exactly one account. Bind defaults to `0.0.0.0`; name defaults to `ss-{PORT}` for Shadowsocks, otherwise `{PROTOCOL}-{PORT}`. Repeat `--param key=value` for protocol parameters. The full configuration is validated before secret generation/persistence. Name conflicts return `SERVER_EXISTS`; overlapping configured binds on a port return `PORT_IN_USE`. Core listeners bind per transport, but current config validation and `server add` reject overlapping bind/port pairs regardless of transport. Thus TCP and UDP may share a numeric port in the core, but the CLI does not support it.
 
 `list`/`show` expose endpoint details and parameter keys only, never values or secrets. `link` returns `{name, account, format, link}` and is the intentional credential disclosure. `--host` overrides `public_host`; otherwise a host is required. A host must be a hostname or IP without a port or credentials. Multi-account servers require `--account`. Formats are `uri` (default) and `mihomo` when supported by the protocol. `--qr` is rejected: there is no QR encoder dependency. `rotate` replaces one account secret or, without `--account`, server material and user secrets. `remove` deletes config and secrets.
 
-Configuration is `{HOME}/config.ktav`; generated secrets/material are stored separately in `{HOME}/server-secrets.ktav` using owner-only atomic writes. Add persists secrets before config, and removes its newly created entry if config save fails. The running watcher observes config/secrets changes.
+Configuration is `{HOME}/config.ktav`; generated secrets/material are stored separately in `{HOME}/server-secrets.ktav` using owner-only atomic writes. Add persists secrets before config, and removes its newly created entry if config save fails. Commands persist the requested config/secret changes; live watcher/core handling applies valid changes when the angel is running. A failed restart preserves the last good configuration where possible and the angel stays alive to retry.
 
 ## Errors
 
@@ -52,4 +52,4 @@ netivri server rotate ss-8388 --account alice
 netivri server remove ss-8388
 ```
 
-Server connections use configured account routes and allowed-client policy. Shadowsocks server UDP is unsupported.
+The global `listen.allowed_clients` and, for account authentication, account `allowed_clients` policy both gate server clients. An account allowlist-only change is hot without listener restart and existing connections survive, including mixed authentication. See [configuration](../config.md#server-listeners).
