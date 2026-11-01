@@ -26,7 +26,7 @@ import (
 )
 
 func TestE2ETrojanLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const pass = "trojan-e2e-account-password"
 	backend := accountsEcho(t)
@@ -404,6 +404,7 @@ func e2eTrojanWaitStatus(t *testing.T, ctx context.Context, home string, want bo
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Trojan status wait expired")
 			t.Fatal("Trojan server status did not converge")
 		case <-ticker.C:
 		}

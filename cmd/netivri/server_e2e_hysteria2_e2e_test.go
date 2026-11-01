@@ -24,7 +24,7 @@ import (
 )
 
 func TestE2EHysteria2Lifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const accountPassword = "hysteria2-e2e-account-password"
 	aliceUp, bobUp := accountsServer(t), accountsServer(t)
@@ -529,6 +529,7 @@ func e2eHysteria2WaitStatus(t *testing.T, ctx context.Context, home, name, proto
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Hysteria2 status wait expired")
 			t.Fatalf("server status presence did not become %t", present)
 		case <-ticker.C:
 		}
@@ -570,6 +571,7 @@ func e2eHysteria2WaitDropped(t *testing.T, ctx context.Context, home, name strin
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Hysteria2 dropped status wait expired")
 			t.Fatal("allowed-client drop was not counted")
 		case <-ticker.C:
 		}

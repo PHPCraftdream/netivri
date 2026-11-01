@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -150,21 +151,54 @@ func upProcReport(home string) string {
 	p.exitMu.Lock()
 	state := "angel process: running"
 	if p.exited {
-		state = fmt.Sprintf("angel process: exited (%v)", p.exitErr)
+		state = "angel process: exited"
 	}
 	p.exitMu.Unlock()
 	return state + "\n" + e2eTail("stderr", p.Stderr(), 15) + "\n" + e2eTail("stdout", p.Stdout(), 5)
 }
 
-// e2eTail returns the last n lines of text that carry no link or secret.
+var e2eURLPattern = regexp.MustCompile(`\S*://\S+`)
+var e2eUUIDPattern = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+var e2eTokenPattern = regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}\b`)
+
+func e2eRedactDiagnostic(text string) string {
+	text = e2eURLPattern.ReplaceAllString(text, "[redacted]")
+	text = e2eUUIDPattern.ReplaceAllString(text, "[redacted]")
+	text = e2eTokenPattern.ReplaceAllString(text, "[redacted]")
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(text, "@") {
+		return "[redacted]"
+	}
+	return text
+}
+func TestE2ERedactDiagnosticText(t *testing.T) {
+	for _, value := range []string{
+		"https://token.example/path",
+		"uuid=00000000-0000-4000-8000-000000000000",
+		"key=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+		"password=hidden",
+		"alice@example.invalid",
+	} {
+		got := e2eRedactDiagnostic(value)
+		for _, secret := range []string{"token.example", "00000000-0000", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "hidden", "alice@example"} {
+			if strings.Contains(got, secret) {
+				t.Fatal("diagnostic redaction retained sensitive text")
+			}
+		}
+	}
+	if got := e2eRedactDiagnostic("server stopped"); got != "server stopped" {
+		t.Fatalf("ordinary diagnostic text changed: %q", got)
+	}
+}
+
+// e2eTail returns the last n redacted lines of text.
 func e2eTail(name, text string, n int) string {
 	var kept []string
 	for _, line := range strings.Split(text, "\n") {
-		lower := strings.ToLower(line)
-		if strings.TrimSpace(line) == "" || strings.Contains(line, "://") || strings.Contains(lower, "password") || strings.Contains(lower, "secret") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		kept = append(kept, line)
+		kept = append(kept, e2eRedactDiagnostic(line))
 	}
 	if len(kept) > n {
 		kept = kept[len(kept)-n:]

@@ -34,6 +34,12 @@ Unit test files have **no** build tag.
 
 - **Deterministic.** Never sleep for synchronization. Use channels,
   `context` deadlines and polling with short deadlines.
+- **Budgets.** A whole-test `context` is a generous ceiling (minutes: a
+  Windows runner can take several times longer than a laptop), not a tuned
+  limit; bound each wait with its own short child deadline. A tight
+  whole-test budget makes the last wait of a long test fail with a message
+  about a different cause (the reload that "never happened" was only the
+  expired context).
 - **Ports** come from the kernel: listen on `127.0.0.1:0` (or use
   `testutil.FreeLoopbackAddr`, which lives in package `testutil` behind
   the `integration` build tag (`testutil_integration.go`), so it is

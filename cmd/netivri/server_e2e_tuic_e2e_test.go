@@ -560,6 +560,7 @@ func e2eTUICWaitStatus(t *testing.T, ctx context.Context, h string, present bool
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, h, "TUIC status wait expired")
 			return ctx.Err()
 		case <-tick.C:
 		}
@@ -591,6 +592,7 @@ func e2eTUICWaitDropIncrease(t *testing.T, ctx context.Context, h string, secret
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, h, "TUIC dropped status wait expired")
 			t.Fatal("Alice drop counter did not increase")
 		case <-tick.C:
 		}

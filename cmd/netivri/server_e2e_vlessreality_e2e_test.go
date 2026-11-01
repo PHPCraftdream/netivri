@@ -34,7 +34,7 @@ import (
 var e2eVlessRealityNetworkRejected = errors.New("VLESS authentication rejected")
 
 func TestE2EVlessRealityLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const pass = "e2e-vless-reality-account-password"
 	aliceNode, bobNode := accountsServer(t), accountsServer(t)
@@ -374,6 +374,7 @@ func e2eVlessRealityWaitStatus(t *testing.T, ctx context.Context, home string, w
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "VLESS Reality status wait expired")
 			t.Fatalf("server presence did not become %t", want)
 		case <-ticker.C:
 		}

@@ -509,6 +509,7 @@ func e2eMieruWaitStatus(t *testing.T, ctx context.Context, home string, wantPres
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Mieru status wait expired")
 			t.Fatalf("Mieru status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}
@@ -532,6 +533,7 @@ func e2eMieruWaitReload(t *testing.T, ctx context.Context, home string, secrets 
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Mieru reload status wait expired")
 			t.Fatal("status did not become available")
 		case <-ticker.C:
 		}
@@ -566,6 +568,7 @@ func e2eMieruWaitDropped(t *testing.T, ctx context.Context, home string, minimum
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Mieru dropped status wait expired")
 			t.Fatal("Mieru dropped-client counter did not increment")
 		case <-ticker.C:
 		}
