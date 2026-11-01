@@ -21,7 +21,7 @@ import (
 
 func TestTrojanAnyTLSShareEndpointReloadRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	backend := echoServer(t)
 	host, portText, err := net.SplitHostPort(backend)
 	if err != nil {

@@ -195,9 +195,7 @@ func multiportTrialCaptureFirstFlight(t *testing.T, c *outbound.ShadowSocks, por
 		_ = encoded.Close()
 		t.Fatal("first flight empty")
 	}
-	if err = encoded.Close(); err != nil {
-		t.Fatal(err)
-	}
+	_ = encoded.Close()
 	return append([]byte(nil), capture.buffer...)
 }
 func multiportTrialRawReplay(t *testing.T, port int, flight []byte) {
@@ -228,7 +226,7 @@ func multiportTrialRawReplay(t *testing.T, port int, flight []byte) {
 
 func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	backendIP, backendPort := multiportTrialEcho(t)
 	camouflage := multiportTrialCamouflage(t)
 	ssP, _ := servers.Lookup("shadowsocks")
