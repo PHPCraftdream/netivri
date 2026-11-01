@@ -244,7 +244,7 @@ func (vlessReality) Link(spec Spec, login, host string) (string, error) {
 	if err := spec.Validate(); err != nil {
 		return "", err
 	}
-	if spec.Protocol != "vless-reality" || !containsAccount(spec.Accounts, login) {
+	if spec.Protocol != "vless-reality" || !vlessHasAccount(spec.Accounts, login) {
 		return "", errors.New("VLESS Reality account is not configured")
 	}
 	id := spec.Users[login]["uuid"]
@@ -265,7 +265,7 @@ func (vlessReality) Link(spec Spec, login, host string) (string, error) {
 	return u.String(), nil
 }
 
-func containsAccount(accounts []string, login string) bool {
+func vlessHasAccount(accounts []string, login string) bool {
 	for _, a := range accounts {
 		if a == login {
 			return true
@@ -285,7 +285,7 @@ func (vlessReality) Mihomo(spec Spec, login, host string) (string, error) {
 	if err := spec.Validate(); err != nil {
 		return "", err
 	}
-	if spec.Protocol != "vless-reality" || !containsAccount(spec.Accounts, login) {
+	if spec.Protocol != "vless-reality" || !vlessHasAccount(spec.Accounts, login) {
 		return "", errors.New("VLESS Reality account is not configured")
 	}
 	id := spec.Users[login]["uuid"]
