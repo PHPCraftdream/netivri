@@ -219,7 +219,7 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("angel reload count did not reach %d (last: %s)\n%s", count, lastProblem, serverE2ELogTail(t, home))
+			t.Fatalf("angel reload count did not reach %d (last: %s)\n%s\n%s", count, lastProblem, upProcReport(home), serverE2ELogTail(t, home))
 		case <-ticker.C:
 		}
 	}
