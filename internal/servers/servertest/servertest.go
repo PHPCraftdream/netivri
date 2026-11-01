@@ -49,18 +49,38 @@ func FreePort(t testing.TB) int {
 	return port
 }
 
-// StartOnFreePort retries a listener start up to three times when the selected
-// port is already in use. Other errors fail without exposing their contents.
+// IsAddrInUse reports whether err means the listen address is already taken:
+// the OS errors (also through wrapping), the Windows and Unix texts, and the
+// core's PORT_IN_USE code, which protocols' redacted start errors may reduce to.
+func IsAddrInUse(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048)) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{"address already in use", "address in use", "wsaeaddrinuse", "only one usage of each socket address", "port_in_use"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// StartOnFreePort retries a listener start up to five times when the selected
+// port is already in use. Other errors fail with the error text, which the
+// servers' start errors keep free of secrets.
 func StartOnFreePort(t testing.TB, start func(port int) error) int {
 	t.Helper()
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 5; attempt++ {
 		port := FreePort(t)
 		err := start(port)
 		if err == nil {
 			return port
 		}
-		if !errors.Is(err, syscall.EADDRINUSE) && !errors.Is(err, syscall.Errno(10048)) && !strings.Contains(strings.ToLower(err.Error()), "address already in use") && !strings.Contains(strings.ToLower(err.Error()), "wsaeaddrinuse") {
-			t.Fatal("could not start test listener")
+		if !IsAddrInUse(err) {
+			t.Fatalf("could not start test listener: %v", err)
 		}
 	}
 	t.Fatal("could not start test listener on an available port")
