@@ -119,6 +119,14 @@ type liveAngel struct {
 	refreshStreaks map[string]int
 	loopsCancel    context.CancelFunc
 	loopsRunning   sync.WaitGroup
+	retryCancel    context.CancelFunc
+	retryRunning   sync.WaitGroup
+	retryWait      func(context.Context, time.Duration) bool
+	retryApplied   chan struct{}
+	retryTarget    *desiredState
+	retryDesired   string
+	retryOpts      *core.Options
+	retryFailures  int
 
 	// Persisted site bindings: when the stored set was last written, how
 	// many bindings the latest core start loaded, and the test seams of the
@@ -281,7 +289,7 @@ func nodesWithoutNames(routes map[string][]map[string]any) map[string][]map[stri
 // fingerprint identifies all settings a core is built from. Settings the core
 // does not read (subscription URLs and refresh interval) are left out.
 func fingerprint(d desiredState) string {
-	return listenerFingerprint(d) + routesFingerprint(d) + serverFingerprint(d.servers)
+	return listenerFingerprint(d) + accountClientsFingerprint(d.cfg) + routesFingerprint(d) + serverFingerprint(d.servers)
 }
 
 // routesFingerprint covers nodes, labels, tiers, account routes and SOCKS5
@@ -309,7 +317,7 @@ func routesFingerprint(d desiredState) string {
 // listenerFingerprint covers the listener: address, allowed clients and the
 // credentials. A change here needs a new core.
 func listenerFingerprint(d desiredState) string {
-	type acct struct{ Login, Password, Clients string }
+	type acct struct{ Login, Password string }
 	v := struct {
 		Bind, AuthLogin, AuthPassword string
 		Port                          int
@@ -320,13 +328,34 @@ func listenerFingerprint(d desiredState) string {
 	persistMu.Lock()
 	v.AuthLogin, v.AuthPassword = d.cfg.Auth.Login, d.cfg.Auth.Password
 	for _, a := range d.cfg.Accounts {
-		v.Accounts = append(v.Accounts, acct{a.Login, a.Password, config.NormalizeAllowedClients(a.AllowedClients)})
+		v.Accounts = append(v.Accounts, acct{a.Login, a.Password})
 	}
 	persistMu.Unlock()
 	sort.Slice(v.Accounts, func(i, j int) bool { return v.Accounts[i].Login < v.Accounts[j].Login })
 	data, _ := json.Marshal(v)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func accountClientsFingerprint(cfg *config.Config) string {
+	type entry struct{ Login, Clients string }
+	entries := make([]entry, 0, len(cfg.Accounts))
+	for _, a := range cfg.Accounts {
+		entries = append(entries, entry{a.Login, config.NormalizeAllowedClients(a.AllowedClients)})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Login < entries[j].Login })
+	data, _ := json.Marshal(entries)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func updateAccountPolicy(a mihauth.Authenticator, cfg *config.Config) {
+	switch v := a.(type) {
+	case *loggedAuth:
+		updateAccountPolicy(v.inner, cfg)
+	case *accountPolicyAuthenticator:
+		v.UpdateConfig(cfg)
+	}
 }
 
 // reload applies the files on disk when they differ from what runs. A file
@@ -349,16 +378,27 @@ func (l *liveAngel) reload(ctx context.Context) {
 	l.mu.Lock()
 	l.latest = d.cfg
 	if d.port == 0 {
-		d.port = l.actualPort // a random port stays the one clients know
+		d.port = l.actualPort
 	}
 	same := fingerprint(l.applied) == fingerprint(d)
-	globalPostChanged := l.applied.cfg.Chain.PostSOCKS5 != d.cfg.Chain.PostSOCKS5
-	inPlace := !same && !globalPostChanged && listenerFingerprint(l.applied) == listenerFingerprint(d) &&
-		(((len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)) || (serverFingerprint(l.applied.servers) != serverFingerprint(d.servers) && routesFingerprint(l.applied) == routesFingerprint(d)))
-	if same {
+	instDown := l.inst == nil
+	if same && !instDown {
 		l.reloadErr = ""
 	}
+	globalPostChanged := l.applied.cfg.Chain.PostSOCKS5 != d.cfg.Chain.PostSOCKS5
+	inPlace := !same && !globalPostChanged && listenerFingerprint(l.applied) == listenerFingerprint(d) &&
+		(((len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)) || routesFingerprint(l.applied) == routesFingerprint(d) || (accountClientsFingerprint(l.applied.cfg) != accountClientsFingerprint(d.cfg)))
 	l.mu.Unlock()
+	if instDown {
+		l.mu.Lock()
+		unchangedFailed := l.retryDesired == fingerprint(d)
+		l.mu.Unlock()
+		if unchangedFailed {
+			return
+		}
+		l.restart(ctx, d)
+		return
+	}
 	switch {
 	case same:
 	case inPlace && l.reconfigure(d):
@@ -382,9 +422,28 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	oldServers := cloneServerSpecs(l.applied.servers)
 	serverChanged := serverFingerprint(oldServers) != serverFingerprint(d.servers)
 	serverOnly := serverChanged && routesFingerprint(l.applied) == routesFingerprint(d)
-	l.mu.Unlock()
-	if len(d.pool.accountRoutes) == 0 && !serverOnly {
+	policyOnly := accountClientsFingerprint(l.applied.cfg) != accountClientsFingerprint(d.cfg) && routesFingerprint(l.applied) == routesFingerprint(d) && !serverChanged
+	if len(d.pool.accountRoutes) == 0 && !serverOnly && !policyOnly {
+		l.mu.Unlock()
 		return false
+	}
+	l.mu.Unlock()
+	if len(d.pool.accountRoutes) == 0 && policyOnly && len(d.servers) == 0 && len(oldServers) == 0 {
+		// Direct mode has no core route/server policy to reconfigure; the
+		// stable authenticator is the policy enforcement point.
+		l.mu.Lock()
+		if l.closed || l.inst != inst {
+			l.mu.Unlock()
+			return true
+		}
+		updateAccountPolicy(auth, d.cfg)
+		d.port = l.actualPort
+		l.startOpts.AccountAllowedClients = accountAllowedClients(d.cfg)
+		l.applied, l.latest = d, d.cfg
+		l.reloads++
+		l.lastReload, l.reloadErr = time.Now(), ""
+		l.mu.Unlock()
+		return true
 	}
 	if store != nil && len(d.pool.infos) > 0 {
 		if err := store.SetNodes(d.pool.infos); err != nil {
@@ -408,6 +467,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 		return true
 	}
 	o.Port, d.port = l.actualPort, l.actualPort
+	updateAccountPolicy(o.Authenticator, d.cfg)
 	l.applied, l.latest, l.startOpts = d, d.cfg, o
 	l.reloads++
 	l.lastReload = time.Now()
@@ -430,12 +490,21 @@ func (l *liveAngel) noteReloadError(what string, err error) {
 // instance that was just closed is still being released.
 func startCore(ctx context.Context, o core.Options) (coreInstance, error) {
 	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		inst, err := coreStart(ctx, o)
 		var ce *cli.Error
 		if err == nil || !errors.As(err, &ce) || ce.Code != "PORT_IN_USE" || attempt == portRetries {
 			return inst, err
 		}
-		time.Sleep(portRetryWait)
+		t := time.NewTimer(portRetryWait)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return nil, ctx.Err()
+		case <-t.C:
+		}
 	}
 }
 
@@ -449,8 +518,22 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 		return
 	}
 	l.mu.Lock()
-	store := l.store
+	store, prev, old := l.store, l.startOpts, l.inst
+	if l.closed {
+		l.mu.Unlock()
+		return
+	}
+	l.retryDesired = fingerprint(d)
+	oldServers := cloneServerSpecs(l.applied.servers)
+	wasDown := old == nil
+	if old != nil {
+		l.writeBindingsFinalLocked(old, store)
+	}
+	l.inst = nil
 	l.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
 	if len(d.pool.infos) > 0 {
 		if store == nil {
 			store = openStats(l.opts.Home, d.pool.infos, l.warnf)
@@ -458,51 +541,191 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.store = store
-	if l.closed {
-		return
-	}
-	prev := l.startOpts
-	oldServers := cloneServerSpecs(l.applied.servers)
-	if l.inst != nil {
-		// The last snapshot is taken while the instance still runs and is
-		// on disk before it closes; the new core loads it as InitialBindings.
-		l.writeBindingsFinalLocked(l.inst, store)
-		_ = l.inst.Close()
-		l.inst = nil
-	}
 	o := l.coreOptions(d, a, store)
+	l.mu.Lock()
+	l.store = store
+	l.mu.Unlock()
 	inst, err := startCore(ctx, o)
 	if err != nil {
-		l.reloadErr = errText(err)
-		l.warnf("new configuration not applied, restoring the previous one: %s", l.reloadErr)
-		// The rollback restarts the previous configuration with the bindings
-		// that were just saved from the old instance, not with the ones it
-		// was originally started with.
+		text := errText(err)
+		if wasDown {
+			l.mu.Lock()
+			l.retryTarget, l.retryOpts = cloneDesired(&d), &o
+			l.retryFailures = 0
+			l.reloadErr = text
+			l.mu.Unlock()
+			l.warnf("configuration restart failed; retrying: %s", text)
+			l.startRetry()
+			return
+		}
+		l.mu.Lock()
+		l.reloadErr = text
+		l.mu.Unlock()
+		l.warnf("new configuration not applied, restoring the previous one: %s", text)
 		back := prev
 		back.InitialBindings = initialBindings(store, l.warnf)
 		backInst, err2 := startCore(ctx, back)
 		if err2 != nil {
-			l.errorf("the previous configuration did not start either, stopping: %s", errText(err2))
-			l.stop()
+			l.mu.Lock()
+			l.retryTarget, l.retryOpts = cloneDesired(&l.applied), &back
+			l.retryFailures = 0
+			l.reloadErr = text + "; previous configuration could not be restored: " + errText(err2)
+			l.mu.Unlock()
+			l.warnf("previous configuration could not be restarted; retrying: %s", errText(err2))
+			l.startRetry()
+			return
+		}
+		l.mu.Lock()
+		if l.closed {
+			l.mu.Unlock()
+			_ = backInst.Close()
 			return
 		}
 		l.inst = backInst
 		l.noteBindingsRestored(backInst)
+		l.mu.Unlock()
+		return
+	}
+	l.mu.Lock()
+	if l.closed {
+		l.mu.Unlock()
+		_ = inst.Close()
 		return
 	}
 	l.inst, l.applied, l.latest, l.startOpts = inst, d, d.cfg, o
+	l.retryTarget, l.retryOpts, l.retryDesired = nil, nil, ""
 	l.noteBindingsRestored(inst)
 	l.actualPort = portOf(inst.Addr())
 	l.startOpts.Port, l.applied.port = l.actualPort, l.actualPort
 	l.reloads++
 	l.lastReload = time.Now()
 	l.reloadErr = ""
+	l.mu.Unlock()
 	l.logf("configuration applied: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	l.logServerDelta(oldServers, d.servers)
+}
+
+func cloneDesired(d *desiredState) *desiredState {
+	c := *d
+	return &c
+}
+
+const retryBase = time.Second
+const retryMax = 30 * time.Second
+
+func retryBackoff(failures int) time.Duration {
+	d := retryBase
+	for i := 1; i < failures && d < retryMax; i++ {
+		d *= 2
+	}
+	if d > retryMax {
+		return retryMax
+	}
+	return d
+}
+
+func (l *liveAngel) retryLoop(ctx context.Context) {
+	defer l.retryRunning.Done()
+	for {
+		l.mu.Lock()
+		n, wait := l.retryFailures+1, l.retryWait
+		l.mu.Unlock()
+		if wait != nil {
+			if !wait(ctx, retryBackoff(n)) {
+				return
+			}
+		} else if !waitContext(ctx, retryBackoff(n)) {
+			return
+		}
+
+		l.reloadMu.Lock()
+		l.mu.Lock()
+		if l.closed {
+			l.mu.Unlock()
+			l.reloadMu.Unlock()
+			return
+		}
+		if l.inst != nil || l.retryTarget == nil {
+			l.mu.Unlock()
+			l.reloadMu.Unlock()
+			continue
+		}
+		d := cloneDesired(l.retryTarget)
+		o := l.startOpts
+		if l.retryOpts != nil {
+			o = *l.retryOpts
+		}
+		l.mu.Unlock()
+		inst, err := startCore(ctx, o)
+		l.mu.Lock()
+		success := err == nil && !l.closed && l.inst == nil && l.retryTarget != nil && fingerprint(*l.retryTarget) == fingerprint(*d)
+		var failures int
+		if success {
+			l.inst = inst
+			l.applied, l.startOpts = *d, o
+			l.actualPort = portOf(inst.Addr())
+			l.startOpts.Port, l.applied.port = l.actualPort, l.actualPort
+			l.retryTarget, l.retryOpts = nil, nil
+			l.retryDesired = ""
+			l.retryFailures, l.reloadErr = 0, ""
+			l.noteBindingsRestored(inst)
+		} else if err != nil && !l.closed {
+			l.retryFailures++
+			failures = l.retryFailures
+			l.reloadErr = errText(err)
+		}
+		closed := l.closed
+		l.mu.Unlock()
+		if success {
+			l.reloadMu.Unlock()
+			l.logf("previous configuration restored")
+			if l.retryApplied != nil {
+				select {
+				case l.retryApplied <- struct{}{}:
+				default:
+				}
+			}
+			continue
+		}
+		l.reloadMu.Unlock()
+		if closed {
+			if err == nil {
+				_ = inst.Close()
+			}
+			return
+		}
+		if err == nil {
+			_ = inst.Close()
+			continue
+		}
+		if failures == 1 || failures%5 == 0 {
+			l.warnf("previous configuration restart failed: %s", errText(err))
+		}
+	}
+}
+
+func (l *liveAngel) startRetry() {
+	l.mu.Lock()
+	if l.closed || l.retryCancel != nil || l.retryTarget == nil {
+		l.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	l.retryCancel = cancel
+	l.retryRunning.Add(1)
+	go l.retryLoop(ctx)
+	l.mu.Unlock()
+}
+
+func waitContext(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
 
 // watchSignature condenses the size and modification time of config.ktav,
@@ -630,12 +853,18 @@ func (l *liveAngel) watchSleep(ctx context.Context) {
 
 // close stops the loops, then the core and the statistics store.
 func (l *liveAngel) close() {
+	l.mu.Lock()
+	l.closed = true
+	if l.retryCancel != nil {
+		l.retryCancel()
+	}
+	l.mu.Unlock()
 	if l.loopsCancel != nil {
 		l.loopsCancel()
 	}
 	l.loopsRunning.Wait()
+	l.retryRunning.Wait()
 	l.mu.Lock()
-	l.closed = true
 	inst, store := l.inst, l.store
 	l.inst = nil
 	oldServers := cloneServerSpecs(l.applied.servers)
@@ -676,6 +905,9 @@ func (l *liveAngel) status(startedAt string) angel.Status {
 	}
 	if !l.lastReload.IsZero() {
 		st.Reload.LastAt = l.lastReload.UTC().Format(time.RFC3339)
+	}
+	if l.inst == nil {
+		st.Core = "down"
 	}
 	if l.inst == nil {
 		st.Accounts = accountStatus(l.applied.cfg, nil)

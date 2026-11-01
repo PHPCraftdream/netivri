@@ -708,15 +708,18 @@ that tier; open connections stay). A route is used only for the accounts that na
 fallback to a direct connection or to a country or provider that is not in the
 lists. Accounts without a provider and country, and
 auth's account, take the default route, which is direct until a node is selected.
-A running angel applies a change to accounts by itself, within a few seconds
+A running angel applies account changes by itself, within a few seconds
 (no `down` and `up` needed). A new country or provider list goes into the
-running listener and the open connections go on; adding or removing an
-account, a new password or a new `allowed_clients` restarts the listener on
-the same port, which ends the open connections. A change of `chain.post_socks5`,
-or a change that makes a route appear or disappear entirely, restarts the
-listener as well; a new pre or post of an account and new nodes do not. A
-change it cannot apply, such as a route without
-nodes, leaves the running configuration in place and is reported as
+running listener and the open connections go on. Account-only `allowed_clients`
+changes are applied hot to servers and mixed-proxy authentication; existing
+connections stay open. Adding or removing an account, changing its credentials,
+or changing the bind or port restarts the listener and ends open connections.
+Changes to `listen.allowed_clients` or global `chain.post_socks5` also require a
+restart. Route changes are applied in place when supported; existing
+connections stay open. Server changes are transactional: unchanged listeners
+and their connections are kept, except changed UDP listeners, whose connections
+end when their sockets are restarted. A change it cannot apply, such as a route
+without nodes, leaves the running configuration in place and is reported as
 `reload.last_error` by `status`. See [design/live-reload.md](design/live-reload.md)
 and [design/socks5-chain.md](design/socks5-chain.md).
 
@@ -914,6 +917,22 @@ Text watch adds a `Servers` table for running listeners. Watch JSON includes `se
 status contains operational details, not credentials.
 
 Scripts that read `warm.nodes`, `stats` or `affinity` must pass `--full`.
+
+`angel` is `running` even while no core is available; during that interval,
+status may include `core: "down"`. `reload.last_error` reports why the latest
+core start/reload failed. After a failed replacement and failed rollback, the
+control process stays running while no core is available and retries the
+previous good configuration after 1 second, doubling the delay to a 30-second
+cap. It warns on the first and every fifth consecutive failure. A successful
+recovery clears `last_error` and logs at INFO. A newer valid configuration on
+disk is attempted immediately and replaces the recovery target; `down` cancels
+retries.
+
+Even when a replacement fails and the old core is restored (or background
+recovery is still retrying), the newest valid file configuration remains the
+source for subscription definitions and `fetch.update_interval`. The applied
+core may still be running the previous configuration; status `refresh` describes
+the current valid file configuration, not necessarily what the core has applied.
 
 `refresh` (`{"interval_seconds", "ok", "failed", "last_at", "last_error"}`) and
 `reload` (`{"count", "last_at", "last_error"}`) describe how the angel keeps

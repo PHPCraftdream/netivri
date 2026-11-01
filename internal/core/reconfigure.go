@@ -74,7 +74,7 @@ func (i *Instance) Reconfigure(o Options) error {
 		if old.table != nil || i.route != routeDirect || len(i.state().accountRoutes) != 0 {
 			return ErrReconfigureUnsupported
 		}
-		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || o.GlobalPost != "" {
+		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
 			return ErrReconfigureUnsupported
 		}
 		tx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)

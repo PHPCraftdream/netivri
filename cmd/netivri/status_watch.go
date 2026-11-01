@@ -319,7 +319,11 @@ func (w *watchPrinter) frameJSON(st angel.Status, rates map[string][2]float64, n
 		ActiveAccounts int                `json:"active_accounts"`
 		Accounts       []accountJSON      `json:"accounts"`
 		Servers        []angel.ServerInfo `json:"servers,omitempty"`
+		Core           string             `json:"core,omitempty"`
 	}{Time: now.UTC().Format(time.RFC3339), ActiveAccounts: active, Accounts: items, Servers: st.Servers}
+	if st.Core != "" {
+		doc.Core = st.Core
+	}
 	_ = json.NewEncoder(w.out).Encode(doc)
 }
 

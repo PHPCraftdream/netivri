@@ -156,6 +156,7 @@ type Status struct {
 	Foreground bool     `json:"foreground"`
 	PID        int      `json:"pid"`
 	Listen     string   `json:"listen"`
+	Core       string   `json:"core,omitempty"`
 	Protocols  []string `json:"protocols"`
 	Auth       string   `json:"auth"`
 	Route      string   `json:"route"`

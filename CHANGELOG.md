@@ -10,6 +10,17 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **A new access rule for one account no longer drops everyone.** `account set-clients` (an
+  `allowed_clients` change of accounts only) is applied in place to the servers and
+  the mixed port: open connections stay, the new rule holds for new ones. Adding or
+  removing an account, new credentials, bind or port still restart the listener.
+
+- **The angel survives a core that will not start.** When a replacement core and the
+  rollback to the previous one both fail to start (a port that is not free yet), the
+  angel no longer exits: `status` shows `core: "down"`, the previous good
+  configuration is retried after 1 s, 2 s, 4 s ... up to 30 s, a newer valid
+  configuration is tried at once, and `down` still stops it.
+
 - **Fewer, faster node probes.** A round probes up to 24 nodes at once (was 8),
   so a round over three dozen nodes in a dead network ends inside one probe
   interval instead of after 75 s. A fallback node that carries no traffic (a

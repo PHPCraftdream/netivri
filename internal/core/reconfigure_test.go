@@ -15,6 +15,7 @@ import (
 	"github.com/metacubex/mihomo/tunnel/statistic"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
 // instanceWith returns an unpublished Instance whose routing generation is st.
@@ -52,6 +53,49 @@ func TestReconfigureRefusesWhatItCannotApply(t *testing.T) {
 	// Never published (Start did not return it): treated as closed too.
 	if err := inst.Reconfigure(Options{RouteNodes: nodes, AccountRoute: routes}); !errors.Is(err, errInstanceClosed) {
 		t.Errorf("an unpublished instance: %v, want errInstanceClosed", err)
+	}
+}
+
+func TestReconfigureServersOnlyGlobalPostNone(t *testing.T) {
+	p := registerUnitServerProtocol(t)
+	s := &serverSet{broker: newSocketBroker()}
+	spec := unitServerSpec("edge", p.name, 1080)
+	tx, err := s.prepare([]servers.Spec{spec}, &udpCountingTunnel{}, nil, nil)
+	if err != nil {
+		t.Fatal("prepare running server:", err)
+	}
+	if err := tx.commit(); err != nil {
+		t.Fatal("commit running server:", err)
+	}
+	inst := &Instance{route: routeDirect, servers: s}
+	lifecycleMu.Lock()
+	previous := current
+	current = inst
+	lifecycleMu.Unlock()
+	t.Cleanup(func() {
+		lifecycleMu.Lock()
+		current = previous
+		lifecycleMu.Unlock()
+		s.close()
+	})
+
+	starts := p.starts.Load()
+	previousPolicy := s.policy.Load()
+	if err := inst.Reconfigure(Options{Servers: []servers.Spec{spec}, GlobalPost: "nOnE"}); err != nil {
+		t.Fatalf("servers-only Reconfigure with GlobalPost none: %v", err)
+	}
+	if s.policy.Load() == previousPolicy {
+		t.Fatal("accepted GlobalPost none did not update server policy")
+	}
+	updatedPolicy := s.policy.Load()
+	if err := inst.Reconfigure(Options{Servers: []servers.Spec{spec}, GlobalPost: "socks5://post.example:1080"}); !errors.Is(err, ErrReconfigureUnsupported) {
+		t.Errorf("servers-only Reconfigure with a post URL: %v, want ErrReconfigureUnsupported", err)
+	}
+	if s.policy.Load() != updatedPolicy {
+		t.Error("unsupported post URL changed the server policy")
+	}
+	if got := p.starts.Load(); got != starts {
+		t.Errorf("Reconfigure started %d servers, want no additional starts", got-starts)
 	}
 }
 
