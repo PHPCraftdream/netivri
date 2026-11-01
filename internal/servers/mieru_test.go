@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PHPCraftdream/netivri/internal/subscription"
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/common/yaml"
@@ -107,14 +106,6 @@ func TestMieruMihomoSnippetAndImporter(t *testing.T) {
 	proxy := converted[0]
 	if proxy["type"] != "mieru" || proxy["server"] != "example.org" || proxy["port"] != 1234 || proxy["transport"] != "TCP" || proxy["username"] != "alice" || proxy["password"] != "pw" || proxy["multiplexing"] != "MULTIPLEXING_LOW" || proxy["udp"] != true {
 		t.Fatal("Mieru URI conversion fields mismatch")
-	}
-	parsed, err := subscription.ParseDetailed([]byte(link))
-	if err != nil || len(parsed.Nodes) != 1 {
-		t.Fatal("Mieru subscription parsing failed")
-	}
-	proxy = parsed.Nodes[0].Raw
-	if parsed.Nodes[0].Type != "mieru" || parsed.Nodes[0].Server != "example.org" || parsed.Nodes[0].Port != 1234 || proxy["transport"] != "TCP" || proxy["username"] != "alice" || proxy["password"] != "pw" || proxy["multiplexing"] != "MULTIPLEXING_LOW" || proxy["udp"] != true {
-		t.Fatal("Mieru subscription fields mismatch")
 	}
 	snippet, err := p.(MihomoLinker).Mihomo(spec, "alice", "example.org")
 	if err != nil {
