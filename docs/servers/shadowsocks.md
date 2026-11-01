@@ -4,7 +4,7 @@ Shadowsocks is the first `internal/servers` protocol: one listener serves exactl
 
 ## Configure and run
 
-The server package accepts resolved specs; the example command syntax below describes the planned product interface, not a claim that the CLI command is implemented:
+Typical commands (see the [server CLI reference](cli.md)):
 
 ```text
 netivri server add --protocol shadowsocks --name edge --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST}
@@ -53,7 +53,7 @@ Startup pre-acquires only the TCP socket before passing it to Mihomo, with UDP d
 
 UDP is unsupported: the core tunnel wrapper drops and counts UDP traffic arriving through all server tunnels. Mihomo's UDP-incompatible account rule may fall through to `DIRECT` for UDP rather than the account route, so UDP must fail closed rather than be sent direct. The Shadowsocks Mihomo snippet therefore sets `udp: false`.
 
-Unit tests cover registry behavior, Spec validation/redaction/equality, cipher validation and generated key sizes, SIP002/SIP022 payload round-trips, and safe startup-error formatting/classification. `/internal/core/servers_integration_test.go` contains the loopback TCP route, rotation, policy, listener-reuse, and close coverage; it is an integration-tagged CI test and was not run for this documentation change. There is no Shadowsocks UDP packet loopback test yet.
+Unit tests cover registry behavior, Spec validation/redaction/equality, cipher validation and generated key sizes, SIP002/SIP022 payload round-trips, and safe startup-error formatting/classification. `/internal/core/servers_integration_test.go` contains the loopback TCP route, rotation, policy, listener-reuse, and close coverage; it is an integration-tagged test. There is no Shadowsocks UDP packet loopback test yet.
 
 ## Known limitation
 

@@ -33,6 +33,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   order, `--provider main,backup --country DE,NL`) and is routed only through
   matching nodes, with no fallback to a direct connection or a country it does
   not name.
+- **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link`. See [`docs/servers/`](docs/servers/README.md).
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
@@ -132,6 +133,26 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
 
+### Run your own server
+
+After `netivri up`, add an endpoint for an existing account, inspect it, and
+generate a client link. Links contain credentials; handle them privately. A
+loopback bind such as `127.0.0.1` is local only; use a reachable bind only
+intentionally when remote clients should connect.
+
+```sh
+netivri server add --protocol shadowsocks --name {NAME} --account alice --port 8388 --bind 127.0.0.1 --public-host {HOST} --param cipher=aes-128-gcm
+netivri server list
+netivri server link {NAME} --account alice --host {HOST}
+netivri server link {NAME} --account alice --host {HOST} --format mihomo
+netivri server rotate {NAME} --account alice
+netivri server remove {NAME}
+```
+
+URI and Mihomo YAML links contain credentials; handle them privately. See the
+[server protocol index](docs/servers/README.md), [server CLI reference](docs/servers/cli.md),
+and [server configuration](docs/config.md#server-listeners).
+
 ### A separate copy in this directory
 
 Settings, subscriptions, tokens, statistics and the angel all live in one state
@@ -209,6 +230,7 @@ command.
 |---|---|
 | CLI contract, JSON, exit and error codes | [`docs/cli.md`](docs/cli.md) |
 | Configuration file | [`docs/config.md`](docs/config.md) |
+| Servers | [`docs/servers/README.md`](docs/servers/README.md) |
 | Installation | [`docs/install.md`](docs/install.md) |
 | Releasing | [`docs/release.md`](docs/release.md) |
 | Dependency licenses | [`docs/licenses.md`](docs/licenses.md) |

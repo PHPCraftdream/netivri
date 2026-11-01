@@ -8,6 +8,16 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Added
+
+- **Protocol servers and account routing.** Add and manage anytls, hysteria2,
+  mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic,
+  vless-reality and vmess listeners with `netivri server` CLI commands. Each
+  authenticated connection uses its account's route. Generate client links or
+  Mihomo YAML; server allowlists filter clients. UDP-bound listeners have a
+  restart lifecycle, and UDP relay payloads are dropped and counted. See
+  [`docs/servers/README.md`](docs/servers/README.md).
+
 ### Changed
 
 - **A new access rule for one account no longer drops everyone.** `account set-clients` (an

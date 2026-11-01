@@ -27,12 +27,10 @@ servers: [
         port: 443
         accounts: alice
         public_host: "{PUBLIC_HOST}"
-        params: {
-            sni: "{TLS_NAME}"
-            alpn: h3
-            congestion: bbr
-            udp_relay_mode: native
-        }
+        sni: "{TLS_NAME}"
+        alpn: h3
+        congestion: bbr
+        udp_relay_mode: native
     }
 ]
 ```
