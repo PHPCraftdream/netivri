@@ -3,6 +3,7 @@ package servertest
 
 import (
 	"errors"
+	"math/rand/v2"
 	"net"
 	"os"
 	"strconv"
@@ -35,17 +36,41 @@ func TrustForTest(t testing.TB, material map[string]string) {
 	}
 }
 
-// FreePort briefly binds loopback TCP port 0 and returns the assigned port,
-// provided the same number can also be bound as a UDP port: the TCP and UDP
-// port spaces are separate (Windows excludes different ranges for each), and
-// the port may serve either kind of server. The port may be claimed by another
-// process before the caller uses it.
+// freePortOSAttempts is how many times FreePort lets the OS pick the TCP port
+// before it falls back to candidates from a fixed range.
+const freePortOSAttempts = 20
+
+// freePortAttempts bounds the whole search.
+const freePortAttempts = 200
+
+// freePortCandidate is the port to try on an attempt: 0 asks the OS for a TCP
+// port, later attempts pick from a range that Windows rarely excludes for UDP.
+func freePortCandidate(attempt int) int {
+	if attempt < freePortOSAttempts {
+		return 0
+	}
+	return 20000 + rand.IntN(20000)
+}
+
+// FreePort briefly binds loopback TCP and returns the port, provided the same
+// number can also be bound as a UDP port: the TCP and UDP port spaces are
+// separate (Windows excludes different ranges for each), and the port may serve
+// either kind of server. The OS picks the port first; when its choices keep
+// failing on the UDP side (a runner with large UDP excluded ranges), ports from a
+// fixed range are tried instead. The port may be claimed by another process
+// before the caller uses it.
 func FreePort(t testing.TB) int {
 	t.Helper()
-	for attempt := 0; attempt < 20; attempt++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+	var lastErr error
+	for attempt := 0; attempt < freePortAttempts; attempt++ {
+		candidate := freePortCandidate(attempt)
+		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate)))
 		if err != nil {
-			t.Fatal("could not reserve a test port")
+			if candidate == 0 {
+				t.Fatalf("could not reserve a test port: %v", err)
+			}
+			lastErr = err
+			continue
 		}
 		port := listener.Addr().(*net.TCPAddr).Port
 		if err := listener.Close(); err != nil {
@@ -53,12 +78,13 @@ func FreePort(t testing.TB) int {
 		}
 		packet, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
+			lastErr = err
 			continue
 		}
 		_ = packet.Close()
 		return port
 	}
-	t.Fatal("could not reserve a test port free for TCP and UDP")
+	t.Fatalf("could not reserve a test port free for TCP and UDP (last error: %v)", lastErr)
 	return 0
 }
 
