@@ -153,6 +153,8 @@ type ServerInfo struct {
 	Default        bool     `json:"default,omitempty"`
 	Unclassified   uint64   `json:"unclassified,omitempty"`
 	SlowFirstByte  uint64   `json:"slow_first_byte,omitempty"`
+	Replayed       uint64   `json:"replayed,omitempty"`
+	Ambiguous      uint64   `json:"ambiguous,omitempty"`
 }
 
 // Status is the live answer of GET /v1/status.

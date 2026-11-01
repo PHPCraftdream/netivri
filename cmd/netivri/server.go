@@ -21,16 +21,20 @@ func (p *serverParamFlags) String() string     { return "" }
 func (p *serverParamFlags) Set(v string) error { *p = append(*p, v); return nil }
 
 type serverView struct {
-	Name       string   `json:"name"`
-	Protocol   string   `json:"protocol"`
-	Bind       string   `json:"bind"`
-	Port       int      `json:"port"`
-	Accounts   string   `json:"accounts"`
-	PublicHost string   `json:"public_host,omitempty"`
-	Members    []string `json:"members,omitempty"`
-	Default    bool     `json:"default,omitempty"`
-	SingleUser bool     `json:"single_user"`
-	Params     []string `json:"params"`
+	Name          string   `json:"name"`
+	Protocol      string   `json:"protocol"`
+	Bind          string   `json:"bind"`
+	Port          int      `json:"port"`
+	Accounts      string   `json:"accounts"`
+	PublicHost    string   `json:"public_host,omitempty"`
+	Members       []string `json:"members,omitempty"`
+	Default       bool     `json:"default,omitempty"`
+	SingleUser    bool     `json:"single_user"`
+	Unclassified  uint64   `json:"unclassified,omitempty"`
+	SlowFirstByte uint64   `json:"slow_first_byte,omitempty"`
+	Replayed      uint64   `json:"replayed,omitempty"`
+	Ambiguous     uint64   `json:"ambiguous,omitempty"`
+	Params        []string `json:"params"`
 }
 
 func serverPublic(cfg *config.Config, s config.Server) serverView {
@@ -73,6 +77,9 @@ func serverNotFound() error {
 }
 func serverConflict(msg string) error     { return serverError("SERVER_EXISTS", msg, cli.ExitConflict) }
 func serverPortConflict(msg string) error { return serverError("PORT_IN_USE", msg, cli.ExitConflict) }
+func serverPortAmbiguous(msg string) error {
+	return serverError("SERVER_PORT_AMBIGUOUS", msg, cli.ExitConflict)
+}
 func serverNameValid(s string) bool {
 	if len(s) < 1 || len(s) > 32 {
 		return false
@@ -134,6 +141,7 @@ func runServer(args []string, stdout io.Writer) error {
 		for _, s := range cfg.Servers {
 			items = append(items, serverPublic(cfg, s))
 		}
+		overlayServerRuntimeCounters(home, items)
 		cli.Success(stdout, map[string]any{"servers": items})
 		return nil
 	case "add":
@@ -189,6 +197,7 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		newProto, _ := servers.Lookup(*protocol)
 		newUDP := newProto != nil && servers.IsUDPBound(newProto)
+		newTLS, newTrial := servers.ShareMode(servers.Spec{Protocol: *protocol, Params: pm})
 		if !newUDP && cfg.Listen.Port == *port && serverBindsOverlap(cfg.Listen.Bind, *bind) {
 			return serverPortConflict("server port conflicts with the proxy listener")
 		}
@@ -200,11 +209,8 @@ func runServer(args []string, stdout io.Writer) error {
 			if existing.Port != *port || !serverBindsOverlap(existing.Bind, *bind) {
 				continue
 			}
-			// Two TLS-family servers on one exact endpoint may share it: the
-			// shared-port validation below decides (SERVER_PORT_AMBIGUOUS).
-			_, existingSniffs := existingProto.(servers.Sniffer)
-			_, newSniffs := newProto.(servers.Sniffer)
-			if !newUDP && existingSniffs && newSniffs && serverSameBind(existing.Bind, *bind) {
+			existingTLS, existingTrial := servers.ShareMode(servers.Spec{Protocol: existing.Protocol, Params: existing.Params})
+			if !newUDP && serverSameBind(existing.Bind, *bind) && ((existingTLS || existingTrial) && (newTLS || newTrial)) {
 				continue
 			}
 			return serverPortConflict("server port conflicts with an existing listener")
@@ -228,9 +234,38 @@ func runServer(args []string, stdout io.Writer) error {
 				break
 			}
 		}
-		if _, e = store.EnsureSecrets(spec); e != nil {
+		ensured, ensureErr := store.EnsureSecrets(spec)
+		if ensureErr != nil {
 			cfg.Servers = oldServers
 			return serverError("INTERNAL", "server secrets could not be stored", cli.ExitInternal)
+		}
+		secretSpecs := make([]servers.Spec, 0)
+		for _, current := range specs {
+			proto, _ := servers.Lookup(current.Protocol)
+			if current.Port != *port || !serverSameBind(current.Bind, *bind) || servers.IsUDPBound(proto) != newUDP {
+				continue
+			}
+			if current.Name == n {
+				secretSpecs = append(secretSpecs, ensured)
+				continue
+			}
+			if applied, applyErr := store.Apply(current); applyErr != nil {
+				cfg.Servers = oldServers
+				_ = store.Remove(n)
+				return serverError("INTERNAL", "server secrets could not be loaded", cli.ExitInternal)
+			} else {
+				secretSpecs = append(secretSpecs, applied)
+			}
+		}
+		if err := servers.ValidateSharedPort(secretSpecs); err != nil {
+			cfg.Servers = oldServers
+			_ = store.Remove(n)
+			return serverValidationError(err)
+		}
+		if err := servers.ValidateTrialSecrets(secretSpecs); err != nil {
+			cfg.Servers = oldServers
+			_ = store.Remove(n)
+			return serverPortAmbiguous("shared endpoint credentials are ambiguous")
 		}
 		if err := config.Save(config.ConfigPath(home), cfg); err != nil {
 			cfg.Servers = oldServers
@@ -266,7 +301,9 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		switch sub {
 		case "show":
-			cli.Success(stdout, map[string]any{"server": serverPublic(cfg, *entry)})
+			view := []serverView{serverPublic(cfg, *entry)}
+			overlayServerRuntimeCounters(home, view)
+			cli.Success(stdout, map[string]any{"server": view[0]})
 			return nil
 		case "remove":
 			_, i := cfg.GetServer(name)

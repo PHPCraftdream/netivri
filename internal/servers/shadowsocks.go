@@ -21,6 +21,8 @@ const defaultCipher = "2022-blake3-aes-128-gcm"
 
 type shadowsocks struct{}
 
+func (shadowsocks) NewTrial(spec Spec) (Trial, error) { return newTrial(spec) }
+
 func init()                          { Register(shadowsocks{}) }
 func (shadowsocks) Name() string     { return "shadowsocks" }
 func (shadowsocks) SingleUser() bool { return true }

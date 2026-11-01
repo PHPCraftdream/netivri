@@ -188,36 +188,23 @@ type Protocol interface {
 - If reconfiguration fails, rollback restores TCP leases and best-effort restores all prior UDP specs. The result reports whether UDP restoration completed or was incomplete.
 - Port conflicts are checked per transport, so TCP and UDP may share a bind and port. Counters are shared across generations of a server name. UDP relay traffic is still dropped and counted; UDP-bound only describes the listener transport.
 
-## One port, several protocols (TLS stage 1 implemented)
+## One port, several protocols (stages 1 and 2 implemented)
 
-TCP endpoints may share a bind and port only when every member is TLS-capable and implements `servers.Sniffer`; TCP and UDP remain separate, and UDP/QUIC sharing is not implemented. Each protocol owns its `Sniffer.MatchKeys(params)` implementation and returns its SNI/ALPN match keys. A shared parser/classifier consumes those keys; protocol-name-specific branching is not centralized classifier logic. The listener peeks without consuming ClientHello bytes, then replays them to the selected protocol listener. The peek is bounded to 64 KiB and 3 seconds; peeked bytes are never logged. Slow/incomplete first bytes and unmatched or malformed ClientHellos are closed and counted as `slow_first_byte` and `unclassified`, respectively. Status entries expose sorted `members`, `default`, `unclassified`, and `slow_first_byte`.
+A TCP endpoint may share among eligible members: TLS family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality), Shadowsocks 2022 using any of its three ciphers, and VMess AEAD (`alterId=0`). Legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP-bound protocols remain exclusive. Stage 3, UDP/QUIC ALPN multiplexing, is not implemented.
 
-Classification uses protocol-declared explicit match keys that must match the exported link. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may send host-derived SNI that matches no configured key and falls back. A default selects only valid unmatched TLS and never resolves overlap. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap).
+Shared Shadowsocks 2022 uses one PSK, listener and account; VMess can have at most 1024 users. PSKs and VMess UUIDs must be distinct within a group. At most 16 trial members are allowed. Reused credentials or a trial default returns `SERVER_PORT_AMBIGUOUS` (exit 6) with a safe hint. TLS match-key and default behavior remain as specified in stage 1.
 
-`default: true` (or `--default`) is the single fallback for a valid TLS ClientHello that matches no configured set; it never handles malformed or non-TLS input. Overlapping ALPN sets for the same SNI are refused even when a default exists. Config/add errors are `SERVER_PORT_AMBIGUOUS` (exit 6) with a hint to change SNI/ALPN; a default cannot resolve an ambiguous match. Non-sniffable same-transport combinations remain exclusive (`PORT_IN_USE`).
+Trials are pure, precomputed per lease. All candidates must reject before TLS classification; no early first-two-byte choice is made because `0x16 0x03` can collide with encrypted protocol data. Timestamp windows are 28 seconds for Shadowsocks 2022 and 118 seconds for VMess. Bounded replay filters are per endpoint (TTL 60 seconds and 240 seconds respectively: a prefix stamped one window ahead stays valid for two windows after its first acceptance). Peek/replay buffers are at most 64 KiB when TLS is eligible, otherwise 4 KiB; deadline 3 seconds.
 
-Only stage 1 (TLS-family classification) is implemented. Cleartext trial authentication (stage 2) and UDP/QUIC ALPN multiplexing (stage 3) are not implemented.
+All rejection paths silently drain: never write and never close first. Drain until peer close or randomized 30–90 second idle; bounded concurrent drain and byte permits may force resource-cap closure. Pending trials are capped per endpoint and source; over a cap the connection is closed at once, a resource cap like the drain permits. Malformed, unmatched and failed trials are not distinguishable on the wire. No secrets or peeked bytes are logged.
 
-**Where it plugs in.** `internal/core/servers_broker.go` owns the real
-socket (`socketEndpoint`) and one `acceptPump`; the active member map is committed
-atomically, and a failed stage rolls back without disturbing the prior membership.
-The pump classifies each accepted connection and sends it to exactly one lease.
-Protocols only see a `net.Listener`. The shared endpoint classifier uses each protocol's `Sniffer.MatchKeys(params)` to produce SNI/ALPN match keys; one shared ClientHello parser classifies connections. Protocols without match keys keep exclusive ports.
+**Where it plugs in.** `internal/core/servers_broker.go` owns the real socket and one accept pump. Protocol-declared sniffers retain TLS match-key ownership; trial members are precomputed per lease and tested without consuming the replay buffer. The pump sends a connection to exactly one selected lease.
 
-**Classification pipeline** (per connection; peek is bounded to 64 KiB and 3 seconds, bytes are replayed to the selected listener and never logged):
+**Tests.** Unit fixtures cover classification and trial rejection; integration tests cover shared listeners and rollback; e2e runs only in CI.
 
-1. TLS ClientHello (`0x16 0x03`): each protocol's `Sniffer.MatchKeys(params)` supplies protocol-declared explicit keys matching exported links. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may send host-derived SNI and fall back unmatched. The default handles valid unmatched TLS only; overlapping matches fail with `SERVER_PORT_AMBIGUOUS`; change `sni` to resolve overlap. A missing explicit key uses the hint `set sni on {NAME} or mark it as the default`.
-2. Non-TLS traffic may be trial-authenticated against the configured Shadowsocks and VMess members. Failed trials are rejected after a fixed delay; this stage is planned, not implemented.
-3. QUIC servers sharing a UDP endpoint use their ALPN to classify connections only when the offered protocols are disjoint. Current shared HTTP/3 ALPN use is refused; disjoint-ALPN QUIC multiplexing is planned, not implemented.
+**Security notes.** Silent bounded drain limits active-probe feedback; hard resource caps take precedence over keeping a rejected connection open. Replay filters are bounded per endpoint.
 
-Unmatched or malformed ClientHellos are closed and counted in `unclassified`; incomplete/slow first bytes are closed and counted in `slow_first_byte`. These fields, sorted `members`, and the `default` marker are exposed in server status. Same-transport non-sniffable conflicts remain `PORT_IN_USE`.
-
-**Tests.** Unit: classifier fixtures including real ClientHellos, malformed/slow input; integration tests exercise shared listeners and rollback; e2e runs only in CI.
-
-**Security notes.** Unmatched traffic is closed without revealing the protocol set; peeked bytes are never logged; a slow first byte is counted and cut off at the deadline.
-
-**Non-goals now.** UDP relay, domain fronting, camouflage beyond Reality's own, classification that needs terminating TLS in the front.
-
+**Non-goals now.** UDP relay and UDP/QUIC ALPN multiplexing.
 
 ## CLI
 

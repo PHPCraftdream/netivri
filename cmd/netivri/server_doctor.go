@@ -76,6 +76,31 @@ func (d *doctorContext) checkServers() []doctorCheck {
 	if err != nil {
 		return append(checks, doctorCheck{"servers", doctorFail, "configured servers are invalid"})
 	}
+	appliedSpecs := make([]servers.Spec, 0, len(resolved))
+	for _, spec := range resolved {
+		if applied, applyErr := store.Apply(spec); applyErr != nil {
+			return append(checks, doctorCheck{"server-secrets", doctorFail, "configured server secrets are unavailable"})
+		} else {
+			appliedSpecs = append(appliedSpecs, applied)
+		}
+	}
+	groups := map[string][]servers.Spec{}
+	for _, spec := range appliedSpecs {
+		key := net.JoinHostPort(spec.Bind, strconv.Itoa(spec.Port))
+		proto, _ := servers.Lookup(spec.Protocol)
+		key += "/" + strconv.FormatBool(servers.IsUDPBound(proto))
+		groups[key] = append(groups[key], spec)
+	}
+	for _, group := range groups {
+		if len(group) > 1 || len(group) == 1 && group[0].Default {
+			if err := servers.ValidateSharedPort(group); err != nil {
+				return append(checks, doctorCheck{"servers", doctorFail, "configured server sharing is ambiguous"})
+			}
+			if err := servers.ValidateTrialSecrets(group); err != nil {
+				return append(checks, doctorCheck{"servers", doctorFail, "configured server credentials are ambiguous"})
+			}
+		}
+	}
 	var issues []string
 	for _, s := range resolved {
 		ip := net.ParseIP(s.Bind)
@@ -97,6 +122,9 @@ func (d *doctorContext) checkServers() []doctorCheck {
 				issues = append(issues, s.Name+" port is taken")
 			}
 		}
+	}
+	if d.angelUp {
+		checks = append(checks, serverCounterChecks(d.status, resolved)...)
 	}
 	if len(issues) == 0 {
 		checks = append(checks, doctorCheck{"servers", doctorOK, "configured server endpoints are available"})

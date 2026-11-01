@@ -201,6 +201,8 @@ type Info struct {
 	Default                bool
 	Unclassified           uint64
 	SlowFirstByte          uint64
+	Replayed               uint64
+	Ambiguous              uint64
 	Connections            int
 	DroppedClients         uint64
 }

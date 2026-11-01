@@ -50,27 +50,29 @@ Account writes validate the entire resulting configuration before saving; valida
 
 ## Server listeners
 
-Each server's protocol-specific options are written as flattened keys in the endpoint object, alongside `name`, `protocol`, and other server fields. The Go config model collects these keys into `Server.Params` (`map[string]string`); that internal map is not a nested `params` object in Ktav. Parameter values are configuration, not credentials, and are hidden by `server list`/`show`. Passwords, UUIDs, keys, certificates, and generated protocol material are stored separately in `{HOME}/server-secrets.ktav`, not in `config.ktav`.
+Each server's protocol-specific options are written as flattened keys in the endpoint object, alongside `name`, `protocol`, and other server fields. Eligible shared TCP members are TLS-family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality), Shadowsocks 2022 with any of its three ciphers, and VMess AEAD (`alterId=0`). Legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP-bound protocols are exclusive. Shared Shadowsocks uses one PSK, listener and account; VMess allows at most 1024 users. Raw PSKs and VMess UUIDs must be distinct across the group. A group allows at most 16 trial members. Reused secrets or default on a trial member returns `SERVER_PORT_AMBIGUOUS` (exit 6) with a safe hint. Protocol parameter keys are flattened; credentials are stored separately in `{HOME}/server-secrets.ktav`.
 
 | Key | Type | Default | Validation and meaning |
 | --- | --- | --- | --- |
 | `servers[].name` | string | required | 1-32 ASCII letters, digits, `.`, `_`, `-`; unique. |
 | `servers[].protocol` | string | required | Must match one of the registered names in [the server index](servers/README.md). |
 | `servers[].bind` | string (IP address) | `0.0.0.0` | Must parse as an IP address. Empty means `0.0.0.0`. |
-| `servers[].port` | integer | required | 1-65535. Same-transport overlap is rejected (`PORT_IN_USE`) except eligible shared TLS TCP endpoints with distinct protocol-owned explicit match keys; overlaps return `SERVER_PORT_AMBIGUOUS`. TCP and UDP-bound servers may share a port number. |
+| `servers[].port` | integer | required | 1-65535. Same-transport overlap is rejected (`PORT_IN_USE`) unless all members meet shared eligibility; ambiguous groups return `SERVER_PORT_AMBIGUOUS`. TCP and UDP-bound servers may share a port number. |
 | `servers[].accounts` | string | required | `*` expands to all configured accounts for multi-user protocols only, or a comma-separated list of unique, existing account logins. Logins are 1-64 ASCII letters, digits, `.`, `_`, `@`, `-`; `init` is reserved. Single-user protocols require exactly one resolved account. |
 | `servers[].public_host` | string | empty | Optional link host. Config accepts a scalar string; `server link` strictly validates the host as a hostname or IP without a port or credentials; `--host` overrides it. |
-| `servers[].default` | boolean | `false` | Marks the single TLS fallback on a shared TCP endpoint for a valid unmatched ClientHello. |
+| `servers[].default` | boolean | `false` | Marks the TLS fallback for valid unmatched ClientHello. Trial members cannot be default. |
 | `servers[].{PARAMETER}` | string, boolean, integer | protocol-dependent | Protocol-specific option as a flattened Ktav key. Arbitrary unrecognized keys are collected into the Go `Server.Params` map; scalar booleans and integers are converted to strings. Maps, sequences, and floats are rejected. Reserved server field names are not parameters. Values must also pass protocol validation. See each protocol page under [Server protocols](servers/README.md). |
 
-Shared servers need protocol-declared explicit match keys matching exported links. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may use host-derived SNI, remain unmatched, and fall back. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap).
+TLS sharing retains the existing explicit protocol-owned SNI/ALPN match rules. For Trojan/AnyTLS, SNI is required unless default; VLESS-Reality uses explicit SNI or destination-derived servername. TrustTunnel without explicit SNI matches h2 at any SNI; with explicit SNI it matches exactly. An absent-SNI key otherwise matches only absent SNI. A sole TLS server may be default; a shared member without an explicit usable key must itself be the default. Explicit SNI is recommended for certificate-TLS. A no-SNI default link may use host-derived SNI and fall back when unmatched. Default handles valid unmatched TLS only and never resolves overlap. Missing explicit key hint: `set sni on {NAME} or mark it as the default`; overlap requires changing `sni`.
+
+Trial timestamps are 28 seconds (Shadowsocks 2022) and 118 seconds (VMess). Replay-filter TTLs are 60 and 240 seconds per endpoint. Buffers are capped at 64 KiB when TLS is eligible, otherwise 4 KiB; deadline 3 seconds. Rejection silently drains without writing or closing first, until peer close or randomized 30–90 second idle, subject to bounded concurrent drain/byte permits. Pending trials are capped per endpoint/source. When a local angel is available, `status` exposes `slow_first_byte`, `replayed` and `ambiguous` counters; zero values are omitted. `list`/`show` include live counters when available, otherwise configuration only. `doctor` reports safe aggregate counter summaries.
 Listener startup failures make `up` fail closed. A failed live restart leaves the angel/control process running; if both replacement and rollback cores fail, status can show `core: "down"` and `reload.last_error`, and the angel retries the prior good configuration with backoff. `allowed_clients`-only changes on an existing account apply hot to server policy without restarting listeners; existing connections survive. This applies for mixed authentication and server endpoints, including when no account route is configured. Global `listen.allowed_clients`, server credentials, account membership, bind and port changes require restart/reconfiguration. A failed server reconfiguration keeps prior servers where possible; UDP restoration after a failed restart is best-effort.
 
 `allowed_clients` for a server connection is the intersection of global `listen.allowed_clients` and the authenticated account's optional rule; either may deny the peer. See [Allowed clients](#allowed-clients) for the shared rule syntax.
 
-`server add`, `list`, `link`, `rotate` and `remove` examples and parameters are in the [server CLI reference](servers/cli.md). Shared endpoints require distinct SNI/ALPN matches and allow one `default` fallback; ambiguity is not fixed by declaring a default. Link output is credential-bearing; it is the only intended output of a generated server secret. The secrets store is written atomically with owner-only permissions. Do not copy links or secret-bearing Mihomo YAML into public logs.
+`server add`, `list`, `link`, `rotate` and `remove` examples and parameters are in the [server CLI reference](servers/cli.md). TLS sharing still requires valid distinct SNI/ALPN matches; a default only catches valid unmatched TLS. Trial members must satisfy shared eligibility and unique credential constraints. Link output is credential-bearing; protect generated links and Mihomo YAML.
 
-This shared configuration example defines its account inline and uses identical bind/port values, distinct valid SNI values, and exactly one default fallback. Alternatively, a shared member without an explicit usable key must itself be the sole default; a lone exclusive server may omit SNI entirely.
+This shared configuration example defines a Shadowsocks 2022 listener and a VMess AEAD listener on the same endpoint, both for the same account. Use distinct PSKs and UUIDs across the group. TLS family members may also join when eligible; legacy AEAD and UDP servers may not.
 
 ```ktav
 accounts: [
@@ -82,21 +84,20 @@ accounts: [
 
 servers: [
     {
-        name: trojan-edge
-        protocol: trojan
+        name: ss2022-edge
+        protocol: shadowsocks
         bind: 127.0.0.1
         port: 8443
         accounts: alice
-        default: true
-        sni: trojan.example.org
+        cipher: 2022-blake3-aes-128-gcm
     }
     {
-        name: anytls-edge
-        protocol: anytls
+        name: vmess-edge
+        protocol: vmess
         bind: 127.0.0.1
         port: 8443
         accounts: alice
-        sni: anytls.example.org
+        cipher: auto
     }
 ]
 ```
