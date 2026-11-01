@@ -200,14 +200,25 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
+	// While the core is replaced the angel's status may be briefly
+	// unreachable (ANGEL_NOT_RUNNING on Windows): keep polling until ctx ends.
+	lastProblem := "no status yet"
 	for {
-		st := liveStatusOf(t, home)
-		if st.Data.Reload.Count >= count && st.Data.Reload.LastError == "" {
-			return
+		code, out, _ := accountsRun(t, home, "status")
+		var st liveStatus
+		if code != 0 {
+			lastProblem = fmt.Sprintf("status exit %d", code)
+		} else if err := json.Unmarshal([]byte(out), &st); err != nil {
+			lastProblem = "status did not decode"
+		} else {
+			lastProblem = fmt.Sprintf("reload count %d", st.Data.Reload.Count)
+			if st.Data.Reload.Count >= count && st.Data.Reload.LastError == "" {
+				return
+			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("angel reload count did not reach %d", count)
+			t.Fatalf("angel reload count did not reach %d (last: %s)", count, lastProblem)
 		case <-ticker.C:
 		}
 	}
