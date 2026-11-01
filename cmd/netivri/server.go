@@ -27,11 +27,13 @@ type serverView struct {
 	Port       int      `json:"port"`
 	Accounts   string   `json:"accounts"`
 	PublicHost string   `json:"public_host,omitempty"`
+	Members    []string `json:"members,omitempty"`
+	Default    bool     `json:"default,omitempty"`
 	SingleUser bool     `json:"single_user"`
 	Params     []string `json:"params"`
 }
 
-func serverPublic(s config.Server) serverView {
+func serverPublic(cfg *config.Config, s config.Server) serverView {
 	p, _ := servers.Lookup(s.Protocol)
 	keys := make([]string, 0, len(s.Params))
 	for k := range s.Params {
@@ -42,7 +44,26 @@ func serverPublic(s config.Server) serverView {
 	if bind == "" {
 		bind = "0.0.0.0"
 	}
-	return serverView{s.Name, s.Protocol, bind, s.Port, s.Accounts, s.PublicHost, p != nil && p.SingleUser(), keys}
+	view := serverView{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Accounts: s.Accounts, PublicHost: s.PublicHost, Default: s.Default, SingleUser: p != nil && p.SingleUser(), Params: keys}
+	if cfg != nil {
+		for _, peer := range cfg.Servers {
+			peerBind := peer.Bind
+			if peerBind == "" {
+				peerBind = "0.0.0.0"
+			}
+			if peer.Port == s.Port && peerBind == bind {
+				peerProto, _ := servers.Lookup(peer.Protocol)
+				if peerProto != nil && p != nil && servers.IsUDPBound(peerProto) == servers.IsUDPBound(p) {
+					view.Members = append(view.Members, peer.Name)
+				}
+			}
+		}
+	}
+	if len(view.Members) <= 1 {
+		view.Members = nil
+	}
+	sort.Strings(view.Members)
+	return view
 }
 func serverError(code, msg string, exit int) error {
 	return &cli.Error{Code: code, Message: msg, Exit: exit}
@@ -111,7 +132,7 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		items := make([]serverView, 0, len(cfg.Servers))
 		for _, s := range cfg.Servers {
-			items = append(items, serverPublic(s))
+			items = append(items, serverPublic(cfg, s))
 		}
 		cli.Success(stdout, map[string]any{"servers": items})
 		return nil
@@ -124,6 +145,7 @@ func runServer(args []string, stdout io.Writer) error {
 		port := fs.Int("port", 0, "port")
 		bind := fs.String("bind", "0.0.0.0", "bind")
 		public := fs.String("public-host", "", "host")
+		defaultServer := fs.Bool("default", false, "default TLS server")
 		var params serverParamFlags
 		fs.Var(&params, "param", "key=value")
 		pos, e := parseFlags(fs, rest)
@@ -165,21 +187,12 @@ func runServer(args []string, stdout io.Writer) error {
 		if _, i := cfg.GetServer(n); i >= 0 {
 			return serverConflict("server name is already configured")
 		}
-		// A TCP and a UDP endpoint may share a port number: conflicts are per transport.
 		newProto, _ := servers.Lookup(*protocol)
 		newUDP := newProto != nil && servers.IsUDPBound(newProto)
 		if !newUDP && cfg.Listen.Port == *port && serverBindsOverlap(cfg.Listen.Bind, *bind) {
 			return serverPortConflict("server port conflicts with the proxy listener")
 		}
-		for _, s := range cfg.Servers {
-			if existing, ok := servers.Lookup(s.Protocol); ok && servers.IsUDPBound(existing) != newUDP {
-				continue
-			}
-			if s.Port == *port && serverBindsOverlap(s.Bind, *bind) {
-				return serverPortConflict("server port conflicts with an existing listener")
-			}
-		}
-		entry := config.Server{Name: n, Protocol: *protocol, Bind: *bind, Port: *port, Accounts: *account, PublicHost: *public, Params: pm}
+		entry := config.Server{Name: n, Protocol: *protocol, Bind: *bind, Port: *port, Accounts: *account, PublicHost: *public, Default: *defaultServer, Params: pm}
 		oldServers := cfg.Servers
 		cfg.Servers = append(cfg.Servers, entry)
 		if e = cfg.Validate(); e != nil {
@@ -207,7 +220,7 @@ func runServer(args []string, stdout io.Writer) error {
 			_ = store.Remove(n)
 			return serverError("INTERNAL", "server configuration could not be saved", cli.ExitInternal)
 		}
-		cli.Success(stdout, map[string]any{"server": serverPublic(cfg.Servers[len(cfg.Servers)-1])})
+		cli.Success(stdout, map[string]any{"server": serverPublic(cfg, cfg.Servers[len(cfg.Servers)-1])})
 		return nil
 	case "show", "remove", "rotate", "link":
 		fs := flag.NewFlagSet("server "+sub, flag.ContinueOnError)
@@ -236,7 +249,7 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		switch sub {
 		case "show":
-			cli.Success(stdout, map[string]any{"server": serverPublic(*entry)})
+			cli.Success(stdout, map[string]any{"server": serverPublic(cfg, *entry)})
 			return nil
 		case "remove":
 			_, i := cfg.GetServer(name)

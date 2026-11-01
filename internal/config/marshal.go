@@ -105,6 +105,9 @@ func renderServers(cfg *Config) []map[string]any {
 	out := make([]map[string]any, 0, len(cfg.Servers))
 	for _, s := range cfg.Servers {
 		m := map[string]any{"name": s.Name, "protocol": s.Protocol, "port": s.Port, "accounts": s.Accounts}
+		if s.Default {
+			m["default"] = true
+		}
 		if s.Bind != "" && s.Bind != "0.0.0.0" {
 			m["bind"] = s.Bind
 		}
@@ -171,6 +174,9 @@ func configEqual(a, b *Config) bool {
 		return false
 	}
 	for i := range x.Servers {
+		if x.Servers[i].Default != y.Servers[i].Default {
+			return false
+		}
 		if x.Servers[i].Bind == "" {
 			x.Servers[i].Bind = "0.0.0.0"
 		}

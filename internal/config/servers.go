@@ -5,6 +5,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
@@ -17,6 +18,7 @@ type Server struct {
 	Port       int               `json:"port"`
 	Accounts   string            `json:"accounts"`
 	PublicHost string            `json:"public_host,omitempty"`
+	Default    bool              `json:"default,omitempty"`
 	Params     map[string]string `json:"-"`
 }
 
@@ -29,7 +31,6 @@ func (c *Config) GetServer(name string) (*Server, int) {
 	}
 	return nil, -1
 }
-
 func validServerName(s string) bool {
 	if len(s) < 1 || len(s) > 32 {
 		return false
@@ -52,10 +53,11 @@ func validateServers(c *Config) error {
 		port int
 		udp  bool
 	}
-	ports := map[endpointKey][]struct {
+	type endpoint struct {
 		bind  string
 		index int
-	}{}
+	}
+	ports := map[endpointKey][]endpoint{}
 	for i := range c.Servers {
 		s := &c.Servers[i]
 		field := func(k string) string { return fmt.Sprintf("servers[%d].%s", i, k) }
@@ -69,6 +71,11 @@ func validateServers(c *Config) error {
 		p, ok := servers.Lookup(s.Protocol)
 		if !ok {
 			return invalid("%s is not a registered server protocol", field("protocol"))
+		}
+		if s.Default {
+			if _, ok := p.(servers.Sniffer); !ok {
+				return invalid("%s default requires a TLS-sniffable protocol", field("default"))
+			}
 		}
 		bind := s.Bind
 		if bind == "" {
@@ -85,15 +92,26 @@ func validateServers(c *Config) error {
 			return invalid("%s conflicts with listen.port", field("port"))
 		}
 		key := endpointKey{s.Port, udp}
-		for _, previous := range ports[key] {
-			if bindsOverlap(bind, previous.bind) {
-				return invalid("%s duplicates servers[%d] endpoint", field("port"), previous.index)
+		for _, prevEntry := range ports[key] {
+			if !bindsOverlap(bind, prevEntry.bind) {
+				continue
+			}
+			prev := &c.Servers[prevEntry.index]
+			pp, _ := servers.Lookup(prev.Protocol)
+			if bind != prevEntry.bind {
+				return &cli.Error{Code: "PORT_IN_USE", Message: "overlapping bind addresses cannot share a server socket", Exit: cli.ExitConflict}
+			}
+			if udp || !hasSniffer(p) || !hasSniffer(pp) {
+				return &cli.Error{Code: "PORT_IN_USE", Message: "server endpoint is already in use", Exit: cli.ExitConflict}
+			}
+			if err := servers.ValidateSharedPort([]servers.Spec{
+				{Name: prev.Name, Protocol: prev.Protocol, Bind: bind, Port: prev.Port, Default: prev.Default, Params: prev.Params},
+				{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Default: s.Default, Params: s.Params},
+			}); err != nil {
+				return err
 			}
 		}
-		ports[key] = append(ports[key], struct {
-			bind  string
-			index int
-		}{bind, i})
+		ports[key] = append(ports[key], endpoint{bind, i})
 		if s.Accounts == "" {
 			return invalid("%s must be a comma-separated account list or *", field("accounts"))
 		}
@@ -127,7 +145,7 @@ func validateServers(c *Config) error {
 				return invalid("%s contains an invalid protocol parameter key", field("params"))
 			}
 			switch k {
-			case "name", "protocol", "bind", "port", "accounts", "public_host":
+			case "name", "protocol", "bind", "port", "accounts", "public_host", "default":
 				return invalid("%s is reserved", field(k))
 			}
 			if err := checkScalar(field(k), v); err != nil {
@@ -143,7 +161,7 @@ func validateServers(c *Config) error {
 	}
 	return nil
 }
-
+func hasSniffer(p servers.Protocol) bool { _, ok := p.(servers.Sniffer); return ok }
 func bindsOverlap(a, b string) bool {
 	if b == "" {
 		b = "127.0.0.1"
@@ -203,7 +221,7 @@ func (c *Config) ResolveServers() ([]servers.Spec, error) {
 		if bind == "" {
 			bind = "0.0.0.0"
 		}
-		spec := servers.Spec{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Accounts: accounts, Params: s.Params}
+		spec := servers.Spec{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Default: s.Default, Accounts: accounts, Params: s.Params}
 		if err := spec.Validate(); err != nil {
 			return nil, invalid("servers[%d] is invalid", i)
 		}

@@ -8,12 +8,33 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
+func doctorInvalidClassifierConfig(home string) []doctorCheck {
+	_, err := config.Load(config.ConfigPath(home))
+	if err == nil {
+		return nil
+	}
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
+		return nil
+	}
+	switch ce.Code {
+	case "SERVER_PORT_AMBIGUOUS":
+		return []doctorCheck{{"servers", doctorFail, "configured server classifier is ambiguous; " + ce.Hint}}
+	case "PORT_IN_USE":
+		return []doctorCheck{{"servers", doctorFail, "configured server endpoints conflict"}}
+	default:
+		return nil
+	}
+}
+
 func (d *doctorContext) checkServers() []doctorCheck {
 	if d.cfgIssue != "" || d.cfg == nil {
-		return nil
+		return doctorInvalidClassifierConfig(d.home)
 	}
 	store := servers.NewStore(d.home)
 	_, statErr := os.Stat(store.Path())

@@ -49,7 +49,7 @@ netivri stats [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--node {NODE}] [--si
 netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {LIST|off}] [--max-nodes {N}] [--url {URL}]
 
 netivri server protocols [--json]
-netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--param {KEY=VALUE} ...] [--json]
+netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--default] [--param {KEY=VALUE} ...] [--json]
 netivri server list [--json]
 netivri server show {NAME} [--json]
 netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr] [--json]
@@ -302,7 +302,16 @@ The server command contract and operational behavior are documented in [`servers
 
 Server connection filtering requires the global and (when present) account `allowed_clients` policies to allow the peer. Account allowlist-only changes are applied hot to server policy without restarting listeners; existing connections survive. This covers mixed authentication and server endpoints, including when no account route is configured. Changing global policy, account credentials/membership, bind, port, or server definition requires listener restart/reconfiguration. A failed core replacement can leave the angel alive and retrying the last good configuration; see [configuration](config.md#server-listeners).
 
-Server name errors are `SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6) for an already configured name; port conflicts return `PORT_IN_USE` (exit 6). UDP-bound QUIC listeners restart with a brief gap and end existing sessions; UDP relay payloads are dropped and counted. The port conflict check is per transport, so a TCP server and a UDP-bound server may share a numeric port.
+`SERVER_NOT_FOUND` (exit 5) means the requested server is not configured; `SERVER_EXISTS` (exit 6) means the server name is already configured.
+
+TLS servers with distinguishable SNI/ALPN match keys may share a TCP endpoint. `server add --default` marks a TLS fallback for valid unmatched ClientHellos; a sole TLS server may also be the default. It does not handle malformed or non-TLS input. SNI matching is exact and case-insensitive, ALPN exact and case-sensitive; an absent-SNI key matches only absent SNI except that TrustTunnel without explicit `sni` matches h2 at any SNI. Clients offering ALPNs from both sets fail closed. Overlapping matches are refused even with a default (`SERVER_PORT_AMBIGUOUS`, exit 6); give one of them another `sni`. A missing explicit key uses the hint `set sni on {NAME} or mark it as the default`. Shared members require protocol-declared explicit match keys matching exported links: Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. Explicit `sni` is recommended for certificate-TLS members. A shared server without an explicit usable key must itself be the default. A no-`sni` default link may use host-derived SNI that matches no key and falls back. Same-transport non-sniffable conflicts remain `PORT_IN_USE`. Eligible servers expose `Sniffer.MatchKeys(params)`; the shared ClientHello parser and matcher classify connections, with match keys owned by protocols. TLS peeking is bounded to 64 KiB and 3 seconds; bytes are not logged. Status exposes `members`, `default`, `unclassified` (unmatched/malformed), and `slow_first_byte` counters. TCP and UDP are separate transports; stages 2 (cleartext trial authentication) and 3 (UDP/QUIC ALPN) are not implemented.
+
+```sh
+netivri server add --protocol trojan --name {NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --param sni={TROJAN_SNI} --default
+netivri server add --protocol anytls --name {OTHER_NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --param sni={ANYTLS_SNI}
+```
+
+The examples show two protocols configured on the same port with distinct SNI names; valid configured accounts such as `{ACCOUNT}` must exist before adding either listener.
 
 ### `logs`
 
@@ -904,7 +913,8 @@ an optional array in both short and full views: omitted when no server is
 running. Each item has `name`, `protocol`, `listen`, `accounts` (account login
 array), `connections` (integer active connections), `dropped_clients` (unsigned
 integer count combining clients rejected by allowed-client policy and dropped UDP
-packets). The selection
+packets), plus shared-endpoint `members`, `default`, `unclassified` and
+`slow_first_byte`. The selection
 fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
 
@@ -1290,6 +1300,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ANGEL_STOP_TIMEOUT` | 1 | The angel did not stop within 15 s after `down` |
 | `ANGEL_NOT_RESPONDING` | 1 | `status`, `down` or `up`: the state file names an angel whose control endpoint did not answer within 2 s (busy, for example reloading); retry in a moment. Nothing is removed, stopped or spawned |
 | `PORT_IN_USE` | 6 | Listen port is taken |
+| `SERVER_PORT_AMBIGUOUS` | 6 | A shared TCP port cannot be classified: TLS match keys overlap, or a member that is not the default has no explicit SNI that its link sends (an IP literal is never sent as SNI). Set or change `sni`, or mark one member as the default; a default does not resolve overlapping keys. |
 | `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |
 | `INTERNAL` | 1 | Bug; details in `netivri logs` |
 

@@ -148,6 +148,10 @@ type ServerInfo struct {
 	Accounts       []string `json:"accounts"`
 	Connections    int      `json:"connections"`
 	DroppedClients uint64   `json:"dropped_clients"`
+	Members        []string `json:"members,omitempty"`
+	Default        bool     `json:"default,omitempty"`
+	Unclassified   uint64   `json:"unclassified,omitempty"`
+	SlowFirstByte  uint64   `json:"slow_first_byte,omitempty"`
 }
 
 // Status is the live answer of GET /v1/status.

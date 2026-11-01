@@ -29,6 +29,11 @@ const defaultRealityFlow = "xtls-rprx-vision"
 
 type vlessReality struct{}
 
+func (vlessReality) MatchKeys(params map[string]string) ([]string, []string, bool) {
+	sni, _, explicit := tlsMatchKeyValues(realitySNI(params), "", true)
+	return sni, nil, explicit
+}
+
 func init()                           { Register(vlessReality{}) }
 func (vlessReality) Name() string     { return "vless-reality" }
 func (vlessReality) SingleUser() bool { return false }

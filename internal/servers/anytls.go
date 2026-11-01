@@ -21,6 +21,10 @@ const anyTLSMinPasswordBytes = 24
 
 type anyTLS struct{}
 
+func (anyTLS) MatchKeys(params map[string]string) ([]string, []string, bool) {
+	return tlsMatchKeyValues(params["sni"], params["alpn"], params["sni"] != "")
+}
+
 func init() { Register(anyTLS{}) }
 
 func (anyTLS) Name() string     { return "anytls" }

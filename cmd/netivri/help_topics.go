@@ -80,7 +80,7 @@ var helpExitCodes = []helpExit{
 	{cli.ExitNetwork, "network error (fetching a subscription, diagnosing a node)"},
 	{cli.ExitNoAngel, "the angel is not running (for commands that need it)"},
 	{cli.ExitNotFound, "not found (subscription, account, node, nodes for a country)"},
-	{cli.ExitConflict, "conflict (port in use, angel already running with other settings)"},
+	{cli.ExitConflict, "conflict (port in use, angel already running with other settings, overlapping TLS match keys)"},
 	{cli.ExitCheckFailed, "doctor: at least one check failed (the document on stdout says which)"},
 }
 
@@ -109,24 +109,27 @@ var helpTopics = []helpTopic{
 	},
 	{
 		Name: "server add", Group: groupServer, Summary: "Add a server listener",
-		Usage:       []string{"netivri server add --protocol {PROTOCOL} --account {ACCOUNT} --port {PORT}", "netivri server add [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}]", "netivri server add [--param {KEY=VALUE}]"},
-		Description: "Validates a new endpoint before persistence; then generates secrets and saves config. Default name: ss-{PORT} (Shadowsocks) or {PROTOCOL}-{PORT}. Repeated --param is supported; list/show disclose only keys.",
+		Usage:       []string{"netivri server add --protocol {PROTOCOL} --account {ACCOUNT} --port {PORT}", "netivri server add [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--default]", "netivri server add [--param {KEY=VALUE}]"},
+		Description: "Validates a new endpoint before persistence; then generates secrets and saves config. Default name: ss-{PORT} (Shadowsocks) or {PROTOCOL}-{PORT}. Shared members need protocol-declared explicit match keys matching exported links: Trojan and AnyTLS require sni unless the server is the default; Reality uses sni or a destination-derived servername. TrustTunnel without explicit sni matches h2 at any SNI; with explicit sni, it matches exactly. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. Explicit sni is recommended for certificate-TLS members. --default handles unmatched valid TLS only, never overlaps. Missing-key hint: set sni on {NAME} or mark it as the default. Overlapping keys require changing sni; a default cannot resolve overlap.",
 		Flags: []helpFlag{{"--protocol {PROTOCOL}", "Registered protocol."},
 			{"--account {ACCOUNT}", "Account or * for supported multi-user protocols."},
 			{"--port {PORT}", "Listener port."}, {"--name {NAME}", "Optional name."},
 			{"--bind {ADDR}", "Bind address (default 0.0.0.0)."},
-			{"--public-host {HOST}", "Host embedded in links."}, {"--param {KEY=VALUE}", "Repeat for protocol parameters."}},
-		Examples: []helpExample{{"Add a listener", "netivri server add --protocol shadowsocks --account alice --port 8388"}},
-		Errors:   []helpError{herr("USAGE", cli.ExitUsage, "invalid arguments"), herr("CONFIG_INVALID", cli.ExitUsage, "invalid server configuration or protocol parameters")},
-		SeeAlso:  []string{"server protocols", "server list", "server link"},
+			{"--public-host {HOST}", "Host embedded in links."}, {"--default", "Fallback for valid unmatched TLS; it never resolves overlapping keys."}, {"--param {KEY=VALUE}", "Repeat for protocol parameters."}},
+		Examples: []helpExample{
+			{"Add a TLS listener using host-derived SNI through the shared endpoint default", "netivri server add --protocol trojan --name {NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --default"},
+			{"Add another TLS protocol on the same port with a distinct SNI", "netivri server add --protocol anytls --name {OTHER_NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --param sni={OTHER_SNI}"},
+		},
+		Errors:  []helpError{herr("USAGE", cli.ExitUsage, "invalid arguments"), herr("CONFIG_INVALID", cli.ExitUsage, "invalid server configuration or protocol parameters"), herr("SERVER_PORT_AMBIGUOUS", cli.ExitConflict, "a shared port cannot be classified: TLS match keys overlap, or a member that is not the default has no explicit SNI its link sends (an IP literal is never sent); set or change sni, or mark one member as the default; a default does not resolve overlapping keys")},
+		SeeAlso: []string{"server protocols", "server list", "server link"},
 	},
 	{
 		Name: "server list", Group: groupServer, Summary: "List configured server listeners", Usage: []string{"netivri server list", "netivri server list --json"},
-		Description: "Lists server endpoint configuration without secrets or parameter values; params contains keys only.", Examples: []helpExample{{"List listeners", "netivri server list"}}, SeeAlso: []string{"server show"},
+		Description: "Lists server endpoint configuration without secrets or parameter values; params contains keys only. members lists sorted peers sharing the endpoint; default marks the fallback server.", Examples: []helpExample{{"List listeners", "netivri server list"}}, SeeAlso: []string{"server show"},
 	},
 	{
 		Name: "server show", Group: groupServer, Summary: "Show a server listener", Usage: []string{"netivri server show {NAME}", "netivri server show {NAME} --json"},
-		Description: "Shows a server endpoint without secrets or parameter values; params contains keys only.", Examples: []helpExample{{"Inspect a listener", "netivri server show edge"}}, SeeAlso: []string{"server list", "server link"},
+		Description: "Shows a server endpoint without secrets or parameter values; params contains keys only. members lists sorted peers sharing the endpoint; default marks the fallback server.", Examples: []helpExample{{"Inspect a listener", "netivri server show edge"}}, SeeAlso: []string{"server list", "server link"},
 	},
 	{
 		Name: "server link", Group: groupServer, Summary: "Generate a client link", Usage: []string{"netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}]", "netivri server link {NAME} [--format {uri|mihomo}] [--qr]"},
@@ -182,6 +185,7 @@ var helpTopics = []helpTopic{
 			herr("ALREADY_RUNNING", cli.ExitConflict, "an angel is running and --port or --bind differ, or --foreground was given"),
 			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "an angel is running but did not answer in time; nothing was spawned"),
 			herr("PORT_IN_USE", cli.ExitConflict, "the listen port is taken"),
+			herr("SERVER_PORT_AMBIGUOUS", cli.ExitConflict, "shared TLS match keys overlap; give one of them another SNI. A default cannot resolve the conflict"),
 			herr("AUTH_REQUIRED", cli.ExitUsage, "non-loopback --bind without proxy authentication"),
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account's provider or country has no stored nodes; run 'netivri sub update'"),
 			herr("ANGEL_START_FAILED", cli.ExitInternal, "the angel failed to start; see run/netivri.log in the state directory"),

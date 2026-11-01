@@ -79,7 +79,9 @@ servers: [
 - `name`: 1 to 32 characters of `A-Za-z0-9._-`, unique.
 - `protocol`: a name from the registry (`netivri server protocols`).
 - `bind`: default `0.0.0.0`; `doctor` warns that the port is public.
-- `port`: 1 to 65535, required, unique per bind and transport.
+- `port`: 1 to 65535. Same-transport overlap is rejected except eligible shared TLS TCP endpoints with distinct protocol-owned explicit match keys; overlaps return `SERVER_PORT_AMBIGUOUS`. A shared member without an explicit usable key must be the sole default; a lone exclusive server may omit SNI. TCP and UDP-bound servers may share a port number.
+- `default`: optional boolean, `false` by default; the single valid-unmatched-TLS fallback for a shared TCP endpoint. It never resolves overlapping matches.
+- Shared members must be one of Trojan, AnyTLS, TrustTunnel or VLESS-Reality and provide protocol-declared explicit match keys matching exported links. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap).
 - `accounts`: login list, or `*` for every account (multi-user protocols only; a single-user protocol needs exactly one resolved login). Core resolves `*` before creating a `Spec`; `Spec.Validate` accepts only resolved logins.
 - `public_host`: host name or address carried by links; may be empty, then `server link --host` is required.
 - unknown protocol parameter keys are `CONFIG_INVALID` and identify the key, never its value.
@@ -186,77 +188,43 @@ type Protocol interface {
 - If reconfiguration fails, rollback restores TCP leases and best-effort restores all prior UDP specs. The result reports whether UDP restoration completed or was incomplete.
 - Port conflicts are checked per transport, so TCP and UDP may share a bind and port. Counters are shared across generations of a server name. UDP relay traffic is still dropped and counted; UDP-bound only describes the listener transport.
 
-## One port, several protocols (design, not implemented)
+## One port, several protocols (TLS stage 1 implemented)
 
-Goal: several servers on one TCP port, the protocol chosen from what the client
-sends. Already true today: TCP and UDP are separate port spaces and conflicts are
-checked per transport, so one TCP server and one QUIC server may share a number
-(443/tcp Trojan or Reality plus 443/udp Hysteria2 or TUIC). The rest needs a
-front mux for servers of the same transport.
+TCP endpoints may share a bind and port only when every member is TLS-capable and implements `servers.Sniffer`; TCP and UDP remain separate, and UDP/QUIC sharing is not implemented. Each protocol owns its `Sniffer.MatchKeys(params)` implementation and returns its SNI/ALPN match keys. A shared parser/classifier consumes those keys; protocol-name-specific branching is not centralized classifier logic. The listener peeks without consuming ClientHello bytes, then replays them to the selected protocol listener. The peek is bounded to 64 KiB and 3 seconds; peeked bytes are never logged. Slow/incomplete first bytes and unmatched or malformed ClientHellos are closed and counted as `slow_first_byte` and `unclassified`, respectively. Status entries expose sorted `members`, `default`, `unclassified`, and `slow_first_byte`.
 
-**Where it plugs in.** `internal/core/servers_broker.go` already owns the real
-socket (`socketEndpoint`, one `acceptPump`) and hands every accepted connection to
-the single active lease of the endpoint; protocols only see a `net.Listener`. The
-mux keeps that shape: an endpoint may hold one active lease per server plus a
-classifier; the pump classifies each connection and sends it to exactly one lease.
-Protocols do not change. A server joins a shared endpoint only if its protocol
-implements an optional `Sniffer` (a pure function over the peeked bytes), so
-protocols without one keep exclusive ports.
+Classification uses protocol-declared explicit match keys that must match the exported link. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may send host-derived SNI that matches no configured key and falls back. A default selects only valid unmatched TLS and never resolves overlap. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap).
 
-**Classification pipeline** (per connection, first-byte deadline of a few seconds,
-nothing is consumed: the peeked bytes are replayed to the chosen server):
+`default: true` (or `--default`) is the single fallback for a valid TLS ClientHello that matches no configured set; it never handles malformed or non-TLS input. Overlapping ALPN sets for the same SNI are refused even when a default exists. Config/add errors are `SERVER_PORT_AMBIGUOUS` (exit 6) with a hint to change SNI/ALPN; a default cannot resolve an ambiguous match. Non-sniffable same-transport combinations remain exclusive (`PORT_IN_USE`).
 
-1. TLS ClientHello (`0x16 0x03`): parse SNI and ALPN. A server matches by its
-   `sni` parameter (Reality: its `ServerNames`) and its ALPN set (TrustTunnel: `h2`).
-   Two TLS servers with the same SNI and ALPN cannot be told apart before the
-   handshake is decrypted (Trojan sends 56 hex characters and CRLF first, AnyTLS 32
-   binary bytes, both inside TLS), so `server add` refuses the combination
-   (`SERVER_PORT_AMBIGUOUS`, hint: give one of them another `sni`). One TLS server may
-   be marked the default for a ClientHello that matches no SNI; without a default the
-   connection is closed.
-2. Not TLS: protocols with no cleartext marker (Shadowsocks, VMess, Snell, Sudoku,
-   Mieru) can only be told apart by trial authentication of the first bytes (AEAD
-   length block, VMess auth id inside its time window). Stage 2 allows a short
-   whitelist of such protocols per port, tries them in a fixed order, and closes the
-   connection when none accepts. The cost is a few cheap operations per connection;
-   the risk is that the time to reject differs from a plain server (active probing),
-   so a rejected connection is closed after a fixed minimum delay.
-3. QUIC (UDP): servers on one UDP port are told apart only by the ALPN in the QUIC
-   Initial, which Hysteria2, TUIC and ShadowQUIC mostly share (`h3`): the combination
-   is refused unless the ALPN sets differ.
+Only stage 1 (TLS-family classification) is implemented. Cleartext trial authentication (stage 2) and UDP/QUIC ALPN multiplexing (stage 3) are not implemented.
 
-**Config and CLI.** `server add --port N` with an existing server on N (same
-transport) succeeds only when the combination is classifiable; otherwise it fails
-with `SERVER_PORT_AMBIGUOUS` and a hint. `server list` and `status` show the
-shared endpoint and its members; `doctor` reports sets that stopped being
-classifiable (for example after a certificate or `sni` change). Per-server
-counters stay per server; the mux adds `unclassified` (closed without a match).
+**Where it plugs in.** `internal/core/servers_broker.go` owns the real
+socket (`socketEndpoint`) and one `acceptPump`; the active member map is committed
+atomically, and a failed stage rolls back without disturbing the prior membership.
+The pump classifies each accepted connection and sends it to exactly one lease.
+Protocols only see a `net.Listener`. The shared endpoint classifier uses each protocol's `Sniffer.MatchKeys(params)` to produce SNI/ALPN match keys; one shared ClientHello parser classifies connections. Protocols without match keys keep exclusive ports.
 
-**Stages.** (1) TLS family by SNI and ALPN, including Reality's own fallback to its
-camouflage target for unauthenticated clients. (2) Trial authentication for
-Shadowsocks and VMess. (3) QUIC ALPN where the sets are distinct.
+**Classification pipeline** (per connection; peek is bounded to 64 KiB and 3 seconds, bytes are replayed to the selected listener and never logged):
 
-**Tests.** Unit: the classifier over recorded first-byte fixtures of each protocol
-(real ClientHellos with SNI and ALPN, a Shadowsocks AEAD first chunk, a VMess header,
-garbage, an empty connection, a slow connection). Integration: two or three
-protocols on one port reached by their real Mihomo clients, one reload that moves a
-server in or out of the shared endpoint, a rollback. e2e: the CLI path with real
-binaries.
+1. TLS ClientHello (`0x16 0x03`): each protocol's `Sniffer.MatchKeys(params)` supplies protocol-declared explicit keys matching exported links. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may send host-derived SNI and fall back unmatched. The default handles valid unmatched TLS only; overlapping matches fail with `SERVER_PORT_AMBIGUOUS`; change `sni` to resolve overlap. A missing explicit key uses the hint `set sni on {NAME} or mark it as the default`.
+2. Non-TLS traffic may be trial-authenticated against the configured Shadowsocks and VMess members. Failed trials are rejected after a fixed delay; this stage is planned, not implemented.
+3. QUIC servers sharing a UDP endpoint use their ALPN to classify connections only when the offered protocols are disjoint. Current shared HTTP/3 ALPN use is refused; disjoint-ALPN QUIC multiplexing is planned, not implemented.
 
-**Security notes.** The close behavior of the mux must not reveal the set of
-protocols (unmatched traffic ends like a plain server's); peeked bytes are never
-logged; the peek buffer is bounded; a slowloris client is cut by the first-byte
-deadline and counted.
+Unmatched or malformed ClientHellos are closed and counted in `unclassified`; incomplete/slow first bytes are closed and counted in `slow_first_byte`. These fields, sorted `members`, and the `default` marker are exposed in server status. Same-transport non-sniffable conflicts remain `PORT_IN_USE`.
 
-**Non-goals now.** UDP relay, domain fronting, camouflage beyond Reality's own,
-classification that needs terminating TLS in the front.
+**Tests.** Unit: classifier fixtures including real ClientHellos, malformed/slow input; integration tests exercise shared listeners and rollback; e2e runs only in CI.
+
+**Security notes.** Unmatched traffic is closed without revealing the protocol set; peeked bytes are never logged; a slow first byte is counted and cut off at the deadline.
+
+**Non-goals now.** UDP relay, domain fronting, camouflage beyond Reality's own, classification that needs terminating TLS in the front.
+
 
 ## CLI
 
 ```text
 netivri server protocols [--json]
 netivri server add --protocol P [--name N] --account A|* --port N [--bind ADDR]
-                   [--public-host H] [--param key=value ...] [--json]
+                   [--public-host H] [--default] [--param key=value ...] [--json]
 netivri server list [--json]
 netivri server show NAME [--json]
 netivri server link NAME [--account A] [--host H] [--format uri|mihomo] [--qr]

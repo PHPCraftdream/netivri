@@ -55,16 +55,49 @@ Each server's protocol-specific options are written as flattened keys in the end
 | `servers[].name` | string | required | 1-32 ASCII letters, digits, `.`, `_`, `-`; unique. |
 | `servers[].protocol` | string | required | Must match one of the registered names in [the server index](servers/README.md). |
 | `servers[].bind` | string (IP address) | `0.0.0.0` | Must parse as an IP address. Empty means `0.0.0.0`. |
-| `servers[].port` | integer | required | 1-65535. Config validation and `server add` reject overlapping bind/port pairs of the same transport (`PORT_IN_USE`); a TCP server and a UDP-bound server (Hysteria2, TUIC, ShadowQUIC) may share a port number, and a UDP-bound server may use the proxy port (`listen.port`). |
+| `servers[].port` | integer | required | 1-65535. Same-transport overlap is rejected (`PORT_IN_USE`) except eligible shared TLS TCP endpoints with distinct protocol-owned explicit match keys; overlaps return `SERVER_PORT_AMBIGUOUS`. TCP and UDP-bound servers may share a port number. |
 | `servers[].accounts` | string | required | `*` expands to all configured accounts for multi-user protocols only, or a comma-separated list of unique, existing account logins. Logins are 1-64 ASCII letters, digits, `.`, `_`, `@`, `-`; `init` is reserved. Single-user protocols require exactly one resolved account. |
 | `servers[].public_host` | string | empty | Optional link host. Config accepts a scalar string; `server link` strictly validates the host as a hostname or IP without a port or credentials; `--host` overrides it. |
+| `servers[].default` | boolean | `false` | Marks the single TLS fallback on a shared TCP endpoint for a valid unmatched ClientHello. |
 | `servers[].{PARAMETER}` | string, boolean, integer | protocol-dependent | Protocol-specific option as a flattened Ktav key. Arbitrary unrecognized keys are collected into the Go `Server.Params` map; scalar booleans and integers are converted to strings. Maps, sequences, and floats are rejected. Reserved server field names are not parameters. Values must also pass protocol validation. See each protocol page under [Server protocols](servers/README.md). |
 
-Config validation checks that each explicit account reference exists, and rejects ambiguous overlapping configured endpoints. `server add` validates the complete endpoint before creating secrets. Listener startup failures make `up` fail closed. A failed live restart leaves the angel/control process running; if both replacement and rollback cores fail, status can show `core: "down"` and `reload.last_error`, and the angel retries the prior good configuration with backoff. `allowed_clients`-only changes on an existing account apply hot to server policy without restarting listeners; existing connections survive. This applies for mixed authentication and server endpoints, including when no account route is configured. Global `listen.allowed_clients`, server credentials, account membership, bind and port changes require restart/reconfiguration. A failed server reconfiguration keeps prior servers where possible; UDP restoration after a failed restart is best-effort.
+Shared servers need protocol-declared explicit match keys matching exported links. Trojan and AnyTLS require `sni` unless the server is the default; VLESS-Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. Explicit `sni` is recommended for certificate-TLS shared members. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. A default link without `sni` may use host-derived SNI, remain unmatched, and fall back. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap).
+Listener startup failures make `up` fail closed. A failed live restart leaves the angel/control process running; if both replacement and rollback cores fail, status can show `core: "down"` and `reload.last_error`, and the angel retries the prior good configuration with backoff. `allowed_clients`-only changes on an existing account apply hot to server policy without restarting listeners; existing connections survive. This applies for mixed authentication and server endpoints, including when no account route is configured. Global `listen.allowed_clients`, server credentials, account membership, bind and port changes require restart/reconfiguration. A failed server reconfiguration keeps prior servers where possible; UDP restoration after a failed restart is best-effort.
 
 `allowed_clients` for a server connection is the intersection of global `listen.allowed_clients` and the authenticated account's optional rule; either may deny the peer. See [Allowed clients](#allowed-clients) for the shared rule syntax.
 
-`server add`, `list`, `link`, `rotate` and `remove` examples and parameters are in the [server CLI reference](servers/cli.md). Link output is credential-bearing; it is the only intended output of a generated server secret. The secrets store is written atomically with owner-only permissions. Do not copy links or secret-bearing Mihomo YAML into public logs.
+`server add`, `list`, `link`, `rotate` and `remove` examples and parameters are in the [server CLI reference](servers/cli.md). Shared endpoints require distinct SNI/ALPN matches and allow one `default` fallback; ambiguity is not fixed by declaring a default. Link output is credential-bearing; it is the only intended output of a generated server secret. The secrets store is written atomically with owner-only permissions. Do not copy links or secret-bearing Mihomo YAML into public logs.
+
+This shared configuration example defines its account inline and uses identical bind/port values, distinct valid SNI values, and exactly one default fallback. Alternatively, a shared member without an explicit usable key must itself be the sole default; a lone exclusive server may omit SNI entirely.
+
+```ktav
+accounts: [
+    {
+        login: alice
+        password:: init
+    }
+]
+
+servers: [
+    {
+        name: trojan-edge
+        protocol: trojan
+        bind: 127.0.0.1
+        port: 8443
+        accounts: alice
+        default: true
+        sni: trojan.example.org
+    }
+    {
+        name: anytls-edge
+        protocol: anytls
+        bind: 127.0.0.1
+        port: 8443
+        accounts: alice
+        sni: anytls.example.org
+    }
+]
+```
 
 ## SOCKS5 chain
 

@@ -141,7 +141,7 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 		old = map[string]*serverEntry{}
 	}
 	want := make(map[string]servers.Spec, len(specs))
-	endpoints := map[string]string{}
+	endpoints := map[string][]servers.Spec{}
 	udp := map[string]servers.Protocol{}
 	for _, sp := range specs {
 		if err := sp.Validate(); err != nil {
@@ -161,12 +161,24 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 		}
 		want[sp.Name] = sp.Clone()
 		key := transport + "\x00" + sp.ListenAddress()
-		if name, ok := endpoints[key]; ok {
-			return nil, errors.New("server endpoint conflict: " + name + " and " + sp.Name)
+		endpoints[key] = append(endpoints[key], sp.Clone())
+	}
+	for _, group := range endpoints {
+		if len(group) > 1 {
+			if err := servers.ValidateSharedPort(group); err != nil {
+				return nil, err
+			}
 		}
-		endpoints[key] = sp.Name
 	}
 	stage := s.broker.stage()
+	tcpSpecs := make([]servers.Spec, 0, len(want))
+	for _, sp := range want {
+		p, _ := servers.Lookup(sp.Protocol)
+		if !protocolUDPBound(p) {
+			tcpSpecs = append(tcpSpecs, sp.Clone())
+		}
+	}
+	stage.setServers(tcpSpecs)
 	next := make(map[string]*serverEntry, len(want))
 	policy := newClientPolicy(global, accounts)
 	tx := &serverTransaction{set: s, stage: stage, next: next, old: old, udp: udp, specs: want, tunnel: tunnel, policy: policy}
@@ -185,7 +197,7 @@ func (s *serverSet) prepare(specs []servers.Spec, tunnel C.Tunnel, global []neti
 			e.counters = previous.counters
 		}
 		tw := &serverTunnel{inner: tunnel, entry: e, policy: &s.policy}
-		r, err := p.Start(sp, servers.Env{Tunnel: tw, ListenConfig: stage})
+		r, err := p.Start(sp, servers.Env{Tunnel: tw, ListenConfig: stage.forServer(sp)})
 		if err != nil {
 			if r != nil {
 				_ = r.Close()
@@ -351,7 +363,11 @@ func (s *serverSet) info() []servers.Info {
 	defer s.mu.RUnlock()
 	out := make([]servers.Info, 0, len(s.items))
 	for _, e := range s.items {
-		out = append(out, servers.Info{Name: e.running.Name, Protocol: e.running.Protocol, Listen: e.running.Listen, Accounts: append([]string(nil), e.running.Accounts...), Connections: int(e.counters.connections.Load()), DroppedClients: e.counters.dropped.Load()})
+		info := servers.Info{Name: e.running.Name, Protocol: e.running.Protocol, Listen: e.running.Listen, Accounts: append([]string(nil), e.running.Accounts...), Connections: int(e.counters.connections.Load()), DroppedClients: e.counters.dropped.Load(), Default: e.spec.Default}
+		if !isUDPEntry(e) {
+			info.Members, info.Unclassified, info.SlowFirstByte = s.broker.endpointInfo(e.running.Listen)
+		}
+		out = append(out, info)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out

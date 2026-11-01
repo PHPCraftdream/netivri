@@ -18,6 +18,14 @@ const trusttunnelSecretBytes = 32
 
 type trusttunnelProtocol struct{}
 
+func (trusttunnelProtocol) MatchKeys(params map[string]string) ([]string, []string, bool) {
+	sni, _, explicit := tlsMatchKeyValues(params["sni"], "", params["sni"] != "")
+	if params["sni"] == "" {
+		return nil, []string{"h2"}, true
+	}
+	return sni, []string{"h2"}, explicit
+}
+
 func init()                                  { Register(trusttunnelProtocol{}) }
 func (trusttunnelProtocol) Name() string     { return "trusttunnel" }
 func (trusttunnelProtocol) SingleUser() bool { return false }
