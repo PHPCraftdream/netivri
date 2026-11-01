@@ -177,7 +177,7 @@ func TestE2EShadowQUICLifecycle(t *testing.T) {
 	if wrongErr == nil {
 		t.Fatal("wrong ShadowQUIC secret was accepted")
 	}
-	if netErr, ok := wrongErr.(net.Error); ok && netErr.Timeout() {
+	if e2eShadowQUICTimedOut(wrongErr) {
 		if aliceUp.count.Load() != beforeA || bobUp.count.Load() != beforeB {
 			t.Fatal("wrong-secret probe reached a recorder")
 		}
@@ -205,7 +205,7 @@ func TestE2EShadowQUICLifecycle(t *testing.T) {
 		if aliceUp.count.Load() != oldAliceCount || bobUp.count.Load() != oldBobCount {
 			t.Fatal("old-secret probe reached a recorder")
 		}
-	} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+	} else if e2eShadowQUICTimedOut(err) {
 		if aliceUp.count.Load() != oldAliceCount || bobUp.count.Load() != oldBobCount {
 			t.Fatal("old-secret probe reached a recorder")
 		}
@@ -472,6 +472,17 @@ func e2eShadowQUICProbe(parent context.Context, port int, user, password, target
 	}
 	return nil
 }
+// e2eShadowQUICTimedOut reports a deadline or a network timeout anywhere in a
+// (possibly joined) error: the silent drop of JLS shows up as one.
+func e2eShadowQUICTimedOut(err error) bool {
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "timeout") || strings.Contains(text, "no recent network activity") || strings.Contains(text, "deadline exceeded")
+}
+
 func e2eShadowQUICRejected(err error) bool {
 	if err == nil {
 		return false
