@@ -932,7 +932,8 @@ var helpTopics = []helpTopic{
 			"down with that failure, in which case the angel re-binds and retries once on the node it now " +
 			"selects. Once a node is down, new connections skip it and existing bindings to it re-bind to the " +
 			"next up node or tier; the node comes back as soon as a probe or a dial succeeds. A down node is " +
-			"probed with growing pauses: the probe interval doubles twice (base, 2x, 4x) and then caps.\n\n" +
+			"probed with growing pauses: the probe interval doubles twice (base, 2x, 4x) and then caps. A fallback node that carries no traffic " +
+			"is probed every 3 minutes while it answers, and a server that two providers list identically is probed once.\n\n" +
 			"An account is created with the password placeholder init: the first client that authenticates with " +
 			"that login claims it, and the angel stores the argon2id hash of the password it sent. A client from " +
 			"an address the allowed_clients rules refuse is turned away before the password is checked, so a " +

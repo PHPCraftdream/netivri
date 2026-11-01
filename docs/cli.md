@@ -1003,7 +1003,9 @@ the watch never removes the state file. `--watch` cannot be combined with
 exit country): background probes of every node proxy through the node itself,
 every 45 seconds (a node that stays down is probed less and less often:
 45 s, 90 s, 3 m, then every 10 minutes, until a probe or a real dial
-succeeds again). The short view carries only the summary
+succeeds again; a fallback node that carries no traffic is probed every 3 minutes
+while it answers; a server that two providers or two accounts list identically is
+probed once). The short view carries only the summary
 `{"alive", "total", "probes", "probe_failures"}`: how many of the `total`
 nodes' last probe succeeded, and how many probes ran and failed. With
 `--full`, `warm` has the counters

@@ -10,6 +10,15 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **Fewer, faster node probes.** A round probes up to 24 nodes at once (was 8),
+  so a round over three dozen nodes in a dead network ends inside one probe
+  interval instead of after 75 s. A fallback node that carries no traffic (a
+  worse tier, with a better node up) is probed every 3 minutes while it
+  answers, which also quiets its flapping lines; a failed probe, traffic, or
+  the better tier going down puts it back on 45 s. A server that two providers
+  list with identical settings, or one node of two accounts, is probed once and
+  the result is recorded for each.
+
 - **The log says which stage of a route failed.** For a route with a `pre_socks5`
   or `post_socks5` hop, the failed dials of a minute are one line per stage
   (`account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`,

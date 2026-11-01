@@ -230,6 +230,18 @@ of a node is 45 s while it is not down, then 45 s, 90 s, 3 m and every
 10 minutes (cap) over its consecutive down probes. The first success of
 any kind (probe or real dial) resets it to 45 s.
 
+Two more things spare the probes. A fallback node (a member of a worse tier
+than the best of its route) that has carried no traffic for 5 minutes, while
+some better node of the route is up, is probed every fourth interval (3 m)
+after a probe that answered; a failed probe, a better tier going down, traffic
+or a wake-up probe (`ProbeNow`) puts it back on the 45 s interval. And members
+that are the same node reached the same way share one probe: the key is a hash
+of the node's settings without its name plus the route's pre and post hop, so
+one server listed by two providers, or one node of two accounts, is probed once
+and the result is recorded for each member (`memberProbeKeys`,
+`WarmOptions.Same`). A node that differs in any setting, or in a hop, is
+probed on its own.
+
 A failed probe is confirmed before it counts (`WarmOptions.ConfirmProbe`, on
 in the angel): it is retried at once against `ConfirmURL`
 (`http://cp.cloudflare.com/generate_204`, or the probe URL itself when that
@@ -240,7 +252,9 @@ failed probe. Why: on the author's nodes real dials succeeded 100% (3486 and
 9347 dials) while probes put the busiest exit at 93.6% uptime, so a single
 target at 5 s blamed working nodes and moved their traffic to a fallback tier.
 A confirmation costs a failing node up to 15 s of one probe slot per round,
-which `ProbeConcurrency` (8) absorbs.
+which `ProbeConcurrency` (24) absorbs: a round over 36 nodes in a dead network
+(every probe and its confirmation timing out, 15 s each) takes two waves, 30 s,
+inside one probe interval (with 8 it took 75 s, longer than the interval).
 
 Selection for a new binding: candidates are the members that are not down
 and have a delay; if there are none, the members that are not down; if there
@@ -324,7 +338,9 @@ type AffinityStats struct {
 }
 
 // WarmOptions gains (warm.go):
-ProbeConcurrency int // 0 = 8; probes of one round run this many at a time
+ProbeConcurrency int // 0 = 24; probes of one round run this many at a time
+Idle func(name string) bool // fallback node with no traffic: probed every 4th interval while it answers
+Same func(name string) string // names with one key are one node reached the same way: probed once
 ConfirmProbe bool // retry a failed probe against ConfirmURL with ConfirmTimeout; only a failure of both counts
 ConfirmURL string // "" = cloudflare generate_204, or ProbeURL when it is not the default
 ConfirmTimeout time.Duration // 0 = 2 x ProbeTimeout
