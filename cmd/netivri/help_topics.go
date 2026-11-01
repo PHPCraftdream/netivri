@@ -117,8 +117,8 @@ var helpTopics = []helpTopic{
 			{"--bind {ADDR}", "Bind address (default 0.0.0.0)."},
 			{"--public-host {HOST}", "Host embedded in links."}, {"--default", "Fallback for valid unmatched TLS; it never resolves overlapping keys."}, {"--param {KEY=VALUE}", "Repeat for protocol parameters."}},
 		Examples: []helpExample{
-			{"Add a TLS listener using host-derived SNI through the shared endpoint default", "netivri server add --protocol trojan --name {NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --default"},
-			{"Add another TLS protocol on the same port with a distinct SNI", "netivri server add --protocol anytls --name {OTHER_NAME} --account {ACCOUNT} --port {PORT} --bind 127.0.0.1 --param sni={OTHER_SNI}"},
+			{"Add a TLS listener using host-derived SNI through the shared endpoint default", "netivri server add --protocol trojan --name {NAME} --account {ACCOUNT} --port {PORT} --default"},
+			{"Add another TLS protocol on the same port with a distinct SNI", "netivri server add --protocol anytls --account {ACCOUNT} --port {PORT} --param sni={SNI}"},
 		},
 		Errors:  []helpError{herr("USAGE", cli.ExitUsage, "invalid arguments"), herr("CONFIG_INVALID", cli.ExitUsage, "invalid server configuration or protocol parameters"), herr("SERVER_PORT_AMBIGUOUS", cli.ExitConflict, "a shared port cannot be classified: TLS match keys overlap, or a member that is not the default has no explicit SNI its link sends (an IP literal is never sent); set or change sni, or mark one member as the default; a default does not resolve overlapping keys")},
 		SeeAlso: []string{"server protocols", "server list", "server link"},

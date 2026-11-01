@@ -5,7 +5,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
@@ -98,11 +97,10 @@ func validateServers(c *Config) error {
 			}
 			prev := &c.Servers[prevEntry.index]
 			pp, _ := servers.Lookup(prev.Protocol)
-			if bind != prevEntry.bind {
-				return &cli.Error{Code: "PORT_IN_USE", Message: "overlapping bind addresses cannot share a server socket", Exit: cli.ExitConflict}
-			}
-			if udp || !hasSniffer(p) || !hasSniffer(pp) {
-				return &cli.Error{Code: "PORT_IN_USE", Message: "server endpoint is already in use", Exit: cli.ExitConflict}
+			// Only an exact endpoint of sniffable TCP protocols can be shared;
+			// every other overlap is the old duplicate-endpoint error.
+			if bind != prevEntry.bind || udp || !hasSniffer(p) || !hasSniffer(pp) {
+				return invalid("%s duplicates servers[%d] endpoint", field("port"), prevEntry.index)
 			}
 			if err := servers.ValidateSharedPort([]servers.Spec{
 				{Name: prev.Name, Protocol: prev.Protocol, Bind: bind, Port: prev.Port, Default: prev.Default, Params: prev.Params},
