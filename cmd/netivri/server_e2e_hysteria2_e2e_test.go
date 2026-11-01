@@ -220,6 +220,16 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	if aliceUp.count.Load() != beforeAlice || bobUp.count.Load() != beforeBob {
 		e2eHysteria2Failure(t, homeA, homeB, secrets, "restricted route recorder", io.ErrUnexpectedEOF)
 	}
+	// A dead route backs off probes (45s base, lengthened per failure); restarting B clears its cached dead-node state.
+	restartB := func() {
+		if code, stdout, errout := accountsRun(t, homeB, "down"); code != 0 && !e2eHysteria2AngelNotRunning(stdout, errout) {
+			t.Fatalf("client angel down: %s", serverErrorSummary(stdout, errout))
+		}
+		angelB.Stop()
+		angelB = startUp(t, homeB, "--port", "0")
+		trackAngel(angelB)
+	}
+	restartB()
 	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"bob", bobEcho, bobUp, aliceUp}})
 	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
 	if code != 0 {
@@ -227,6 +237,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	}
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 4)
+	restartB()
 	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"alice", aliceEcho, aliceUp, bobUp}, {"bob", bobEcho, bobUp, aliceUp}})
 	aliceLink, bobLink := link("alice"), link("bob")
 	code, out, stderr = accountsRun(t, homeA, "down")
@@ -238,6 +249,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	angelA = startUp(t, homeA, "--port", "0")
 	trackAngel(angelA)
 	e2eHysteria2WaitStatus(t, ctx, homeA, "edge", "hysteria2", true)
+	restartB()
 	if link("alice") != aliceLink || link("bob") != bobLink {
 		t.Fatal("server links changed across restart")
 	}
@@ -261,7 +273,7 @@ type e2eHysteria2Echo struct {
 
 func e2eHysteria2RetryEchoes(t *testing.T, parent context.Context, proxy, password string, secrets []string, homeA, homeB string, checks []e2eHysteria2Echo) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	for _, check := range checks {
 		beforeOwn, beforeOther := check.own.count.Load(), check.other.count.Load()
@@ -405,14 +417,6 @@ statusLoop:
 		case <-ticker.C:
 		}
 	}
-	if !full {
-		code, stdout, stderr, err := angelExec(home, "logs", "--since", "2m", "--tail", "20", "--json")
-		if err != nil || code != 0 {
-			t.Logf("diagnostic logs (%s): %s", home, e2eHysteria2Sanitize(stderr, secrets))
-		} else {
-			t.Logf("diagnostic logs (%s): %s", home, e2eHysteria2Logs(stdout, secrets))
-		}
-	}
 }
 
 func e2eHysteria2Status(raw string, full bool, secrets []string) string {
@@ -425,9 +429,12 @@ func e2eHysteria2Status(raw string, full bool, secrets []string) string {
 				Dropped     uint64 `json:"dropped_clients"`
 			} `json:"servers"`
 			Warm struct {
-				Alive int `json:"alive"`
-				Total int `json:"total"`
-				Nodes []struct {
+				Alive         int    `json:"alive"`
+				Total         int    `json:"total"`
+				Probes        uint64 `json:"probes"`
+				ProbeFailures uint64 `json:"probe_failures"`
+				PoolDiscards  uint64 `json:"pool_discards"`
+				Nodes         []struct {
 					Label   string `json:"label"`
 					Name    string `json:"name"`
 					Alive   bool   `json:"alive"`
@@ -443,32 +450,9 @@ func e2eHysteria2Status(raw string, full bool, secrets []string) string {
 	out := "servers=" + string(data)
 	if full {
 		nodes, _ := json.Marshal(envelope.Data.Warm.Nodes)
-		out += fmt.Sprintf(" warm.alive=%d warm.total=%d nodes.alive=%s", envelope.Data.Warm.Alive, envelope.Data.Warm.Total, nodes)
+		out += fmt.Sprintf(" warm.alive=%d warm.total=%d warm.probes=%d warm.probe_failures=%d warm.pool_discards=%d nodes.alive=%s", envelope.Data.Warm.Alive, envelope.Data.Warm.Total, envelope.Data.Warm.Probes, envelope.Data.Warm.ProbeFailures, envelope.Data.Warm.PoolDiscards, nodes)
 	}
 	return e2eHysteria2Sanitize(out, secrets)
-}
-
-func e2eHysteria2Logs(raw string, secrets []string) string {
-	var envelope struct {
-		Data struct {
-			Entries []struct {
-				Time    string `json:"time"`
-				Level   string `json:"level"`
-				Message string `json:"message"`
-			} `json:"entries"`
-		} `json:"data"`
-	}
-	if json.Unmarshal([]byte(raw), &envelope) != nil {
-		return "log entries unavailable"
-	}
-	lines := make([]string, 0, len(envelope.Data.Entries))
-	for _, entry := range envelope.Data.Entries {
-		line := entry.Time + " " + entry.Level + " " + entry.Message
-		if !strings.Contains(line, "://") {
-			lines = append(lines, e2eHysteria2Sanitize(line, secrets))
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 func e2eHysteria2Sanitize(s string, secrets []string) string {
