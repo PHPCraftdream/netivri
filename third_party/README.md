@@ -71,3 +71,11 @@
    `UpdateProxies`) while dials look their `dialer-proxy` up, which is the
    SOCKS5 chain's pre and post hop; upstream never replaced it while
    serving. The race detector found it in `TestSOCKS5PreReconfigureKeepsOpenConnection`.
+6. **Atomic Vision state** (`transport/vless/vision/conn.go`,
+   `transport/vless/vision/netivri_atomic.go`): `readLastCommand` and
+   `writeDirect` are `atomic` values. `Upstream()` runs on the relay goroutine
+   (it picks the MTU of the reader) while `ReadBuffer` and `WriteBuffer` update
+   the two fields on the connection's own read and write goroutines; upstream
+   has no synchronization there. The race detector found it on macOS in
+   `TestVlessRealityServerRoutesAndRejectsInvalidCredentials`. Behaviour is
+   otherwise unchanged.
