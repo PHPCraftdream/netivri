@@ -448,10 +448,12 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Only the angel child has a log; a foreground run stays silent on stderr.
+	// Only the angel child has a log; a foreground run stays silent on stderr
+	// unless NETIVRI_LOG_STDERR is set.
+	logToStderr := opts.Handshake != "" || foregroundLogRequested()
 	leveled := func(write func(string, ...any)) func(string, ...any) {
 		return func(format string, args ...any) {
-			if opts.Handshake != "" {
+			if logToStderr {
 				write(format, args...)
 			}
 		}

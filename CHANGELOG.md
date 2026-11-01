@@ -10,6 +10,7 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Angel log on stderr for a foreground run.** `NETIVRI_LOG_STDERR=1 netivri up --foreground` writes the angel log (debug level included) to stderr; without the variable a foreground run stays silent. The e2e tests set it, so a failed run shows what the angel did.
 - **Protocol servers and account routing.** Add and manage anytls, hysteria2,
   mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic,
   vless-reality and vmess listeners with `netivri server` CLI commands. Each

@@ -167,7 +167,7 @@ var helpTopics = []helpTopic{
 		Flags: []helpFlag{
 			{"--port {N}", "Local port, default 7890. 0 takes any free port; the chosen address is in the output (listen)."},
 			{"--bind {ADDR}", "Address to listen on, default 127.0.0.1. Anything but loopback needs proxy authentication (an account, or auth.login and auth.password in config.ktav; an init password also needs auth.allow_init_remote: true), otherwise up fails with AUTH_REQUIRED."},
-			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when an angel is running."},
+			{"--foreground", "Run in this terminal until Ctrl+C or 'netivri down'. Prints one document when ready. Fails with ALREADY_RUNNING when an angel is running. Silent on stderr unless NETIVRI_LOG_STDERR=1, which writes the angel log there."},
 			{"--home {DIR}", "State directory (see the global flags in 'netivri help')."},
 			{"--local", "Use ./.netivri in the current directory as the state directory, creating it; a separate angel with its own settings. A new directory has the default port 7890, so give it --port when another angel uses that."},
 		},
@@ -175,6 +175,7 @@ var helpTopics = []helpTopic{
 			{"Start in the background on 127.0.0.1:7890", "netivri up"},
 			{"Take any free port and read it from the output", "netivri up --port 0"},
 			{"Run in the foreground, for example under a service manager", "netivri up --foreground"},
+			{"Run in the foreground and see the angel log on stderr", "NETIVRI_LOG_STDERR=1 netivri up --foreground"},
 			{"Keep a separate profile with its own config, subscriptions and statistics", "netivri up --home ./work-profile"},
 			{"A separate copy in this directory (./.netivri), on any free port, next to your usual one", "netivri up --local --port 0"},
 			{"Then, from the same directory, with no flag (the directory is found on its own)", "netivri status"},
