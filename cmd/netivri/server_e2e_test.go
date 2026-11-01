@@ -43,9 +43,9 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	accountsClient(t, serverAngel.Status().Data.Listen, "alice", pass, backend)
 
 	port := freePort(t)
-	code, out, stderr := serverRun(t, homeA, "add", "--protocol", "shadowsocks", "--name", "edge", "--account", "alice", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "127.0.0.1", "--param", "cipher=aes-128-gcm")
+	code, out, stderr := serverRun(t, homeA, "add", "--protocol", "shadowsocks", "--name", "edge", "--account", "alice", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1", "--param", "cipher=aes-128-gcm")
 	if code != 0 {
-		t.Fatalf("server add failed (exit %d)", code)
+		t.Fatalf("server add failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, pass)
 	waitStatusReload(t, ctx, homeA, 1)
@@ -53,9 +53,9 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 
 	link := func() string {
 		t.Helper()
-		code, out, _ := serverRun(t, homeA, "link", "edge", "--format", "uri")
+		code, out, stderr := serverRun(t, homeA, "link", "edge", "--format", "uri")
 		if code != 0 {
-			t.Fatalf("server link failed (exit %d)", code)
+			t.Fatalf("server link failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 		}
 		var env struct {
 			OK   bool `json:"ok"`
@@ -89,13 +89,13 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	go func() { defer close(serveDone); _ = subServer.Serve(subListener) }()
 
 	homeB := t.TempDir()
-	code, _, _ = accountsRun(t, homeB, "sub", "add", "http://"+subListener.Addr().String()+"/subscription", "--name", "edge")
+	code, out, stderr = accountsRun(t, homeB, "sub", "add", "http://"+subListener.Addr().String()+"/subscription", "--name", "edge")
 	if code != 0 {
-		t.Fatalf("local subscription add failed (exit %d)", code)
+		t.Fatalf("local subscription add failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
-	code, _, _ = accountsRun(t, homeB, "account", "add", "alice", "--provider", "edge")
+	code, out, stderr = accountsRun(t, homeB, "account", "add", "alice", "--provider", "edge")
 	if code != 0 {
-		t.Fatalf("client account add failed (exit %d)", code)
+		t.Fatalf("client account add failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
 	clientAngel := startUp(t, homeB, "--port", "0")
 	drive := func() {
@@ -117,7 +117,7 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	}
 	code, out, stderr = serverRun(t, homeA, "rotate", "edge", "--account", "alice")
 	if code != 0 {
-		t.Fatalf("server rotate failed (exit %d)", code)
+		t.Fatalf("server rotate failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, pass)
 	waitStatusReload(t, ctx, homeA, 2)
@@ -128,16 +128,16 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	mu.Lock()
 	body = []byte(link() + "\n")
 	mu.Unlock()
-	code, _, _ = accountsRun(t, homeB, "sub", "update", "edge")
+	code, out, stderr = accountsRun(t, homeB, "sub", "update", "edge")
 	if code != 0 {
-		t.Fatalf("subscription update failed (exit %d)", code)
+		t.Fatalf("subscription update failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
 	waitStatusReload(t, ctx, homeB, 1)
 	drive()
 
 	code, out, stderr = serverRun(t, homeA, "remove", "edge")
 	if code != 0 {
-		t.Fatalf("server remove failed (exit %d)", code)
+		t.Fatalf("server remove failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, pass)
 	waitStatusReload(t, ctx, homeA, 3)
@@ -159,7 +159,7 @@ func waitServerStatus(t *testing.T, ctx context.Context, home string, wantPresen
 	for {
 		code, out, stderr := accountsRun(t, home, "status")
 		if code != 0 {
-			t.Fatalf("status failed (exit %d)", code)
+			t.Fatalf("status failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 		}
 		var env struct {
 			Data struct {
