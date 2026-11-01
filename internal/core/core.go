@@ -322,6 +322,9 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 				return generatedMemberName(name) && tracked
 			}
 			wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
+			wo.Idle = fallbackIdle(plans, health)
+			keys := memberProbeKeys(plans, o)
+			wo.Same = func(name string) string { return keys[name] }
 		} else if o.Node != nil || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
 			// MATCH traffic leaves through the global post when there is one
 			// (behind the default node, if any): probe that whole chain.

@@ -315,6 +315,12 @@ func (h *nodeHealth) trafficAlive() bool {
 	return last != 0 && h.clock().UnixNano()-last < int64(trafficAliveFor)
 }
 
+// idleFor reports whether no data has come back through the node for d.
+func (h *nodeHealth) idleFor(d time.Duration) bool {
+	last := h.lastTraffic.Load()
+	return last == 0 || h.clock().UnixNano()-last >= int64(d)
+}
+
 func (h *nodeHealth) recordProbe(alive bool, delay time.Duration) {
 	h.mu.Lock()
 	changed := h.applyProbe(alive, delay)

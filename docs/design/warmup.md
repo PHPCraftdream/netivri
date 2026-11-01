@@ -450,7 +450,9 @@ counters and `warm.nodes` behind `--full`; the default short view shows only
 the `alive`/`total`/`probes`/`probe_failures` summary).
 
 A round probes its nodes concurrently, at most `ProbeConcurrency` at a time
-(default 8). A node that failed twice in a row is skipped in the following
+(default 24). A fallback node without traffic is probed every fourth interval
+and members that are one node share one probe, see docs/design/node-stats.md.
+A node that failed twice in a row is skipped in the following
 rounds, one more round after each further failure up to three, and is probed
 every round again after one success. `WarmOptions.OnProbe` receives every
 result (internal proxy name, success, delay); a probe cut short by shutdown is

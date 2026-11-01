@@ -166,6 +166,9 @@ func (i *Instance) Reconfigure(o Options) error {
 		wo.OnProbeError = probeErrorHook(nameToLabel, health, o.Warm.OnProbeError)
 		wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
 		wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
+		wo.Idle = fallbackIdle(plans, health)
+		keys := memberProbeKeys(plans, o)
+		wo.Same = func(name string) string { return keys[name] }
 		wo.seed = backoff
 		if warm, err = startWarm(wo, nil); err != nil {
 			return err

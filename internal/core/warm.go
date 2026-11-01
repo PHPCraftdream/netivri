@@ -27,8 +27,14 @@ const (
 	defaultConfirmURL = "http://cp.cloudflare.com/generate_204"
 	defaultPoolTTL    = 30 * time.Second
 
-	// defaultProbeConcurrency bounds the probes of one round.
-	defaultProbeConcurrency = 8
+	// defaultProbeConcurrency bounds the probes of one round. Sized so that a
+	// round over a few dozen nodes in a dead network (a probe and its confirm
+	// take 15 s) ends inside one probe interval.
+	defaultProbeConcurrency = 24
+
+	// idleProbeFactor is how many probe intervals an idle node waits between
+	// two successful probes, see WarmOptions.Idle.
+	idleProbeFactor = 4
 )
 
 // WarmOptions configures periodic node probes and the optional raw TCP pool.
@@ -64,6 +70,18 @@ type WarmOptions struct {
 	// lengthened interval (probeBackoffInterval). Start sets it from the
 	// sticky health table.
 	Down func(name string) bool
+	// Idle, when set, reports whether the node behind an internal proxy name
+	// carries no traffic and has better nodes to fall back from, such as a
+	// fallback tier: such a node is probed every idleProbeFactor intervals
+	// after a probe that succeeded, and at the usual interval while its probes
+	// fail. Start sets it from the route plans.
+	Idle func(name string) bool
+	// Same, when set, gives a key to a probed proxy name: names with the same
+	// key are one node reached the same way (the same server and settings from
+	// two providers, or one node of two accounts), so a round probes one of them
+	// and records its result for all. "" probes the name alone. Start sets it
+	// from the route plans.
+	Same func(name string) string
 
 	// only, when set, limits the probed proxies to the names it accepts;
 	// seed is the probe schedule each name starts with. Reconfigure sets both,
@@ -337,10 +355,6 @@ func (w *warmer) probeAll(parent context.Context) {
 	if concurrency <= 0 {
 		concurrency = defaultProbeConcurrency
 	}
-	type scheduled struct {
-		proxy C.Proxy
-		index int
-	}
 	now := w.clock.Now()
 	w.mu.Lock()
 	if len(w.backoff) != len(w.proxies) {
@@ -368,10 +382,11 @@ func (w *warmer) probeAll(parent context.Context) {
 	}
 	w.mu.Unlock()
 
+	groups := w.groupDue(due)
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 schedule:
-	for _, item := range due {
+	for _, group := range groups {
 		select {
 		case sem <- struct{}{}:
 		case <-parent.Done():
@@ -384,18 +399,71 @@ schedule:
 			break schedule
 		}
 		wg.Add(1)
-		go func(p C.Proxy, index int) {
+		go func(group []scheduled) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			w.probeOne(parent, p, index)
-		}(item.proxy, item.index)
+			w.probeGroup(parent, group)
+		}(group)
 	}
 	wg.Wait()
 }
 
-// probeOne runs a single probe and records its result. OnProbe runs
-// outside w.mu, from the probing goroutine.
+// scheduled is a proxy that is due in a round and its index in w.proxies.
+type scheduled struct {
+	proxy C.Proxy
+	index int
+}
+
+// groupDue splits the proxies due in a round into groups that share one
+// probe (WarmOptions.Same), in the order of their first member.
+func (w *warmer) groupDue(due []scheduled) [][]scheduled {
+	if w.options.Same == nil {
+		groups := make([][]scheduled, len(due))
+		for i, item := range due {
+			groups[i] = []scheduled{item}
+		}
+		return groups
+	}
+	var groups [][]scheduled
+	at := make(map[string]int)
+	for _, item := range due {
+		key := w.options.Same(item.proxy.Name())
+		if key == "" {
+			groups = append(groups, []scheduled{item})
+			continue
+		}
+		if g, ok := at[key]; ok {
+			groups[g] = append(groups[g], item)
+			continue
+		}
+		at[key] = len(groups)
+		groups = append(groups, []scheduled{item})
+	}
+	return groups
+}
+
+// probeGroup probes the first member of a group and records the result for
+// every member.
+func (w *warmer) probeGroup(parent context.Context, group []scheduled) {
+	measured, ok, err := w.measure(parent, group[0].proxy)
+	if !ok {
+		return
+	}
+	for _, item := range group {
+		w.record(item.proxy, item.index, measured, err)
+	}
+}
+
+// probeOne runs a single probe and records its result.
 func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
+	if measured, ok, err := w.measure(parent, p); ok {
+		w.record(p, index, measured, err)
+	}
+}
+
+// measure runs one probe, with its confirming probe when that is on. ok is
+// false when shutdown interrupted it, which says nothing about the node.
+func (w *warmer) measure(parent context.Context, p C.Proxy) (measured time.Duration, ok bool, err error) {
 	ctx, cancel := context.WithTimeout(parent, w.options.ProbeTimeout)
 	delay, err := w.probe(ctx, p, w.options.ProbeURL)
 	cancel()
@@ -407,16 +475,27 @@ func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
 		cancel()
 	}
 	if parent.Err() != nil {
-		// Shutdown interrupted the probe: that says nothing about the node.
-		return
+		return 0, false, nil
 	}
-	now := w.clock.Now()
-	w.probeCount.Add(1)
-	var measured time.Duration
 	if err == nil {
 		measured = time.Duration(delay) * time.Millisecond
-	} else {
+	}
+	return measured, true, err
+}
+
+// record stores the result of a probe of p and reports it. OnProbe runs
+// outside w.mu, from the probing goroutine.
+func (w *warmer) record(p C.Proxy, index int, measured time.Duration, err error) {
+	now := w.clock.Now()
+	w.probeCount.Add(1)
+	if err != nil {
 		w.probeFailures.Add(1)
+	}
+	// An idle node is probed less often once it answers, with half an interval
+	// of slack so the tick that falls on the due time is not missed.
+	var next probeSchedule
+	if err == nil && w.options.Idle != nil && w.options.Idle(p.Name()) {
+		next.nextDue = now.Add(idleProbeFactor*w.options.ProbeInterval - w.options.ProbeInterval/2)
 	}
 	w.mu.Lock()
 	w.stats.LastProbe = now
@@ -431,8 +510,8 @@ func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
 		h.Delay = measured
 	}
 	if index >= 0 && index < len(w.backoff) && err == nil {
-		// Success: back to the base interval (probeSchedule zero value).
-		w.backoff[index] = probeSchedule{}
+		// Success: back to the base interval (the zero value), or the idle one.
+		w.backoff[index] = next
 	}
 	w.mu.Unlock()
 	if err != nil && w.options.OnProbeError != nil {
