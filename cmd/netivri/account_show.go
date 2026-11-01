@@ -76,12 +76,16 @@ func accountShow(home string, cfg *config.Config, rest []string, stdout io.Write
 	if err != nil {
 		return err
 	}
+	if effectiveExit(a) == "direct" {
+		tiers = []accountShowTier{}
+	}
 	live := accountShowLive(context.Background(), home, login, tiers)
 	info := infoForAccount(cfg, a)
 	cli.Success(stdout, map[string]any{
 		"login":        a.Login,
 		"provider":     a.Provider,
 		"exit_country": a.ExitCountry,
+		"exit":         effectiveExit(a),
 		"pre_socks5":   showChainInfoForAccount(info.PreSOCKS5),
 		"post_socks5":  showChainInfoForAccount(info.PostSOCKS5),
 		"providers":    providers,

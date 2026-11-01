@@ -45,6 +45,9 @@ func credentialRouteKey(providers, countries, pre, post string) string {
 func snapshotDemand(accounts []config.Account) (all bool, named map[string]bool) {
 	named = make(map[string]bool)
 	for _, a := range accounts {
+		if a.Exit == "direct" {
+			continue
+		}
 		providers, countries := routeLists(a)
 		if len(providers) == 0 && len(countries) == 0 {
 			continue
@@ -178,16 +181,21 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 	for _, a := range accounts {
 		providers, countries := routeLists(a)
 		pre, post := inheritChain(a.PreSOCKS5, globalPre), inheritChain(a.PostSOCKS5, globalPost)
-		direct := len(providers) == 0 && len(countries) == 0
+		direct := a.Exit == "direct" || (len(providers) == 0 && len(countries) == 0)
+		if a.Exit == "direct" {
+			pre = "none"
+		}
 		key := credentialRouteKey(config.JoinList(providers), config.JoinList(countries), pre, post)
 		if direct {
-			// Preserve the implicit plain-direct default. An explicit post
-			// chain, including an account-level "none" overriding a global post,
-			// needs a route to bypass MATCH.
-			if post == "" || (strings.EqualFold(post, "none") && !(strings.EqualFold(a.PostSOCKS5, "none") && globalPost != "" && !strings.EqualFold(globalPost, "none"))) {
+			// Keep implicit default-direct behavior unchanged. Explicit direct
+			// accounts get distinct keys based on their effective post hop.
+			if a.Exit != "direct" && (post == "" || (strings.EqualFold(post, "none") && !(strings.EqualFold(a.PostSOCKS5, "none") && globalPost != "" && !strings.EqualFold(globalPost, "none")))) {
 				continue
 			}
 			pre = "none"
+			if a.Exit == "direct" && post == "" {
+				post = "none"
+			}
 			key = credentialRouteKey("", "", pre, post)
 		}
 		pool.accountRoutes[a.Login] = key
@@ -208,6 +216,8 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 	for _, d := range wanted {
 		pool.routePre[d.key], pool.routePost[d.key] = d.pre, d.post
 		if d.direct {
+			pool.routePre[d.key] = "none"
+			pool.routePost[d.key] = d.post
 			continue
 		}
 		// Each group is the set of providers that share a tier.
@@ -411,8 +421,7 @@ func statusAccountChain(accountPre, accountPost, globalPre, globalPost string) *
 }
 
 // accountStatus lists the configured accounts for the status answer,
-// sorted by login. The country comes from the live route key's second field;
-// a credential hash, when present, is a separate third field.
+// sorted by login. Exit reports the effective explicit/default mode.
 func accountStatus(cfg *config.Config, routes map[string]string) []angel.AccountInfo {
 	out := make([]angel.AccountInfo, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
@@ -425,8 +434,12 @@ func accountStatus(cfg *config.Config, routes map[string]string) []angel.Account
 		}
 		// No normalization: an account without its own rule reports "" here, like
 		// in `account list`.
-		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, AllowedClients: a.AllowedClients,
-			Chain: statusAccountChain(a.PreSOCKS5, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)})
+		pre := a.PreSOCKS5
+		if a.Exit == "direct" {
+			pre = "none"
+		}
+		chain := statusAccountChain(pre, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
+		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, Exit: effectiveExit(&a), AllowedClients: a.AllowedClients, Chain: chain})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
 	return out

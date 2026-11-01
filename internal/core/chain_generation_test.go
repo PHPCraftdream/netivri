@@ -79,39 +79,24 @@ func TestGenerationNamesMatchMappingsPlansLabelsAndWarmLeaves(t *testing.T) {
 	}
 }
 
-func TestDirectPostRoutePlanUsesPostMember(t *testing.T) {
+func TestDirectPostRouteHasNoNodePlan(t *testing.T) {
 	o := Options{AccountRoute: map[string]string{"a": "direct"}, RoutePost: map[string]string{"direct": "socks5://post.example:1080"}}
 	plans, err := buildRoutePlansGen(o, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plans) != 1 || !reflect.DeepEqual(plans[0].names, []string{"netivri-g4-r0-0-post"}) {
-		t.Fatalf("plans = %#v", plans)
-	}
-	if got := memberNameLabels(plans)["netivri-g4-r0-0-post"]; got != "r0-0" {
-		t.Fatalf("label = %q", got)
+	if len(plans) != 0 || len(memberNameLabels(plans)) != 0 {
+		t.Fatalf("direct post plans/labels = %#v/%v", plans, memberNameLabels(plans))
 	}
 }
 
-func TestDirectRouteBuildStickyGroupUsesBuiltinDirect(t *testing.T) {
+func TestDirectRouteHasNoStickyPlan(t *testing.T) {
 	plans, err := buildRoutePlansGen(Options{AccountRoute: map[string]string{"a": "direct"}, RoutePre: map[string]string{"direct": "none"}, RoutePost: map[string]string{"direct": "none"}}, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct := testWarmProxy{name: "DIRECT", typ: C.Direct}
-	// The built-in DIRECT is not generation-owned: it never enters the names
-	// that Reconfigure retires.
-	for _, name := range planProxyNames(plans) {
-		if name == "DIRECT" {
-			t.Fatalf("planProxyNames lists the built-in DIRECT: %v", planProxyNames(plans))
-		}
-	}
-	groups, err := buildStickyGroups(plans, map[string]C.Proxy{"DIRECT": direct}, newAffinityTable(nil, 0), newHealthTable(), nil, nil)
-	if err != nil {
-		t.Fatalf("buildStickyGroups with builtin DIRECT: %v", err)
-	}
-	if groups[plans[0].group] == nil {
-		t.Fatal("DIRECT route did not produce a sticky group")
+	if len(plans) != 0 {
+		t.Fatalf("direct route plans = %#v", plans)
 	}
 }
 func TestWarmLeavesExcludeDirectAndProbeThreeChainsOnceEach(t *testing.T) {

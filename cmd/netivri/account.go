@@ -25,6 +25,7 @@ type accountInfo struct {
 	PreSOCKS5      accountChainInfo `json:"pre_socks5"`
 	PostSOCKS5     accountChainInfo `json:"post_socks5"`
 	PasswordSet    bool             `json:"password_set"`
+	Exit           string           `json:"exit"`
 }
 
 func accountList(cfg *config.Config) []accountInfo {
@@ -50,14 +51,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		return err
 	}
 	save := func() error {
-		if err := config.Save(config.ConfigPath(home), cfg); err != nil {
-			var cliErr *cli.Error
-			if errors.As(err, &cliErr) {
-				return cliErr
-			}
-			return &cli.Error{Code: "INTERNAL", Message: "save config", Exit: cli.ExitInternal}
-		}
-		return nil
+		return saveAccountConfig(home, cfg)
 	}
 	usage := func(msg string) error { return cli.Usage("account %s: %s", args[0], msg) }
 	switch args[0] {
@@ -78,17 +72,21 @@ func runAccount(args []string, stdout io.Writer) error {
 		clients := fs.String("clients", "", "client addresses that may use this account (allowed-clients rules)")
 		pre := fs.String("pre-socks5", "", "pre-hop proxy URL (socks5://, http:// or https://)")
 		post := fs.String("post-socks5", "", "post-hop proxy URL (socks5://, http:// or https://)")
+		exitFlag := fs.String("exit", "", "account exit mode (route or direct)")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
 			return usage("invalid flags")
 		}
-		preGiven, postGiven := false, false
+		preGiven, postGiven, exitModeGiven := false, false, false
 		fs.Visit(func(f *flag.Flag) {
 			if f.Name == "pre-socks5" {
 				preGiven = true
 			}
 			if f.Name == "post-socks5" {
 				postGiven = true
+			}
+			if f.Name == "exit" {
+				exitModeGiven = true
 			}
 		})
 		if preGiven {
@@ -122,6 +120,13 @@ func runAccount(args []string, stdout io.Writer) error {
 				return err
 			}
 		}
+		exitMode := ""
+		if exitModeGiven {
+			exitMode = *exitFlag
+			if exitMode != "route" && exitMode != "direct" {
+				return invalidAccountExitAt(len(cfg.Accounts))
+			}
+		}
 		clientsVal := ""
 		if *clients != "" {
 			if _, err := config.ParseAllowedClients(*clients); err != nil {
@@ -129,24 +134,38 @@ func runAccount(args []string, stdout io.Writer) error {
 			}
 			clientsVal = config.NormalizeAllowedClients(*clients)
 		}
+		if a, _ := cfg.Account(login); a != nil {
+			if a.ExitCountry == cc && a.Provider == prov && effectiveExit(a) == effectiveExit(&config.Account{Exit: exitMode}) && a.AllowedClients == clientsVal && a.PreSOCKS5 == *pre && a.PostSOCKS5 == *post {
+				if a.Exit == "direct" {
+					cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true, "hint": directExitHint})
+				} else {
+					cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true})
+				}
+				return nil
+			}
+			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country, exit or clients rule", Exit: cli.ExitConflict}
+		}
 		if cfg.Auth.Login == login && cfg.Auth.Login != config.InitPlaceholder {
 			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
 		}
-		if a, _ := cfg.Account(login); a != nil {
-			if a.ExitCountry == cc && a.Provider == prov && a.AllowedClients == clientsVal && a.PreSOCKS5 == *pre && a.PostSOCKS5 == *post {
-				cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true})
-				return nil
-			}
-			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country or clients rule", Exit: cli.ExitConflict}
+		next := config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, Exit: exitMode, AllowedClients: clientsVal, PreSOCKS5: *pre, PostSOCKS5: *post}
+		if err := validateAccountCandidate(cfg, map[int]config.Account{len(cfg.Accounts): next}); err != nil {
+			return err
 		}
-		cfg.Accounts = append(cfg.Accounts, config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, AllowedClients: clientsVal, PreSOCKS5: *pre, PostSOCKS5: *post})
+		cfg.Accounts = append(cfg.Accounts, next)
 		if err := save(); err != nil {
 			return err
 		}
-		cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false})
+		if exitMode == "direct" {
+			cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false, "hint": directExitHint})
+		} else {
+			cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false})
+		}
 		return nil
 	case "clone":
 		return accountClone(home, cfg, rest, save, stdout)
+	case "set-exit":
+		return accountSetExit(home, cfg, rest, save, stdout)
 	case "set-socks5":
 		return accountSetSOCKS5(cfg, rest, save, stdout)
 	case "set-country":
@@ -237,12 +256,22 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 		}
 		return c
 	}
+	updates := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
 		next := changed(a, value)
-		if next == *a {
-			continue // repeating the same value always succeeds
-		}
-		if field != "clients" {
+		_, index := cfg.Account(a.Login)
+		updates[index] = next
+	}
+	if err := validateAccountCandidate(cfg, updates); err != nil {
+		return err
+	}
+	if field != "clients" {
+		for _, a := range targets {
+			_, index := cfg.Account(a.Login)
+			next := updates[index]
+			if next == *a {
+				continue
+			}
 			if err := checkRoute(home, cfg, next); err != nil {
 				return err
 			}

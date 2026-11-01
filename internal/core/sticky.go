@@ -393,21 +393,10 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 				Exit:    cli.ExitNotFound,
 			}
 		}
+		if directPost || directRoute {
+			continue
+		}
 		plan := routePlan{index: index, gen: gen, key: key, group: groupProxyName(gen, index)}
-		if directRoute {
-			plan.names = append(plan.names, "DIRECT")
-			plan.labels = append(plan.labels, "r"+fmt.Sprint(index)+"-0")
-			plan.tiers = []int{0}
-			plans = append(plans, plan)
-			continue
-		}
-		if directPost {
-			plan.names = append(plan.names, helperProxyName(gen, index, 0, "post"))
-			plan.labels = append(plan.labels, "r"+fmt.Sprint(index)+"-0")
-			plan.tiers = []int{0}
-			plans = append(plans, plan)
-			continue
-		}
 		plan.hops = routeHops(nodes, o.RoutePre[key], o.RoutePost[key])
 		for node := range nodes {
 			name := memberProxyName(gen, index, node)

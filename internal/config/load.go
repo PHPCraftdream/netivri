@@ -63,6 +63,42 @@ func bindingErrorSummary(err error) string {
 	return b.String()
 }
 
+func exitAccountValues(src string) ([]*string, error) {
+	value, err := pure.Loads(src)
+	if err != nil {
+		return nil, configFromBindingError(err)
+	}
+	raw, ok := value.(map[string]any)
+	if !ok {
+		return nil, invalid("config must be a table")
+	}
+	items, exists := raw["accounts"]
+	if !exists {
+		return nil, nil
+	}
+	accounts, ok := items.([]any)
+	if !ok {
+		return nil, invalid("accounts must be an array")
+	}
+	exits := make([]*string, len(accounts))
+	for i, item := range accounts {
+		account, ok := item.(map[string]any)
+		if !ok {
+			return nil, invalid("accounts[%d] must be a table", i)
+		}
+		value, exists := account["exit"]
+		if !exists {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return nil, invalid("accounts[%d].exit must be a string", i)
+		}
+		exits[i] = &text
+	}
+	return exits, nil
+}
+
 // Load reads and validates the configuration file at path. A missing
 // file is reported as an error wrapping os.ErrNotExist; parse or
 // validation problems are *cli.Error with code CONFIG_INVALID.
@@ -76,9 +112,18 @@ func Load(path string) (*Config, error) {
 	if err := ktavLoadsStrict(string(src)); err != nil {
 		return nil, configFromBindingError(err)
 	}
+	exits, err := exitAccountValues(string(src))
+	if err != nil {
+		return nil, err
+	}
 	cfg, err := ktavLoadsIntoConfig(string(src))
 	if err != nil {
 		return nil, err
+	}
+	for i, exit := range exits {
+		if exit != nil {
+			cfg.Accounts[i].Exit = *exit
+		}
 	}
 	cfg.normalizeAccountLists()
 	if err := cfg.Validate(); err != nil {

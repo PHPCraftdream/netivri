@@ -197,8 +197,6 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	for _, key := range keys {
 		nodes := o.RouteNodes[key]
 		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
-		// A plain DIRECT route is explicit: both sides say none. A route with
-		// no nodes and no such marker is a missing route, not a direct one.
 		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
 		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, nil, nil, &cli.Error{
@@ -209,18 +207,17 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		}
 
 		members := make([]string, 0, len(nodes))
-		if directRoute {
-			members = append(members, "DIRECT")
-		}
-		if directPost {
-			postName := helperProxyName(gen, keyIndex[key], 0, "post")
-			post, err := chainProxy(o.RoutePost[key], postName)
-			if err != nil {
-				return nil, nil, nil, err
+		if directRoute || directPost {
+			if directPost {
+				postName := helperProxyName(gen, keyIndex[key], 0, "post")
+				post, err := chainProxy(o.RoutePost[key], postName)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				post["dialer-proxy"] = "DIRECT"
+				proxies = append(proxies, post)
 			}
-			post["dialer-proxy"] = "DIRECT"
-			proxies = append(proxies, post)
-			members = append(members, postName)
+			continue
 		}
 		for index, node := range nodes {
 			prepared, _, err := prepareNode(node)
@@ -260,7 +257,19 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 
 	rules := make([]string, 0, len(logins)+1)
 	for _, login := range logins {
-		group := groupProxyName(gen, keyIndex[o.AccountRoute[login]])
+		key := o.AccountRoute[login]
+		nodes := o.RouteNodes[key]
+		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
+		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
+		if directRoute {
+			rules = append(rules, "IN-USER,"+login+",DIRECT")
+			continue
+		}
+		if directPost {
+			rules = append(rules, "IN-USER,"+login+","+helperProxyName(gen, keyIndex[key], 0, "post"))
+			continue
+		}
+		group := groupProxyName(gen, keyIndex[key])
 		rules = append(rules, "IN-USER,"+login+","+group)
 	}
 	fallback := "DIRECT"

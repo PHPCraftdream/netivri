@@ -53,6 +53,21 @@ func accountSetSOCKS5(cfg *config.Config, rest []string, save func() error, stdo
 			return err
 		}
 	}
+	updates := make(map[int]config.Account, len(targets))
+	for _, a := range targets {
+		next := *a
+		if given["pre"] {
+			next.PreSOCKS5 = pv
+		}
+		if given["post"] {
+			next.PostSOCKS5 = qv
+		}
+		_, index := cfg.Account(a.Login)
+		updates[index] = next
+	}
+	if err := validateAccountCandidate(cfg, updates); err != nil {
+		return err
+	}
 	for _, a := range targets {
 		if given["pre"] {
 			a.PreSOCKS5 = pv
@@ -107,6 +122,10 @@ func infoForAccount(cfg *config.Config, a *config.Account) accountInfo {
 		}
 		return accountChainInfo{Value: resolved.value, Source: resolved.source, Auth: resolved.auth, Own: ownValue}
 	}
-	return accountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, AllowedClients: a.AllowedClients, PreSOCKS5: chainInfo(a.PreSOCKS5, cfg.Chain.PreSOCKS5), PostSOCKS5: chainInfo(a.PostSOCKS5, cfg.Chain.PostSOCKS5), PasswordSet: accountHasPassword(a)}
+	preInfo := chainInfo(a.PreSOCKS5, cfg.Chain.PreSOCKS5)
+	if effectiveExit(a) == "direct" {
+		preInfo = accountChainInfo{Value: "none", Source: "direct"}
+	}
+	return accountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, Exit: effectiveExit(a), AllowedClients: a.AllowedClients, PreSOCKS5: preInfo, PostSOCKS5: chainInfo(a.PostSOCKS5, cfg.Chain.PostSOCKS5), PasswordSet: accountHasPassword(a)}
 }
 func chainHasAuth(s string) bool { u, e := url.Parse(s); return e == nil && u.User != nil }
