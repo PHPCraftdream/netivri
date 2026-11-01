@@ -459,11 +459,11 @@ func e2eMieruRejectedError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
 		return true
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.Errno(10054)) || errors.Is(err, syscall.Errno(10053)) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.Errno(10054)) || errors.Is(err, syscall.Errno(10053)) {
 		return true
 	}
 	message := strings.ToLower(err.Error())
-	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted", "timeout"} {
+	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted", "closed pipe", "timeout"} {
 		if strings.Contains(message, phrase) {
 			return true
 		}
