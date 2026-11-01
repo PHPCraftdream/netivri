@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"io"
 	"math/big"
 	"net"
@@ -19,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/metacubex/mihomo/component/ca"
 
 	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
@@ -176,6 +179,14 @@ func TestHTTPPostHopThatRefusesFailsTheConnection(t *testing.T) {
 // certificate for 127.0.0.1, which no client trusts.
 func startTLSHTTPHop(t *testing.T) (*httpHop, string) {
 	t.Helper()
+	h, addr, _ := startTLSHTTPHopCert(t)
+	return h, addr
+}
+
+// startTLSHTTPHopCert is startTLSHTTPHop that also returns the certificate in
+// PEM form, for a test that chooses to trust it.
+func startTLSHTTPHopCert(t *testing.T) (*httpHop, string, string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -183,8 +194,9 @@ func startTLSHTTPHop(t *testing.T) (*httpHop, string) {
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "hop"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, BasicConstraintsValid: true, IsCA: true,
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
@@ -206,7 +218,8 @@ func startTLSHTTPHop(t *testing.T) (*httpHop, string) {
 			go h.serve(c)
 		}
 	}()
-	return h, raw.Addr().String()
+	pemCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return h, raw.Addr().String(), string(pemCert)
 }
 
 // An https hop is reached over TLS with the certificate checked: one that no
@@ -248,5 +261,32 @@ func TestHTTPSHopWithAnUntrustedCertificateFails(t *testing.T) {
 	}
 	if len(hops) == 0 || hops[0] != HopPost {
 		t.Errorf("failed dial stages = %q, want the post hop whose address the TLS error names", hops)
+	}
+}
+
+// An https hop whose certificate the client trusts carries the connection: the
+// node dials the hop over TLS and the hop gets the CONNECT for the destination.
+func TestHTTPSHopWithATrustedCertificateCarriesTheConnection(t *testing.T) {
+	_, nodeAddr := startChainRecorder(t)
+	post, postAddr, certPEM := startTLSHTTPHopCert(t)
+	if err := ca.AddCertificate(certPEM); err != nil {
+		t.Fatalf("trust the hop's certificate: %v", err)
+	}
+	t.Cleanup(ca.ResetCertificate)
+	backend := echoServer(t)
+	inst, err := Start(context.Background(), Options{
+		HomeDir: testutil.TempHome(t), Authenticator: aliceAuthenticator(),
+		RouteNodes: map[string][]map[string]any{"de": {nodeMap(nodeAddr)}}, AccountRoute: map[string]string{"alice": "de"},
+		RoutePost: map[string]string{"de": "https://" + postAddr},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = inst.Close() })
+	if err := tryDialAccountSOCKS5(t, inst.Addr(), "127.0.0.1", backend, "alice", alicePassword); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := post.snapshot(); len(got) != 1 || got[0] != backend {
+		t.Errorf("https hop CONNECTs = %v, want the destination %s", got, backend)
 	}
 }
