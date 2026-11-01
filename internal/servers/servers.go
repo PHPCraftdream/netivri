@@ -155,7 +155,10 @@ func (s Spec) Validate() error {
 	return nil
 }
 
-// Protocol is the contract implemented by each server backend.
+// Protocol is the contract implemented by each server backend. Start receives
+// its listener through Env.ListenConfig. Protocols implementing UDPBound with
+// UDPBound() == true must use ListenPacket for their UDP bind; others are treated
+// as TCP-bound and use Listen.
 type Protocol interface {
 	Name() string
 	SingleUser() bool
@@ -166,7 +169,9 @@ type Protocol interface {
 	Link(spec Spec, login, host string) (string, error)
 }
 
-// Env contains the filtered Mihomo tunnel and the actual listen abstraction.
+// Env contains the filtered Mihomo tunnel and listener abstraction provided to
+// Protocol.Start. TCP-bound protocols use Listen; UDP-bound protocols use
+// ListenPacket to bind their real UDP socket.
 type Env struct {
 	Tunnel       C.Tunnel
 	ListenConfig C.InboundListenConfig
@@ -193,6 +198,20 @@ type Info struct {
 	Accounts               []string
 	Connections            int
 	DroppedClients         uint64
+}
+
+// UDPBound is an optional protocol capability that reports whether Start binds UDP.
+// When true, Start must bind using env.ListenConfig.ListenPacket with a real UDP
+// network (udp, udp4, or udp6); Listen is rejected for that protocol. A false
+// result, or not implementing UDPBound, is treated as TCP-bound and uses the
+// staged TCP listener.
+//
+// When a changed UDP-bound server is restarted, the old server's Close is called
+// before the new server starts. This close-old-first behavior can leave a brief
+// gap; existing connections or datagrams may end. Close must release the UDP
+// port before it returns.
+type UDPBound interface {
+	UDPBound() bool
 }
 
 // MihomoLinker is an optional interface for protocols that can emit YAML snippets.

@@ -158,6 +158,13 @@ type Protocol interface {
   where rules, sticky groups, hops and `OnConnEvent` apply unchanged.
 - UDP: the core tunnel wrapper drops and counts UDP traffic arriving through all server tunnels. Shadowsocks currently exposes TCP only; UDP is unsupported for this version.
 
+## UDP-bound servers
+
+- A protocol may optionally implement `UDPBound() bool`. Protocols implementing `UDPBound() bool` as true use `Env.ListenConfig`'s real UDP socket through Mihomo `inbound.ListenConfig`; TCP `Listen` on that endpoint is rejected. UDP listeners are closed synchronously so the UDP port is free when `Close` returns.
+- Reconfiguration commits TCP changes, then restarts every changed or removed UDP-bound listener. UDP sockets cannot be handed over: QUIC owns packet-connection and session state. The restart has a brief gap and existing connections end.
+- If reconfiguration fails, rollback restores TCP leases and best-effort restores all prior UDP specs. The result reports whether UDP restoration completed or was incomplete.
+- Port conflicts are checked per transport, so TCP and UDP may share a bind and port. Counters are shared across generations of a server name. UDP relay traffic is still dropped and counted; UDP-bound only describes the listener transport.
+
 ## CLI
 
 ```text
