@@ -39,9 +39,12 @@ import (
 	logrus "github.com/sirupsen/logrus"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
 // Options configures Start.
+// Servers configures VPN-node protocol listeners, independently of the mixed
+// listener's AllowedClients filter.
 type Options struct {
 	HomeDir       string             // required; created if missing, passed to constant.SetHomeDir
 	Bind          string             // default "127.0.0.1"
@@ -67,6 +70,10 @@ type Options struct {
 	GlobalPost string
 	// AccountRoute maps an authenticated login to the route key it uses.
 	AccountRoute map[string]string
+	// Servers configures VPN-node protocol listeners.
+	Servers []servers.Spec
+	// AccountAllowedClients restricts server clients by authenticated account.
+	AccountAllowedClients map[string][]netip.Prefix
 	// Warm optionally enables the background probes of the node proxies and,
 	// with PoolSize > 0, a pre-dial pool for the default node (see warm.go).
 	// nil disables both.
@@ -127,6 +134,7 @@ type Instance struct {
 	restoredBindings int
 	// routing is the part Reconfigure replaces; never nil once published.
 	routing atomic.Pointer[routingState]
+	servers *serverSet
 }
 
 // routingState is one generation of the account routes: Start builds
@@ -347,8 +355,30 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		poller.start()
 	}
 
+	serverState := &serverSet{items: make(map[string]*serverEntry), broker: newSocketBroker()}
+	serverTx, serverErr := serverState.prepare(o.Servers, tt, allowed, o.AccountAllowedClients)
+	if serverErr == nil {
+		serverErr = serverTx.commit()
+	}
+	if serverErr != nil {
+		serverTx.rollback()
+		if warm != nil {
+			warm.Close()
+		}
+		if poller != nil {
+			poller.stop()
+		}
+		_ = ln.Close()
+		serverState.close()
+		tt.closeAll(closeDrainTimeout)
+		executor.Shutdown()
+		resetAllowedClients()
+		return nil, serverErr
+	}
+
 	inst := &Instance{
 		ln:               ln,
+		servers:          serverState,
 		done:             make(chan struct{}),
 		route:            route,
 		tt:               tt,
@@ -473,6 +503,14 @@ func (i *Instance) MemberLabels() map[string]string {
 	return out
 }
 
+// Servers returns information about the configured protocol listeners.
+func (i *Instance) Servers() []servers.Info {
+	if i == nil {
+		return nil
+	}
+	return i.servers.info()
+}
+
 // Close stops the listener and the embedded core. Idempotent.
 func (i *Instance) Close() error {
 	i.mu.Lock()
@@ -490,6 +528,7 @@ func (i *Instance) Close() error {
 	if ln != nil {
 		_ = ln.Close()
 	}
+	i.servers.close()
 	// No connection may outlive the instance: close the tracked ones and
 	// wait for their handlers before Mihomo's global state is torn down.
 	i.tt.closeAll(closeDrainTimeout)
