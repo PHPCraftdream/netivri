@@ -41,7 +41,9 @@ The placeholders are generated values; the actual URI percent-encodes query valu
 
 v2rayN and Hiddify clients that support VLESS Reality can import the URI from clipboard. Xray-core itself uses a manual JSON client configuration rather than importing this URI; configure a VLESS outbound with the same UUID, server/port, TCP transport, TLS Reality public key and short ID, SNI, fingerprint and Vision flow. sing-box support varies by version and URI importer; when the URI is not accepted, configure its VLESS outbound manually with the same values.
 
-This implementation supports TCP only; it does not provide UDP. Reality's active-probe resistance is not anonymity, does not conceal traffic from the endpoint or network observer, and is not a guarantee against detection or blocking.
+The generated import URI follows Mihomo's `ConvertsV2Ray` share-link importer behavior: it sets `udp: true` for imported VLESS links. This is an importer default, not a capability of this server. The authoritative Mihomo YAML emitted by `server link --format mihomo` sets `udp: false`; this listener and server core support TCP only and drop UDP.
+
+Reality's active-probe resistance is not anonymity, does not conceal traffic from the endpoint or network observer, and is not a guarantee against detection or blocking.
 
 ## Logging
 

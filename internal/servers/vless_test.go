@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/metacubex/mihomo/common/convert"
 	C "github.com/metacubex/mihomo/constant"
 	"go.yaml.in/yaml/v3"
 )
@@ -175,6 +176,29 @@ func TestVLESSRealityLinkRoundTripAndMihomoYAML(t *testing.T) {
 			if u.Query().Get(k) != want {
 				t.Errorf("URI parameter %q mismatch", k)
 			}
+		}
+		imported, err := convert.ConvertsV2Ray([]byte(link))
+		if err != nil || len(imported) != 1 {
+			t.Fatal("VLESS URI import failed")
+		}
+		importedProxy := imported[0]
+		port, ok := importedProxy["port"].(string)
+		if !ok || port != "443" {
+			t.Fatalf("imported port has type %T, want string", importedProxy["port"])
+		}
+		for key, want := range map[string]any{
+			"name": s.Name, "type": "vless", "server": host, "port": "443",
+			"uuid": s.Users["alice"]["uuid"], "udp": true, "tls": true,
+			"servername": "reality.example.org", "client-fingerprint": "firefox",
+			"flow": defaultRealityFlow, "encryption": "none", "network": "tcp",
+		} {
+			if got, ok := importedProxy[key]; !ok || got != want {
+				t.Errorf("imported field %q mismatch", key)
+			}
+		}
+		importedReality, ok := importedProxy["reality-opts"].(map[string]any)
+		if !ok || importedReality["public-key"] != s.Material["public_key"] || importedReality["short-id"] != ids[0] {
+			t.Fatal("imported Reality fields mismatch")
 		}
 		text, err := (vlessReality{}).Mihomo(s, "alice", host)
 		if err != nil {
