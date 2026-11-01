@@ -34,7 +34,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   matching nodes, with no fallback to a direct connection or a country it does
   not name.
 - **Explicit account exits.** Choose the account's VPN-node route or direct egress (optionally via a post proxy). Direct is opt-in and exposes this machine's address to destinations. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Account writes validate the entire resulting configuration before saving; failures return `CONFIG_INVALID` and persist no changes. Batch account writes are atomic.
-- **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. Only Trojan, AnyTLS, TrustTunnel and VLESS-Reality can share a TCP port using explicit protocol-owned SNI/ALPN matching; one default handles valid unmatched TLS but cannot resolve overlaps. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link`. See [`docs/servers/`](docs/servers/README.md).
+- **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. One share mode lets Shadowsocks 2022 (three ciphers), VMess AEAD (`alterId=0`), and the TLS family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality) share a TCP port; legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP servers remain exclusive. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link` (shared links use one account). See [`docs/servers/`](docs/servers/README.md).
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
@@ -143,14 +143,11 @@ every subscription once an hour (`fetch.update_interval`).
 
 ### Run your own server
 
-After `netivri up`, add two endpoints on the SAME `{PORT}`: a Trojan default that accepts valid unmatched TLS using host-derived SNI, and AnyTLS with an explicit `{ANYTLS_SNI}`. Both use existing account `alice`; inspect them, and
-generate a client link. Links contain credentials; handle them privately. A
-loopback bind such as `127.0.0.1` is local only; use a reachable bind only
-intentionally when remote clients should connect.
+After `netivri up`, add two endpoints on the same `{PORT}`: a Shadowsocks 2022 listener and a VMess AEAD listener. TLS-family members also require protocol-owned SNI/ALPN match keys. Shadowsocks 2022 must use one of its three supported ciphers, and VMess must use AEAD (`alterId=0`); both examples use the existing account `alice`.
 
 ```sh
-netivri server add --protocol trojan --name {NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --default
-netivri server add --protocol anytls --name {OTHER_NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --param sni={ANYTLS_SNI}
+netivri server add --protocol shadowsocks --name {NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --param cipher=2022-blake3-aes-128-gcm
+netivri server add --protocol vmess --name {OTHER_NAME} --account alice --port {PORT} --bind 127.0.0.1 --public-host {HOST} --param cipher=auto
 netivri server list
 netivri server link {NAME} --account alice --host {HOST}
 netivri server link {NAME} --account alice --host {HOST} --format mihomo

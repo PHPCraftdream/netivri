@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
@@ -51,6 +53,7 @@ func validateServers(c *Config) error {
 	type endpointKey struct {
 		port int
 		udp  bool
+		bind string
 	}
 	type endpoint struct {
 		bind  string
@@ -72,7 +75,11 @@ func validateServers(c *Config) error {
 			return invalid("%s is not a registered server protocol", field("protocol"))
 		}
 		if s.Default {
-			if _, ok := p.(servers.Sniffer); !ok {
+			tls, trial := servers.ShareMode(servers.Spec{Protocol: s.Protocol, Params: s.Params})
+			if !tls {
+				if trial {
+					return servers.ValidateSharedPort([]servers.Spec{{Name: s.Name, Protocol: s.Protocol, Bind: s.Bind, Port: s.Port, Default: s.Default, Params: s.Params}})
+				}
 				return invalid("%s default requires a TLS-sniffable protocol", field("default"))
 			}
 		}
@@ -90,23 +97,24 @@ func validateServers(c *Config) error {
 		if !udp && s.Port == c.Listen.Port && bindsOverlap(bind, c.Listen.Bind) {
 			return invalid("%s conflicts with listen.port", field("port"))
 		}
-		key := endpointKey{s.Port, udp}
-		for _, prevEntry := range ports[key] {
-			if !bindsOverlap(bind, prevEntry.bind) {
+		key := endpointKey{s.Port, udp, bind}
+		for priorKey, entries := range ports {
+			if priorKey.port != s.Port || priorKey.udp != udp {
 				continue
 			}
-			prev := &c.Servers[prevEntry.index]
-			pp, _ := servers.Lookup(prev.Protocol)
-			// Only an exact endpoint of sniffable TCP protocols can be shared;
-			// every other overlap is the old duplicate-endpoint error.
-			if bind != prevEntry.bind || udp || !hasSniffer(p) || !hasSniffer(pp) {
-				return invalid("%s duplicates servers[%d] endpoint", field("port"), prevEntry.index)
-			}
-			if err := servers.ValidateSharedPort([]servers.Spec{
-				{Name: prev.Name, Protocol: prev.Protocol, Bind: bind, Port: prev.Port, Default: prev.Default, Params: prev.Params},
-				{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Default: s.Default, Params: s.Params},
-			}); err != nil {
-				return err
+			for _, prior := range entries {
+				if !bindsOverlap(bind, prior.bind) {
+					continue
+				}
+				if bind != prior.bind {
+					return invalid("%s duplicates servers[%d] endpoint", field("port"), prior.index)
+				}
+				prev := &c.Servers[prior.index]
+				tlsNew, trialNew := servers.ShareMode(servers.Spec{Protocol: s.Protocol, Params: s.Params})
+				tlsPrev, trialPrev := servers.ShareMode(servers.Spec{Protocol: prev.Protocol, Params: prev.Params})
+				if !((tlsNew || trialNew) && (tlsPrev || trialPrev)) {
+					return invalid("%s duplicates servers[%d] endpoint", field("port"), prior.index)
+				}
 			}
 		}
 		ports[key] = append(ports[key], endpoint{bind, i})
@@ -157,7 +165,60 @@ func validateServers(c *Config) error {
 			return invalid("%s contains an invalid protocol parameter", field("params"))
 		}
 	}
+	// Validate complete endpoint groups so fallback/default and account limits
+	// are evaluated consistently rather than pairwise.
+	groups := map[endpointKey][]servers.Spec{}
+	for _, s := range c.Servers {
+		p, _ := servers.Lookup(s.Protocol)
+		udp := servers.IsUDPBound(p)
+		bind := s.Bind
+		if bind == "" {
+			bind = "0.0.0.0"
+		}
+		accounts := []string{}
+		if s.Accounts == "*" {
+			for _, a := range c.Accounts {
+				accounts = append(accounts, a.Login)
+			}
+			if c.Auth.Login != "" && c.Auth.Login != InitPlaceholder {
+				accounts = append(accounts, c.Auth.Login)
+			}
+		} else {
+			accounts = strings.Split(s.Accounts, ",")
+		}
+		key := endpointKey{s.Port, udp, bind}
+		groups[key] = append(groups[key], servers.Spec{Name: s.Name, Protocol: s.Protocol, Bind: bind, Port: s.Port, Default: s.Default, Params: s.Params, Accounts: accounts})
+	}
+	for _, group := range groups {
+		// Validate each exact endpoint separately; overlap rules have already
+		// rejected wildcard-vs-specific conflicting binds above.
+		byBind := map[string][]servers.Spec{}
+		for _, member := range group {
+			byBind[member.Bind] = append(byBind[member.Bind], member)
+		}
+		for _, exact := range byBind {
+			if err := servers.ValidateSharedPort(exact); err != nil {
+				var ce *cli.Error
+				if errors.As(err, &ce) && ce.Code == "SERVER_PORT_AMBIGUOUS" {
+					return err
+				}
+				if trialGroup(exact) {
+					return err
+				}
+				return invalid("servers[1].port duplicates servers[0] endpoint")
+			}
+		}
+	}
 	return nil
+}
+func trialGroup(specs []servers.Spec) bool {
+	for _, spec := range specs {
+		_, trial := servers.ShareMode(spec)
+		if trial {
+			return true
+		}
+	}
+	return false
 }
 func hasSniffer(p servers.Protocol) bool { _, ok := p.(servers.Sniffer); return ok }
 func bindsOverlap(a, b string) bool {

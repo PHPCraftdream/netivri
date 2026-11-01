@@ -951,6 +951,7 @@ func (l *liveAngel) status(startedAt string) angel.Status {
 				Accounts: append([]string(nil), info.Accounts...), Connections: info.Connections,
 				DroppedClients: info.DroppedClients, Members: members,
 				Default: info.Default, Unclassified: info.Unclassified, SlowFirstByte: info.SlowFirstByte,
+				Replayed: info.Replayed, Ambiguous: info.Ambiguous,
 			})
 		}
 		sort.Slice(st.Servers, func(i, j int) bool { return st.Servers[i].Name < st.Servers[j].Name })

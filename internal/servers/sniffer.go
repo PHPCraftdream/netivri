@@ -108,13 +108,42 @@ func overlapALPN(a, b []string) bool {
 }
 
 func ValidateSharedPort(specs []Spec) error {
-	if len(specs) < 2 {
+	if len(specs) == 0 {
+		return nil
+	}
+	trialMembers, vmessUsers := 0, 0
+	anyTrial := false
+	for _, spec := range specs {
+		tls, trial := ShareMode(spec)
+		if !tls && !trial && len(specs) > 1 {
+			return &cli.Error{Code: "PORT_IN_USE", Message: "server protocol cannot share a port", Exit: cli.ExitConflict}
+		}
+		if trial {
+			anyTrial = true
+			if spec.Default {
+				return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "trial-authenticated servers cannot be default", Exit: cli.ExitConflict, Hint: "choose a TLS server as the default"}
+			}
+			trialMembers++
+			if spec.Protocol == "vmess" {
+				vmessUsers += len(spec.Accounts)
+			}
+		}
+	}
+	if trialMembers > 16 || vmessUsers > 1024 {
+		return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "shared endpoint exceeds user limit", Exit: cli.ExitConflict}
+	}
+	if len(specs) == 1 {
 		return nil
 	}
 	address := normalizeListenAddress(specs[0])
 	for _, spec := range specs[1:] {
 		if normalizeListenAddress(spec) != address {
 			return &cli.Error{Code: "PORT_IN_USE", Message: "shared servers must use the same listen address", Exit: cli.ExitConflict}
+		}
+	}
+	if anyTrial && trialSecretsPresent(specs) {
+		if err := ValidateTrialSecrets(specs); err != nil {
+			return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "shared endpoint has invalid or ambiguous trial credentials", Exit: cli.ExitConflict, Hint: "use distinct valid trial credentials"}
 		}
 	}
 	keys := make([]struct {
@@ -124,14 +153,11 @@ func ValidateSharedPort(specs []Spec) error {
 	defaults := 0
 	for i, spec := range specs {
 		sni, alpn, explicit, capable := TLSMatchKeys(spec)
-		if !capable || func() bool { p, ok := Lookup(spec.Protocol); return !ok || IsUDPBound(p) }() {
-			return &cli.Error{Code: "PORT_IN_USE", Message: "server protocol cannot share a port", Exit: cli.ExitConflict}
-		}
 		keys[i] = struct {
 			sni, alpn         []string
 			explicit, capable bool
 		}{sni, alpn, explicit, capable}
-		if spec.Default {
+		if capable && spec.Default {
 			defaults++
 		}
 	}
@@ -139,18 +165,34 @@ func ValidateSharedPort(specs []Spec) error {
 		return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "only one server may be the default", Exit: cli.ExitConflict, Hint: "give one of them another sni"}
 	}
 	for i, spec := range specs {
-		if !spec.Default && !keys[i].explicit {
+		if keys[i].capable && !spec.Default && !keys[i].explicit {
 			return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "shared server needs explicit SNI", Exit: cli.ExitConflict, Hint: "set sni on " + spec.Name + " or mark it as the default"}
 		}
 	}
 	for i := range specs {
+		if !keys[i].capable {
+			continue
+		}
 		for j := i + 1; j < len(specs); j++ {
-			if SnifferAmbiguous(keys[i].sni, keys[i].alpn, keys[j].sni, keys[j].alpn) {
+			if keys[j].capable && SnifferAmbiguous(keys[i].sni, keys[i].alpn, keys[j].sni, keys[j].alpn) {
 				return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "shared server TLS match keys overlap", Exit: cli.ExitConflict, Hint: "give one of them another sni"}
 			}
 		}
 	}
 	return nil
+}
+func trialSecretsPresent(specs []Spec) bool {
+	for _, spec := range specs {
+		_, trial := ShareMode(spec)
+		if trial {
+			for _, login := range spec.Accounts {
+				if len(spec.Users[login]) > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func normalizeListenAddress(s Spec) string {

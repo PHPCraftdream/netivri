@@ -18,6 +18,8 @@ import (
 
 type vmess struct{}
 
+func (vmess) NewTrial(spec Spec) (Trial, error) { return newTrial(spec) }
+
 func init()                    { Register(vmess{}) }
 func (vmess) Name() string     { return "vmess" }
 func (vmess) SingleUser() bool { return false }

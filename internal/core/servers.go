@@ -366,6 +366,7 @@ func (s *serverSet) info() []servers.Info {
 		info := servers.Info{Name: e.running.Name, Protocol: e.running.Protocol, Listen: e.running.Listen, Accounts: append([]string(nil), e.running.Accounts...), Connections: int(e.counters.connections.Load()), DroppedClients: e.counters.dropped.Load(), Default: e.spec.Default}
 		if !isUDPEntry(e) {
 			info.Members, info.Unclassified, info.SlowFirstByte = s.broker.endpointInfo(e.running.Listen)
+			info.Replayed, info.Ambiguous = s.broker.endpointCounters(e.running.Listen)
 		}
 		out = append(out, info)
 	}
