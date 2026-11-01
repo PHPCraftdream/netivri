@@ -165,6 +165,71 @@ type Protocol interface {
 - If reconfiguration fails, rollback restores TCP leases and best-effort restores all prior UDP specs. The result reports whether UDP restoration completed or was incomplete.
 - Port conflicts are checked per transport, so TCP and UDP may share a bind and port. Counters are shared across generations of a server name. UDP relay traffic is still dropped and counted; UDP-bound only describes the listener transport.
 
+## One port, several protocols (design, not implemented)
+
+Goal: several servers on one TCP port, the protocol chosen from what the client
+sends. Already true today: TCP and UDP are separate port spaces and conflicts are
+checked per transport, so one TCP server and one QUIC server may share a number
+(443/tcp Trojan or Reality plus 443/udp Hysteria2 or TUIC). The rest needs a
+front mux for servers of the same transport.
+
+**Where it plugs in.** `internal/core/servers_broker.go` already owns the real
+socket (`socketEndpoint`, one `acceptPump`) and hands every accepted connection to
+the single active lease of the endpoint; protocols only see a `net.Listener`. The
+mux keeps that shape: an endpoint may hold one active lease per server plus a
+classifier; the pump classifies each connection and sends it to exactly one lease.
+Protocols do not change. A server joins a shared endpoint only if its protocol
+implements an optional `Sniffer` (a pure function over the peeked bytes), so
+protocols without one keep exclusive ports.
+
+**Classification pipeline** (per connection, first-byte deadline of a few seconds,
+nothing is consumed: the peeked bytes are replayed to the chosen server):
+
+1. TLS ClientHello (`0x16 0x03`): parse SNI and ALPN. A server matches by its
+   `sni` parameter (Reality: its `ServerNames`) and its ALPN set (TrustTunnel: `h2`).
+   Two TLS servers with the same SNI and ALPN cannot be told apart before the
+   handshake is decrypted (Trojan sends 56 hex characters and CRLF first, AnyTLS 32
+   binary bytes, both inside TLS), so `server add` refuses the combination
+   (`SERVER_PORT_AMBIGUOUS`, hint: give one of them another `sni`). One TLS server may
+   be marked the default for a ClientHello that matches no SNI; without a default the
+   connection is closed.
+2. Not TLS: protocols with no cleartext marker (Shadowsocks, VMess, Snell, Sudoku,
+   Mieru) can only be told apart by trial authentication of the first bytes (AEAD
+   length block, VMess auth id inside its time window). Stage 2 allows a short
+   whitelist of such protocols per port, tries them in a fixed order, and closes the
+   connection when none accepts. The cost is a few cheap operations per connection;
+   the risk is that the time to reject differs from a plain server (active probing),
+   so a rejected connection is closed after a fixed minimum delay.
+3. QUIC (UDP): servers on one UDP port are told apart only by the ALPN in the QUIC
+   Initial, which Hysteria2, TUIC and ShadowQUIC mostly share (`h3`): the combination
+   is refused unless the ALPN sets differ.
+
+**Config and CLI.** `server add --port N` with an existing server on N (same
+transport) succeeds only when the combination is classifiable; otherwise it fails
+with `SERVER_PORT_AMBIGUOUS` and a hint. `server list` and `status` show the
+shared endpoint and its members; `doctor` reports sets that stopped being
+classifiable (for example after a certificate or `sni` change). Per-server
+counters stay per server; the mux adds `unclassified` (closed without a match).
+
+**Stages.** (1) TLS family by SNI and ALPN, including Reality's own fallback to its
+camouflage target for unauthenticated clients. (2) Trial authentication for
+Shadowsocks and VMess. (3) QUIC ALPN where the sets are distinct.
+
+**Tests.** Unit: the classifier over recorded first-byte fixtures of each protocol
+(real ClientHellos with SNI and ALPN, a Shadowsocks AEAD first chunk, a VMess header,
+garbage, an empty connection, a slow connection). Integration: two or three
+protocols on one port reached by their real Mihomo clients, one reload that moves a
+server in or out of the shared endpoint, a rollback. e2e: the CLI path with real
+binaries.
+
+**Security notes.** The close behavior of the mux must not reveal the set of
+protocols (unmatched traffic ends like a plain server's); peeked bytes are never
+logged; the peek buffer is bounded; a slowloris client is cut by the first-byte
+deadline and counted.
+
+**Non-goals now.** UDP relay, domain fronting, camouflage beyond Reality's own,
+classification that needs terminating TLS in the front.
+
 ## CLI
 
 ```text
