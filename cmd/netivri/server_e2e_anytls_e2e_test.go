@@ -684,7 +684,8 @@ func e2eAnyTLSWaitStatus(t *testing.T, ctx context.Context, home string, present
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("AnyTLS status did not reach expected state (%s)", last)
+			serverE2EFailureDiagnostics(t, home, "AnyTLS status wait expired")
+			t.Fatalf("AnyTLS status did not reach expected state (%s)", e2eRedactDiagnostic(last))
 		case <-ticker.C:
 		}
 	}
@@ -715,6 +716,7 @@ func e2eAnyTLSWaitDropped(t *testing.T, ctx context.Context, home string, minimu
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "AnyTLS dropped status wait expired")
 			t.Fatal("AnyTLS dropped-client counter did not increment")
 		case <-ticker.C:
 		}

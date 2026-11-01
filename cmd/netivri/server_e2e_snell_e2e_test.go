@@ -534,6 +534,7 @@ func e2eSnellWaitStatus(t *testing.T, ctx context.Context, home, name string, wa
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "Snell status wait expired")
 			t.Fatalf("Snell status did not converge for %s", name)
 		case <-tick.C:
 		}

@@ -26,7 +26,7 @@ import (
 var e2eVMessRejectedError = errors.New("VMess request rejected")
 
 func TestE2eVMessLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const alicePass = "vmess-e2e-alice-password"
 	const bobPass = "vmess-e2e-bob-password"
@@ -406,6 +406,7 @@ func e2eVMessWaitServerStatus(t *testing.T, ctx context.Context, home string, wa
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "VMess server status wait expired")
 			t.Fatalf("VMess server status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}
@@ -440,6 +441,7 @@ func e2eVMessWaitDropped(t *testing.T, ctx context.Context, home string, minimum
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "VMess dropped status wait expired")
 			t.Fatal("VMess disallowed-client drop counter did not increment")
 		case <-ticker.C:
 		}

@@ -27,7 +27,12 @@ type liveStatus struct {
 		Reload struct {
 			Count     uint64 `json:"count"`
 			LastError string `json:"last_error"`
+			LastAt    string `json:"last_at"`
 		} `json:"reload"`
+		Servers []struct {
+			Name        string `json:"name"`
+			Connections int    `json:"connections"`
+		} `json:"servers"`
 		Refresh struct {
 			IntervalSeconds int64 `json:"interval_seconds"`
 		} `json:"refresh"`
@@ -38,11 +43,13 @@ func liveStatusOf(t *testing.T, home string) liveStatus {
 	t.Helper()
 	code, out, stderr := accountsRun(t, home, "status")
 	if code != 0 {
-		t.Fatalf("status exit %d: %s%s", code, out, stderr)
+		serverE2EFailureDiagnostics(t, home, "live status command failed")
+		t.Fatalf("status exit %d: %s", code, e2eRedactDiagnostic(out+stderr))
 	}
 	var st liveStatus
 	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		t.Fatalf("decode status: %v", err)
+		serverE2EFailureDiagnostics(t, home, "live status decode failed")
+		t.Fatalf("decode status failed")
 	}
 	return st
 }
@@ -65,7 +72,8 @@ func waitLive(t *testing.T, home, what string, cond func(liveStatus) bool) liveS
 			return st
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("not applied within 40s: %s (reloads %d, last error %q)", what, st.Data.Reload.Count, st.Data.Reload.LastError)
+			serverE2EFailureDiagnostics(t, home, "live status wait expired: "+what)
+			t.Fatalf("not applied within 40s: %s (reloads %d, last error %q)", what, st.Data.Reload.Count, e2eRedactDiagnostic(st.Data.Reload.LastError))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}

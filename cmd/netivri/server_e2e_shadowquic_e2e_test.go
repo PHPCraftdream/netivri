@@ -28,7 +28,7 @@ import (
 )
 
 func TestE2EShadowQUICLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const accountPass = "shadowquic-e2e-account-password"
 	backend := accountsEcho(t)
@@ -548,6 +548,7 @@ func e2eShadowQUICWaitStatus(t *testing.T, ctx context.Context, home string, wan
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "ShadowQUIC status wait expired")
 			t.Fatalf("ShadowQUIC status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}

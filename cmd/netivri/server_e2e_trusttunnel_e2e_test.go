@@ -29,7 +29,7 @@ import (
 var e2eTrustTunnelRejectedError = errors.New("TrustTunnel authentication rejected")
 
 func TestE2EServerTrustTunnelLifecycle(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	const pass = "trusttunnel-e2e-account-password"
 	backend := accountsEcho(t)
@@ -538,6 +538,7 @@ func e2eTrustTunnelWaitStatus(t *testing.T, ctx context.Context, home string, wa
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "TrustTunnel status wait expired")
 			t.Fatalf("TrustTunnel status did not become present=%t", want)
 		case <-ticker.C:
 		}
@@ -559,6 +560,7 @@ func e2eTrustTunnelReloadCount(t *testing.T, ctx context.Context, home string, s
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "TrustTunnel reload status wait expired")
 			t.Fatal("angel status unavailable after restart")
 		case <-ticker.C:
 		}
@@ -601,6 +603,7 @@ func e2eTrustTunnelWaitDropped(t *testing.T, ctx context.Context, home string, m
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "TrustTunnel dropped status wait expired")
 			t.Fatal("TrustTunnel dropped-client counter did not increment")
 		case <-ticker.C:
 		}

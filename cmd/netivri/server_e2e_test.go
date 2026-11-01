@@ -164,10 +164,12 @@ func waitNamedServerStatus(t *testing.T, ctx context.Context, home, name, protoc
 	for {
 		code, out, stderr := accountsRun(t, home, "status")
 		if code != 0 {
-			t.Fatalf("status failed (exit %d): %s", code, serverErrorSummary(out, stderr))
+			serverE2EFailureDiagnostics(t, home, "Shadowsocks status command failed")
+			t.Fatalf("status failed (exit %d): %s", code, e2eRedactDiagnostic(serverErrorSummary(out, stderr)))
 		}
 		matches, err := serverStatusMatches(out, name, protocol, wantPresent)
 		if err != nil {
+			serverE2EFailureDiagnostics(t, home, "server status decode failed")
 			t.Fatalf("decode status: %v", err)
 		}
 		assertNoSecrets(t, out, stderr, "server-e2e-account-password")
@@ -176,14 +178,45 @@ func waitNamedServerStatus(t *testing.T, ctx context.Context, home, name, protoc
 		}
 		select {
 		case <-ctx.Done():
+			serverE2EFailureDiagnostics(t, home, "server status wait expired")
 			t.Fatalf("edge server status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}
 	}
 }
 
+type serverE2EStatus struct {
+	Data struct {
+		Reload struct {
+			Count     uint64 `json:"count"`
+			LastError string `json:"last_error"`
+			LastAt    string `json:"last_at"`
+		} `json:"reload"`
+		Servers []struct {
+			Name        string `json:"name"`
+			Connections int    `json:"connections"`
+		} `json:"servers"`
+	} `json:"data"`
+}
+
+func serverE2EFailureDiagnostics(t *testing.T, home, reason string) {
+	t.Helper()
+	code, out, _ := accountsRun(t, home, "status")
+	var st serverE2EStatus
+	if code != 0 || json.Unmarshal([]byte(out), &st) != nil {
+		t.Logf("server e2e diagnostics (%s): status unavailable; %s\n%s", e2eRedactDiagnostic(reason), upProcReport(home), serverE2ELogTail(t, home))
+		return
+	}
+	servers := make([]string, 0, len(st.Data.Servers))
+	for _, server := range st.Data.Servers {
+		servers = append(servers, fmt.Sprintf("%s present connections=%d", e2eRedactDiagnostic(server.Name), server.Connections))
+	}
+	t.Logf("server e2e diagnostics (%s): reload count=%d last_error=%q last_at=%q servers=%v\n%s\n%s", e2eRedactDiagnostic(reason), st.Data.Reload.Count, e2eRedactDiagnostic(st.Data.Reload.LastError), e2eRedactDiagnostic(st.Data.Reload.LastAt), servers, upProcReport(home), serverE2ELogTail(t, home))
+}
+
 func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint64) {
 	t.Helper()
+	started := time.Now()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	// While the core is replaced the angel's status may be briefly
@@ -201,29 +234,33 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 			if st.Data.Reload.Count >= count && st.Data.Reload.LastError == "" {
 				return
 			}
+			if st.Data.Reload.Count < count && st.Data.Reload.LastError != "" {
+				serverE2EFailureDiagnostics(t, home, fmt.Sprintf("reload stalled at %d below %d", st.Data.Reload.Count, count))
+				t.Fatalf("angel reload failed before count %d: %s", count, e2eRedactDiagnostic(st.Data.Reload.LastError))
+			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("angel reload count did not reach %d (last: %s)\n%s\n%s", count, lastProblem, upProcReport(home), serverE2ELogTail(t, home))
+			serverE2EFailureDiagnostics(t, home, fmt.Sprintf("reload count did not reach %d after %s (%v)", count, time.Since(started).Round(time.Millisecond), ctx.Err()))
+			t.Fatalf("angel reload count did not reach %d (last: %s)", count, lastProblem)
 		case <-ticker.C:
 		}
 	}
 }
 
-// serverE2ELogTail returns the last angel log lines without links or
-// credentials, to name the cause of a failed reload wait.
+// serverE2ELogTail returns a redacted tail of the angel log.
 func serverE2ELogTail(t *testing.T, home string) string {
 	t.Helper()
 	code, out, stderr := accountsRun(t, home, "logs", "--tail", "40")
 	if code != 0 {
-		return fmt.Sprintf("angel log unavailable (exit %d): %s", code, serverErrorSummary(out, stderr))
+		return fmt.Sprintf("angel log unavailable (exit %d): %s", code, e2eRedactDiagnostic(serverErrorSummary(out, stderr)))
 	}
 	var kept []string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "://") || strings.Contains(strings.ToLower(line), "password") || strings.Contains(strings.ToLower(line), "secret") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		kept = append(kept, line)
+		kept = append(kept, e2eRedactDiagnostic(line))
 	}
 	return "angel log tail:\n" + strings.Join(kept, "\n")
 }
