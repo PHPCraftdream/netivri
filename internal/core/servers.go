@@ -66,6 +66,10 @@ func (c serverUDPListenConfig) ListenPacket(ctx context.Context, n, a string) (n
 	return c.listen.ListenPacket(ctx, n, a)
 }
 func (t *serverTunnel) HandleTCPConn(c net.Conn, m *C.Metadata) {
+	if m != nil && m.Type == C.INNER {
+		t.inner.HandleTCPConn(c, m)
+		return
+	}
 	p := t.policy.Load()
 	if !permitsServerClient(p, m) {
 		t.entry.counters.dropped.Add(1)
