@@ -190,7 +190,7 @@ type Protocol interface {
 
 ## One port, several protocols (stages 1 and 2 implemented)
 
-A TCP endpoint may share among eligible members: TLS family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality), Shadowsocks 2022 using any of its three ciphers, and VMess AEAD (`alterId=0`). Legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP-bound protocols remain exclusive. Stage 3, UDP/QUIC ALPN multiplexing, is not implemented.
+A TCP endpoint may share among eligible members: TLS family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality), Shadowsocks 2022 using any of its three ciphers, and VMess AEAD (`alterId=0`). Legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP-bound protocols remain exclusive. Each QUIC server (Hysteria2, TUIC, ShadowQUIC) keeps its own UDP port: sharing one UDP port by the SNI/ALPN of the QUIC Initial packet is not planned. It would put a stateful per-packet demultiplexer in front of throughput protocols (a virtual packet conn loses quic-go GSO/ECN/pktinfo), the ClientHello spans several Initial packets, Hysteria2 is h3-only and every default sends ALPN h3 (so only an explicit distinct `sni` separates servers, and `salamander` cannot take part), and UDP port numbers are cheap. A TCP server may use the same number; one QUIC server can take UDP 443.
 
 Shared Shadowsocks 2022 uses one PSK, listener and account; VMess can have at most 1024 users. PSKs and VMess UUIDs must be distinct within a group. At most 16 trial members are allowed. Reused credentials or a trial default returns `SERVER_PORT_AMBIGUOUS` (exit 6) with a safe hint. TLS match-key and default behavior remain as specified in stage 1.
 
