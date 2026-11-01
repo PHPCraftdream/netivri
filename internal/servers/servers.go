@@ -214,6 +214,12 @@ type UDPBound interface {
 	UDPBound() bool
 }
 
+// IsUDPBound reports whether the protocol binds UDP rather than TCP.
+func IsUDPBound(p Protocol) bool {
+	u, ok := p.(UDPBound)
+	return ok && u.UDPBound()
+}
+
 // MihomoLinker is an optional interface for protocols that can emit YAML snippets.
 type MihomoLinker interface {
 	Mihomo(spec Spec, login, host string) (string, error)
