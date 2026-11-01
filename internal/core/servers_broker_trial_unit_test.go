@@ -451,6 +451,30 @@ func TestBrokerPendingCapsAreEndpointAndSourceScoped(t *testing.T) {
 	}
 }
 
+func TestBrokerReplayFilterOutlivesTheAuthWindow(t *testing.T) {
+	for _, tc := range []struct {
+		protocol string
+		window   time.Duration
+	}{{"shadowsocks", 28 * time.Second}, {"vmess", 118 * time.Second}} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			now := time.Unix(1_700_000_000, 0)
+			b := newSocketBroker()
+			b.clock = func() time.Time { return now }
+			ep := &socketEndpoint{}
+			key := []byte("front-key")
+			if b.replayCheckAndRecord(ep, key, tc.protocol) {
+				t.Fatal("first use reported as a replay")
+			}
+			// A prefix stamped one window ahead of the first acceptance is
+			// still valid two windows later and must still be refused.
+			now = now.Add(2 * tc.window)
+			if !b.replayCheckAndRecord(ep, key, tc.protocol) {
+				t.Fatal("replay inside the authentication window not detected")
+			}
+		})
+	}
+}
+
 func TestBrokerReplayCountsDuplicateAcceptedTrial(t *testing.T) {
 	b := newSocketBroker()
 	b.drainWait = func() time.Duration { return 0 }

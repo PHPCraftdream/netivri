@@ -655,7 +655,10 @@ func (b *socketBroker) replayCheckAndRecord(ep *socketEndpoint, key []byte, prot
 	if len(ep.replay) >= 4096 {
 		return true
 	}
-	ttl := 120 * time.Second
+	// A prefix stamped one window ahead of the first acceptance stays valid
+	// for two windows (28 s for Shadowsocks 2022, 118 s for VMess): the entry
+	// must outlive that.
+	ttl := 240 * time.Second
 	if protocol == "shadowsocks" {
 		ttl = 60 * time.Second
 	}
