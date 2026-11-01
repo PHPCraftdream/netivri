@@ -1058,7 +1058,9 @@ target does not make a working node look down.
 
 When no angel is running: error `ANGEL_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control
-answer) counts as not running and is removed.
+answer: connection refused, another pid) counts as not running and is removed. An angel that
+only answers too slowly (busy reloading) is not gone: `ANGEL_NOT_RESPONDING`, exit 1, and its
+state file stays.
 
 Planned shape once node selection and subscriptions are wired in (additive
 to the fields above):
@@ -1266,6 +1268,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ANGEL_START_FAILED` | 1 | The angel child exited or failed before reporting startup; details in `run/netivri.log` of the state directory |
 | `ANGEL_START_TIMEOUT` | 1 | The angel did not report startup within 15 s |
 | `ANGEL_STOP_TIMEOUT` | 1 | The angel did not stop within 15 s after `down` |
+| `ANGEL_NOT_RESPONDING` | 1 | `status`, `down` or `up`: the state file names an angel whose control endpoint did not answer within 2 s (busy, for example reloading); retry in a moment. Nothing is removed, stopped or spawned |
 | `PORT_IN_USE` | 6 | Listen port is taken |
 | `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |
 | `INTERNAL` | 1 | Bug; details in `netivri logs` |

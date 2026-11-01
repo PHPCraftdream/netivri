@@ -124,9 +124,23 @@ func Probe(ctx context.Context, home string) (State, error) {
 	return st, err
 }
 
+// ErrControlTimeout reports that the control endpoint the state file names
+// accepted the request but did not answer in time. The angel is most likely
+// alive and busy (a reload or core restart): its state file is kept and the
+// caller should retry instead of treating the angel as gone.
+var ErrControlTimeout = errors.New("angel control did not answer in time")
+
+// isTimeout reports a deadline or a network timeout.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
+}
+
 // ProbeLive checks whether an angel runs for this home: the state file AND
 // a live control answer from the same pid are required, anything else is
-// ErrNotRunning and a stale state file is removed best-effort. It returns the
+// ErrNotRunning and a stale state file is removed best-effort. A control
+// request that merely times out is the exception: the angel may be busy, so
+// the state file stays and the error wraps ErrControlTimeout. It returns the
 // state file content and the live status.
 func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 	st, err := ReadState(home)
@@ -140,6 +154,9 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 		return State{}, Status{}, ErrNotRunning
 	}
 	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
+	if err != nil && isTimeout(err) {
+		return st, Status{}, fmt.Errorf("%w: %v", ErrControlTimeout, err)
+	}
 	if err != nil || status.PID != st.PID {
 		RemoveStateIf(home, st.PID, st.Token)
 		return State{}, Status{}, ErrNotRunning

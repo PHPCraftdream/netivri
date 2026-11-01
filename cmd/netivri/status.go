@@ -60,6 +60,9 @@ func runStatus(args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	defer cancel()
 	_, st, err := angelProbeLive(ctx, home)
+	if errors.Is(err, angel.ErrControlTimeout) {
+		return angelNotResponding()
+	}
 	if errors.Is(err, angel.ErrNotRunning) {
 		return &cli.Error{
 			Code:    "ANGEL_NOT_RUNNING",

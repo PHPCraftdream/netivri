@@ -11,7 +11,20 @@ import (
 	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/angel"
+	"github.com/PHPCraftdream/netivri/internal/cli"
 )
+
+// angelNotResponding is the answer when the angel's state file stands but its
+// control endpoint did not answer in time: it runs and is busy (a reload or
+// a core restart), it is not gone, so nothing may be spawned or cleaned up.
+func angelNotResponding() *cli.Error {
+	return &cli.Error{
+		Code:    "ANGEL_NOT_RESPONDING",
+		Message: "angel is running but did not answer in time",
+		Hint:    "it is probably busy reloading; retry in a moment",
+		Exit:    cli.ExitInternal,
+	}
+}
 
 // Seams over internal/angel: the cmd-level decisions (idempotency,
 // ALREADY_RUNNING rules, not-running outputs) are unit-tested without

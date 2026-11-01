@@ -328,7 +328,11 @@ func runUp(args []string, stdout io.Writer) error {
 func runUpAngel(opts upOptions, args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), angel.DefaultSpawnTimeout+angel.ProbeTimeout)
 	defer cancel()
-	if _, live, err := angelProbeLive(ctx, opts.Home); err == nil {
+	_, live, probeErr := angelProbeLive(ctx, opts.Home)
+	if errors.Is(probeErr, angel.ErrControlTimeout) {
+		return angelNotResponding()
+	}
+	if probeErr == nil {
 		if conflictsWithRunning(opts, live.Listen) {
 			return &cli.Error{
 				Code:    "ALREADY_RUNNING",
