@@ -11,10 +11,10 @@ func TestPrepareRoutesDirectAccountRouteUsesDirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(proxies) != 0 || len(groups) != 1 || groups[0]["proxies"].([]string)[0] != "DIRECT" {
+	if len(proxies) != 0 || len(groups) != 0 {
 		t.Fatalf("proxies/groups=%v/%v", proxies, groups)
 	}
-	if rules[0] != "IN-USER,a,netivri-group-0" || rules[1] != "MATCH,DIRECT" {
+	if rules[0] != "IN-USER,a,DIRECT" || rules[1] != "MATCH,DIRECT" {
 		t.Fatalf("rules=%v", rules)
 	}
 }
@@ -24,7 +24,7 @@ func TestPrepareRoutesDirectAccountPostDoesNotUseDefaultNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 1 || groups[0]["proxies"].([]string)[0] != "netivri-r0-0-post" {
+	if len(groups) != 0 {
 		t.Fatalf("groups=%v", groups)
 	}
 	var post map[string]any
@@ -33,7 +33,7 @@ func TestPrepareRoutesDirectAccountPostDoesNotUseDefaultNode(t *testing.T) {
 			post = proxy
 		}
 	}
-	if post == nil || post["dialer-proxy"] != "DIRECT" || rules[0] != "IN-USER,a,netivri-group-0" || rules[len(rules)-1] != "MATCH,netivri-node" {
+	if post == nil || post["dialer-proxy"] != "DIRECT" || rules[0] != "IN-USER,a,netivri-r0-0-post" || rules[len(rules)-1] != "MATCH,netivri-node" {
 		t.Fatalf("post=%v rules=%v", post, rules)
 	}
 }
@@ -46,7 +46,7 @@ func TestPrepareRoutesDirectAccountPostUsesDirectBase(t *testing.T) {
 	if len(proxies) != 1 || proxies[0]["name"] != "netivri-r0-0-post" || proxies[0]["dialer-proxy"] != "DIRECT" {
 		t.Fatalf("proxies=%v", proxies)
 	}
-	if len(groups) != 1 || groups[0]["proxies"].([]string)[0] != "netivri-r0-0-post" || rules[0] != "IN-USER,a,netivri-group-0" {
+	if len(groups) != 0 || rules[0] != "IN-USER,a,netivri-r0-0-post" {
 		t.Fatalf("groups/rules=%v/%v", groups, rules)
 	}
 }

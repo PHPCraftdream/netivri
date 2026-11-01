@@ -99,7 +99,7 @@ func activityLabel(chain C.Chain, labels map[string]string) string {
 		}
 	}
 	for _, name := range chain {
-		if name == "DIRECT" {
+		if name == "DIRECT" || isRoutePostName(name) {
 			return ActivityDirect
 		}
 	}

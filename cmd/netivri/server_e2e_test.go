@@ -154,6 +154,10 @@ func serverRun(t *testing.T, home string, args ...string) (int, string, string) 
 }
 
 func waitServerStatus(t *testing.T, ctx context.Context, home string, wantPresent bool) {
+	waitNamedServerStatus(t, ctx, home, "edge", "shadowsocks", wantPresent)
+}
+
+func waitNamedServerStatus(t *testing.T, ctx context.Context, home, name, protocol string, wantPresent bool) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -162,31 +166,12 @@ func waitServerStatus(t *testing.T, ctx context.Context, home string, wantPresen
 		if code != 0 {
 			t.Fatalf("status failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 		}
-		var env struct {
-			Data struct {
-				Servers []struct {
-					Name           string `json:"name"`
-					Protocol       string `json:"protocol"`
-					Listen         string `json:"listen"`
-					Connections    int    `json:"connections"`
-					DroppedClients int    `json:"dropped_clients"`
-				} `json:"servers"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal([]byte(out), &env); err != nil {
+		matches, err := serverStatusMatches(out, name, protocol, wantPresent)
+		if err != nil {
 			t.Fatalf("decode status: %v", err)
 		}
-		present := false
-		for _, server := range env.Data.Servers {
-			if server.Name == "edge" {
-				present = true
-				if wantPresent && (server.Protocol != "shadowsocks" || server.Listen == "" || server.Connections < 0 || server.DroppedClients < 0) {
-					t.Fatal("edge server status is incomplete")
-				}
-			}
-		}
 		assertNoSecrets(t, out, stderr, "server-e2e-account-password")
-		if present == wantPresent {
+		if matches {
 			return
 		}
 		select {

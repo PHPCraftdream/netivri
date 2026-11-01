@@ -257,6 +257,9 @@ func (d *doctorContext) checkSubscriptions() doctorCheck {
 func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 	name := "account " + a.Login
 	providers, countries := routeLists(*a)
+	if a.Exit == "direct" {
+		return d.exitDirectAccountCheck(a)
+	}
 	if len(providers) == 0 && len(countries) == 0 {
 		return doctorCheck{name, doctorOK, "direct"}
 	}
@@ -320,6 +323,65 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 		}
 	}
 	return doctorCheck{name, doctorFail, "no live node on the route"}
+}
+
+func (d *doctorContext) exitDirectAccountCheck(a *config.Account) doctorCheck {
+	name := "account " + a.Login
+	detail := "exit: direct"
+	public := false
+	if d.angelUp {
+		if host, _, err := net.SplitHostPort(d.status.Listen); err == nil {
+			public = !isLoopbackHost(host)
+		}
+	} else if d.cfg != nil {
+		public = !isLoopbackHost(d.cfg.Listen.Bind)
+	}
+	if public {
+		detail += "; mixed proxy is bound to a non-loopback address"
+	}
+	if d.cfg != nil {
+		for _, server := range d.cfg.Servers {
+			accounts := strings.Split(server.Accounts, ",")
+			if strings.TrimSpace(server.Accounts) == "*" {
+				accounts = accounts[:0]
+				for _, configured := range d.cfg.Accounts {
+					accounts = append(accounts, configured.Login)
+				}
+			}
+			served := false
+			for _, login := range accounts {
+				if strings.TrimSpace(login) == a.Login {
+					served = true
+					break
+				}
+			}
+			if !served {
+				continue
+			}
+			bind := server.Bind
+			if d.angelUp {
+				for _, live := range d.status.Servers {
+					if live.Name == server.Name {
+						if host, _, err := net.SplitHostPort(live.Listen); err == nil {
+							bind = host
+						}
+						break
+					}
+				}
+			}
+			if bind == "" {
+				bind = "0.0.0.0"
+			}
+			if !isLoopbackHost(bind) {
+				public = true
+				detail += "; served by public/non-loopback server " + server.Name
+			}
+		}
+	}
+	if public {
+		return doctorCheck{name, doctorWarn, detail}
+	}
+	return doctorCheck{name, doctorOK, detail}
 }
 
 // nodeInService is whether new connections of an account can use the node: the

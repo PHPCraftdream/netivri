@@ -19,7 +19,11 @@ versions; every such change is listed here.
   [`docs/servers/README.md`](docs/servers/README.md).
 - **TLS server listeners can share a TCP port.** Only Trojan, AnyTLS, TrustTunnel and VLESS-Reality share; protocol-declared explicit match keys must match exported links. Trojan and AnyTLS require `sni` unless the server is the default; Reality uses `sni` or a destination-derived servername. TrustTunnel without explicit `sni` matches h2 at any SNI; with explicit `sni`, it matches exactly. An absent-SNI key otherwise matches only absent SNI. A sole TLS server may be the default; a shared server without an explicit usable key must itself be the default. Explicit `sni` is recommended for certificate-TLS members; a no-`sni` default link may have unmatched host-derived SNI and fall back. A default handles valid unmatched TLS only, never overlapping matches. `SERVER_PORT_AMBIGUOUS` for a missing explicit key hints `set sni on {NAME} or mark it as the default`; for overlapping keys, change `sni` (a default cannot resolve overlap). See the server CLI reference for `--default` and errors.
 
+- **Explicit direct exits per account.** `accounts[].exit` opts an account into direct egress, optionally via the effective post proxy. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Server-only changes that a direct-only core cannot apply in place now restart too. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Direct requires empty provider/country; inherited pre-proxy is ignored but an explicitly configured account pre-proxy is rejected. This is never a fallback and exposes this machine's address to destinations. See [`docs/design/exit-direct.md`](docs/design/exit-direct.md).
+
 ### Changed
+
+- Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.
 
 - **A new access rule for one account no longer drops everyone.** `account set-clients` (an
   `allowed_clients` change of accounts only) is applied in place to the servers and
@@ -99,6 +103,10 @@ versions; every such change is listed here.
   everything. Coverage floors and the packaging jobs run only on a full run.
 
 ### Fixed
+
+- **Direct-only server reloads fall back safely.** Adding servers when explicit direct accounts leave no in-place route table now restarts the listener on `ErrReconfigureUnsupported`; server transaction errors still remain visible without a restart.
+
+- Account commands no longer write a configuration that the next load refuses (account add init).
 
 - **A busy angel is no longer taken for a dead one.** `status`, `down` and `up`
   asked the control channel once and, when the answer took longer than 2 s (an

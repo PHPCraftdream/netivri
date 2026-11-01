@@ -30,6 +30,10 @@ commas (`main,backup`, `DE,NL`). The order is the priority, see
 [Priority](#priority). A provider that is in the list of any account cannot be
 removed (`sub rm` fails with `SUB_IN_USE`, exit 6).
 
+## Explicit account exit
+
+An account may set `exit: direct` to leave from this machine instead of using VPN nodes. This requires empty `provider` and `exit_country`; inherited `pre_socks5` is ignored, but an explicitly configured account pre-proxy is rejected. An optional effective `post_socks5` is used directly. Empty or absent `exit` means `route`, preserving existing behavior. For direct accounts `account show` reports effective `pre_socks5` as value `none`, source `direct`, auth `false`, own `null`, and `tiers` is empty. Route/direct toggles apply in place only when at least one account route has stored nodes both before and after; the first node-backed route appearing or the last disappearing restarts, including the first explicit direct route on a default-only instance. Direct-only changes and changes after the last node-backed route restart. Keeping another account's node-backed route through a flip preserves connections. Adding an account always restarts. See [direct exit per account](exit-direct.md).
+
 ## Priority
 
 A route is a list of **tiers**. The countries come first, in the order

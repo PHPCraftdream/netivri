@@ -36,7 +36,7 @@ not preserved, so keep personal notes elsewhere.
 | `chain.pre_socks5` | string | *(empty)* | Default proxy netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
 | `chain.post_socks5` | string | *(empty)* | Default proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format (`socks5://`, `http://` or `https://`). An account's own `post_socks5` overrides it. |
 | `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
-| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), and optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before the password is verified, or an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). |
+| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), optional `exit` (empty/absent for default `route`, or `direct`), optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before password verification, so an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). Direct requires empty provider and exit_country; explicitly configured account pre-proxy is rejected except `none`, inherited pre-proxy is ignored, and effective post-proxy may be used directly. |
 | `servers` | array | `[]` | Inbound server endpoint objects; see [Server listeners](#server-listeners). Each has `name`, `protocol`, optional `bind`, `port`, `accounts`, optional `public_host`, and flattened protocol-specific option keys. Credentials/material are kept separately in `{HOME}/server-secrets.ktav`. |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
 | `selection.country` | string | *(empty)* | Reserved for the planned `netivri use --country {COUNTRY}`: validated, but nothing reads it yet. |
@@ -45,6 +45,8 @@ not preserved, so keep personal notes elsewhere.
 `accounts` is separate from `auth`; either or both may be configured. Account logins are unique, and cannot collide with a non-`init` `auth.login`. The reserved login `init` cannot be used for an account. `exit_country` may be omitted or empty to use the default route; codes are normalized to uppercase when loaded. Shape validation checks two ASCII letters per code, not whether that code represents a real country. Config validation checks the provider's shape only; `up` and the `account` commands check that the named subscriptions exist.
 
 `provider` and `exit_country` may each hold a list: items separated by commas, blanks around a comma ignored, a repeated item kept once. In `exit_country` a `*` item stands for every country the list does not name, nodes of an unknown country included, at its place in the order (`DE,*` is DE first, then everything else; `*` alone is any country). When the file is loaded the lists are rewritten in the canonical form (`DE,NL`, `main,backup`), and the commands store them that way. The order is the priority: the countries first, then, inside a country, the providers (`provider: main,backup` with `exit_country: DE,NL` tries `main` in DE, `backup` in DE, `main` in NL, `backup` in NL). See [`docs/design/accounts.md`](design/accounts.md).
+
+Account writes validate the entire resulting configuration before saving; validation failures return `CONFIG_INVALID` and persist no changes. Batch account writes are atomic. An account route-to-direct or direct-to-route change applies in place only when at least one account route has stored nodes both before and after, keeping existing connections. The first node-backed route appearing or last disappearing (including the first explicit direct route on a default-only instance), direct-only changes, and changes after the last node-backed route restart the listener. Keeping another account's node-backed route through a flip preserves connections. Adding an account always restarts, as with `account add`; default/default-node/global-post changes retain their usual restart behavior. When adding or changing servers for explicit-direct-only accounts, the listener restarts if the core reports the change unsupported in place; other server transaction errors leave the current configuration running and appear in `status`.
 
 ## Server listeners
 
@@ -268,6 +270,20 @@ selection.node::
 selection.country::
 selection.mode: manual
 ```
+
+## Direct account example
+
+```ktav
+accounts: [
+    {
+        login: alice
+        password:: init
+        exit: direct
+    }
+]
+```
+
+Direct exits require empty provider and exit_country. An explicitly configured account pre-proxy is rejected, inherited pre-proxy is ignored, and effective post-proxy may be used directly. `set-exit` does not clear provider/country; clear them first. Direct accounts have no node tiers; `account show` reports effective `pre_socks5` as `{"value":"none","source":"direct","auth":false,"own":null}`. If changing another account field while an account's direct exit remains invalid, `CONFIG_INVALID` includes a hint to run `netivri account set-exit {ACCOUNT} route` first. An account route-mode toggle applies in place only when at least one route has stored nodes both before and after; first node-backed route appearing, last disappearing, and direct-only changes restart. Another node-backed account route preserves connections through flips. Adding an account always restarts.
 
 Chain settings in a file (global in dotted form, per account inside the
 object):

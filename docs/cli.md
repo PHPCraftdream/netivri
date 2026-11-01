@@ -31,10 +31,14 @@ netivri sub countries [{SUBSCRIPTION} | --url {URL} [--via {PROXY}]]
 netivri node list [--sub {SUBSCRIPTION}] [--country {COUNTRY}] [--alive]
 netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]   (planned)
 
-netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--clients {RULES}] [--pre-socks5 {URL}] [--post-socks5 {URL}]
-netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--clients {RULES}]
+netivri account add {ACCOUNT} [--exit {route|direct}]
+netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]
+netivri account add {ACCOUNT} [--clients {RULES}] [--pre-socks5 {URL}] [--post-socks5 {URL}]
+netivri account clone {SOURCE} {ACCOUNT} [--exit {route|direct}] [--password {PASSWORD}|init]
+netivri account clone {SOURCE} {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]] [--clients {RULES}]
 netivri account list
 netivri account show {ACCOUNT}
+netivri account set-exit {ACCOUNT}[,{ACCOUNT}...] {route|direct} | --all {route|direct}
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] {COUNTRY}[,{COUNTRY}...] | --all {COUNTRY}[,{COUNTRY}...]
 netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...] | --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]
@@ -516,7 +520,7 @@ The checks:
 | `angel` | An angel runs for this state directory (pid, uptime). |
 | `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
-| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An account with neither provider nor exit country is `ok` ("direct"). |
+| `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An explicit direct exit reports `exit: direct`; doctor warns if served by a non-loopback server. An account with neither provider nor exit country uses the default route. |
 | `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
@@ -534,19 +538,25 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   by commas, in priority order** (`--provider main,backup --country
   DE,NL`; spaces around a comma are ignored, a repeated item counts once, the
   value is stored in this canonical form, with upper-case codes).
+  `--exit {route|direct}` chooses route mode by default or explicit direct mode.
+  Direct requires empty provider and country; an explicitly configured
+  account pre-proxy is rejected, `pre_socks5: none` is allowed, and an
+  inherited pre-proxy is ignored. An effective post-proxy may be used directly.
+  Direct bypasses the VPN, exposing this machine's address to destinations; direct is not a safety fallback. Success includes a security hint.
   `--clients {RULES}` restricts the addresses the account may authenticate
   from: one comma-separated allowed-clients rule list (same grammar as
   `listen.allowed_clients`; see [config.md](config.md), "Allowed clients").
   `--pre-socks5 {URL}` and `--post-socks5 {URL}` give the account its own
   proxy before and after the VPN node, each `{socks5|http|https}://[user:password@]host:port`
   with a required port or `none` (see `set-socks5`). Repeating
-  `add` with the same providers and countries in the same order succeeds with
+  `add` with the same providers, country, and exit mode in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
 - `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider, exit
   country, `allowed_clients`, `pre_socks5` and `post_socks5` of `{SOURCE}` and, by default, its password: the stored hash is copied,
   so both logins accept the same password (a source that still has the `init`
-  placeholder gives a copy with the placeholder). `--password {PASSWORD}` gives
+  placeholder gives a copy with the placeholder). `--exit {route|direct}`
+  overrides the copied exit; otherwise it is inherited. `--password {PASSWORD}` gives
   the new account a password of its own (1 to 1024 bytes, hashed with argon2id
   like any other), and `--password init` leaves it to the first client that
   connects. `--clients {RULES}` replaces the copied `allowed_clients` with the
@@ -559,9 +569,9 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `init`); the password and its hash are never printed. A password given with
   `--password` is visible in the shell history and the process list: prefer
   `--password init` when that matters. `{SOURCE}` is not changed.
-- `list` reports `login`, `provider`, `exit_country`, `allowed_clients`
-  (empty when the account has no rule of its own), `pre_socks5` and
-  `post_socks5` (the effective proxy of each side, `socks5://`, `http://` or
+- `list` reports `login`, `provider`, `exit_country`, `exit` (`route` or `direct`),
+  `allowed_clients` (empty when the account has no rule of its own), `pre_socks5`
+  and `post_socks5` (the effective proxy of each side, `socks5://`, `http://` or
   `https://`, see `set-socks5`)
   and `password_set` (`false` until the placeholder is claimed); it never
   returns a password, a hash or the credentials of a proxy URL.
@@ -599,7 +609,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
    "pre_socks5": {"value": "socks5://pre.example:1080", "source": "global", "auth": true},
    "post_socks5": {"value": "socks5://alice-exit.example:1080", "source": "account", "auth": false,
                    "own": "socks5://alice-exit.example:1080"},
-   "providers": ["main", "backup"], "countries": ["DE", "*"], "live": true,
+   "exit": "route", "providers": ["main", "backup"], "countries": ["DE", "*"], "live": true,
    "tiers": [
      {"tier": 0, "country": "DE", "providers": ["main"],
       "nodes": [{"label": "main/a1b2c3d4e5f6", "name": "Germany 1",
@@ -644,6 +654,27 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   one without a route, whose traffic then goes to the post proxy directly. A
   running angel applies a change of an account's pre or post in place, within
   a few seconds, and the open connections go on.
+- `set-exit` takes one login or comma-separated logins, or `--all`, followed by
+  `route` or `direct`. Direct requires empty provider and country; no
+  `--none` form exists. An explicitly configured pre-proxy is rejected, an
+  inherited pre-proxy is ignored, and the effective post-proxy may be used
+  directly. Changing to direct does not clear provider/country; validate every
+  selected account before saving. Invalid exit or direct settings return
+  `CONFIG_INVALID`; a route with no stored nodes returns
+  `NO_NODES_FOR_COUNTRY`. Route/direct changes apply in place only when at least
+  one account route has stored nodes both before and after, retaining open
+  connections. The first node-backed route appearing or last disappearing
+  (including the first explicit direct route on a default-only instance),
+  direct-only changes, and changes after the last node-backed route restart the
+  listener. Keeping another account's node-backed route through a flip preserves
+  connections. Adding an account always restarts, as with `account add`; default/
+  default-node/global-post changes retain their usual restart behavior.
+  Direct exits bypass the VPN and expose this machine's address. They may be
+  served by the mixed proxy or a server; `doctor` warns for a direct account on a
+  non-loopback server bind or mixed proxy bind, without failing the check. When
+  adding or changing servers for explicit-direct-only accounts, the listener
+  restarts if the core reports the change unsupported in place; other server
+  transaction errors leave the current configuration running and appear in `status`.
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
@@ -662,8 +693,11 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   exit 5, when a named login does not exist or there are no accounts;
   `ACCOUNT_INVALID`, exit 2, for a malformed login). A login repeated in the
   list counts once.
-- **Check before the change.** Before anything is written, every account
-  whose provider or country would change is checked as `up` would check it:
+- **Check before the change.** Before anything is written, account writes validate
+  the entire resulting configuration. If validation fails, the command returns
+  `CONFIG_INVALID` (exit 2) and persists no changes; batch writes are atomic.
+  For `set-country` and `set-provider`, every account whose provider or country
+  would change is also checked as `up` would check it:
   its route (the new providers, or its own, or every subscription when it
   has none, together with the new or its own countries) must have a stored
   node; one listed provider or country without nodes does not matter while
@@ -679,10 +713,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 
 ```json
 {"login": "alice", "provider": "main,backup", "exit_country": "DE,NL", "providers": ["main", "backup"], "countries": ["DE", "NL"], "live": false, "tiers": [{"tier": 0, "country": "DE", "providers": ["main"], "nodes": [{"label": "main/de-1", "provider": "main", "country": "DE", "tier": 0, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 1, "country": "DE", "providers": ["backup"], "nodes": [{"label": "backup/de-2", "provider": "backup", "country": "DE", "tier": 1, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 2, "country": "NL", "providers": ["main"], "nodes": [{"label": "main/nl-1", "provider": "main", "country": "NL", "tier": 2, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 3, "country": "NL", "providers": ["backup"], "skipped": true, "reason": "no nodes for this country and provider", "nodes": []}]}
-{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}, "existing": false}
+{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "exit": "route", "allowed_clients": "", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}, "existing": false}
 {"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}]}
-{"account": {"login": "alice", "provider": "", "exit_country": "NL", "allowed_clients": "loopback", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}}
 {"account": {"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": "socks5://pre.example:1080", "source": "account", "auth": true}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}}
+{"login": "alice", "provider": "", "exit_country": "", "exit": "direct", "pre_socks5": {"value": "none", "source": "direct", "auth": false, "own": null}, "post_socks5": {"value": "none", "source": "none", "auth": false, "own": null}, "providers": [], "countries": [], "tiers": [], "live": false, "fallback_connections": null}
 {"removed": "alice"}
 ```
 
@@ -690,9 +724,11 @@ These are the `data` values, respectively, for add, list, set-country/
 set-provider with one login, show, rm and, last, `set-socks5 alice --pre
 socks5://user:secret@pre.example:1080 --post none` (the credentials are not
 in the output; `auth` says the URL had some). `set-country` and `set-provider`
-with
-several logins or `--all` print the `{"accounts": [...]}` form of `list` with
+with several logins or `--all` print the `{"accounts": [...]}` form of `list` with
 the accounts that were addressed, in the order given (`--all`: config order).
+The `show` object with `"exit": "direct"` is the document of a direct account:
+its `tiers` are empty and its effective pre hop has source `direct`, value `none`
+and own value `null`.
 
 Routing is applied by `up`. An account with providers and/or exit countries
 needs stored subscription snapshots that hold matching nodes (providers set:
@@ -730,7 +766,18 @@ connections stay open. Server changes are transactional: unchanged listeners
 and their connections are kept, except changed UDP listeners, whose connections
 end when their sockets are restarted. A change it cannot apply, such as a route
 without nodes, leaves the running configuration in place and is reported as
-`reload.last_error` by `status`. See [design/live-reload.md](design/live-reload.md)
+`reload.last_error` by `status`.
+
+An account route-to-direct or direct-to-route change applies in place only
+when at least one account route has stored nodes both before and after, keeping
+existing connections. The first node-backed route appearing or last disappearing
+(including the first explicit direct route on a default-only instance), direct-
+only changes, and changes after the last node-backed route restart the listener.
+Keeping another node-backed account route through a flip preserves connections.
+Adding an account always restarts, as with `account add`; default/default-node/
+global-post changes retain their usual restart behavior.
+
+See [design/live-reload.md](design/live-reload.md)
 and [design/socks5-chain.md](design/socks5-chain.md).
 
 ### `up`
@@ -901,7 +948,7 @@ Exactly these fields exist in the short view: `angel` (always `running` on succe
 directory this command asked and how it was chosen, see [Separate state
 directories](#separate-state-directories)), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
-record is `{"login", "provider", "exit_country", "allowed_clients", "chain"}`,
+record has `{"login", "provider", "exit_country", "exit", "allowed_clients", "chain"}`,
 sorted by login; `chain` is `{"pre_socks5", "pre_socks5_source",
 "pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}`,
 the proxies of the running core (`socks5://`, `http://` or `https://`),
@@ -917,6 +964,8 @@ packets), plus shared-endpoint `members`, `default`, `unclassified` and
 `slow_first_byte`. The selection
 fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+`status` reports effective account exit modes (`route` or `direct`); `account show` reports the configured mode and direct accounts have no node tiers.
 
 Example server item (the same shape appears in short, full and watch JSON):
 
@@ -1278,7 +1327,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
-| `CONFIG_INVALID` | 2 | `config.ktav` is not valid (for example a bad port, an account password that is neither `init` nor an argon2id hash, an empty `listen.allowed_clients`), or an allowed-clients rule list given to `account add --clients`, `account set-clients` or `account clone --clients` is not valid; the message names the bad item |
+| `CONFIG_INVALID` | 2 | Invalid configuration or account fields. When another field change conflicts with a direct account exit, the error carries a hint to run `netivri account set-exit {ACCOUNT} route` first. |
 | `ACCOUNT_NOT_FOUND` | 5 | No account with that login |
 | `ACCOUNT_EXISTS` | 6 | Account already exists with conflicting settings; `account clone` onto an existing login |
 | `SUB_EXISTS_NAME` | 6 | `sub add --name` already used by a different URL |

@@ -28,6 +28,7 @@ type AccountInfo struct {
 	Login          string        `json:"login"`
 	Provider       string        `json:"provider"`
 	ExitCountry    string        `json:"exit_country"`
+	Exit           string        `json:"exit,omitempty"`
 	AllowedClients string        `json:"allowed_clients"`
 	Chain          *AccountChain `json:"chain,omitempty"`
 }

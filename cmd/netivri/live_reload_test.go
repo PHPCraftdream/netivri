@@ -978,6 +978,53 @@ func TestReloadReconfiguresAccountPolicyWithGlobalPostNoneAndServers(t *testing.
 	}
 }
 
+func TestReloadServerAdditionForDirectOnlyAccountRestartsOnUnsupported(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Exit: "direct"})
+	if f.script.calls() != 1 {
+		t.Fatalf("initial starts=%d, want 1", f.script.calls())
+	}
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: f.hash, Exit: "direct"}}
+	cfg.Servers = []config.Server{{Name: "edge", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 12345, Accounts: "alice"}}
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 {
+		t.Fatalf("server addition starts=%d, want restart (2)", f.script.calls())
+	}
+	if !f.script.inst(0).isClosed() {
+		t.Fatal("old direct-only core was not closed")
+	}
+	if got := f.script.call(1).Servers; len(got) != 1 || got[0].Name != "edge" {
+		t.Fatalf("restarted core servers=%v, want edge", got)
+	}
+	if f.reloads() != 1 || f.reloadErr() != "" {
+		t.Fatalf("reloads=%d error=%q, want applied once without error", f.reloads(), f.reloadErr())
+	}
+}
+
+func TestReloadServerTransactionErrorDoesNotRestart(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Exit: "direct"})
+	running := f.script.inst(0)
+	running.setInPlace(errors.New("server transaction failed"))
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: f.hash, Exit: "direct"}}
+	cfg.Servers = []config.Server{{Name: "edge", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 12345, Accounts: "alice"}}
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.l.reload(t.Context())
+	if f.script.calls() != 1 || running.isClosed() {
+		t.Fatalf("transaction error restarted core: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	if f.reloads() != 0 || !strings.Contains(f.reloadErr(), "server transaction failed") {
+		t.Fatalf("reloads=%d error=%q, want retained transaction error", f.reloads(), f.reloadErr())
+	}
+}
+
 func TestReloadRestartsOnGlobalPostWithNoRoutes(t *testing.T) {
 	f := newReloadFixture(t, upOptions{})
 	cfg, err := config.Load(config.ConfigPath(f.home))

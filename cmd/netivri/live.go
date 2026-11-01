@@ -301,17 +301,32 @@ func routesFingerprint(d desiredState) string {
 		Labels     map[string][]string
 		Tiers      map[string][]int
 		Routes     map[string]string
+		Exit       []struct{ Login, Exit string }
 		Pre        map[string]string
 		Post       map[string]string
 		GlobalPost string
 	}{
 		Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers,
 		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost,
-		GlobalPost: d.cfg.Chain.PostSOCKS5,
+		Exit: normalizedExitFingerprint(d.cfg.Accounts), GlobalPost: d.cfg.Chain.PostSOCKS5,
 	}
 	data, _ := json.Marshal(v)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func normalizedExitFingerprint(accounts []config.Account) []struct{ Login, Exit string } {
+	out := make([]struct{ Login, Exit string }, 0, len(accounts))
+	for _, a := range accounts {
+		out = append(out, struct{ Login, Exit string }{a.Login, func() string {
+			if a.Exit == "direct" {
+				return "direct"
+			}
+			return "route"
+		}()})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
+	return out
 }
 
 // listenerFingerprint covers the listener: address, allowed clients and the
@@ -427,6 +442,12 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 		l.mu.Unlock()
 		return false
 	}
+	// Core route reconfiguration requires a live node table/poller, not merely
+	// account route entries. Keep policy/server-only cases independent.
+	if (len(d.pool.nodes) == 0 || len(l.applied.pool.nodes) == 0) && !serverOnly && !policyOnly {
+		l.mu.Unlock()
+		return false
+	}
 	l.mu.Unlock()
 	if len(d.pool.accountRoutes) == 0 && policyOnly && len(d.servers) == 0 && len(oldServers) == 0 {
 		// Direct mode has no core route/server policy to reconfigure; the
@@ -452,7 +473,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	}
 	o := l.routeOptions(d, auth, store)
 	if err := inst.Reconfigure(o); err != nil {
-		if serverOnly {
+		if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
 			l.noteReloadError("server configuration not applied", err)
 			return true
 		}

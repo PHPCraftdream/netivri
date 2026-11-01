@@ -54,6 +54,7 @@ type Account struct {
 	AllowedClients string `json:"allowed_clients,omitempty"`
 	PreSOCKS5      string `json:"pre_socks5,omitempty"`
 	PostSOCKS5     string `json:"post_socks5,omitempty"`
+	Exit           string `json:"exit,omitempty"`
 }
 
 // Account returns the account and its index, or (nil, -1) when absent.
@@ -327,6 +328,9 @@ func (c *Config) Validate() error {
 		if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
 			return invalid("accounts[%d].allowed_clients: %v", i, err)
 		}
+		if err := ValidateAccountExit(*a, i); err != nil {
+			return err
+		}
 		if err := checkScalar(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
 			return err
 		}
@@ -345,6 +349,30 @@ func (c *Config) Validate() error {
 	}
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
+	}
+	return nil
+}
+
+// ValidateAccountExit validates only the account exit policy. index is the
+// account's position in Config.Accounts and is included in safe diagnostics.
+func ValidateAccountExit(a Account, index int) error {
+	if err := checkScalar(fmt.Sprintf("accounts[%d].exit", index), a.Exit); err != nil {
+		return err
+	}
+	switch a.Exit {
+	case "", "route":
+	case "direct":
+		if a.Provider != "" {
+			return invalid("accounts[%d].exit requires an empty provider for direct", index)
+		}
+		if a.ExitCountry != "" {
+			return invalid("accounts[%d].exit requires an empty exit_country for direct", index)
+		}
+		if a.PreSOCKS5 != "" && !strings.EqualFold(a.PreSOCKS5, "none") {
+			return invalid("accounts[%d].exit direct does not allow pre_socks5", index)
+		}
+	default:
+		return invalid("accounts[%d].exit must be empty, route or direct", index)
 	}
 	return nil
 }

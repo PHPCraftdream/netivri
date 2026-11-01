@@ -33,6 +33,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   order, `--provider main,backup --country DE,NL`) and is routed only through
   matching nodes, with no fallback to a direct connection or a country it does
   not name.
+- **Explicit account exits.** Choose the account's VPN-node route or direct egress (optionally via a post proxy). Direct is opt-in and exposes this machine's address to destinations. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Account writes validate the entire resulting configuration before saving; failures return `CONFIG_INVALID` and persist no changes. Batch account writes are atomic.
 - **Servers for your accounts.** Add an inbound endpoint for anytls, hysteria2, mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic, vless-reality or vmess. Only Trojan, AnyTLS, TrustTunnel and VLESS-Reality can share a TCP port using explicit protocol-owned SNI/ALPN matching; one default handles valid unmatched TLS but cannot resolve overlaps. Each connection uses its account's route; generate private client links or Mihomo YAML with `netivri server link`. See [`docs/servers/`](docs/servers/README.md).
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
@@ -108,6 +109,13 @@ the supported platforms (Linux on glibc and musl, such as Alpine; macOS; Windows
 directive.
 
 ## Quick start
+
+Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country. With explicit-direct-only accounts, a server update restarts the listener if the core cannot reconfigure it in place; other server transaction errors leave the running configuration unchanged.
+
+```sh
+# Optional: create an account with an explicit direct exit
+netivri account add {ACCOUNT} --exit direct
+```
 
 ```sh
 # 1. Add a subscription (the URL is a credential; keep it private)

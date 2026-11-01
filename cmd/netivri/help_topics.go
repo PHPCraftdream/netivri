@@ -400,11 +400,17 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "account",
 		Summary: "Manage proxy logins with a provider and an exit country",
-		Usage:   []string{"netivri account {add|clone|list|show|set-country|set-provider|set-clients|set-socks5|rm} [arguments]"},
+		Usage: []string{
+			"netivri account {add|clone|list|show|set-exit|set-country}",
+			"netivri account {set-provider|set-clients|set-socks5|rm} [arguments]",
+		},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +
 			"to a direct connection or to a country or provider it does not name. An account with neither uses the " +
-			"default route, which is direct.\n\n" +
+			"default route, which is direct. Its explicit exit mode is route or direct; direct bypasses the VPN and " +
+			"exposes this machine's address. Direct requires empty provider and country; switching never clears them " +
+			"silently, so clear them first. An effective post proxy may be used directly; inherited pre-proxy is " +
+			"ignored, while an explicitly configured account pre-proxy is rejected.\n\n" +
 			"Both may be a comma-separated list in priority order: the countries come first, and inside a country " +
 			"the providers, so 'main,backup' with 'DE,NL' tries main in DE, backup in DE, main in NL, backup in NL. " +
 			"New connections use the first of these that has a node that is up; the later ones are fallbacks. In a " +
@@ -412,9 +418,10 @@ var helpTopics = []helpTopic{
 			"quote it in shells that expand globs.\n\n" +
 			"A new account has the password placeholder 'init': the first client that connects with the login sets the " +
 			"password, which is stored as an argon2id hash.\n\n" +
-			"A running angel applies account changes by itself within a few seconds. A new or removed account or a " +
+			"Direct accounts have no node tiers. `account show` reports effective pre_socks5 with source `direct` and value `none`; its own value is null. Use 'netivri account set-exit {ACCOUNT} {route|direct}' to change the mode. CONFIG_INVALID for an account field change includes a hint to run `netivri account set-exit {ACCOUNT} route` first when it conflicts with a direct exit.\n\n" +
+			"A running angel applies account changes by itself within a few seconds. Account writes validate the entire resulting configuration before saving; failures return CONFIG_INVALID and persist no changes. Batch account writes are atomic. A new or removed account or a " +
 			"new password restarts its listener on the same port, so open connections end; a new country or " +
-			"provider list keeps them. 'netivri status' shows the outcome under 'reload'.",
+			"provider list keeps them. Server-only updates for explicit-direct-only accounts restart when the core reports in-place reconfiguration unsupported; other server transaction errors leave the current configuration running. 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
 			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
 			{"Show one account and its route", "netivri account show alice"},
@@ -425,15 +432,22 @@ var helpTopics = []helpTopic{
 		Name:    "account add",
 		Group:   groupAccount,
 		Summary: "Create an account",
-		Usage:   []string{"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]] [--pre-socks5 {URL}] [--post-socks5 {URL}]"},
+		Usage: []string{
+			"netivri account add {ACCOUNT} [--exit {route|direct}]",
+			"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
+			"netivri account add {ACCOUNT} [--pre-socks5 {URL}] [--post-socks5 {URL}]",
+		},
 		Description: "Creates a proxy login with the password placeholder 'init': the first client that connects with " +
 			"this login sets the password. A login uses the characters A-Z a-z 0-9 . _ @ - (and is not 'init').\n\n" +
 			"Repeating the command with the same providers and countries, in the same order, succeeds and reports " +
 			"existing true; any difference for an existing login is ACCOUNT_EXISTS (use set-country or " +
 			"set-provider to change it). " +
 			"A running angel applies the new account within a few seconds. Optional --pre-socks5 and --post-socks5 set " +
-			"account-specific proxy hops (socks5://, http:// or https://); see 'netivri help routing' for order and inheritance.",
+			"account-specific proxy hops (socks5://, http:// or https://); see 'netivri help routing' for order and inheritance. " +
+			"Optional --exit chooses route (default) or direct. Direct requires empty provider/country, ignores inherited pre-proxy, rejects an explicitly configured pre-proxy, and may use an effective post proxy (a proxy after netivri's exit). " +
+			"Adding an account always restarts its listener and ends open connections. Route/direct toggles apply in place only when at least one account route has stored nodes both before and after; if the first node-backed route appears or the last disappears (including the first explicit direct route on a default-only instance), the listener restarts. Direct-only changes and changes after the last node-backed route are restarts. Keeping another account's node-backed route through a flip preserves connections. Default/default-node/global-post changes retain their usual restart behavior.",
 		Flags: []helpFlag{
+			{"--exit {route|direct}", "Account exit mode; default route. Direct requires empty provider/country; if changing another field while this account is still invalid, CONFIG_INVALID includes a hint to run 'netivri account set-exit {ACCOUNT} route' first."},
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
 			{"--clients {RULES}", "Client addresses that may use this account: an allowed-clients rule list (e.g. 10.0.0.0/8, 192.168.1.*, loopback, *). Default: no account restriction."},
@@ -441,6 +455,9 @@ var helpTopics = []helpTopic{
 			{"--post-socks5 {URL}", "Proxy hop after the selected netivri exit. Use socks5://, http:// (an HTTP CONNECT proxy) or https:// (the same over TLS) as scheme://[user:password@]host:port; the port is required; credentials are never shown."},
 		},
 		Examples: []helpExample{
+			{"Add an account with the default route explicitly selected", "netivri account add alice --exit route"},
+			{"Add an account with an explicit direct exit", "netivri account add {ACCOUNT} --exit direct"},
+			{"Direct exit can use an optional post proxy", "netivri account add alice --exit direct --post-socks5 socks5://proxy.example:1080"},
 			{"Exit through Germany, using the subscription main", "netivri account add alice --provider main --country DE"},
 			{"Exit through the Netherlands, any subscription that has such nodes", "netivri account add bob --country NL"},
 			{"Any country of one subscription", "netivri account add carol --provider main"},
@@ -455,7 +472,7 @@ var helpTopics = []helpTopic{
 			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
 			herr("ACCOUNT_EXISTS", cli.ExitConflict, "the login exists with a different provider or country"),
-			herr("CONFIG_INVALID", cli.ExitUsage, "--clients is not a valid allowed-clients value"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "invalid --exit or direct-exit fields, or invalid allowed-clients value"),
 		},
 		SeeAlso: []string{"account list", "account clone", "sub countries", "up"},
 	},
@@ -464,9 +481,11 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "Create an account from an existing one",
 		Usage: []string{
-			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init] [--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]] [--country {COUNTRY}[,{COUNTRY}...]]",
+			"netivri account clone {SOURCE} {ACCOUNT} [--exit {route|direct}]",
+			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init]",
+			"netivri account clone {SOURCE} {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
 		},
-		Description: "Creates {ACCOUNT} with the provider, exit country and allowed_clients of {SOURCE} and, unless " +
+		Description: "Creates {ACCOUNT} with the provider, exit country, exit mode and allowed_clients of {SOURCE} and, unless " +
 			"--password says " +
 			"otherwise, with the same password: the stored hash is copied, so both logins accept the same password. " +
 			"If {SOURCE} still has the placeholder 'init', so does the copy.\n\n" +
@@ -476,6 +495,7 @@ var helpTopics = []helpTopic{
 			"nothing is created. {SOURCE} is never changed. A running angel picks the new account up within a few " +
 			"seconds.",
 		Flags: []helpFlag{
+			{"--exit {route|direct}", "Exit mode to copy over (default) or override; direct requires empty provider and country."},
 			{"--password {PASSWORD}", "A new password for {ACCOUNT}. Default: copy the password of {SOURCE}."},
 			{"--password init", "Use the placeholder: the first password a client sends for {ACCOUNT} becomes its password."},
 			{"--provider {SUBSCRIPTION}[,...]", "Replace the copied provider (or list of providers, in priority order)."},
@@ -483,6 +503,8 @@ var helpTopics = []helpTopic{
 			{"--clients {RULES}", "Replace the copied allowed-clients rule list. Clear it afterwards with 'account set-clients --none'."},
 		},
 		Examples: []helpExample{
+			{"Clone alice but keep route mode", "netivri account clone alice bob --exit route"},
+			{"Clone an account with an explicit direct exit", "netivri account clone {SOURCE} {ACCOUNT} --exit direct"},
 			{"A second login with the same route and the same password", "netivri account clone alice bob"},
 			{"The same route, a password of its own", "netivri account clone alice bob --password choose-a-password"},
 			{"The same route, the first client sets the password", "netivri account clone alice bob --password init"},
@@ -496,7 +518,7 @@ var helpTopics = []helpTopic{
 			herr("COUNTRY_INVALID", cli.ExitUsage, "the country is not an ISO 3166-1 alpha-2 code"),
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "the provider is not a configured subscription"),
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "the replaced route has no stored nodes"),
-			herr("CONFIG_INVALID", cli.ExitUsage, "--clients is not a valid allowed-clients value"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "invalid account direct-exit configuration"),
 		},
 		Notes: []string{
 			"A password given on the command line is visible in the shell history and to other local users in the " +
@@ -510,8 +532,8 @@ var helpTopics = []helpTopic{
 		Group:   groupAccount,
 		Summary: "List accounts",
 		Usage:   []string{"netivri account list [--home {DIR}]"},
-		Description: "Shows each account: login, provider, exit_country, allowed_clients (empty when the account has " +
-			"no rule of its own) and password_set, which is false until the " +
+		Description: "Shows each account: login, provider, exit_country, exit, allowed_clients (empty when the account has " +
+			"no rule of its own), effective pre_socks5 and post_socks5, and password_set, which is false until the " +
 			"first client claims the 'init' placeholder. Passwords and hashes are never shown.",
 		Examples: []helpExample{{"List the accounts", "netivri account list"}},
 		SeeAlso:  []string{"account add", "status"},
@@ -533,6 +555,7 @@ var helpTopics = []helpTopic{
 			"with a reason and does not consume a tier index, so the indexes match the order the angel actually " +
 			"tries.\n\n" +
 			"Without a running angel the static part is still shown and live is false (the live fields are null). " +
+			"Direct accounts report exit direct and have no node tiers. " +
 			"SOCKS5 hops are shown as effective pre_socks5 and post_socks5 values with their source (account or global); " +
 			"credentials are redacted. Passwords, hashes and subscription URLs are never shown.",
 		Examples: []helpExample{
@@ -544,6 +567,20 @@ var helpTopics = []helpTopic{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
 		},
 		SeeAlso: []string{"account list", "status", "stats"},
+	},
+	{
+		Name: "account set-exit", Group: groupAccount, Summary: "Change an account's exit mode",
+		Usage:       []string{"netivri account set-exit {ACCOUNT}[,{ACCOUNT}...] {route|direct}", "netivri account set-exit --all {route|direct}"},
+		Description: "Changes the exit mode of one or more accounts, or every account with --all. Direct requires empty provider and country; it exposes this machine's address, ignores inherited pre-proxy, and rejects an explicitly configured pre-proxy; an effective post proxy may be used directly. If a change to any account field conflicts with another account's direct exit, it is rejected before saving with CONFIG_INVALID and a hint to run 'netivri account set-exit {ACCOUNT} route' first. The change is prechecked before saving. Switching to direct never clears provider/country implicitly: clear them first or CONFIG_INVALID is returned. Switching to route with empty route fields retains the existing default-route behavior. Route/direct changes apply in place with connections retained only when account routes are nonempty and have stored nodes both before and after; if the first node-backed route appears or last disappears (including the first explicit direct route on a default-only instance), the listener restarts. Direct-only changes or changes after the last node-backed route restart. Keeping another node-backed route through a flip preserves connections. Adding an account always restarts. Default/default-node/global-post changes retain their usual restart behavior.",
+		Examples:    []helpExample{{"Set one account to direct after clearing its route", "netivri account set-country {ACCOUNT} --none\nnetivri account set-provider {ACCOUNT} --none\nnetivri account set-exit {ACCOUNT} direct"}, {"Set every eligible account to route mode", "netivri account set-exit --all route"}},
+		Flags:       []helpFlag{{"--all", "Apply the new exit mode to every configured account."}},
+		Errors: []helpError{
+			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account does not exist, or --all with no accounts"),
+			herr("ACCOUNT_INVALID", cli.ExitUsage, "a login is not valid"),
+			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "the route mode would leave an account without stored nodes"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "invalid exit mode, or direct requires empty provider/country and no explicitly configured pre-proxy"),
+		},
+		SeeAlso: []string{"account add", "account set-country", "account set-provider", "account show"},
 	},
 	{
 		Name:    "account set-country",
@@ -919,7 +956,7 @@ var helpTopics = []helpTopic{
 			"characters of A-Za-z0-9._@-, unique, not the reserved init, not a duplicate of a non-init " +
 			"auth.login), accounts.password (init or an argon2id hash), and optional accounts.provider (a " +
 			"comma-separated list of subscription names in priority order), accounts.exit_country (a " +
-			"comma-separated list of two-letter country codes, * allowed) and accounts.allowed_clients (the " +
+			"comma-separated list of two-letter country codes, * allowed), accounts.exit (route by default or direct, requiring empty provider/country; direct rejects explicitly configured account pre-proxy, ignores inherited pre-proxy, and may use effective post-proxy directly) and accounts.allowed_clients (the " +
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
@@ -982,7 +1019,11 @@ var helpTopics = []helpTopic{
 			"and a new connection goes to a node of the first tier that has one up, so a later tier is only a " +
 			"fallback. There is no fallback beyond the lists: no direct connection, and no country or provider " +
 			"the account does not name. An account with neither a provider nor a country uses the default route, " +
-			"which is direct until a node is selected.\n\n" +
+			"which is direct until a node is selected. Explicit exit direct bypasses the VPN; it requires empty " +
+			"provider/country, rejects explicitly configured account pre-proxy and ignores inherited pre-proxy, and " +
+			"may use an effective post proxy directly. It exposes this machine's address and is never an automatic " +
+			"fallback. Direct accounts have no node tiers; `account show` reports effective pre_socks5 with source " +
+			"`direct`, value `none`, and own value null. The post proxy is the hop after netivri's exit.\n\n" +
 			"A chain has up to three hops: an optional pre_socks5 hop, the selected subscription exit, " +
 			"and an optional post_socks5 hop. The order is client -> pre-hop -> selected exit -> post-hop -> target; " +
 			"each hop URL (socks5://, http:// or https://) requires a port. Account pre/post settings cascade independently: inherit uses the " +
@@ -1037,7 +1078,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"status: angel, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
-				"provider, exit_country, allowed_clients), route, started_at, uptime_seconds, version, " +
+				"provider, exit_country, exit, allowed_clients), route, started_at, uptime_seconds, version, " +
 				"active_accounts, activity[] (login, active, connections, upload_bytes, download_bytes - byte counts -, " +
 				"providers[], countries[], nodes[] with node, name, provider, country, connections and the byte " +
 				"counters), warm (alive = nodes whose last probe succeeded, total = the number of nodes, " +

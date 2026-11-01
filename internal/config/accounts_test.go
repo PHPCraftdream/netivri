@@ -10,6 +10,139 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
+func TestValidateDirectAccountExit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account Account
+		wantErr string
+	}{
+		{"valid plain", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct"}, ""},
+		{"valid post", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: "socks5://proxy.example:1080"}, ""},
+		{"provider", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", Provider: "main"}, "accounts[0].exit"},
+		{"country", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", ExitCountry: "DE"}, "accounts[0].exit"},
+		{"pre", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: "socks5://proxy.example:1080"}, "accounts[0].exit"},
+		{"unknown", Account{Login: "alice", Password: InitPlaceholder, Exit: "invalid"}, "accounts[0].exit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Default()
+			c.Accounts = []Account{tc.account}
+			err := c.Validate()
+			if tc.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestDirectAccountKtavRoundTrip(t *testing.T) {
+	cfg := Default()
+	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: "socks5://proxy.example:1080"}}
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(cfg.Accounts, loaded.Accounts) {
+		t.Fatalf("accounts = %#v", loaded.Accounts)
+	}
+}
+
+func TestAccountExitLoadDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name, field, want string
+	}{
+		{"missing remains empty", "", ""},
+		{"empty remains empty", "exit::\n", ""},
+		{"route", "exit: route\n", "route"},
+		{"direct", "exit: direct\n", "direct"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.ktav")
+			doc := "accounts: [\n  {\n    login: alice\n    password: init\n    " + tc.field + "  }\n]\n"
+			if tc.field == "" {
+				doc = "accounts: [\n  {\n    login: alice\n    password: init\n  }\n]\n"
+			}
+			if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := loaded.Accounts[0].Exit; got != tc.want {
+				t.Fatalf("loaded exit = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAccountExitSaveLoadRoundTrips(t *testing.T) {
+	for _, exit := range []string{"", "route", "direct"} {
+		t.Run(exit, func(t *testing.T) {
+			cfg := Default()
+			cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: exit}}
+			if exit == "direct" {
+				cfg.Chain.PreSOCKS5 = "socks5://global.example:1080"
+				cfg.Accounts[0].PreSOCKS5 = "none"
+			}
+			path := filepath.Join(t.TempDir(), "config.ktav")
+			if err := Save(path, cfg); err != nil {
+				t.Fatal(err)
+			}
+			round, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if round.Accounts[0].Exit != exit {
+				t.Fatalf("round-trip exit = %q, want %q", round.Accounts[0].Exit, exit)
+			}
+		})
+	}
+}
+
+func TestAccountExitRawValuesFailConfigInvalid(t *testing.T) {
+	for _, raw := range []string{"123", "true", "unknown"} {
+		t.Run(raw, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.ktav")
+			doc := "accounts: [\n  {\n    login: alice\n    password: init\n    exit: " + raw + "\n  }\n]\n"
+			if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Load(path)
+			ce, ok := err.(*cli.Error)
+			if !ok || ce.Code != CodeConfigInvalid || !strings.Contains(ce.Message, "accounts[0].exit") {
+				t.Fatalf("error = %#v", err)
+			}
+		})
+	}
+}
+
+func TestDirectExitAllowsNonePreAndPreservesRouteFields(t *testing.T) {
+	cfg := Default()
+	cfg.Chain.PreSOCKS5 = "socks5://global.example:1080"
+	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: "none"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	doc := "accounts: [\n  {\n    login: alice\n    password: init\n    provider: main\n    exit_country: de\n  }\n]\n"
+	if err := os.WriteFile(path, []byte(doc), 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Accounts[0].Exit != "" || loaded.Accounts[0].Provider != "main" || loaded.Accounts[0].ExitCountry != "DE" {
+		t.Fatalf("legacy account normalization = %#v", loaded.Accounts[0])
+	}
+}
 func TestAccountHelpers(t *testing.T) {
 	for _, login := range []string{"a", "Abc_@.-9", strings.Repeat("x", 64)} {
 		if !ValidAccountLogin(login) {

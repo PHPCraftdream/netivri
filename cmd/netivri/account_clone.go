@@ -29,18 +29,22 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 	country := fs.String("country", "", "exit country instead of the copied one")
 	provider := fs.String("provider", "", "provider instead of the copied one")
 	clients := fs.String("clients", "", "replace the copied allowed-clients rule list")
+	exitMode := fs.String("exit", "", "exit mode instead of the copied one")
 	pos, err := parseFlags(fs, rest)
 	if err != nil {
 		return cli.Usage("account clone: invalid flags")
 	}
 	passwordGiven := false
 	clientsGiven := false
+	exitGiven := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "password":
 			passwordGiven = true
 		case "clients":
 			clientsGiven = true
+		case "exit":
+			exitGiven = true
 		}
 	})
 	if len(pos) != 2 {
@@ -60,7 +64,7 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists: " + newLogin, Exit: cli.ExitConflict}
 	}
 
-	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
+	next := config.Account{Login: newLogin, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, Exit: src.Exit, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
 	mode := clonePasswordCopied
 	if src.Password == config.InitPlaceholder {
 		mode = clonePasswordInit
@@ -100,7 +104,17 @@ func accountClone(home string, cfg *config.Config, rest []string, save func() er
 		}
 		routeChanged = true
 	}
-	if routeChanged {
+	if exitGiven {
+		if *exitMode != "route" && *exitMode != "direct" {
+			return invalidAccountExitAt(len(cfg.Accounts))
+		}
+		next.Exit = *exitMode
+		routeChanged = true
+	}
+	if err := validateAccountCandidate(cfg, map[int]config.Account{len(cfg.Accounts): next}); err != nil {
+		return err
+	}
+	if routeChanged && effectiveExit(&next) == "route" {
 		if err := checkRoute(home, cfg, next); err != nil {
 			return err
 		}
