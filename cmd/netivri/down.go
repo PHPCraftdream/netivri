@@ -32,6 +32,9 @@ func runDown(args []string, stdout io.Writer) error {
 	defer cancel()
 
 	st, err := angelProbe(ctx, home)
+	if errors.Is(err, angel.ErrControlTimeout) {
+		return angelNotResponding()
+	}
 	if errors.Is(err, angel.ErrNotRunning) {
 		cli.Success(stdout, map[string]any{"angel": "stopped", "was_running": false})
 		return nil

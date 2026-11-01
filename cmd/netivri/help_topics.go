@@ -180,6 +180,7 @@ var helpTopics = []helpTopic{
 		},
 		Errors: []helpError{
 			herr("ALREADY_RUNNING", cli.ExitConflict, "an angel is running and --port or --bind differ, or --foreground was given"),
+			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "an angel is running but did not answer in time; nothing was spawned"),
 			herr("PORT_IN_USE", cli.ExitConflict, "the listen port is taken"),
 			herr("AUTH_REQUIRED", cli.ExitUsage, "non-loopback --bind without proxy authentication"),
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account's provider or country has no stored nodes; run 'netivri sub update'"),
@@ -199,7 +200,10 @@ var helpTopics = []helpTopic{
 			{"Stop the angel", "netivri down"},
 			{"Stop the angel of another profile", "netivri down --home ./work-profile"},
 		},
-		Errors:  []helpError{herr("ANGEL_STOP_TIMEOUT", cli.ExitInternal, "the angel did not stop within 15 seconds")},
+		Errors: []helpError{
+			herr("ANGEL_STOP_TIMEOUT", cli.ExitInternal, "the angel did not stop within 15 seconds"),
+			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "the angel is running but did not answer in time (busy); retry in a moment"),
+		},
 		SeeAlso: []string{"up", "status"},
 	},
 	{
@@ -234,7 +238,10 @@ var helpTopics = []helpTopic{
 			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
 			{"Start the angel only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
 		},
-		Errors:  []helpError{herr("ANGEL_NOT_RUNNING", cli.ExitNoAngel, "nothing is running; start it with 'netivri up'")},
+		Errors: []helpError{
+			herr("ANGEL_NOT_RUNNING", cli.ExitNoAngel, "nothing is running; start it with 'netivri up'"),
+			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "the angel is running but did not answer in time (busy reloading); retry in a moment"),
+		},
 		SeeAlso: []string{"up", "stats"},
 	},
 

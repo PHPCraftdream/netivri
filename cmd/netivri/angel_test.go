@@ -535,3 +535,59 @@ func TestHandshakeFlagOnlyWithForeground(t *testing.T) {
 		t.Errorf("handshake with foreground rejected: %v", err)
 	}
 }
+
+func probeControlTimeout(context.Context, string) (angel.State, error) {
+	return angelTestState(), errors.Join(angel.ErrControlTimeout, errors.New("deadline"))
+}
+
+// A control request that only timed out means a busy but live angel: status,
+// down and up must not call it "not running", stop it blindly or spawn a
+// second one (a state file deleted on a timeout once did exactly that).
+func TestRunStatusControlTimeoutIsNotNotRunning(t *testing.T) {
+	_ = stubAngels(t, probeControlTimeout, nil)
+	testutil.TempHome(t)
+	err := runStatus(nil, &bytes.Buffer{})
+	ce, ok := err.(*cli.Error)
+	if !ok {
+		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
+	}
+	if ce.Code != "ANGEL_NOT_RESPONDING" || ce.Exit == cli.ExitNoAngel || ce.Hint == "" {
+		t.Errorf("code/exit/hint = %q/%d/%q, want ANGEL_NOT_RESPONDING, not exit %d, with a hint", ce.Code, ce.Exit, ce.Hint, cli.ExitNoAngel)
+	}
+}
+
+func TestRunDownControlTimeoutDoesNotClaimStopped(t *testing.T) {
+	_ = stubAngels(t, probeControlTimeout, nil)
+	testutil.TempHome(t)
+	oldStop := angelControlStop
+	angelControlStop = func(context.Context, string, string) error {
+		t.Error("down sent a stop request to an angel that did not answer")
+		return nil
+	}
+	t.Cleanup(func() { angelControlStop = oldStop })
+	var out bytes.Buffer
+	err := runDown(nil, &out)
+	ce, ok := err.(*cli.Error)
+	if !ok || ce.Code != "ANGEL_NOT_RESPONDING" {
+		t.Fatalf("runDown err = %v, want ANGEL_NOT_RESPONDING", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout must stay empty on failure, got %q", out.String())
+	}
+}
+
+func TestRunUpAngelControlTimeoutDoesNotSpawn(t *testing.T) {
+	_ = stubAngels(t, probeControlTimeout, func(context.Context, angel.SpawnOptions) (angel.State, error) {
+		t.Error("up spawned a second angel while the first only answered slowly")
+		return angel.State{}, errors.New("must not spawn")
+	})
+	var out bytes.Buffer
+	err := runUpAngel(upOptions{Home: t.TempDir()}, []string{"--json"}, &out)
+	ce, ok := err.(*cli.Error)
+	if !ok || ce.Code != "ANGEL_NOT_RESPONDING" {
+		t.Fatalf("runUpAngel err = %v, want ANGEL_NOT_RESPONDING", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout must stay empty on failure, got %q", out.String())
+	}
+}

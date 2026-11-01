@@ -76,6 +76,16 @@ versions; every such change is listed here.
   `CI` workflow (inputs `packages`, `tags`, `run`, `os`, `race`), runs
   everything. Coverage floors and the packaging jobs run only on a full run.
 
+### Fixed
+
+- **A busy angel is no longer taken for a dead one.** `status`, `down` and `up`
+  asked the control channel once and, when the answer took longer than 2 s (an
+  angel busy restarting its core), deleted the state file of the live angel:
+  from then on `status` said "not running", `down` could not find it and `up`
+  started a second angel. A slow answer now ends in `ANGEL_NOT_RESPONDING`
+  (exit 1, retry in a moment) and changes nothing; only a refused connection or
+  another pid answering still clears a stale state file.
+
 ## [0.1.0] - 2026-10-28
 
 First release under this number, and the first one published to the `@netivri`

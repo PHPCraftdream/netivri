@@ -179,3 +179,90 @@ func TestProbeLiveKeepStateMissing(t *testing.T) {
 		t.Fatalf("missing state: err = %v, want ErrNotRunning", err)
 	}
 }
+
+// TestProbeLiveControlTimeoutKeepsState is the one-shot probe's version of
+// the watch's transient case: a control endpoint that accepts but never
+// answers (a live angel busy restarting its core) is ErrControlTimeout, not
+// ErrNotRunning, and the state file survives. Before, the first slow answer
+// deleted the state file of a live angel and status, down and up lost it.
+func TestProbeLiveControlTimeoutKeepsState(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	acceptDone := make(chan struct{})
+	go func() {
+		defer close(acceptDone)
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = l.Close()
+		mu.Lock()
+		for _, c := range conns {
+			_ = c.Close()
+		}
+		conns = nil
+		mu.Unlock()
+		select {
+		case <-acceptDone:
+		case <-time.After(5 * time.Second):
+			t.Error("the accept goroutine did not exit")
+		}
+	})
+	home := t.TempDir()
+	st := testState()
+	st.Control = l.Addr().String()
+	if err := WriteState(home, st); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, _, err = ProbeLive(ctx, home)
+	if !errors.Is(err, ErrControlTimeout) {
+		t.Fatalf("hanging control endpoint: err = %v, want ErrControlTimeout", err)
+	}
+	if errors.Is(err, ErrNotRunning) {
+		t.Fatalf("a control timeout became ErrNotRunning: %v", err)
+	}
+	if !stateExists(home) {
+		t.Error("a control timeout removed the state file of a live angel")
+	}
+}
+
+// TestProbeLiveConnRefusedRemovesState: nothing listens on the recorded
+// control port, the angel is gone and its stale state file is cleaned up.
+func TestProbeLiveConnRefusedRemovesState(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	st := testState()
+	st.Control = addr
+	if err := WriteState(home, st); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err = ProbeLive(ctx, home)
+	if !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("refused control port: err = %v, want ErrNotRunning", err)
+	}
+	if stateExists(home) {
+		t.Error("the stale state file of a gone angel was not removed")
+	}
+}
