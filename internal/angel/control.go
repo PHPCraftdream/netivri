@@ -140,6 +140,16 @@ type ReloadInfo struct {
 	LastError string `json:"last_error,omitempty"` // why the newest files are not applied
 }
 
+// ServerInfo describes a running server endpoint without exposing secrets.
+type ServerInfo struct {
+	Name           string   `json:"name"`
+	Protocol       string   `json:"protocol"`
+	Listen         string   `json:"listen"`
+	Accounts       []string `json:"accounts"`
+	Connections    int      `json:"connections"`
+	DroppedClients uint64   `json:"dropped_clients"`
+}
+
 // Status is the live answer of GET /v1/status.
 type Status struct {
 	Angel      string   `json:"angel"`
@@ -154,6 +164,7 @@ type Status struct {
 	StartedAt      string        `json:"started_at"`
 	Version        string        `json:"version"`
 	Accounts       []AccountInfo `json:"accounts,omitempty"`
+	Servers        []ServerInfo  `json:"servers,omitempty"`
 	// Activity has one entry per account while the core runs.
 	Activity []AccountActivity `json:"activity,omitempty"`
 	Warm     *WarmInfo         `json:"warm,omitempty"`

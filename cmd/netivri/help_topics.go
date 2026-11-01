@@ -1,6 +1,11 @@
 package main
 
-import "github.com/PHPCraftdream/netivri/internal/cli"
+import (
+	"strings"
+
+	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/servers"
+)
 
 // The help text is ASCII only on purpose: it must read the same in every
 // console code page. help_test.go checks it against the command table and
@@ -10,6 +15,7 @@ const (
 	groupService = "Proxy service"
 	groupSubs    = "Subscriptions and nodes"
 	groupAccount = "Accounts"
+	groupServer  = "Servers"
 	groupDiag    = "Statistics and diagnostics"
 	// groupConcepts holds the concept topics: not commands, but things an
 	// operator with only the binary needs to learn from help alone.
@@ -18,7 +24,7 @@ const (
 )
 
 // helpGroups is the order of the command list in the overview.
-var helpGroups = []string{groupService, groupSubs, groupAccount, groupDiag, groupConcepts, groupOther}
+var helpGroups = []string{groupService, groupSubs, groupAccount, groupServer, groupDiag, groupConcepts, groupOther}
 
 const helpSummary = "local proxy service for provider subscriptions"
 
@@ -87,6 +93,61 @@ func herr(code string, exit int, meaning string) helpError {
 
 var helpTopics = []helpTopic{
 	{
+		Name:        "server",
+		Summary:     "Manage protocol server listeners",
+		Usage:       []string{"netivri server {protocols|add|list|show|link|rotate|remove} [arguments]"},
+		Description: "Manages protocol server endpoints. status and status --watch include active server listeners and their available connection counters; see doctor and logs for other local diagnostics.",
+		Examples:    []helpExample{{"List registered server protocols", "netivri server protocols"}},
+		Notes:       []string{"Registered protocols in this build: " + strings.Join(servers.Names(), ", ")},
+	},
+	{
+		Name: "server protocols", Group: groupServer, Summary: "List registered server protocols",
+		Usage:       []string{"netivri server protocols", "netivri server protocols --json"},
+		Description: "Lists the protocols registered by this build, including whether they support multiple users. Parameter metadata is unavailable via the protocol interface.",
+		Examples:    []helpExample{{"List protocols", "netivri server protocols"}},
+		SeeAlso:     []string{"server add"},
+	},
+	{
+		Name: "server add", Group: groupServer, Summary: "Add a server listener",
+		Usage:       []string{"netivri server add --protocol {PROTOCOL} --account {ACCOUNT} --port {PORT}", "netivri server add [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}]", "netivri server add [--param {KEY=VALUE}]"},
+		Description: "Validates a new endpoint before persistence; then generates secrets and saves config. Default name: ss-{PORT} (Shadowsocks) or {PROTOCOL}-{PORT}. Repeated --param is supported; list/show disclose only keys.",
+		Flags: []helpFlag{{"--protocol {PROTOCOL}", "Registered protocol."},
+			{"--account {ACCOUNT}", "Account or * for supported multi-user protocols."},
+			{"--port {PORT}", "Listener port."}, {"--name {NAME}", "Optional name."},
+			{"--bind {ADDR}", "Bind address (default 0.0.0.0)."},
+			{"--public-host {HOST}", "Host embedded in links."}, {"--param {KEY=VALUE}", "Repeat for protocol parameters."}},
+		Examples: []helpExample{{"Add a listener", "netivri server add --protocol shadowsocks --account alice --port 8388"}},
+		Errors:   []helpError{herr("USAGE", cli.ExitUsage, "invalid arguments"), herr("CONFIG_INVALID", cli.ExitUsage, "invalid server configuration or protocol parameters")},
+		SeeAlso:  []string{"server protocols", "server list", "server link"},
+	},
+	{
+		Name: "server list", Group: groupServer, Summary: "List configured server listeners", Usage: []string{"netivri server list", "netivri server list --json"},
+		Description: "Lists server endpoint configuration without secrets or parameter values; params contains keys only.", Examples: []helpExample{{"List listeners", "netivri server list"}}, SeeAlso: []string{"server show"},
+	},
+	{
+		Name: "server show", Group: groupServer, Summary: "Show a server listener", Usage: []string{"netivri server show {NAME}", "netivri server show {NAME} --json"},
+		Description: "Shows a server endpoint without secrets or parameter values; params contains keys only.", Examples: []helpExample{{"Inspect a listener", "netivri server show edge"}}, SeeAlso: []string{"server list", "server link"},
+	},
+	{
+		Name: "server link", Group: groupServer, Summary: "Generate a client link", Usage: []string{"netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}]", "netivri server link {NAME} [--format {uri|mihomo}] [--qr]"},
+		Description: "Produces a link containing the server credential; it is the one output intended to disclose a generated secret. --host overrides public_host. QR output is unsupported because no encoder is included.",
+		Flags: []helpFlag{{"--account {ACCOUNT}", "Required for multi-account servers."},
+			{"--host {HOST}", "Overrides public_host; no port/credentials."},
+			{"--format {uri|mihomo}", "Format; default uri."}, {"--qr", "Unsupported; no QR encoder."}},
+		Examples: []helpExample{{"Generate the client URI", "netivri server link edge --account alice --host edge.example.org"}}, Errors: []helpError{herr("USAGE", cli.ExitUsage, "invalid account, host or format")}, SeeAlso: []string{"server show"},
+	},
+	{
+		Name: "server rotate", Group: groupServer, Summary: "Rotate server credentials", Usage: []string{"netivri server rotate {NAME}", "netivri server rotate {NAME} --account {ACCOUNT}"},
+		Flags:       []helpFlag{{"--account {ACCOUNT}", "Rotate one user secret; omit to rotate server material and all users."}},
+		Description: "Rotates a server credential; the running watcher observes the secrets file.",
+		Examples:    []helpExample{{"Rotate credentials", "netivri server rotate edge --account alice"}}, SeeAlso: []string{"server link"},
+	},
+	{
+		Name: "server remove", Group: groupServer, Summary: "Remove a server listener", Usage: []string{"netivri server remove {NAME}"},
+		Description: "Removes a server from config and its secrets; the running watcher observes config changes.",
+		Examples:    []helpExample{{"Remove a listener", "netivri server remove edge"}}, SeeAlso: []string{"server list"},
+	},
+	{
 		Name:    "up",
 		Group:   groupService,
 		Summary: "Start the proxy (a background angel by default)",
@@ -149,7 +210,9 @@ var helpTopics = []helpTopic{
 		Description: "Reports the live state of the angel: listen address and protocols, authentication mode, the " +
 			"allowed_clients rule, accounts " +
 			"with their provider and exit country, uptime and version and, while accounts have routes, the warm-up " +
-			"probes, the statistics store and the sticky-routing counters.\n\n" +
+			"probes, the statistics store and the sticky-routing counters. Configured server listeners are listed " +
+			"with their protocol, listen address, accounts, active connections and dropped clients (the unsigned aggregate " +
+			"of clients rejected by allowed-client policy and dropped UDP packets).\n\n" +
 			"The 'activity' list shows who is using the proxy now: for every account whether it is active (has open " +
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
@@ -158,9 +221,9 @@ var helpTopics = []helpTopic{
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
 			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
 			"1s and 60s). With --json it prints one JSON object per line instead. It ends with 4 when the angel " +
-			"stops; --watch cannot be combined with --full.",
+			"stops; --watch cannot be combined with --full. Server listeners and available counters are included when present.",
 		Flags: []helpFlag{
-			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it."},
+			{"--full", "Print everything: the complete warm-up node list with the pool counters, the statistics store and the sticky-routing counters. Scripts that read warm.nodes, stats or affinity need it. Server listeners are included in both short and full views."},
 			{"--watch", "Keep running and print who is active, one frame per --interval, until interrupted or the angel stops (exit 4)."},
 			{"--interval {DURATION}", "How often --watch polls the angel (default 2s, at least 1s, at most 60s). Without --watch it is a usage error."},
 		},

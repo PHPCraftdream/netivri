@@ -261,6 +261,14 @@ func (w *watchPrinter) frameText(st angel.Status, rates map[string][2]float64, n
 	}
 	writeASCIITable(w.out,
 		[]string{"LOGIN", "STATE", "CONN", "UP/s", "DOWN/s", "NODES", "COUNTRIES"}, rows)
+	if len(st.Servers) > 0 {
+		fmt.Fprintln(w.out, "Servers")
+		serverRows := make([][]string, 0, len(st.Servers))
+		for _, s := range st.Servers {
+			serverRows = append(serverRows, []string{asciiSafe(s.Name), asciiSafe(s.Protocol), asciiSafe(s.Listen), strings.Join(s.Accounts, ", "), fmt.Sprint(s.Connections), fmt.Sprint(s.DroppedClients)})
+		}
+		writeASCIITable(w.out, []string{"NAME", "PROTOCOL", "LISTEN", "ACCOUNTS", "CONN", "DROPPED"}, serverRows)
+	}
 }
 
 // frameJSON writes one JSON object per tick: rates are null on the first frame.
@@ -307,10 +315,11 @@ func (w *watchPrinter) frameJSON(st angel.Status, rates map[string][2]float64, n
 		items = append(items, item)
 	}
 	doc := struct {
-		Time           string        `json:"time"`
-		ActiveAccounts int           `json:"active_accounts"`
-		Accounts       []accountJSON `json:"accounts"`
-	}{Time: now.UTC().Format(time.RFC3339), ActiveAccounts: active, Accounts: items}
+		Time           string             `json:"time"`
+		ActiveAccounts int                `json:"active_accounts"`
+		Accounts       []accountJSON      `json:"accounts"`
+		Servers        []angel.ServerInfo `json:"servers,omitempty"`
+	}{Time: now.UTC().Format(time.RFC3339), ActiveAccounts: active, Accounts: items, Servers: st.Servers}
 	_ = json.NewEncoder(w.out).Encode(doc)
 }
 

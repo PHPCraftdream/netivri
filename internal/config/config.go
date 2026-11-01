@@ -38,6 +38,7 @@ type Config struct {
 	Chain         Chain          `json:"chain"`
 	Subscriptions []Subscription `json:"subscriptions,omitempty"`
 	Accounts      []Account      `json:"accounts,omitempty"`
+	Servers       []Server       `json:"servers,omitempty"`
 	Selection     Selection      `json:"selection"`
 }
 
@@ -338,6 +339,9 @@ func (c *Config) Validate() error {
 		if err := validateChainURL(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
 			return err
 		}
+	}
+	if err := validateServers(c); err != nil {
+		return err
 	}
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)

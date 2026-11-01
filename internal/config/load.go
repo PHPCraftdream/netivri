@@ -76,9 +76,9 @@ func Load(path string) (*Config, error) {
 	if err := ktavLoadsStrict(string(src)); err != nil {
 		return nil, configFromBindingError(err)
 	}
-	cfg := Default()
-	if err := ktavLoadsInto(string(src), cfg); err != nil {
-		return nil, configFromBindingError(err)
+	cfg, err := ktavLoadsIntoConfig(string(src))
+	if err != nil {
+		return nil, err
 	}
 	cfg.normalizeAccountLists()
 	if err := cfg.Validate(); err != nil {
