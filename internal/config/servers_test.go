@@ -1,9 +1,12 @@
 package config
 
 import (
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/ktav-lang/golang/pure"
 )
 
 func serverBaseline() *Config {
@@ -100,7 +103,88 @@ func TestServerEmptyArrayAndMarshalNoMutation(t *testing.T) {
 	}
 }
 
+func TestServerPortParsingUsesLosslessGenericValues(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  int
+	}{
+		{"integer", "8388", 8388},
+		{"large integer scalar", "9223372036854775808", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := "servers: [{name: edge, protocol: shadowsocks, port: " + tc.value + ", accounts: alice}]"
+			cfg, err := ktavLoadsIntoConfig(doc)
+			if tc.want == 0 {
+				if err == nil || strings.Contains(err.Error(), tc.value) {
+					t.Fatalf("error = %v, expected redacted invalid port", err)
+				}
+				return
+			}
+			if err != nil || len(cfg.Servers) != 1 || cfg.Servers[0].Port != tc.want {
+				t.Fatalf("config = %#v, error = %v", cfg, err)
+			}
+		})
+	}
+}
+
+func TestServerPortRejectsNonIntegerValues(t *testing.T) {
+	for _, value := range []string{`8388.5`, `"8388"`, `true`, `null`, `999999999999999999999999999999999999999`} {
+		t.Run(value, func(t *testing.T) {
+			doc := "servers: [{name: edge, protocol: shadowsocks, port: " + value + ", accounts: alice}]"
+			cfg, err := ktavLoadsIntoConfig(doc)
+			if err == nil || cfg != nil || strings.Contains(err.Error(), value) {
+				t.Fatalf("config = %#v, error = %v", cfg, err)
+			}
+		})
+	}
+}
+
+func TestServerPortMarshalSaveLoad(t *testing.T) {
+	cfg := serverBaseline()
+	cfg.Servers[0].Params["udp"] = "false"
+	doc, err := Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doc, "port: 8388") {
+		t.Fatalf("Marshal did not emit numeric port: %s", doc)
+	}
+	path := filepath.Join(t.TempDir(), "config.ktav")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Servers[0].Port != cfg.Servers[0].Port || loaded.Servers[0].Params["cipher"] != "aes-128-gcm" || loaded.Servers[0].Params["udp"] != "false" {
+		t.Fatalf("loaded server = %#v", loaded.Servers[0])
+	}
+}
+
 func TestServerParseAndParamsMarshalRoundTrip(t *testing.T) {
+	src := `servers: [{name: edge, protocol: shadowsocks, port: 8388, accounts: alice, numeric: 123}]`
+	var genericInto map[string]any
+	if err := pure.LoadsInto(src, &genericInto); err != nil {
+		t.Fatal(err)
+	}
+	intoPort := genericInto["servers"].([]any)[0].(map[string]any)["port"]
+	if _, ok := intoPort.(float64); !ok {
+		t.Fatalf("LoadsInto generic port = %T (%v), want float64", intoPort, intoPort)
+	}
+	raw, err := pure.Loads(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotPort := raw.(map[string]any)["servers"].([]any)[0].(map[string]any)["port"]
+	if _, ok := gotPort.(int64); !ok {
+		t.Fatalf("generic Ktav port = %T (%v), want int64", gotPort, gotPort)
+	}
+	gotParam := raw.(map[string]any)["servers"].([]any)[0].(map[string]any)["numeric"]
+	if gotParam != int64(123) {
+		t.Fatalf("generic Ktav numeric parameter = %#v", gotParam)
+	}
 	doc := `listen.bind: 127.0.0.1
 listen.port: 7890
 servers: [

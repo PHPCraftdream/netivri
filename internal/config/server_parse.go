@@ -15,9 +15,15 @@ func ktavLoadsIntoConfig(src string) (*Config, error) {
 	if err := ktavLoadsInto(src, cfg); err != nil {
 		return nil, configFromBindingError(err)
 	}
-	var raw map[string]any
-	if err := pure.LoadsInto(src, &raw); err != nil {
+	// LoadsInto decodes generic numeric map values through encoding/json as float64.
+	// Loads preserves integer scalars as int64 so server ports are not lossy.
+	rawValue, err := pure.Loads(src)
+	if err != nil {
 		return nil, configFromBindingError(err)
+	}
+	raw, ok := rawValue.(map[string]any)
+	if !ok {
+		return nil, invalid("config must be a table")
 	}
 	items, hasServers := raw["servers"]
 	rawServers, isArray := items.([]any)
