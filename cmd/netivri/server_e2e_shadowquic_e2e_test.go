@@ -472,6 +472,7 @@ func e2eShadowQUICProbe(parent context.Context, port int, user, password, target
 	}
 	return nil
 }
+
 // e2eShadowQUICTimedOut reports a deadline or a network timeout anywhere in a
 // (possibly joined) error: the silent drop of JLS shows up as one.
 func e2eShadowQUICTimedOut(err error) bool {
