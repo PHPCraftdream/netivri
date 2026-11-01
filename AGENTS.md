@@ -71,6 +71,11 @@ To verify a change, push it and read the CI result.
   sources are vendored in `third_party/mihomo` (see `third_party/README.md`):
   change them only through documented patch commits.
 - Every user-facing behavior change must update `docs/cli.md` in the same change.
+  A user-facing change is done only when all of these are current in that change:
+  `README.md` (feature line, and the quick-start example it affects), the docs
+  (`docs/cli.md`, `docs/config.md` with an example of every new key, the design
+  note), the help topics in `cmd/netivri/help_topics.go` with an example for each
+  new command or flag, and `CHANGELOG.md` under `[Unreleased]`.
 - In the help of the program and in every document, a placeholder is written in
   curly braces with a name that says what goes there: `{ACCOUNT}` (the login of
   an account), `{SUBSCRIPTION}`, `{COUNTRY}`, `{NODE}`, `{URL}`, `{DIR}`. Not
