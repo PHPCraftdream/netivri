@@ -35,16 +35,16 @@ subscriptions, TUN, protocols that need a domain fronting service, a GUI.
 - Accounts are routed by rules `IN-USER,<login>` (`internal/core/accounts.go`),
   and the sticky groups read `metadata.InUser`. A listener that sets `InUser` to
   the account login gets the account's route, statistics, hops and logging for
-  free.
+  free. The sticky group's `ListenPacketContext` chooses its sticky member;
+  `SupportUDP` checks the first member and `IsL3Protocol` checks the selected
+  member. An account rule that does not support UDP may be skipped, allowing a
+  later `MATCH,DIRECT` rule to handle UDP. This version rejects server UDP to
+  prevent traffic from bypassing the account route.
 - VLESS, VMess and Trojan listeners take a user list and set `InUser` to the
   user's `Username`. Mihomo's Shadowsocks server has a single password, so it
   needs one listener per account, each started with `inbound.WithInUser(login)`.
   Protocols differ here, see the matrix.
-- **The IP filter does not cover these listeners.** `inbound.SetAllowedIPs`
-  (our `listen.allowed_clients`) is consulted only by the HTTP, SOCKS and mixed
-  listeners. A server must enforce `listen.allowed_clients` and the per-account
-  `allowed_clients` itself, in the tunnel wrapper it hands to the listener
-  (by `metadata.SrcIP` and `metadata.InUser`), before the connection is routed.
+- **The global IP filter does not cover these listeners.** Mihomo's `inbound.SetAllowedIPs` (`listen.allowed_clients`) is consulted by HTTP, SOCKS and mixed listeners, not the Shadowsocks server. Core therefore enforces the global and per-account allowlists in the wrapped tunnel before forwarding, using `metadata.SrcIP` and `metadata.InUser`. A nil policy pointer is unrestricted; with a configured policy, nil global/account slices mean unrestricted and empty non-nil slices deny all.
 
 ## Model
 
@@ -79,15 +79,10 @@ servers: [
 - `protocol`: a name from the registry (`netivri server protocols`).
 - `bind`: default `0.0.0.0`; `doctor` warns that the port is public.
 - `port`: 1 to 65535, required, unique per bind and transport.
-- `accounts`: login list, or `*` for every account (multi-user protocols only; a
-  single-user protocol needs exactly one login).
-- `public_host`: host name or address that links carry; may be empty, then
-  `server link --host` is required.
-- protocol parameters are keys that the protocol validates (`cipher`, `dest`,
-  `sni`, `cert_file`, `key_file`, `obfs`, ...); unknown keys are
-  `CONFIG_INVALID` and name the key, never the value.
-
-Validation errors name the key (`servers[1].port`) and never contain a secret.
+- `accounts`: login list, or `*` for every account (multi-user protocols only; a single-user protocol needs exactly one resolved login). Core resolves `*` before creating a `Spec`; `Spec.Validate` accepts only resolved logins.
+- `public_host`: host name or address carried by links; may be empty, then `server link --host` is required.
+- unknown protocol parameter keys are `CONFIG_INVALID` and identify the key, never its value.
+- `Spec.Validate` checks resolved names (`1..32` `A-Za-z0-9._-`), ports (`1..65535`), bind IP shape, unique logins (`1..64` `A-Za-z0-9._@-`, not `*`), protocol params, and the single-user account count. `ListenAddress()` supplies `0.0.0.0` for an empty bind.
 
 ## Secrets file
 
@@ -120,10 +115,10 @@ New package `internal/servers`, imported by `internal/core` and `cmd/netivri`:
 type Spec struct {
     Name, Protocol, Bind string
     Port                 int
-    Accounts             []string          // resolved logins
-    Params               map[string]string // validated by the protocol
-    Material             map[string]string // generated server-level material
-    Users                map[string]map[string]string // login -> secrets
+    Accounts             []string
+    Params               map[string]string
+    Material             SecretMap
+    Users                UserSecrets // login -> map[string]string
 }
 
 type Protocol interface {
@@ -137,7 +132,9 @@ type Protocol interface {
 }
 ```
 
-- `Env` carries the (filtered) `C.Tunnel`, the listen config and the log hooks.
+- `Env` carries `Tunnel C.Tunnel` and `ListenConfig C.InboundListenConfig` only. The registry API is `Register(Protocol)` (panics for duplicate names), `Lookup(string) (Protocol, bool)`, `Names() []string` (sorted), and `Registered() []Protocol` (sorted). `Spec` implements validation, redacted formatting, deep clone/equality, and `ListenAddress()` (empty bind becomes `0.0.0.0`). All maps are redacted in `Spec.String` / `GoString`. `NewMaterial` and `NewSecret` retain plain map return types.
+- `Running` holds `Name, Protocol, Listen`, `Accounts` and `Closer`; `(*Running).Close()` is nil-safe. `Info` holds `Name, Protocol, Listen`, `Accounts`, `Connections int`, `DroppedClients uint64`. Optional `MihomoLinker` exposes `Mihomo(spec, login, host) (string, error)`.
+- `NewSecret` returns fields in a regular map for assignment into `UserSecrets[login]`; `NewMaterial` returns fields for `Spec.Material`. Keep secrets out of logs, errors and status.
 - Protocols register themselves in `init()` (`servers.Register`). A protocol
   change therefore touches only its own files: `internal/servers/<protocol>.go`,
   its tests and `docs/servers/<protocol>.md`. The CLI, `help` and the drift test
@@ -151,10 +148,7 @@ type Protocol interface {
 
 ## Core wiring
 
-- `core.Options.Servers []servers.Spec`. `Start` starts them after
-  `ApplyConfig` and the sticky groups, `Reconfigure` replaces the changed ones
-  only (a server whose spec is equal keeps its listener and connections), and
-  `Close` stops them before `executor.Shutdown`.
+- `core.Options.Servers []servers.Spec`. `Start` stages listeners through the core socket broker and commits them transactionally; unchanged specs keep their listener and connections. A changed listener stops accepting new connections after commit, while tracked connections drain until `Instance.Close`. A failed stage rolls back and retains old entries.
 - An address in use is `PORT_IN_USE`, as for the mixed listener; a server that
   fails to start fails `up` (fail closed), a reload that fails keeps the old
   servers and reports the error.
@@ -162,9 +156,7 @@ type Protocol interface {
   `listen.allowed_clients` or the account's `allowed_clients` does not allow,
   counting the drops, and (2) otherwise passes through to the normal tunnel,
   where rules, sticky groups, hops and `OnConnEvent` apply unchanged.
-- UDP: a protocol with a UDP side says so; the loopback tests cover the TCP path
-  first, and UDP through a sticky group follows `IsL3Protocol`, which the first
-  protocol must verify and document.
+- UDP: the core tunnel wrapper drops and counts UDP traffic arriving through all server tunnels. Shadowsocks currently exposes TCP only; UDP is unsupported for this version.
 
 ## CLI
 
@@ -212,7 +204,7 @@ connection log as the local port, with the account as login.
 
 | Protocol | Users | TLS | Transport | Link |
 | --- | --- | --- | --- | --- |
-| shadowsocks (2022 and AEAD) | single | no | TCP, UDP | `ss://` |
+| shadowsocks (2022 and AEAD) | single | no | TCP only (UDP unsupported) | `ss://` |
 | vless-reality | multi | Reality (no certificate) | TCP | `vless://` |
 | vmess | multi | no (AEAD) | TCP | `vmess://` |
 | trojan | multi | TLS material | TCP | `trojan://` |
@@ -257,7 +249,8 @@ client adapter is reported, not shipped untested.
 
 ## Open questions, settled by the first tasks
 
-- UDP of Shadowsocks through sticky groups.
+- Shadowsocks UDP is unsupported in this version. The core tunnel wrapper drops and counts UDP traffic through server tunnels.
+- Safe same-address server changes are staged by the core socket broker. Unchanged specs retain their running listeners; committed changes stop new accepts on the old lease while existing tracked connections drain until `Instance.Close`.
 - Whether the TUIC, AnyTLS, TrustTunnel and ShadowQUIC listeners carry the user
   name into `InUser` (otherwise one listener per account).
 - The default Reality camouflage target (`www.microsoft.com:443`, must speak TLS

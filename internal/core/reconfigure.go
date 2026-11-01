@@ -22,10 +22,10 @@ var ErrReconfigureUnsupported = errors.New("core: this change needs a new instan
 var errInstanceClosed = errors.New("core: the instance is closed")
 
 // Reconfigure replaces the account routes of a running instance: the nodes,
-// their labels and tiers and the login-to-route map of o. The listener, its
-// authenticator and allowed clients stay as Start set them (Bind, Port,
-// Authenticator, AllowedClients and HomeDir of o are ignored), and so do the
-// open connections: they finish on the node they use.
+// their labels and tiers and the login-to-route map of o. Bind, Port,
+// Authenticator and HomeDir are ignored. AllowedClients keeps the mixed
+// listener's existing filter; AccountAllowedClients supplies the server
+// listeners' policy. Open connections finish on the node they use.
 //
 // What a node label keeps across the change: its health (measurements, down
 // state, hedge budget), its probe backoff and the site bindings that point at
@@ -46,13 +46,16 @@ func (i *Instance) Reconfigure(o Options) error {
 	if o.AffinityTTL < 0 {
 		return nodeInvalid("affinity TTL is negative")
 	}
-	if o.Node != nil || len(o.AccountRoute) == 0 {
+	if o.Node != nil {
 		return ErrReconfigureUnsupported
 	}
 	if o.Warm != nil {
 		if _, err := normalizeWarmOptions(*o.Warm); err != nil {
 			return err
 		}
+	}
+	if len(o.AccountRoute) == 0 && len(o.Servers) == 0 && len(i.Servers()) == 0 {
+		return ErrReconfigureUnsupported
 	}
 
 	lifecycleMu.Lock()
@@ -64,8 +67,25 @@ func (i *Instance) Reconfigure(o Options) error {
 		return errInstanceClosed
 	}
 	old := i.state()
-	if old.table == nil || i.route != routeDirect || i.poller == nil {
+	if old.table != nil && len(o.AccountRoute) == 0 {
 		return ErrReconfigureUnsupported
+	}
+	if old.table == nil || i.route != routeDirect || i.poller == nil {
+		if old.table != nil || i.route != routeDirect || len(i.state().accountRoutes) != 0 {
+			return ErrReconfigureUnsupported
+		}
+		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || o.GlobalPost != "" {
+			return ErrReconfigureUnsupported
+		}
+		tx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
+		if err != nil {
+			return err
+		}
+		if err := tx.commit(); err != nil {
+			tx.rollback()
+			return err
+		}
+		return nil
 	}
 
 	// Everything that can fail runs before the instance changes.
@@ -119,6 +139,16 @@ func (i *Instance) Reconfigure(o Options) error {
 	}
 
 	// Stop old probes before carrying their schedules into the next generation.
+	serverTx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			serverTx.rollback()
+		}
+	}()
 	old.warm.Close()
 	backoff := carryBackoff(old.warm.backoffByName(), old.memberLabels, memberNameLabels(plans))
 
@@ -176,7 +206,10 @@ func (i *Instance) Reconfigure(o Options) error {
 	}
 
 	i.poller.setTargets(health, connLabels)
-
+	if err := serverTx.commit(); err != nil {
+		return err
+	}
+	committed = true
 	i.routing.Store(&routingState{
 		gen:           gen,
 		accountRoutes: copyAccountRoutes(o.AccountRoute),
