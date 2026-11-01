@@ -1,3 +1,6 @@
+// Modified by the netivri authors: readLastCommand and writeDirect are atomic,
+// because Upstream() runs on the relay goroutine while ReadBuffer/WriteBuffer
+// update them on the read/write goroutine (a data race under -race).
 package vision
 
 import (
@@ -7,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/metacubex/mihomo/common/buf"
@@ -42,9 +46,9 @@ type Conn struct {
 	readRemainingPadding       int
 	readProcess                bool
 	readFilterUUID             bool
-	readLastCommand            byte
+	readLastCommand            atomic.Uint32
 	writeFilterApplicationData bool
-	writeDirect                bool
+	writeDirect                atomic.Bool
 	writeOnceUserUUID          []byte
 }
 
@@ -103,7 +107,7 @@ func (vc *Conn) ReadBuffer(buffer *buf.Buffer) error {
 		vc.readRemainingPadding -= int(n)
 	}
 	if vc.readProcess {
-		switch vc.readLastCommand {
+		switch vc.lastCommand() {
 		case commandPaddingContinue:
 			//if vc.isTLS || vc.packetsToFilter > 0 {
 			need := PaddingHeaderLen
@@ -131,9 +135,9 @@ func (vc *Conn) ReadBuffer(buffer *buf.Buffer) error {
 			}
 			vc.readRemainingPadding = int(binary.BigEndian.Uint16(header[3:]))
 			vc.readRemainingContent = int(binary.BigEndian.Uint16(header[1:]))
-			vc.readLastCommand = header[0]
+			vc.readLastCommand.Store(uint32(header[0]))
 			log.Debugln("XTLS Vision read padding: command=%d, payloadLen=%d, paddingLen=%d",
-				vc.readLastCommand, vc.readRemainingContent, vc.readRemainingPadding)
+				vc.lastCommand(), vc.readRemainingContent, vc.readRemainingPadding)
 			return vc.ReadBuffer(buffer)
 			//}
 		case commandPaddingEnd:
@@ -178,7 +182,7 @@ func (vc *Conn) ReadBuffer(buffer *buf.Buffer) error {
 				return nil
 			}
 		default:
-			err := fmt.Errorf("XTLS Vision read unknown command: %d", vc.readLastCommand)
+			err := fmt.Errorf("XTLS Vision read unknown command: %d", vc.lastCommand())
 			log.Debugln(err.Error())
 			return err
 		}
@@ -210,7 +214,7 @@ func (vc *Conn) WriteBuffer(buffer *buf.Buffer) (err error) {
 					command = commandPaddingEnd
 					if vc.enableXTLS {
 						command = commandPaddingDirect
-						vc.writeDirect = true
+						vc.writeDirect.Store(true)
 					}
 					vc.writeFilterApplicationData = false
 					applyPadding = false
@@ -273,8 +277,8 @@ func (vc *Conn) NeedAdditionalReadDeadline() bool {
 }
 
 func (vc *Conn) Upstream() any {
-	if vc.writeDirect ||
-		vc.readLastCommand == commandPaddingDirect {
+	if vc.writeDirect.Load() ||
+		vc.lastCommand() == commandPaddingDirect {
 		return vc.netConn
 	}
 	return vc.Conn
@@ -286,7 +290,7 @@ func (vc *Conn) ReaderPossiblyReplaceable() bool {
 
 func (vc *Conn) ReaderReplaceable() bool {
 	if !vc.readProcess &&
-		vc.readLastCommand == commandPaddingDirect {
+		vc.lastCommand() == commandPaddingDirect {
 		return true
 	}
 	return false
@@ -297,7 +301,7 @@ func (vc *Conn) WriterPossiblyReplaceable() bool {
 }
 
 func (vc *Conn) WriterReplaceable() bool {
-	if vc.writeDirect {
+	if vc.writeDirect.Load() {
 		return true
 	}
 	return false
