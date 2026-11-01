@@ -3,6 +3,7 @@ module github.com/PHPCraftdream/netivri
 go 1.26.0
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/ktav-lang/golang v0.8.1
 	github.com/metacubex/mihomo v1.19.32
 	github.com/metacubex/sing v0.5.8
@@ -46,7 +47,6 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/insomniacslk/dhcp v0.0.0-20250109001534-8abf58130905 // indirect
 	github.com/josharian/native v1.1.0 // indirect
