@@ -54,3 +54,7 @@ Startup pre-acquires only the TCP socket before passing it to Mihomo, with UDP d
 UDP is unsupported: the core tunnel wrapper drops and counts UDP traffic arriving through all server tunnels. Mihomo's UDP-incompatible account rule may fall through to `DIRECT` for UDP rather than the account route, so UDP must fail closed rather than be sent direct. The Shadowsocks Mihomo snippet therefore sets `udp: false`.
 
 Unit tests cover registry behavior, Spec validation/redaction/equality, cipher validation and generated key sizes, SIP002/SIP022 payload round-trips, and safe startup-error formatting/classification. `/internal/core/servers_integration_test.go` contains the loopback TCP route, rotation, policy, listener-reuse, and close coverage; it is an integration-tagged CI test and was not run for this documentation change. There is no Shadowsocks UDP packet loopback test yet.
+
+## Known limitation
+
+Upstream sing-shadowsocks2022 `serverConn.Close` can read the response writer concurrently with first-response initialization. Shutting down an in-flight SS2022 connection can therefore trigger the race detector. The dependency module cache is read-only, so this change does not patch the dependency. Tests quiesce client and server handlers deterministically before shutdown; production shutdown of an active connection remains exposed to this race. No race suppression or sleep is used.

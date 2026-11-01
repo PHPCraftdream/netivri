@@ -32,6 +32,28 @@ func serverPort(t *testing.T) (int, string) {
 	return n, port
 }
 
+func waitServerConnections(t *testing.T, inst *Instance) {
+	t.Helper()
+	deadline := time.NewTimer(testTimeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		connections := 0
+		for _, info := range inst.Servers() {
+			connections += info.Connections
+		}
+		if connections == 0 {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatalf("server connections did not drain; still have %d", connections)
+		}
+	}
+}
+
 func TestShadowsocksServersRoutesAndReload(t *testing.T) {
 	aliceNode, aliceAddress := startChainRecorder(t)
 	bobNode, bobAddress := startChainRecorder(t)
@@ -106,8 +128,13 @@ func TestShadowsocksServersRoutesAndReload(t *testing.T) {
 	if startErr != nil {
 		t.Fatalf("Start after port retries: %v", startErr)
 	}
-	t.Cleanup(func() { _ = inst.Close() })
-
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			defer inst.Close()
+			waitServerConnections(t, inst)
+		}
+	})
 	dial := func(port int, key string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), testTimeout)
 		defer cancel()
@@ -120,26 +147,30 @@ func TestShadowsocksServersRoutesAndReload(t *testing.T) {
 		}
 		defer client.Close()
 		meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)}
-		conn, err := client.DialContext(ctx, meta)
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-		if err := conn.SetDeadline(time.Now().Add(testTimeout)); err != nil {
-			return err
-		}
-		payload := []byte("shadowsocks-route-echo")
-		if _, err := conn.Write(payload); err != nil {
-			return err
-		}
-		got := make([]byte, len(payload))
-		if _, err := io.ReadFull(conn, got); err != nil {
-			return err
-		}
-		if string(got) != string(payload) {
-			return io.ErrUnexpectedEOF
-		}
-		return nil
+		err = func() error {
+			conn, err := client.DialContext(ctx, meta)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+			if err = conn.SetDeadline(time.Now().Add(testTimeout)); err != nil {
+				return err
+			}
+			payload := []byte("shadowsocks-route-echo")
+			if _, err = conn.Write(payload); err != nil {
+				return err
+			}
+			got := make([]byte, len(payload))
+			if _, err = io.ReadFull(conn, got); err != nil {
+				return err
+			}
+			if string(got) != string(payload) {
+				return io.ErrUnexpectedEOF
+			}
+			return nil
+		}()
+		waitServerConnections(t, inst)
+		return err
 	}
 	if err := dial(alicePort, aliceKey); err != nil {
 		t.Fatalf("alice server route: %v", err)
@@ -163,7 +194,6 @@ func TestShadowsocksServersRoutesAndReload(t *testing.T) {
 	if err := dial(alicePort, wrongKey); err == nil {
 		t.Fatal("wrong key completed echo")
 	}
-
 	aliceEntry := inst.servers.items["alice-entry"]
 	bobEntry := inst.servers.items["bob-entry"]
 	if err := inst.Reconfigure(base); err != nil {
@@ -259,9 +289,11 @@ func TestShadowsocksServersRoutesAndReload(t *testing.T) {
 		t.Fatalf("restored client policy: %v", err)
 	}
 
+	waitServerConnections(t, inst)
 	if err := inst.Close(); err != nil {
 		t.Fatal(err)
 	}
+	closed = true
 	for _, portText := range []string{alicePortText, bobPortText} {
 		addr := net.JoinHostPort("127.0.0.1", portText)
 		ln, err := net.Listen("tcp", addr)
@@ -316,7 +348,13 @@ func TestShadowsocksServerCountersSurviveReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start after port retries: %v", err)
 	}
-	t.Cleanup(func() { _ = inst.Close() })
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			defer inst.Close()
+			waitServerConnections(t, inst)
+		}
+	})
 	client, err := outbound.NewShadowSocks(outbound.ShadowSocksOption{Name: "counter-client", Server: "127.0.0.1", Port: port,
 		Password: oldKey, Cipher: "2022-blake3-aes-128-gcm"})
 	if err != nil {
@@ -330,81 +368,102 @@ func TestShadowsocksServerCountersSurviveReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	connClosed := false
+	closeConn := func() error {
+		if connClosed {
+			return nil
+		}
+		connClosed = true
+		closeErr := conn.Close()
+		if errors.Is(closeErr, net.ErrClosed) {
+			// The Shadowsocks reader and writer share and re-close the raw connection.
+			return nil
+		}
+		return closeErr
+	}
+	defer func() {
+		_ = closeConn()
+		if !closed {
+			defer inst.Close()
+			waitServerConnections(t, inst)
+		}
+	}()
 	if err := conn.SetDeadline(time.Now().Add(testTimeout)); err != nil {
+		_ = closeConn()
 		t.Fatal(err)
 	}
 	payload := []byte("open-across-replacement")
 	if _, err := conn.Write(payload); err != nil {
+		_ = closeConn()
 		t.Fatal(err)
 	}
 	got := make([]byte, len(payload))
 	if _, err := io.ReadFull(conn, got); err != nil {
+		_ = closeConn()
 		t.Fatal(err)
 	}
 	if string(got) != string(payload) {
+		_ = closeConn()
 		t.Fatalf("echo = %q, want %q", got, payload)
 	}
 	if got := inst.Servers()[0].Connections; got != 1 {
+		_ = closeConn()
 		t.Fatalf("connections before replacement = %d, want 1", got)
 	}
 	oldEntry := inst.servers.items["counter-entry"]
 	packet := &dropCountingPacket{}
 	(&serverTunnel{entry: oldEntry}).HandleUDPPacket(packet, nil)
 	if packet.drops != 1 {
+		_ = closeConn()
 		t.Fatalf("UDP drops = %d, want 1", packet.drops)
 	}
 	oldDropped := oldEntry.counters.dropped.Load()
 	if oldDropped != 1 {
+		_ = closeConn()
 		t.Fatalf("dropped count before replacement = %d, want 1", oldDropped)
 	}
 	newKey := secret()
 	if err := inst.Reconfigure(Options{HomeDir: home, Servers: []servers.Spec{makeSpec(port, newKey)}}); err != nil {
+		_ = closeConn()
 		t.Fatalf("replace server generation: %v", err)
 	}
 	newEntry := inst.servers.items["counter-entry"]
 	if newEntry == oldEntry {
+		_ = closeConn()
 		t.Fatal("replacement reused the old server entry")
 	}
 	if newEntry.counters != oldEntry.counters {
+		_ = closeConn()
 		t.Fatal("replacement did not reuse server counters")
 	}
 	if got := inst.Servers()[0].Connections; got != 1 {
+		_ = closeConn()
 		t.Fatalf("connections after replacement = %d, want 1", got)
 	}
 	if got := droppedFor(inst, "counter-entry"); got != oldDropped {
+		_ = closeConn()
 		t.Fatalf("dropped count after replacement = %d, want %d", got, oldDropped)
 	}
 	if err := conn.SetDeadline(time.Now().Add(testTimeout)); err != nil {
+		_ = closeConn()
 		t.Fatal(err)
 	}
 	if _, err := conn.Write(payload); err != nil {
+		_ = closeConn()
 		t.Fatalf("old connection after replacement: %v", err)
 	}
 	if _, err := io.ReadFull(conn, got); err != nil {
+		_ = closeConn()
 		t.Fatalf("old connection echo after replacement: %v", err)
 	}
 	if string(got) != string(payload) {
+		_ = closeConn()
 		t.Fatalf("old connection echo = %q, want %q", got, payload)
 	}
-	if err := conn.Close(); err != nil {
+	if err := closeConn(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.NewTimer(testTimeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if inst.Servers()[0].Connections == 0 {
-			break
-		}
-		select {
-		case <-ticker.C:
-		case <-deadline.C:
-			t.Fatal("connection counter did not drain after close")
-		}
-	}
-
+	waitServerConnections(t, inst)
 	start := make(chan struct{})
 	closeResult := make(chan error, 1)
 	reconfigureResult := make(chan error, 1)
@@ -430,6 +489,7 @@ func TestShadowsocksServerCountersSurviveReplacement(t *testing.T) {
 	if err := waitResult(closeResult, "Close"); err != nil {
 		t.Fatalf("concurrent Close: %v", err)
 	}
+	closed = true
 	if err := waitResult(reconfigureResult, "Reconfigure"); err != nil && !errors.Is(err, errInstanceClosed) {
 		t.Fatalf("concurrent Reconfigure: %v", err)
 	}
@@ -445,6 +505,7 @@ func TestShadowsocksServerCountersSurviveReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 func droppedFor(i *Instance, name string) uint64 {
 	for _, info := range i.Servers() {
 		if info.Name == name {
