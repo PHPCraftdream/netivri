@@ -302,7 +302,7 @@ The server command contract and operational behavior are documented in [`servers
 
 Server connection filtering requires the global and (when present) account `allowed_clients` policies to allow the peer. Account allowlist-only changes are applied hot to server policy without restarting listeners; existing connections survive. This covers mixed authentication and server endpoints, including when no account route is configured. Changing global policy, account credentials/membership, bind, port, or server definition requires listener restart/reconfiguration. A failed core replacement can leave the angel alive and retrying the last good configuration; see [configuration](config.md#server-listeners).
 
-Server name errors are `SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6) for an already configured name; port conflicts return `PORT_IN_USE` (exit 6). UDP-bound QUIC listeners restart with a brief gap and end existing sessions; UDP relay payloads are dropped and counted. Core listeners are bound per transport, so TCP and UDP can share a numeric port in the core. Current configuration validation and `server add` reject overlapping bind/port pairs regardless of transport, so the CLI does not support cross-transport port sharing.
+Server name errors are `SERVER_NOT_FOUND` (exit 5) for a missing server and `SERVER_EXISTS` (exit 6) for an already configured name; port conflicts return `PORT_IN_USE` (exit 6). UDP-bound QUIC listeners restart with a brief gap and end existing sessions; UDP relay payloads are dropped and counted. The port conflict check is per transport, so a TCP server and a UDP-bound server may share a numeric port.
 
 ### `logs`
 

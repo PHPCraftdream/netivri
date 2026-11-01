@@ -27,7 +27,7 @@ Generated passwords, UUIDs, keys, private keys and other material are stored in 
 
 A loopback server may bind `127.0.0.1` but advertise `::ffff:127.0.0.1` in `public_host`/`--host` when creating a local share link. The subscription parser drops banners advertising `127.0.0.1`, `0.0.0.0`, `::1`, or `localhost`; the mapped IPv4 address remains local. The server listener must still bind to `127.0.0.1`.
 
-QUIC listeners bind UDP sockets. A changed UDP-bound listener closes before its replacement binds, briefly interrupting service and ending existing sessions; socket release is synchronous. Failed replacement restores the previous UDP listener best-effort. UDP relay payloads are dropped and counted, even on UDP-bound protocols. The core binds sockets by transport, so TCP and UDP can share a port number. However, current config validation and `server add` reject overlapping bind/port pairs regardless of transport; the CLI does not support sharing that port across server transports. The distinction is reported as a configuration/CLI limitation, not a supported setup.
+QUIC listeners bind UDP sockets. A changed UDP-bound listener closes before its replacement binds, briefly interrupting service and ending existing sessions; socket release is synchronous. Failed replacement restores the previous UDP listener best-effort. UDP relay payloads are dropped and counted, even on UDP-bound protocols. The conflict check is per transport: a TCP server and a UDP-bound server may share a port number (for example Trojan on TCP 443 and Hysteria2 on UDP 443), and a UDP-bound server may use the proxy port; two servers of the same transport on overlapping binds are refused with `PORT_IN_USE`.
 
 ## Testing
 
