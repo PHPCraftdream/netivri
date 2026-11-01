@@ -140,3 +140,25 @@ func TestServerCommandErrorsAndSubcommandFlags(t *testing.T) {
 		}
 	}
 }
+
+// A TCP and a UDP server may share one port number; two servers of the same
+// transport on overlapping binds may not.
+func TestServerAddPortConflictsArePerTransport(t *testing.T) {
+	home := serverTestHome(t)
+	if _, _, err := serverDispatch(t, home, "add", "--protocol", "shadowsocks", "--name", "tcp-one", "--account", "alice", "--port", "38500", "--bind", "127.0.0.1", "--param", "cipher=aes-128-gcm"); err != nil {
+		t.Fatalf("first TCP server: %v", err)
+	}
+	if _, _, err := serverDispatch(t, home, "add", "--protocol", "hysteria2", "--name", "udp-one", "--account", "alice", "--port", "38500", "--bind", "127.0.0.1"); err != nil {
+		t.Fatalf("a UDP server on the TCP server's port was refused: %v", err)
+	}
+	for name, args := range map[string][]string{
+		"second TCP": {"add", "--protocol", "shadowsocks", "--name", "tcp-two", "--account", "alice", "--port", "38500", "--bind", "0.0.0.0", "--param", "cipher=aes-128-gcm"},
+		"second UDP": {"add", "--protocol", "hysteria2", "--name", "udp-two", "--account", "alice", "--port", "38500", "--bind", "0.0.0.0"},
+	} {
+		err := serverCommandError(t, home, args...)
+		var ce *cli.Error
+		if !errors.As(err, &ce) || ce.Code != "PORT_IN_USE" || ce.Exit != cli.ExitConflict {
+			t.Errorf("%s: err = %v, want PORT_IN_USE", name, err)
+		}
+	}
+}

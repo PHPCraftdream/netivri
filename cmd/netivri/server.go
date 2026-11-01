@@ -165,10 +165,16 @@ func runServer(args []string, stdout io.Writer) error {
 		if _, i := cfg.GetServer(n); i >= 0 {
 			return serverConflict("server name is already configured")
 		}
-		if cfg.Listen.Port == *port && serverBindsOverlap(cfg.Listen.Bind, *bind) {
+		// A TCP and a UDP endpoint may share a port number: conflicts are per transport.
+		newProto, _ := servers.Lookup(*protocol)
+		newUDP := newProto != nil && servers.IsUDPBound(newProto)
+		if !newUDP && cfg.Listen.Port == *port && serverBindsOverlap(cfg.Listen.Bind, *bind) {
 			return serverPortConflict("server port conflicts with the proxy listener")
 		}
 		for _, s := range cfg.Servers {
+			if existing, ok := servers.Lookup(s.Protocol); ok && servers.IsUDPBound(existing) != newUDP {
+				continue
+			}
 			if s.Port == *port && serverBindsOverlap(s.Bind, *bind) {
 				return serverPortConflict("server port conflicts with an existing listener")
 			}

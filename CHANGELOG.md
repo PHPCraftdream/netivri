@@ -97,6 +97,12 @@ versions; every such change is listed here.
   (exit 1, retry in a moment) and changes nothing; only a refused connection or
   another pid answering still clears a stale state file.
 
+- **A TCP and a UDP server may share a port number.** The port conflict check of
+  `server add` and of the configuration is now per transport: Trojan on TCP 443 and
+  Hysteria2 on UDP 443 can coexist, and a UDP server may use the proxy port; two
+  servers of the same transport on overlapping binds are still refused
+  (`PORT_IN_USE`).
+
 ## [0.1.0] - 2026-10-28
 
 First release under this number, and the first one published to the `@netivri`

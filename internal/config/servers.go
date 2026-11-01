@@ -47,7 +47,12 @@ func validateServers(c *Config) error {
 		return invalid("configuration must not be nil")
 	}
 	names := map[string]int{}
-	ports := map[int][]struct {
+	// A TCP and a UDP server may share a port number: the check is per transport.
+	type endpointKey struct {
+		port int
+		udp  bool
+	}
+	ports := map[endpointKey][]struct {
 		bind  string
 		index int
 	}{}
@@ -75,15 +80,17 @@ func validateServers(c *Config) error {
 		if s.Port < 1 || s.Port > 65535 {
 			return invalid("%s must be between 1 and 65535", field("port"))
 		}
-		if s.Port == c.Listen.Port && bindsOverlap(bind, c.Listen.Bind) {
+		udp := servers.IsUDPBound(p)
+		if !udp && s.Port == c.Listen.Port && bindsOverlap(bind, c.Listen.Bind) {
 			return invalid("%s conflicts with listen.port", field("port"))
 		}
-		for _, previous := range ports[s.Port] {
+		key := endpointKey{s.Port, udp}
+		for _, previous := range ports[key] {
 			if bindsOverlap(bind, previous.bind) {
 				return invalid("%s duplicates servers[%d] endpoint", field("port"), previous.index)
 			}
 		}
-		ports[s.Port] = append(ports[s.Port], struct {
+		ports[key] = append(ports[key], struct {
 			bind  string
 			index int
 		}{bind, i})

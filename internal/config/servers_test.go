@@ -41,6 +41,21 @@ func TestServerValidation(t *testing.T) {
 			s.Bind = "0.0.0.0"
 			c.Servers = append(c.Servers, s)
 		}, "port"},
+		{"udp servers overlap", func(c *Config) {
+			c.Servers = []Server{
+				{Name: "one", Protocol: "hysteria2", Bind: "127.0.0.1", Port: 8443, Accounts: "alice"},
+				{Name: "two", Protocol: "hysteria2", Bind: "0.0.0.0", Port: 8443, Accounts: "alice"},
+			}
+		}, "port"},
+		{"tcp and udp servers share a port", func(c *Config) {
+			c.Servers = []Server{
+				{Name: "tcp", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 8443, Accounts: "alice", Params: map[string]string{"cipher": "aes-128-gcm"}},
+				{Name: "udp", Protocol: "hysteria2", Bind: "127.0.0.1", Port: 8443, Accounts: "alice"},
+			}
+		}, ""},
+		{"udp server may use the proxy port", func(c *Config) {
+			c.Servers = []Server{{Name: "udp", Protocol: "hysteria2", Bind: c.Listen.Bind, Port: c.Listen.Port, Accounts: "alice"}}
+		}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
