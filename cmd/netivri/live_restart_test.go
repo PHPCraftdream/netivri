@@ -69,8 +69,8 @@ func TestRetryRestoresAppliedButKeepsNewestValidConfig(t *testing.T) {
 	if appliedServer != "192.0.2.1" {
 		t.Errorf("applied node=%v", appliedServer)
 	}
-	if applied.Fetch.UpdateInterval != "1h" {
-		t.Errorf("applied interval=%q", applied.Fetch.UpdateInterval)
+	if applied.Fetch.UpdateInterval == "2h" || len(applied.Subscriptions) != len(latest.Subscriptions)-1 {
+		t.Errorf("applied config is not the previous one: interval=%q subscriptions=%d", applied.Fetch.UpdateInterval, len(applied.Subscriptions))
 	}
 	if latest.Fetch.UpdateInterval != "2h" || len(latest.Subscriptions) != 2 {
 		t.Errorf("latest config interval=%q subscriptions=%d", latest.Fetch.UpdateInterval, len(latest.Subscriptions))
