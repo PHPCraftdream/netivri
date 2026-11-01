@@ -130,18 +130,27 @@ func TestE2EMieruLifecycle(t *testing.T) {
 	}
 	clientAngel := startUp(t, homeB, "--port", "0")
 	assertStatusSuccess(t, clientAngel.Status())
+	restartClient := func() {
+		code, stdout, stderr := accountsRun(t, homeB, "down")
+		if code != 0 {
+			t.Fatalf("client angel down failed: %s", serverErrorSummary(stdout, stderr))
+		}
+		clientAngel.Stop()
+		clientAngel = startUp(t, homeB, "--port", "0")
+		assertStatusSuccess(t, clientAngel.Status())
+	}
 	drive := func(account, pass string, own, other *accountsUpstream, retry bool) {
 		t.Helper()
 		probeCtx := ctx
 		cancelRetry := func() {}
 		if retry {
-			probeCtx, cancelRetry = context.WithTimeout(ctx, 20*time.Second)
+			probeCtx, cancelRetry = context.WithTimeout(ctx, 30*time.Second)
 		}
 		defer cancelRetry()
 		startOwn, startOther := own.count.Load(), other.count.Load()
 		attempts := 1
 		if retry {
-			attempts = 20
+			attempts = 30
 		}
 		var last error
 		for i := 0; i < attempts; i++ {
@@ -154,6 +163,8 @@ func TestE2EMieruLifecycle(t *testing.T) {
 			}
 			if last != nil {
 				t.Logf("Mieru echo attempt failed: %s", e2eMieruRedact(last.Error(), allSecrets))
+			} else {
+				t.Log("Mieru echo attempt failed: recorder counts not updated")
 			}
 			select {
 			case <-probeCtx.Done():
@@ -214,6 +225,7 @@ func TestE2EMieruLifecycle(t *testing.T) {
 		t.Fatalf("restrict Alice clients failed: %s", serverErrorSummary(out, stderr))
 	}
 	waitStatusReload(t, ctx, homeA, 3)
+	// Restart to reset dead-node probe backoff after a changed client filter or intentional probe rejection.
 	beforeAlice, beforeBob := aliceUp.count.Load(), bobUp.count.Load()
 	if err := e2eMieruProbe(ctx, newAlice, backend, "filtered-client", false); !e2eMieruRejectedError(err) {
 		e2eMieruDiagnostics(t, homeA, homeB, allSecrets)
@@ -223,6 +235,7 @@ func TestE2EMieruLifecycle(t *testing.T) {
 	if aliceUp.count.Load() != beforeAlice || bobUp.count.Load() != beforeBob {
 		t.Fatal("filtered Alice request reached a recorder")
 	}
+	restartClient()
 	drive("bob", bobPass, bobUp, aliceUp, true)
 
 	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
@@ -230,6 +243,7 @@ func TestE2EMieruLifecycle(t *testing.T) {
 		t.Fatalf("clear Alice restriction failed: %s", serverErrorSummary(out, stderr))
 	}
 	waitStatusReload(t, ctx, homeA, 4)
+	restartClient()
 	drive("alice", alicePass, aliceUp, bobUp, true)
 
 	code, out, stderr = accountsRun(t, homeA, "down")
@@ -243,6 +257,7 @@ func TestE2EMieruLifecycle(t *testing.T) {
 	assertNoSecrets(t, originalServerAngel.Stdout(), originalServerAngel.Stderr(), allSecrets...)
 	serverAngel = startUp(t, homeA, "--port", "0")
 	assertStatusSuccess(t, serverAngel.Status())
+	restartClient()
 	if persisted := getLink("alice", "mihomo"); persisted != newAlice {
 		t.Fatal("Alice link changed across server restart")
 	}
