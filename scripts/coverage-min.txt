@@ -29,3 +29,7 @@ internal/stats 78
 # and e2e levels (loopback sockets, a real child process); the unit level
 # measures the pure parts only. Ratcheted after the first green run.
 internal/angel 62
+# Test-support package: its helpers bind loopback sockets, so they run under
+# the integration and e2e levels; the unit level measures only the pure parts
+# (measured about 30 % on ubuntu, windows and macos).
+internal/servers/servertest 25
