@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -173,8 +174,17 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("server add: %s", serverErrorSummary(out, stderr))
 	}
-	waitStatusReload(t, ctx, homeA, 1)
-	waitServerStatus(t, ctx, homeA, true)
+	waitExitDirectStatus(t, ctx, homeA, serverAngel, 1, true, alicePass, bobPass, aliceHash, bobHash)
+	before := recorder.count.Load()
+	accountsClient(t, serverAngel.Status().Data.Listen, "alice", alicePass, backend)
+	if recorder.count.Load() <= before {
+		t.Fatal("Alice mixed-port traffic did not use A route recorder")
+	}
+	before = recorder.count.Load()
+	accountsClient(t, serverAngel.Status().Data.Listen, "bob", bobPass, backend)
+	if recorder.count.Load() != before {
+		t.Fatal("Bob mixed-port direct traffic reached A route recorder")
+	}
 	link := func(account string) string {
 		t.Helper()
 		code, stdout, stderr := serverRun(t, homeA, "link", "exit-direct-edge", "--account", account, "--format", "uri")
@@ -227,7 +237,7 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 		clientAngel.Stop()
 		assertNoSecrets(t, clientAngel.Stdout(), clientAngel.Stderr(), alicePass, bobPass, aliceHash, bobHash)
 	})
-	before := recorder.count.Load()
+	before = recorder.count.Load()
 	accountsClient(t, clientAngel.Status().Data.Listen, "alice", alicePass, backend)
 	if recorder.count.Load() <= before {
 		t.Fatal("Alice did not use A route recorder")
@@ -245,7 +255,7 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("set-exit route: %s", serverErrorSummary(out, stderr))
 	}
-	waitStatusReload(t, ctx, homeA, 2)
+	waitExitDirectStatus(t, ctx, homeA, serverAngel, 2, true, alicePass, bobPass, aliceHash, bobHash)
 	// No provider/country means route mode follows A's default DIRECT route.
 	e2eExitDirectSendExpect(t, held, "open-after-default-route")
 	before = recorder.count.Load()
@@ -258,7 +268,7 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("set-provider route: %s", serverErrorSummary(out, stderr))
 	}
-	waitStatusReload(t, ctx, homeA, 3)
+	waitExitDirectStatus(t, ctx, homeA, serverAngel, 3, true, alicePass, bobPass, aliceHash, bobHash)
 	e2eExitDirectSendExpect(t, held, "open-after-provider-route")
 	before = recorder.count.Load()
 	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
@@ -279,16 +289,26 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if code, out, stderr = accountsRun(t, homeA, "account", "set-provider", "bob", "--none"); code != 0 {
 		t.Fatalf("clear Bob provider: %s", serverErrorSummary(out, stderr))
 	}
-	waitStatusReload(t, ctx, homeA, 4)
+	waitExitDirectStatus(t, ctx, homeA, serverAngel, 4, true, alicePass, bobPass, aliceHash, bobHash)
 	if code, out, stderr = accountsRun(t, homeA, "account", "set-exit", "bob", "direct"); code != 0 {
 		t.Fatalf("set-exit direct: %s", serverErrorSummary(out, stderr))
 	}
-	waitStatusReload(t, ctx, homeA, 5)
+	waitExitDirectStatus(t, ctx, homeA, serverAngel, 5, true, alicePass, bobPass, aliceHash, bobHash)
 	e2eExitDirectSendExpect(t, held, "open-after-direct")
 	before = recorder.count.Load()
 	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
 	if recorder.count.Load() != before {
 		t.Fatal("Bob direct mode still used A recorder")
+	}
+	before = recorder.count.Load()
+	accountsClient(t, serverAngel.Status().Data.Listen, "alice", alicePass, backend)
+	if recorder.count.Load() <= before {
+		t.Fatal("Alice mixed-port route stopped using A recorder after Bob became direct")
+	}
+	before = recorder.count.Load()
+	accountsClient(t, serverAngel.Status().Data.Listen, "bob", bobPass, backend)
+	if recorder.count.Load() != before {
+		t.Fatal("Bob mixed-port direct traffic used A recorder after direct reconfiguration")
 	}
 	_ = held.Close()
 
@@ -336,6 +356,83 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if err := ctx.Err(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func waitExitDirectStatus(t *testing.T, ctx context.Context, home string, proc *upProc, reloadCount uint64, wantServer bool, secrets ...string) {
+	t.Helper()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	lastStatus := "status unavailable"
+	for {
+		code, out, stderr := accountsRun(t, home, "status")
+		if code == 0 {
+			var env struct {
+				Data struct {
+					Reload *struct {
+						Count     uint64 `json:"count"`
+						LastError string `json:"last_error"`
+					} `json:"reload"`
+					Servers []struct {
+						Name           string `json:"name"`
+						Protocol       string `json:"protocol"`
+						Listen         string `json:"listen"`
+						Connections    int    `json:"connections"`
+						DroppedClients uint64 `json:"dropped_clients"`
+					} `json:"servers"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(out), &env); err == nil {
+				lastStatus = exitDirectStatusSummary(env.Data.Reload, env.Data.Servers)
+				serverMatches, statusErr := serverStatusMatches(out, "exit-direct-edge", "vmess", wantServer)
+				if env.Data.Reload != nil && env.Data.Reload.Count >= reloadCount && env.Data.Reload.LastError == "" && statusErr == nil && serverMatches {
+					return
+				}
+			} else {
+				lastStatus = "status JSON did not decode"
+			}
+		} else {
+			lastStatus = fmt.Sprintf("status exit %d: %s", code, serverErrorSummary(out, stderr))
+		}
+		select {
+		case <-ctx.Done():
+			redactedStatus := redactExitDirectDiagnostic(lastStatus, secrets)
+			redactedAngel := redactExitDirectDiagnostic(upProcReport(home), secrets)
+			t.Fatalf("status did not reach reload count %d and server present=%t (last status: %s)\n%s", reloadCount, wantServer, redactedStatus, redactedAngel)
+		case <-ticker.C:
+		}
+	}
+}
+
+func redactExitDirectDiagnostic(text string, secrets []string) string {
+	for _, secret := range secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[redacted]")
+		}
+	}
+	var safe []string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, "://") || strings.Contains(strings.ToLower(line), "password") || strings.Contains(strings.ToLower(line), "secret") {
+			line = "[redacted diagnostic line]"
+		}
+		safe = append(safe, line)
+	}
+	return strings.Join(safe, "\n")
+}
+
+func exitDirectStatusSummary(reload *struct {
+	Count     uint64 `json:"count"`
+	LastError string `json:"last_error"`
+}, servers []struct {
+	Name           string `json:"name"`
+	Protocol       string `json:"protocol"`
+	Listen         string `json:"listen"`
+	Connections    int    `json:"connections"`
+	DroppedClients uint64 `json:"dropped_clients"`
+}) string {
+	if reload == nil {
+		return fmt.Sprintf("reload: missing\nservers: %+v", servers)
+	}
+	return fmt.Sprintf("reload count: %d\nreload last_error: %s\nservers: %+v", reload.Count, reload.LastError, servers)
 }
 
 func e2eExitDirectSocksNode(id, addr string) subscription.Node {

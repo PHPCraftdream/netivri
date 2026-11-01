@@ -421,7 +421,7 @@ var helpTopics = []helpTopic{
 			"Direct accounts have no node tiers. `account show` reports effective pre_socks5 with source `direct` and value `none`; its own value is null. Use 'netivri account set-exit {ACCOUNT} {route|direct}' to change the mode. CONFIG_INVALID for an account field change includes a hint to run `netivri account set-exit {ACCOUNT} route` first when it conflicts with a direct exit.\n\n" +
 			"A running angel applies account changes by itself within a few seconds. Account writes validate the entire resulting configuration before saving; failures return CONFIG_INVALID and persist no changes. Batch account writes are atomic. A new or removed account or a " +
 			"new password restarts its listener on the same port, so open connections end; a new country or " +
-			"provider list keeps them. 'netivri status' shows the outcome under 'reload'.",
+			"provider list keeps them. Server-only updates for explicit-direct-only accounts restart when the core reports in-place reconfiguration unsupported; other server transaction errors leave the current configuration running. 'netivri status' shows the outcome under 'reload'.",
 		Examples: []helpExample{
 			{"Create a login and list the logins", "netivri account add alice --provider main --country DE\nnetivri account list"},
 			{"Show one account and its route", "netivri account show alice"},

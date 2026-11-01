@@ -473,7 +473,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	}
 	o := l.routeOptions(d, auth, store)
 	if err := inst.Reconfigure(o); err != nil {
-		if serverOnly {
+		if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
 			l.noteReloadError("server configuration not applied", err)
 			return true
 		}

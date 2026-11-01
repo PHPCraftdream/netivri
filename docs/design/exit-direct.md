@@ -67,6 +67,8 @@ lifecycle for a choice of two values. If shared profiles are wanted later, an
   their existing restart behavior.
   Clone inherits the source exit unless `--exit` overrides it.
 
+For server updates with explicit-direct-only accounts, the listener restarts if the core reports that the update is unsupported in place; other server transaction errors leave the current configuration running and appear under `status.reload`.
+
 ## CLI and config
 
 ```text

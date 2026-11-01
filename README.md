@@ -110,7 +110,7 @@ directive.
 
 ## Quick start
 
-Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country:
+Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country. With explicit-direct-only accounts, a server update restarts the listener if the core cannot reconfigure it in place; other server transaction errors leave the running configuration unchanged.
 
 ```sh
 # Optional: create an account with an explicit direct exit

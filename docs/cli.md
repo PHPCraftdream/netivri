@@ -671,7 +671,10 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   default-node/global-post changes retain their usual restart behavior.
   Direct exits bypass the VPN and expose this machine's address. They may be
   served by the mixed proxy or a server; `doctor` warns for a direct account on a
-  non-loopback server bind or mixed proxy bind, without failing the check.
+  non-loopback server bind or mixed proxy bind, without failing the check. When
+  adding or changing servers for explicit-direct-only accounts, the listener
+  restarts if the core reports the change unsupported in place; other server
+  transaction errors leave the current configuration running and appear in `status`.
 - `set-country` takes an ISO 3166-1 alpha-2 code, or a comma-separated list of
   codes in priority order, or `--none` to clear it. A malformed code or list
   is `COUNTRY_INVALID`.
