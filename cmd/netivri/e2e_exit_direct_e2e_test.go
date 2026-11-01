@@ -229,9 +229,13 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 			t.Fatalf("import %s: %s", account, serverErrorSummary(out, stderr))
 		}
 	}
-	writeConfig(t, homeB, func(cfg *config.Config) {
-		cfg.Accounts = []config.Account{{Login: "alice", Password: aliceHash, Provider: "alice-edge"}, {Login: "bob", Password: bobHash, Provider: "bob-edge"}}
-	})
+	// Keep the subscriptions `sub add` saved: writeConfig would start from the
+	// default config and drop them, leaving the providers below unknown.
+	cfgB := loadConfigFile(t, homeB)
+	cfgB.Accounts = []config.Account{{Login: "alice", Password: aliceHash, Provider: "alice-edge"}, {Login: "bob", Password: bobHash, Provider: "bob-edge"}}
+	if err := config.Save(config.ConfigPath(homeB), cfgB); err != nil {
+		t.Fatalf("save client config: %v", err)
+	}
 	clientAngel := startUp(t, homeB, "--port", "0")
 	t.Cleanup(func() {
 		clientAngel.Stop()
