@@ -192,6 +192,23 @@ func runServer(args []string, stdout io.Writer) error {
 		if !newUDP && cfg.Listen.Port == *port && serverBindsOverlap(cfg.Listen.Bind, *bind) {
 			return serverPortConflict("server port conflicts with the proxy listener")
 		}
+		for _, existing := range cfg.Servers {
+			existingProto, known := servers.Lookup(existing.Protocol)
+			if known && servers.IsUDPBound(existingProto) != newUDP {
+				continue
+			}
+			if existing.Port != *port || !serverBindsOverlap(existing.Bind, *bind) {
+				continue
+			}
+			// Two TLS-family servers on one exact endpoint may share it: the
+			// shared-port validation below decides (SERVER_PORT_AMBIGUOUS).
+			_, existingSniffs := existingProto.(servers.Sniffer)
+			_, newSniffs := newProto.(servers.Sniffer)
+			if !newUDP && existingSniffs && newSniffs && serverSameBind(existing.Bind, *bind) {
+				continue
+			}
+			return serverPortConflict("server port conflicts with an existing listener")
+		}
 		entry := config.Server{Name: n, Protocol: *protocol, Bind: *bind, Port: *port, Accounts: *account, PublicHost: *public, Default: *defaultServer, Params: pm}
 		oldServers := cfg.Servers
 		cfg.Servers = append(cfg.Servers, entry)
@@ -344,6 +361,23 @@ func runServer(args []string, stdout io.Writer) error {
 func configInvalidServer() error {
 	return &cli.Error{Code: "CONFIG_INVALID", Message: "server configuration is invalid", Exit: cli.ExitUsage}
 }
+
+// serverSameBind reports whether two bind values are the same address (an
+// empty bind is 0.0.0.0).
+func serverSameBind(a, b string) bool {
+	if a == "" {
+		a = "0.0.0.0"
+	}
+	if b == "" {
+		b = "0.0.0.0"
+	}
+	ipA, ipB := net.ParseIP(a), net.ParseIP(b)
+	if ipA == nil || ipB == nil {
+		return a == b
+	}
+	return ipA.Equal(ipB)
+}
+
 func serverBindsOverlap(a, b string) bool {
 	if a == "" {
 		a = "0.0.0.0"
