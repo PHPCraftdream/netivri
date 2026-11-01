@@ -3,12 +3,17 @@
 package servers_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +23,9 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/anytls/padding"
+	"github.com/metacubex/mihomo/transport/vmess"
+	M "github.com/metacubex/sing/common/metadata"
 )
 
 const anyTLSTestTimeout = 5 * time.Second
@@ -246,6 +254,108 @@ func anyTLSNodeMap(address string) map[string]any {
 	}
 	return map[string]any{"name": "anytls-node", "type": "socks5", "server": host, "port": port}
 }
+
+// Synchronous wire probes avoid the vendored Stream.Write/closeLocally race on rejected sessions, including the adapter's initial destination write.
+func anyTLSWireProbe(port int, password, fingerprint, backend string, policy bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), anyTLSTestTimeout)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	defer raw.Close()
+	if err = raw.SetDeadline(time.Now().Add(anyTLSTestTimeout)); err != nil {
+		return err
+	}
+	tlsConn, err := vmess.StreamTLSConn(ctx, raw, &vmess.TLSConfig{Host: "localhost", FingerPrint: fingerprint, ClientFingerprint: "chrome"})
+	if err != nil {
+		return err
+	}
+	defer tlsConn.Close()
+	digest := sha256.Sum256([]byte(password))
+	prelude := append(append([]byte(nil), digest[:]...), 0, 0)
+	if _, err = tlsConn.Write(prelude); err != nil {
+		return err
+	}
+	if !policy {
+		var b [1]byte
+		_, err = tlsConn.Read(b[:])
+		if err == nil {
+			return io.ErrUnexpectedEOF
+		}
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return err
+		}
+		return nil
+	}
+	settings := []byte(fmt.Sprintf("v=2\nclient=netivri-test\npadding-md5=%x", md5.Sum(padding.DefaultPaddingScheme)))
+	if err = anyTLSWriteFrame(tlsConn, 4, 0, settings); err != nil {
+		return err
+	}
+	if err = anyTLSWriteFrame(tlsConn, 1, 1, nil); err != nil {
+		return err
+	}
+	var destination bytes.Buffer
+	host, portText, err := net.SplitHostPort(backend)
+	if err != nil {
+		return err
+	}
+	backendPort, err := strconv.Atoi(portText)
+	if err != nil {
+		return err
+	}
+	if err = M.SocksaddrSerializer.WriteAddrPort(&destination, M.ParseSocksaddrHostPort(host, uint16(backendPort))); err != nil {
+		return err
+	}
+	if err = anyTLSWriteFrame(tlsConn, 2, 1, destination.Bytes()); err != nil {
+		return err
+	}
+	seenSynAck, seenFin := false, false
+	for !seenFin {
+		var h [7]byte
+		if _, err = io.ReadFull(tlsConn, h[:]); err != nil {
+			return err
+		}
+		cmd, sid, n := h[0], binary.BigEndian.Uint32(h[1:5]), binary.BigEndian.Uint16(h[5:])
+		if n > 4096 {
+			return fmt.Errorf("AnyTLS frame too large: %d", n)
+		}
+		payload := make([]byte, int(n))
+		if _, err = io.ReadFull(tlsConn, payload); err != nil {
+			return err
+		}
+		if sid != 1 {
+			continue
+		}
+		switch cmd {
+		case 7:
+			seenSynAck = true
+		case 2:
+			if len(payload) != 0 {
+				return fmt.Errorf("unexpected echoed data")
+			}
+		case 3:
+			seenFin = true
+		default:
+		}
+	}
+	if !seenSynAck {
+		return fmt.Errorf("missing stream SYNACK")
+	}
+	return nil
+}
+func anyTLSWriteFrame(w io.Writer, cmd byte, sid uint32, payload []byte) error {
+	if len(payload) > 65535 {
+		return fmt.Errorf("AnyTLS payload too large")
+	}
+	h := []byte{cmd, byte(sid >> 24), byte(sid >> 16), byte(sid >> 8), byte(sid), byte(len(payload) >> 8), byte(len(payload))}
+	if _, err := w.Write(h); err != nil {
+		return err
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
 func anyTLSDial(port int, password, fingerprint string, backend string) error {
 	client, err := outbound.NewAnyTLS(outbound.AnyTLSOption{
 		Name:                     "anytls-test",
@@ -369,8 +479,15 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 		defer anyTLSWaitConnections(t, inst)
 		return anyTLSDial(port, password, fingerprint, backend)
 	}
+	probe := func(password, fingerprint string, policy bool) error {
+		defer anyTLSWaitConnections(t, inst)
+		return anyTLSWireProbe(port, password, fingerprint, backend, policy)
+	}
 	if err := dial(alicePassword, material["fingerprint"]); err != nil {
 		t.Fatalf("alice route failed: %v", err)
+	}
+	if err := dial(alicePassword, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "certificate fingerprints do not match") {
+		t.Fatalf("wrong fingerprint error=%v, want certificate fingerprint mismatch", err)
 	}
 	anyTLSCheckTargets(t, aliceNode, backend, 1)
 	anyTLSCheckTargets(t, bobNode, backend, 0)
@@ -379,8 +496,8 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	}
 	anyTLSCheckTargets(t, aliceNode, backend, 1)
 	anyTLSCheckTargets(t, bobNode, backend, 1)
-	if err := dial(newPassword(), material["fingerprint"]); err == nil {
-		t.Fatal("wrong password was accepted")
+	if err := probe(newPassword(), material["fingerprint"], false); err != nil {
+		t.Fatalf("wrong-password refusal probe: %v", err)
 	}
 	rotated := newPassword()
 	if err := inst.Reconfigure(anyTLSOptions(home, []servers.Spec{makeSpec(port, rotated)}, aliceAddress, bobAddress, nil, nil)); err != nil {
@@ -389,8 +506,8 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	if err := dial(rotated, material["fingerprint"]); err != nil {
 		t.Fatalf("rotated password failed: %v", err)
 	}
-	if err := dial(alicePassword, material["fingerprint"]); err == nil {
-		t.Fatal("old password was accepted after rotation")
+	if err := probe(alicePassword, material["fingerprint"], false); err != nil {
+		t.Fatalf("old-password refusal probe: %v", err)
 	}
 	if err := dial(bobPassword, material["fingerprint"]); err != nil {
 		t.Fatalf("bob password after rotation failed: %v", err)
@@ -400,8 +517,9 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	if err := inst.Reconfigure(global); err != nil {
 		t.Fatalf("set global policy: %v", err)
 	}
-	if err := dial(rotated, material["fingerprint"]); err == nil {
-		t.Fatal("global client policy accepted loopback")
+	// Synchronous raw probes avoid the vendored stream close/write race, including CreateProxy's initial destination write.
+	if err := probe(rotated, material["fingerprint"], true); err != nil {
+		t.Fatalf("global policy refusal probe: %v", err)
 	}
 	if anyTLSDropped(inst, "anytls-entry") != 1 {
 		t.Fatalf("global denial count=%d, want 1", anyTLSDropped(inst, "anytls-entry"))
@@ -413,8 +531,8 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	if err := inst.Reconfigure(account); err != nil {
 		t.Fatalf("set account policy: %v", err)
 	}
-	if err := dial(rotated, material["fingerprint"]); err == nil {
-		t.Fatal("account client policy accepted loopback")
+	if err := probe(rotated, material["fingerprint"], true); err != nil {
+		t.Fatalf("account policy refusal probe: %v", err)
 	}
 	if anyTLSDropped(inst, "anytls-entry") != 2 {
 		t.Fatalf("account denial count=%d, want 2", anyTLSDropped(inst, "anytls-entry"))
@@ -440,7 +558,6 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	}
 	_ = ln.Close()
 	t.Run("CA trust without fingerprint", func(t *testing.T) {
-		servertest.TrustForTest(t, material)
 		var caInstance *core.Instance
 		caPort := servertest.StartOnFreePort(t, func(p int) error {
 			var startErr error
@@ -458,6 +575,7 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 				anyTLSWaitConnections(t, caInstance)
 			}
 		})
+		servertest.TrustForTest(t, material)
 		if err := anyTLSDial(caPort, rotated, "", backend); err != nil {
 			t.Fatalf("CA-trusted connection without pin: %v", err)
 		}

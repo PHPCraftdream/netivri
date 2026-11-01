@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/transport/anytls/padding"
 	"go.yaml.in/yaml/v3"
 )
@@ -168,6 +169,52 @@ func TestAnyTLSLink(t *testing.T) {
 		if _, err := protocol.Link(bad.spec, bad.user, bad.host); err == nil {
 			t.Errorf("%s accepted", bad.name)
 		}
+	}
+}
+
+func TestAnyTLSLinkConverterRoundTrip(t *testing.T) {
+	protocol := anyTLS{}
+	for _, tc := range []struct {
+		name string
+		host string
+		sni  string
+	}{
+		{"DNS with SNI", "entry.example.test", "tls.example.test"},
+		{"IPv6 with SNI", "2001:db8::5", "tls.example.test"},
+		{"DNS without SNI", "entry.example.test", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := map[string]string{"public_host": tc.host}
+			if tc.sni != "" {
+				params["sni"] = tc.sni
+			}
+			material, err := protocol.NewMaterial(params)
+			if err != nil {
+				t.Fatal("material generation failed")
+			}
+			secret, err := protocol.NewSecret("alice", nil)
+			if err != nil {
+				t.Fatal("secret generation failed")
+			}
+			spec := Spec{Name: "edge-one", Protocol: "anytls", Port: 443, Accounts: []string{"alice"}, Params: params, Material: SecretMap(material), Users: UserSecrets{"alice": secret}}
+			link, err := protocol.Link(spec, "alice", tc.host)
+			if err != nil {
+				t.Fatal("link generation failed")
+			}
+			proxies, err := convert.ConvertsV2Ray([]byte(link))
+			if err != nil || len(proxies) != 1 {
+				t.Fatal("AnyTLS link conversion failed")
+			}
+			proxy := proxies[0]
+			if len(proxy) != 10 || proxy["name"] != spec.Name || proxy["type"] != "anytls" || proxy["server"] != tc.host || proxy["port"] != "443" || proxy["username"] != secret["password"] || proxy["password"] != secret["password"] || proxy["sni"] != tc.sni || proxy["fingerprint"] != TLSFingerprint(material) || proxy["skip-cert-verify"] != false || proxy["udp"] != true {
+				t.Fatal("converted AnyTLS link fields differ")
+			}
+			for _, unsupported := range []string{"tls", "alpn", "network"} {
+				if _, ok := proxy[unsupported]; ok {
+					t.Fatal("converted AnyTLS link contains unsupported field")
+				}
+			}
+		})
 	}
 }
 
