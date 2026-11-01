@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/metacubex/mihomo/common/convert"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -57,6 +58,54 @@ func TestVMessValidationAndGeneratedUUID(t *testing.T) {
 func vmessTestSpec() Spec {
 	return Spec{Name: "entry-1", Protocol: "vmess", Port: 443, Accounts: []string{"alice"}, Params: map[string]string{}, Users: UserSecrets{"alice": {"uuid": testVMessUUID}}}
 }
+func TestVMessURIImportsThroughMihomoConverter(t *testing.T) {
+	protocol := vmess{}
+	for _, tc := range []struct {
+		name, host, cipher string
+	}{
+		{name: "DNS default", host: "edge.example"},
+		{name: "IPv4 AES", host: "192.0.2.10", cipher: "aes-128-gcm"},
+		{name: "IPv6 chacha", host: "2001:db8::8", cipher: "chacha20-poly1305"},
+		{name: "DNS none", host: "edge.example", cipher: "none"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := vmessTestSpec()
+			spec.Params["cipher"] = tc.cipher
+			link, err := protocol.Link(spec, "alice", tc.host)
+			if err != nil {
+				t.Fatal("link generation failed")
+			}
+			proxies, err := convert.ConvertsV2Ray([]byte(link))
+			if err != nil || len(proxies) != 1 {
+				t.Fatalf("Mihomo URI conversion failed: %v", err)
+			}
+			proxy := proxies[0]
+			cipher := tc.cipher
+			if cipher == "" {
+				cipher = "auto"
+			}
+			want := map[string]any{
+				"name": "entry-1", "type": "vmess", "server": tc.host, "port": "443",
+				"uuid": testVMessUUID, "alterId": "0", "udp": true, "xudp": true,
+				"tls": false, "skip-cert-verify": false, "cipher": cipher, "network": "tcp",
+			}
+			for key, value := range want {
+				if proxy[key] != value {
+					t.Errorf("imported field %q mismatch", key)
+				}
+			}
+			if len(proxy) != len(want) {
+				t.Errorf("imported field count = %d, want %d", len(proxy), len(want))
+			}
+			for _, key := range []string{"servername", "alpn", "fingerprint", "sni", "http-opts", "h2-opts", "ws-opts", "grpc-opts"} {
+				if _, ok := proxy[key]; ok {
+					t.Errorf("unexpected imported field %q", key)
+				}
+			}
+		})
+	}
+}
+
 func TestVMessLinkRoundTripAndMihomo(t *testing.T) {
 	protocol := vmess{}
 	spec := vmessTestSpec()

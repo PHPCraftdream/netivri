@@ -22,6 +22,10 @@ The optional `cipher` link/export parameter defaults to `auto`. Accepted values,
 
 `Link` emits standard-base64 JSON `vmess://` v2rayN fields: `v`, `ps`, `add`, `port`, `id`, `aid`, `scy`, `net`, `type`, `host`, `path`, `tls`. The link always selects TCP and no TLS. The Mihomo linker emits a matching TCP VMess proxy snippet.
 
+A socket-free unit test passes the generated URI to Mihomo's `convert.ConvertsV2Ray` and checks the imported proxy fields, including `udp: true`/`xudp: true`, `tls: false`, `skip-cert-verify: false`, and `network: tcp`; it covers a default cipher and explicit AES-GCM, ChaCha20-Poly1305 and `none` values, with DNS, IPv4 and IPv6 endpoints. This test guards that URI interpretation in CI; it is not runtime verification. The legacy converter imports a nonempty `sni` as `servername` and can import ALPN from the JSON; the current link omits both. This legacy JSON conversion branch has no certificate-pin mapping.
+
+The YAML snippet is authoritative for this plain-TCP endpoint: its `type`, `server`, `port`, `uuid`, `alterId`, `cipher`, `network`, `tls: false`, and `udp: false` keys correspond to Mihomo's VMess option tags. In the legacy JSON conversion branch, the converter forces `udp: true` and `xudp: true`, so that URI cannot express UDP off; use the YAML snippet when `udp: false` is required.
+
 Import only into a client supporting VMess v2 AEAD over TCP. Plain VMess is distinguishable from modern TLS-mimicking protocols and is weaker against probing; prefer VLESS Reality or Trojan where practical. Protect links and rotate UUIDs if exposed.
 
 ## Security and future work
