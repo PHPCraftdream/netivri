@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -218,10 +219,28 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("angel reload count did not reach %d (last: %s)", count, lastProblem)
+			t.Fatalf("angel reload count did not reach %d (last: %s)\n%s", count, lastProblem, serverE2ELogTail(t, home))
 		case <-ticker.C:
 		}
 	}
+}
+
+// serverE2ELogTail returns the last angel log lines without links or
+// credentials, to name the cause of a failed reload wait.
+func serverE2ELogTail(t *testing.T, home string) string {
+	t.Helper()
+	code, out, stderr := accountsRun(t, home, "logs", "--tail", "40")
+	if code != 0 {
+		return fmt.Sprintf("angel log unavailable (exit %d): %s", code, serverErrorSummary(out, stderr))
+	}
+	var kept []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "://") || strings.Contains(strings.ToLower(line), "password") || strings.Contains(strings.ToLower(line), "secret") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return "angel log tail:\n" + strings.Join(kept, "\n")
 }
 
 func waitServerPort(ctx context.Context, port int, wantOpen bool) error {
