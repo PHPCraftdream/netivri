@@ -288,7 +288,11 @@ func waitRealityTargetAccepted(t *testing.T, o *realityTargetObservation) int {
 func (o *realityTargetObservation) snapshot() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return fmt.Sprintf("accepted=%d handshakes=%d sni=%v alpn=%v tls_versions=%v handshake_errors=%v target_records=%v", o.accepted, o.handshakes, o.serverNames, o.alpn, o.versions, o.errors, o.records)
+	records := o.records
+	if len(records) > 8 {
+		records = records[:8]
+	}
+	return fmt.Sprintf("accepted=%d handshakes=%d sni=%v alpn=%v tls_versions=%v handshake_errors=%v target_records=%v (total=%d)", o.accepted, o.handshakes, o.serverNames, o.alpn, o.versions, o.errors, records, len(o.records))
 }
 
 func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservation) {
@@ -491,15 +495,16 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	}
 	home := testutil.TempHome(t)
 	options := func(spec servers.Spec, accountPolicy map[string][]netip.Prefix) core.Options {
-		return core.Options{HomeDir: home, Node: map[string]any{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(aliceAddr)}, AllowedClients: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, RouteNodes: map[string][]map[string]any{
+		return core.Options{HomeDir: home, GlobalPost: "socks5://" + aliceAddr, AllowedClients: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, RouteNodes: map[string][]map[string]any{
 			"alice": {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(aliceAddr)}},
 			"bob":   {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(bobAddr)}},
 		}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob"}, Servers: []servers.Spec{spec}, AccountAllowedClients: accountPolicy}
 	}
+	baseOptions := options(makeSpec(users), nil)
 	var inst *core.Instance
 	start := func() error {
 		var startErr error
-		inst, startErr = core.Start(context.Background(), options(makeSpec(users), nil))
+		inst, startErr = core.Start(context.Background(), baseOptions)
 		return startErr
 	}
 	var startErr error
@@ -513,6 +518,7 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 			t.Fatalf("core.Start: %v", startErr)
 		}
 		port = serverPort(t)
+		baseOptions.Servers = []servers.Spec{makeSpec(users)}
 	}
 	if startErr != nil {
 		t.Fatalf("core.Start after port retries: %v", startErr)
@@ -667,7 +673,9 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	}
 	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
 
-	denied := options(makeSpec(users), map[string][]netip.Prefix{"alice": {netip.MustParsePrefix("192.0.2.0/24")}})
+	denied := baseOptions
+	denied.Servers = []servers.Spec{makeSpec(users)}
+	denied.AccountAllowedClients = map[string][]netip.Prefix{"alice": {netip.MustParsePrefix("192.0.2.0/24")}}
 	if err := inst.Reconfigure(denied); err != nil {
 		t.Fatalf("deny Alice client: %v", err)
 	}
@@ -687,7 +695,8 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	}
 	waitVlessConnections(t, inst)
 	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 2, backend)
-	allowed := options(makeSpec(users), nil)
+	allowed := baseOptions
+	allowed.Servers = []servers.Spec{makeSpec(users)}
 	if err := inst.Reconfigure(allowed); err != nil {
 		t.Fatalf("restore Alice client policy: %v", err)
 	}
@@ -702,7 +711,9 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	if rotatedUsers["alice"]["uuid"] == oldAliceUUID {
 		t.Fatal("generated rotation repeated Alice UUID")
 	}
-	if err := inst.Reconfigure(options(makeSpec(rotatedUsers), nil)); err != nil {
+	rotatedOptions := baseOptions
+	rotatedOptions.Servers = []servers.Spec{makeSpec(rotatedUsers)}
+	if err := inst.Reconfigure(rotatedOptions); err != nil {
 		t.Fatalf("rotate Alice UUID: %v", err)
 	}
 	if result := dial(oldAliceUUID, shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
