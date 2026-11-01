@@ -446,20 +446,34 @@ func TestReloadRollsBackWhenTheNewCoreDoesNotStart(t *testing.T) {
 	}
 }
 
-func TestReloadStopsTheAngelWhenNoCoreStarts(t *testing.T) {
+func TestReloadKeepsTheAngelRunningWhenNoCoreStarts(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
 	f.script.fail = map[int]error{2: errors.New("first failure"), 3: errors.New("second failure")}
+	enteredWait := make(chan struct{}, 1)
+	f.l.retryWait = func(ctx context.Context, _ time.Duration) bool {
+		select {
+		case enteredWait <- struct{}{}:
+		default:
+		}
+		<-ctx.Done()
+		return false
+	}
 	f.saveNodes(t, "192.0.2.2", "n1")
 
 	f.l.reload(t.Context())
-	if !f.stopped.Load() {
-		t.Fatal("the angel kept running without a listener")
+	select {
+	case <-enteredWait:
+	case <-time.After(time.Second):
+		t.Fatal("retry loop did not enter its gated wait")
 	}
-	if !strings.Contains(f.logText(), "stopping") {
-		t.Errorf("log does not say why: %q", f.logText())
+	if f.stopped.Load() {
+		t.Fatal("the angel stopped despite restart recovery being active")
+	}
+	if !strings.Contains(f.logText(), "restoring") {
+		t.Errorf("log does not explain recovery: %q", f.logText())
 	}
 	st := f.l.status("2026-10-22T09:00:00Z")
-	if st.Listen != "" || st.Warm != nil || st.Affinity != nil {
+	if st.Listen != "" || st.Warm != nil || st.Affinity != nil || st.Core != "down" {
 		t.Errorf("status without a core reports a listener: %+v", st)
 	}
 	if st.Reload == nil || st.Reload.LastError == "" || len(st.Accounts) != 1 {
@@ -913,6 +927,54 @@ func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
 	key := got[0].AccountRoute["alice"]
 	if got[0].RoutePre[key] != cfg.Accounts[0].PreSOCKS5 || got[0].RoutePost[key] != cfg.Accounts[0].PostSOCKS5 {
 		t.Errorf("Reconfigure chain options pre=%v post=%v, want the account's URLs under route key %q", got[0].RoutePre, got[0].RoutePost, key)
+	}
+}
+
+func TestReloadReconfiguresAccountPolicyWithGlobalPostNoneAndServers(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice"})
+	cfg := config.Default()
+	cfg.Chain.PostSOCKS5 = "none"
+	cfg.Accounts = []config.Account{{Login: "alice", Password: f.hash}}
+	cfg.Servers = []config.Server{{Name: "edge", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 12345, Accounts: "alice"}}
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 {
+		t.Fatalf("initial server config starts=%d, want initial start plus restart", f.script.calls())
+	}
+	running := f.script.inst(1)
+	running.setInPlace(nil)
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts[0].AllowedClients = "127.0.0.1"
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	f.l.reload(t.Context())
+	if f.script.calls() != 2 || running.isClosed() {
+		t.Fatalf("account policy change restarted core: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	}
+	reconfigured := running.reconfigured()
+	if len(reconfigured) != 1 {
+		t.Fatalf("Reconfigure calls=%d, want 1", len(reconfigured))
+	}
+	o := reconfigured[0]
+	if o.GlobalPost != "none" {
+		t.Errorf("Reconfigure GlobalPost=%q, want none", o.GlobalPost)
+	}
+	if len(o.AccountAllowedClients["alice"]) != 1 || o.AccountAllowedClients["alice"][0].String() != "127.0.0.1/32" {
+		t.Errorf("Reconfigure account allowed clients=%v, want loopback host prefix", o.AccountAllowedClients["alice"])
+	}
+	if len(o.AccountRoute) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 {
+		t.Errorf("Reconfigure unexpectedly contains routes: account=%v pre=%v post=%v", o.AccountRoute, o.RoutePre, o.RoutePost)
+	}
+	if len(o.Servers) != 1 || o.Servers[0].Name != "edge" {
+		t.Errorf("Reconfigure servers=%v, want unchanged edge server", o.Servers)
 	}
 }
 

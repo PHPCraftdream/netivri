@@ -16,6 +16,27 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
+func TestStatusWatchJSONCoreOptional(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		core string
+		want bool
+	}{{name: "empty omitted"}, {name: "core included", core: "running", want: true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out bytes.Buffer
+			(&watchPrinter{out: &out, jsonOut: true}).frameJSON(angel.Status{Core: tc.core}, nil, time.Time{})
+			var doc map[string]any
+			if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+				t.Fatal(err)
+			}
+			_, got := doc["core"]
+			if got != tc.want {
+				t.Fatalf("core present=%v, want %v: %s", got, tc.want, out.String())
+			}
+		})
+	}
+}
+
 var errPoll = errors.New("poll timed out")
 
 func TestParseWatchInterval(t *testing.T) {

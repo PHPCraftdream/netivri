@@ -15,8 +15,9 @@ phone (ss://, vless://, ...) -> netivri server -> account route -> [pre] -> node
 ```
 
 An account without a route leaves directly (or through its `post_socks5`), so
-the same feature turns a VPS into a plain exit node.
-
+the same feature turns a VPS into a plain exit node. An explicit global
+`chain.post_socks5: none` means no post hop; it does not disable hot account
+policy updates when the server configuration has no account routes.
 Acceptance: `netivri server add` + `netivri server link` give a URI that a
 stock client of that protocol accepts; the connection is counted and routed as
 the owning account; a client address the account does not allow is dropped;
@@ -148,7 +149,27 @@ type Protocol interface {
 
 ## Core wiring
 
-- `core.Options.Servers []servers.Spec`. `Start` stages listeners through the core socket broker and commits them transactionally; unchanged specs keep their listener and connections. A changed listener stops accepting new connections after commit, while tracked connections drain until `Instance.Close`. A failed stage rolls back and retains old entries.
+- `core.Options.Servers []servers.Spec`. `Start` stages listeners through the
+  core socket broker and commits them transactionally; unchanged specs keep
+  their listener and connections. A changed listener stops accepting new
+  connections after commit, while tracked connections drain until
+  `Instance.Close`. A failed stage rolls back and retains old entries. If
+  starting the replacement core and rollback both fail, the angel/control
+  process stays running while no core is available; `status` may report
+  `core: "down"` and `reload.last_error`. The angel retries the previous good
+  configuration after 1 second, doubling the interval up to 30 seconds; it
+  warns on the first and every fifth consecutive failure. Recovery clears the
+  error and logs at INFO. A newer valid on-disk configuration is tried
+  immediately and replaces the retry target; `down` cancels retries.
+- `AccountAllowedClients`-only updates apply hot to server policy and
+  mixed-proxy authentication without closing existing connections, including
+  when servers have no account routes. An explicit global `post_socks5: none`
+  is no-hop, not a setting that disables this hot account policy. Bind, port,
+  account credentials, account additions/removals, global
+  `listen.allowed_clients` and global post-proxy changes require restart.
+  Routes update in place where supported. Server changes are transactional;
+  unchanged connections stay open, except connections on changed UDP listeners,
+  which end when sockets restart.
 - An address in use is `PORT_IN_USE`, as for the mixed listener; a server that
   fails to start fails `up` (fail closed), a reload that fails keeps the old
   servers and reports the error.

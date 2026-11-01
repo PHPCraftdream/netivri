@@ -256,6 +256,49 @@ func loadConfig(home string) (*config.Config, error) {
 	return cfg, nil
 }
 
+type accountPolicyAuthenticator struct {
+	inner  mihauth.Authenticator
+	mu     sync.RWMutex
+	byUser map[string]config.AllowedClients
+}
+
+func newAccountPolicyAuthenticator(inner mihauth.Authenticator, cfg *config.Config) *accountPolicyAuthenticator {
+	if inner == nil {
+		return nil
+	}
+	a := &accountPolicyAuthenticator{inner: inner}
+	a.UpdateConfig(cfg)
+	return a
+}
+
+// UpdateConfig replaces only the peer policy; the underlying credentials and
+// their init claims and verification caches remain intact.
+func (a *accountPolicyAuthenticator) UpdateConfig(cfg *config.Config) {
+	policies := make(map[string]config.AllowedClients, len(cfg.Accounts))
+	for _, account := range cfg.Accounts {
+		policies[account.Login] = config.AllowedClientPrefixes(account.AllowedClients)
+	}
+	a.mu.Lock()
+	a.byUser = policies
+	a.mu.Unlock()
+}
+
+func (a *accountPolicyAuthenticator) Verify(user, pass string) bool {
+	return a.inner.Verify(user, pass)
+}
+
+func (a *accountPolicyAuthenticator) VerifyFrom(user, pass string, remote net.Addr) bool {
+	a.mu.RLock()
+	policy, exists := a.byUser[user]
+	a.mu.RUnlock()
+	if exists && !policy.AllowsAddr(remote) {
+		return false
+	}
+	return mihauth.VerifyWithRemote(a.inner, user, pass, remote)
+}
+
+func (a *accountPolicyAuthenticator) Users() []string { return a.inner.Users() }
+
 // newAuthenticator builds the Mihomo authenticator from the config.
 // A nil interface (auth disabled) is returned exactly as auth.New
 // produced it. auth.New errors that are not *cli.Error become
@@ -271,9 +314,8 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 	accounts := make([]auth.AccountSpec, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
 		accounts = append(accounts, auth.AccountSpec{
-			Login:          a.Login,
-			Password:       a.Password,
-			AllowedClients: config.AllowedClientPrefixes(a.AllowedClients),
+			Login:    a.Login,
+			Password: a.Password,
 		})
 	}
 	a, err := auth.NewMulti(auth.MultiOptions{
@@ -293,7 +335,10 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 			Hint:    "fix auth.login / auth.password in config.ktav; see netivri help config",
 		}
 	}
-	return a, nil
+	if a == nil {
+		return nil, nil
+	}
+	return newAccountPolicyAuthenticator(a, cfg), nil
 }
 
 func runUp(args []string, stdout io.Writer) error {
