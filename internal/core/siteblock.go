@@ -19,6 +19,9 @@ const (
 	// answered, block a node for a site.
 	silentNeeded = 3
 	silentWindow = 10 * time.Minute
+	// answerRefresh is how often a connection that goes on being answered tells
+	// the group so (the memory of an answer lasts silentWindow).
+	answerRefresh = 30 * time.Second
 	// siteBlockFirst is the first block; every repeat doubles it up to
 	// siteBlockMax.
 	siteBlockFirst = 30 * time.Minute
@@ -30,8 +33,9 @@ const (
 	siteBlockKeep = 24 * time.Hour
 )
 
-// silentMinLife: a connection shorter than this is a client that left, not a
-// destination that does not answer. A variable only so that a test can shorten it.
+// silentMinLife: a connection that waited for an answer for less than this (from
+// the first bytes it sent) is a client that left, not a destination that does
+// not answer. A variable only so that a test can shorten it.
 var silentMinLife = 5 * time.Second
 
 type blockKey struct {
@@ -99,13 +103,17 @@ func (b *siteBlocks) answered(login, site string, member int) {
 	}
 }
 
-// silentEnd records a connection that sent data, got nothing back and lived
-// long enough; the caller has checked that the node itself is up. A site that
-// was answered through the node within silentWindow (answeredRecently) is not
-// blocked by a stray dead connection. It reports
-// the new block, if this connection made one, and how long it lasts.
-func (b *siteBlocks) silentEnd(login, site string, member int, lifetime time.Duration, answeredRecently bool) (time.Duration, bool) {
-	if lifetime < b.minLife || answeredRecently {
+// silentEnd records a connection that sent data and got nothing back for waited
+// (from its first bytes); the caller has checked that the node itself is up and
+// answered a probe or a dial (okAt, the last time) after the connection began.
+// A site that was answered through the node within silentWindow
+// (answeredRecently) is not blocked by a stray dead connection. A run of silent
+// connections blocks the node only once the node has answered something after
+// the first of them ended, so that connections that all end in a network outage
+// do not. It reports the new block, if this connection made one, and how long it
+// lasts.
+func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Duration, answeredRecently bool, okAt time.Time) (time.Duration, bool) {
+	if waited < b.minLife || answeredRecently {
 		return 0, false
 	}
 	now := b.now()
@@ -133,7 +141,7 @@ func (b *siteBlocks) silentEnd(login, site string, member int, lifetime time.Dur
 	} else {
 		st.silent++
 	}
-	if st.silent < silentNeeded {
+	if st.silent < silentNeeded || !okAt.After(st.since) {
 		return 0, false
 	}
 	st.strikes++
@@ -192,16 +200,22 @@ func (g *stickyGroup) answered(w *watchConn) {
 // back counts towards blocking the node for the site, unless the node is down
 // or has not answered a probe or a dial since the connection began (then the
 // network is the likelier culprit), or the site was answered through the node
-// not long ago.
+// not long ago. How long it waited is counted from its first bytes.
 func (g *stickyGroup) ended(w *watchConn, ev ConnEvent) {
 	if g.blocks == nil || g.table == nil || w.siteStr == "" || ev.Down != 0 || ev.Up == 0 {
 		return
 	}
-	if w.member < 0 || w.member >= len(g.healths) || g.healths[w.member] == nil || g.memberDown(w.member) || !g.healths[w.member].okSince(w.start) {
+	if w.member < 0 || w.member >= len(g.healths) || g.healths[w.member] == nil || g.memberDown(w.member) {
 		return
 	}
-	recent := g.table.answeredWithin(affinityKey{login: w.login, site: w.siteStr}, w.member, silentWindow, g.table.now())
-	ttl, blocked := g.blocks.silentEnd(w.login, w.siteStr, w.member, ev.Lifetime, recent)
+	okAt := g.healths[w.member].lastOKAt()
+	if !okAt.After(w.start) {
+		return
+	}
+	now := g.clock()
+	waited := now.Sub(time.Unix(0, w.firstUp.Load()))
+	recent := g.table.answeredWithin(affinityKey{login: w.login, site: w.siteStr}, w.member, silentWindow, now)
+	ttl, blocked := g.blocks.silentEnd(w.login, w.siteStr, w.member, waited, recent, okAt)
 	if blocked {
 		g.emit(ConnEvent{Kind: ConnSiteBlocked, Login: w.login, Label: w.label, Why: MoveNoAnswer, Port: w.port, Site: w.site, Target: ev.Target, Block: ttl})
 	}

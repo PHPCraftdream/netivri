@@ -1047,8 +1047,8 @@ var helpTopics = []helpTopic{
 			"describes the affinity counters.\n\n" +
 			"A node that passes its probes can still never reach one destination (an address blocked on its side). " +
 			"When 3 connections of an account to one site went through a node within 10 minutes, each sent data, " +
-			"waited at least 5 seconds and got nothing back, and no connection to that site was answered through the node in " +
-			"that time, while the node itself answered a probe or a dial meanwhile, the node is blocked for that " +
+			"waited at least 5 seconds for an answer to the first bytes they sent and got nothing back, and no connection to that site was answered through the node in " +
+			"that time (data still coming back on an open one counts), while the node itself answered a probe or a dial after the first of them ended, the node is blocked for that " +
 			"account and site: the site's next connection takes the next node of the route, a worse tier included, and " +
 			"other sites stay where they are. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
 			"answer through the node ends it at once, and a site that was answered through the node is never blocked by " +

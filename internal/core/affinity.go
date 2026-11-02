@@ -159,6 +159,12 @@ func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) boo
 		}
 	}
 	member, provisional := pick()
+	if (wasDown || wasWorse) && member == previous {
+		// The pick keeps the node: keep the binding too, with what it remembers
+		// (which node last answered the site).
+		b.lastUsed.Store(now.UnixNano())
+		return member, false, false, -1
+	}
 	if wasDown && member != previous {
 		// A real rebind: the site moves to another node. Picking the same
 		// node again (every node is down) changes nothing for the site.

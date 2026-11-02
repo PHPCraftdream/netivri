@@ -233,7 +233,11 @@ func TestAnAnswerThroughTheBlockedNodeEndsTheBlock(t *testing.T) {
 	_ = early.Close()
 }
 
-func TestSilentConnectionsEndingInsideABlockAddNothing(t *testing.T) {
+// Connections that all end together, with no sign of life of the node after the
+// first of them ended, may be a network outage: no block until the node answers
+// something afterwards. Then one more silent end makes it, and the rest that end
+// inside the block add nothing.
+func TestSilentBurstWaitsForTheNodeToAnswerAfterItsFirstEnd(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
 	var inFlight []C.Conn
 	for i := 0; i < 2*silentNeeded; i++ {
@@ -251,8 +255,115 @@ func TestSilentConnectionsEndingInsideABlockAddNothing(t *testing.T) {
 	for _, c := range inFlight {
 		_ = c.Close()
 	}
+	if got := ofKind(sink, ConnSiteBlocked); len(got) != 0 {
+		t.Fatalf("%d blocks from a burst that ended with no answer from the node after it", len(got))
+	}
+	clock.advance(time.Second)
+	endConn(t, g, health, clock, blackholed, silent)
 	if got := ofKind(sink, ConnSiteBlocked); len(got) != 1 {
-		t.Fatalf("%d block events from %d silent connections that ended together, want 1", len(got), len(inFlight))
+		t.Fatalf("%d block events after the node answered and one more silent end, want 1", len(got))
+	}
+}
+
+func TestSiteBlocksSilentEndInsideABlockAddsNothing(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	b := newSiteBlocks(now)
+	for i := 0; i < silentNeeded; i++ {
+		b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second))
+	}
+	if b.blockedCount() != 1 {
+		t.Fatal("no block")
+	}
+	if ttl, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked || ttl != 0 {
+		t.Fatalf("a silent end inside a block made another: %s, %v", ttl, blocked)
+	}
+}
+
+func TestSiteBlocksNeedANodeAnswerAfterTheFirstSilentEnd(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	b := newSiteBlocks(now)
+	before := now() // the node last answered at this very moment
+	for i := 0; i < silentNeeded+2; i++ {
+		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, before); blocked {
+			t.Fatal("blocked with no answer of the node after the first silent end")
+		}
+	}
+	if ttl, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, before.Add(time.Second)); !blocked || ttl != siteBlockFirst {
+		t.Fatalf("ttl, blocked = %s, %v after the node answered, want %s, true", ttl, blocked, siteBlockFirst)
+	}
+}
+
+// A connection that sat idle and was cancelled a second after its first bytes
+// did not wait for an answer.
+func TestIdleTimeBeforeTheFirstBytesIsNotWaitingForAnAnswer(t *testing.T) {
+	g, health, clock, _ := blockGroup(t, []int{0, 1})
+	for i := 0; i < 2*silentNeeded; i++ {
+		conn, err := g.DialContext(context.Background(), dialMetadata("alice", blackholed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		clock.advance(30 * time.Second) // idle
+		_, _ = conn.Write([]byte("hello"))
+		clock.advance(time.Second)
+		for _, label := range g.labels {
+			nodeUp(health, label)
+		}
+		_ = conn.Close()
+	}
+	if n := g.blocks.blockedCount(); n != 0 {
+		t.Fatalf("%d blocks from connections that waited one second for an answer", n)
+	}
+}
+
+// A connection that goes on being answered keeps the site known to work, long
+// after its first bytes.
+func TestALongAnsweredConnectionKeepsTheSiteFromBeingBlocked(t *testing.T) {
+	g, health, clock, _ := blockGroup(t, []int{0, 1})
+	long, err := g.DialContext(context.Background(), dialMetadata("alice", blackholed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = long.Write([]byte("hello"))
+	for i := 0; i < 20; i++ { // 20 minutes of data coming back
+		_, _ = long.Read(make([]byte, 8))
+		clock.advance(time.Minute)
+	}
+	for i := 0; i < 2*silentNeeded; i++ {
+		endConn(t, g, health, clock, blackholed, silent)
+	}
+	if n := g.blocks.blockedCount(); n != 0 {
+		t.Fatalf("%d blocks for a site whose connection is still being answered", n)
+	}
+	_ = long.Close()
+}
+
+// While the first node is blocked for a site the site stays on the second one:
+// the better tier does not attract it back, and the second node, which keeps
+// answering, is not blocked by the dead connections that come after.
+func TestBlockedSiteStaysOnTheSecondNodeAndKeepsWhatItRemembers(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	for i := 0; i < silentNeeded; i++ {
+		endConn(t, g, health, clock, blackholed, silent)
+	}
+	if got := chosen(t, g, blackholed); got != 1 {
+		t.Fatalf("site chose %d, want 1", got)
+	}
+	clock.advance(10 * time.Minute) // the first node has been up for long, the block lasts 30
+	endConn(t, g, health, clock, blackholed, connEnd{answer: true, wait: time.Second})
+	for i := 0; i < 2*silentNeeded; i++ {
+		endConn(t, g, health, clock, blackholed, connEnd{wait: 37 * time.Second})
+		if got := chosen(t, g, blackholed); got != 1 {
+			t.Fatalf("site chose %d, want it to stay on 1", got)
+		}
+	}
+	if n := g.blocks.blockedCount(); n != 1 {
+		t.Fatalf("%d blocks, want only the first node blocked", n)
+	}
+	if moves := ofKind(sink, ConnSiteMoved); len(moves) != 1 {
+		t.Errorf("%d moves, want the one away from the blocked node: %+v", len(moves), moves)
+	}
+	if g.table.returnCount() != 0 {
+		t.Errorf("%d returns to the better tier while it is blocked", g.table.returnCount())
 	}
 }
 
@@ -282,20 +393,20 @@ func TestSiteBlocksRunOfSilenceStartsOverAfterTheWindow(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	for i := 0; i < silentNeeded-1; i++ {
-		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false); blocked {
+		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 			t.Fatal("blocked too early")
 		}
 	}
 	clock.advance(silentWindow + time.Minute)
-	if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false); blocked {
+	if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 		t.Fatal("silent connections from two different windows blocked a node")
 	}
 	for i := 0; i < silentNeeded-2; i++ {
-		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false); blocked {
+		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 			t.Fatal("blocked too early in the new run")
 		}
 	}
-	if ttl, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false); !blocked || ttl != siteBlockFirst {
+	if ttl, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); !blocked || ttl != siteBlockFirst {
 		t.Fatalf("ttl, blocked = %s, %v, want %s, true", ttl, blocked, siteBlockFirst)
 	}
 }
@@ -307,7 +418,7 @@ func TestSiteBlocksBlockNeverExceedsTheMaximum(t *testing.T) {
 	for strike := 0; strike < 10; strike++ {
 		var ttl time.Duration
 		for i := 0; i < silentNeeded; i++ {
-			if got, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false); blocked {
+			if got, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 				ttl = got
 			}
 		}
@@ -326,9 +437,9 @@ func TestSiteBlocksCapDropsNewEvidenceAndPrunesIdleRecords(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	for i := 0; i < siteBlockCap; i++ {
-		b.silentEnd("a", fmt.Sprint("site", i), 0, 37*time.Second, false)
+		b.silentEnd("a", fmt.Sprint("site", i), 0, 37*time.Second, false, now().Add(time.Second))
 	}
-	b.silentEnd("a", "one-more", 0, 37*time.Second, false)
+	b.silentEnd("a", "one-more", 0, 37*time.Second, false, now().Add(time.Second))
 	if got := b.n.Load(); got != siteBlockCap {
 		t.Fatalf("%d records, want the cap %d", got, siteBlockCap)
 	}
@@ -339,7 +450,7 @@ func TestSiteBlocksCapDropsNewEvidenceAndPrunesIdleRecords(t *testing.T) {
 		t.Fatal("a record was added over the cap")
 	}
 	clock.advance(silentWindow + time.Minute)
-	b.silentEnd("a", "one-more", 0, 37*time.Second, false)
+	b.silentEnd("a", "one-more", 0, 37*time.Second, false, now().Add(time.Second))
 	if got := b.n.Load(); got > siteBlockCap || got < 1 {
 		t.Fatalf("%d records after pruning, want 1..%d", got, siteBlockCap)
 	}
@@ -381,22 +492,39 @@ func TestBindingRemembersWhichNodeAnsweredTheSite(t *testing.T) {
 	}
 }
 
-func TestOKSinceIsStrictlyAfter(t *testing.T) {
+func TestLastOKAtIsWhenTheNodeLastAnswered(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	health := newHealthTable()
 	health.now = now
 	health.register([]string{"n0"})
-	start := now()
-	if health.health("n0").okSince(start) {
-		t.Fatal("a node that never answered counts as answering")
+	if !health.health("n0").lastOKAt().IsZero() {
+		t.Fatal("a node that never answered has an answer time")
 	}
 	nodeUp(health, "n0")
-	if health.health("n0").okSince(start) {
-		t.Fatal("an answer at the very moment counts as after it")
-	}
+	first := now()
 	clock.advance(time.Second)
 	nodeUp(health, "n0")
-	if !health.health("n0").okSince(start) {
-		t.Fatal("an answer after the start does not count")
+	if got := health.health("n0").lastOKAt(); !got.After(first) {
+		t.Fatalf("last ok = %v, want after %v", got, first)
+	}
+}
+
+// A binding that is picked again onto the same node keeps what it remembers.
+func TestSamePickKeepsTheBindingAndItsAnswerMemory(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	table := newAffinityTable(now, 0)
+	key := affinityKey{login: "alice", site: "s"}
+	pick := func() (int, bool) { return 0, false }
+	table.acquire(key, noDownMember, pick)
+	table.noteAnswer(key, 0, now())
+	allDown := func(int) bool { return true }
+	if member, rebound := table.acquire(key, allDown, pick); member != 0 || rebound {
+		t.Fatalf("member, rebound = %d, %v, want 0, false", member, rebound)
+	}
+	if !table.answeredWithin(key, 0, time.Minute, now()) {
+		t.Fatal("the binding lost its answer memory when the pick kept the node")
+	}
+	if table.rebindCount() != 0 {
+		t.Fatalf("%d rebinds, want 0", table.rebindCount())
 	}
 }

@@ -119,12 +119,13 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 // creating or keeping the binding as needed. On a healthy binding hit it
 // neither allocates nor builds health views.
 func (g *stickyGroup) choose(login, site string) (int, bool) {
-	isDown := g.isDownFn
+	isDown, better := g.isDownFn, g.betterFn
 	if g.blocks.any() {
 		now := g.table.now()
 		isDown = func(m int) bool { return g.isDownFn(m) || g.blocks.blocked(login, site, m, now) }
+		better = func(m int, at time.Time) bool { return g.betterTierStableFor(login, site, m, at) }
 	}
-	member, rebound, returned, from := g.table.acquireWith(affinityKey{login: login, site: site}, isDown, g.betterFn, g.pickFor(login, site))
+	member, rebound, returned, from := g.table.acquireWith(affinityKey{login: login, site: site}, isDown, better, g.pickFor(login, site))
 	if g.events != nil && from >= 0 && from < len(g.labels) && member < len(g.labels) {
 		why := MoveNodeDown
 		if returned {
@@ -143,6 +144,16 @@ func (g *stickyGroup) choose(login, site string) (int, bool) {
 // in non-decreasing tier order, so the better ones are a prefix; a member of
 // the first tier costs one comparison and nothing allocates.
 func (g *stickyGroup) betterTierStable(member int, now time.Time) bool {
+	return g.betterStable(member, now, "", "", false)
+}
+
+// betterTierStableFor is betterTierStable for a site: a node of a better tier
+// that is blocked for the site does not attract it back.
+func (g *stickyGroup) betterTierStableFor(login, site string, member int, now time.Time) bool {
+	return g.betterStable(member, now, login, site, true)
+}
+
+func (g *stickyGroup) betterStable(member int, now time.Time, login, site string, skipBlocked bool) bool {
 	after := g.table.returnAfter
 	if after < 0 || len(g.tiers) != len(g.healths) || member < 0 || member >= len(g.tiers) {
 		return false
@@ -150,7 +161,7 @@ func (g *stickyGroup) betterTierStable(member int, now time.Time) bool {
 	tier := g.tiers[member]
 	nowNs := now.UnixNano()
 	for i := 0; i < len(g.tiers) && g.tiers[i] < tier; i++ {
-		if g.healths[i].stableFor(nowNs, after) {
+		if g.healths[i].stableFor(nowNs, after) && !(skipBlocked && g.blocks.blocked(login, site, i, now)) {
 			return true
 		}
 	}

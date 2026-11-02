@@ -315,11 +315,11 @@ func (h *nodeHealth) trafficAlive() bool {
 	return last != 0 && h.clock().UnixNano()-last < int64(trafficAliveFor)
 }
 
-// okSince reports whether the node answered a probe or a dial after t.
-func (h *nodeHealth) okSince(t time.Time) bool {
+// lastOKAt is when the node last answered a probe or a dial; zero if never.
+func (h *nodeHealth) lastOKAt() time.Time {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.lastOK.After(t)
+	return h.lastOK
 }
 
 // idleFor reports whether no data has come back through the node for d.

@@ -127,7 +127,8 @@ type watchConn struct {
 	siteStr      string // the site key, "" when unknown
 	host         string
 	ip           netip.Addr
-	gotData      atomic.Bool // the first bytes came back, reported once
+	gotData      atomic.Bool  // the first bytes came back, reported once
+	refreshedAt  atomic.Int64 // unix nanoseconds the site was last reported answered; see answerRefresh
 
 	up, down    atomic.Int64
 	firstUp     atomic.Int64 // unix nanoseconds of the first bytes sent to the node; 0 before
@@ -144,27 +145,34 @@ func (w *watchConn) noteUp(n int) {
 	}
 	w.up.Add(int64(n))
 	if w.firstUp.Load() == 0 {
-		w.firstUp.CompareAndSwap(0, time.Now().UnixNano())
+		w.firstUp.CompareAndSwap(0, w.g.clock().UnixNano())
 	}
 }
 
 // noteDown counts bytes that came back and, for the first ones after the
 // client sent something, how long the node took to answer (a node that spoke
-// before the client did has no answer time). One atomic load on the usual
-// path; the clock is read once.
+// before the client did has no answer time). It also tells the group that the
+// site answers, at the first bytes and then at most every answerRefresh, so that
+// a connection that goes on being answered keeps the site known to work.
 func (w *watchConn) noteDown(n int) {
 	if n <= 0 {
 		return
 	}
 	w.down.Add(int64(n))
 	if !w.gotData.Load() && w.gotData.CompareAndSwap(false, true) {
+		w.refreshedAt.Store(w.g.clock().UnixNano())
 		w.g.answered(w)
+	} else if w.siteStr != "" {
+		if now := w.g.clock().UnixNano(); now-w.refreshedAt.Load() >= int64(answerRefresh) {
+			w.refreshedAt.Store(now)
+			w.g.answered(w)
+		}
 	}
 	if w.answer.Load() != 0 {
 		return
 	}
 	if first := w.firstUp.Load(); first != 0 {
-		w.answer.CompareAndSwap(0, max(1, time.Now().UnixNano()-first))
+		w.answer.CompareAndSwap(0, max(1, w.g.clock().UnixNano()-first))
 	} else {
 		w.answer.CompareAndSwap(0, -1)
 	}

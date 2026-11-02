@@ -78,7 +78,9 @@ Rules:
   account to one site went through one node within 10 minutes, each sent data,
   lived at least 5 seconds and got nothing back, none of the site's connections
   was answered through the node in that time, and the node itself answered a
-  probe or a dial after the connection began (so it is not a network outage),
+  probe or a dial after the connection began and again after the first of the
+  silent connections ended (so it is not a network outage that ended them
+  together), counting the wait from the first bytes the connection sent,
   the node is blocked for that (account, site): the next connection is picked
   again with the node counted as down, and goes to the next node of the route,
   a worse tier included (counted in `affinity.rebinds`, logged as a move for

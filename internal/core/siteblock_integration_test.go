@@ -73,10 +73,10 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = instance.Close() })
 
-	// Several connections wait for an answer together; a later dial of the
-	// first node shows it was reachable while they waited.
+	// Several connections wait for an answer together and give up together.
+	// That alone is no block: the node must be seen answering afterwards.
 	var waiting []net.Conn
-	for i := 0; i < silentNeeded+1; i++ {
+	for i := 0; i < silentNeeded; i++ {
 		c, err := openAccountSOCKS5(t, instance.Addr(), blackhole, backend, "alice", alicePassword)
 		if err != nil {
 			t.Fatalf("silent connection %d: %v", i, err)
@@ -90,6 +90,20 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 	for _, c := range waiting {
 		_ = c.Close()
 	}
+	// One more silent connection, while another site is dialed through the
+	// first node: the node answered after the first silent end.
+	last, err := openAccountSOCKS5(t, instance.Addr(), blackhole, backend, "alice", alicePassword)
+	if err != nil {
+		t.Fatalf("last silent connection: %v", err)
+	}
+	if _, err := last.Write([]byte("hello")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tryDialAccountSOCKS5(t, instance.Addr(), fine, backend, "alice", alicePassword); err != nil {
+		t.Fatalf("another site: %v", err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	_ = last.Close()
 
 	blocked := waitEvent(t, sink, func(ev ConnEvent) bool { return ev.Kind == ConnSiteBlocked })
 	if blocked.Login != "alice" || blocked.Label != "first" || blocked.Why != MoveNoAnswer || blocked.Block != siteBlockFirst || !strings.HasPrefix(blocked.Target, blackhole+":") {
@@ -107,9 +121,6 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 		t.Errorf("move = %+v, want first -> second (no answer)", moved)
 	}
 
-	if err := tryDialAccountSOCKS5(t, instance.Addr(), fine, backend, "alice", alicePassword); err != nil {
-		t.Fatalf("another site: %v", err)
-	}
 	if !recordedHost(first, fine) || recordedHost(second, fine) {
 		t.Errorf("first recorded %v, second %v: the other site should stay on the first node", first.recorded(), second.recorded())
 	}
