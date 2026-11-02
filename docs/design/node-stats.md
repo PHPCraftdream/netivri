@@ -390,7 +390,12 @@ start" in the first minute), the others and the third's own line are `INFO`,
 and an `INFO` line closes the burst when its last node is back. For 2 minutes
 after the computer woke up (the angel notices a jump of the wall clock, probes
 every node at once and writes one `INFO` line with the length of the sleep) a
-down is a plain `INFO` line that counts toward neither a burst nor flapping. A node that has
+down is a plain `INFO` line that counts toward neither a burst nor flapping. A network that fails
+slowly makes no burst (the downs are minutes apart: unused nodes are probed rarely), so the log also keeps the
+set of servers (by id, a twin counts once) that are down now and those that never answered. At 6 or more down
+servers, and at least half of the servers that have answered, one `WARN` (`node outage: ...`) opens an outage
+(not while a burst is in progress), the downs and backs of nodes are `DEBUG` while it lasts, and an `INFO`
+line (`node outage over: ...`) closes it when fewer than a quarter are down. A node that has
 never answered (`NeverOK`: it did not go down, it never came up) is one `INFO`
 line, `... has never answered: ...`, and counts toward neither a burst nor
 flapping, so the dead nodes of a subscription do not raise a burst at every

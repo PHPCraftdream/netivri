@@ -347,7 +347,7 @@ and what they repeat (the downs and backs of a flapping node after its `flapping
 twin) at `DEBUG`, which `logs` shows only with `--level debug`.
 
 Once an hour each account that had connections gets one summary line, `account alice: last hour: 412
-connections ended, 0 broken, 30 closed before any data, 3 without an answer (3 sites; ports 443 x3; waited 2.0s median, 15s longest), 0 dials failed,
+connections ended, 0 broken, 30 closed before any data, 3 without an answer (3 sites; ports 443 x3; waited 2.0s median, 15s longest; via main/us (United States, country US) x3), 0 dials failed,
 412.0 MiB down, 38.1 MiB up, answers started after 0.4s median, 1.8s 95th`, so that a log
 without a report of broken connections says "none" and not nothing. The bytes are those of the connections that
 ended in that hour, so that a count of connections without an answer can be checked against what moved. `closed before any data` is a client that
@@ -355,7 +355,7 @@ left without sending a byte (browsers and messengers open connections they do no
 client that sent data and got nothing back from the node's side, the one to watch; the line says how many
 different sites they went to (by hash, never named), their ports (the three most used, the rest as `other`) and how
 long they waited (median and longest), which tells one dead site that is retried from many, and a client that
-gives up quickly from a wait that ran into a timeout. The last part says how long the node's side took to
+gives up quickly from a wait that ran into a timeout. The two nodes most of them went through are named (`via NODE x300, NODE x40, other x5`), which tells a bad node from a bad network; a direct exit has none. The last part says how long the node's side took to
 start answering, from the first bytes the client sent to the first byte that came back (median and 95th
 percentile over the connections that got an answer; a node that spoke before the client did has none), which
 is what "slow" means when nothing failed.
@@ -397,7 +397,14 @@ outage, or the first probes after a start) the third one raises a single `WARN`,
 `node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
 lost network or a shared outage` (with `, right after start` in the first minute), the
 nodes of the burst are logged at `INFO` from then on, and `node burst over: 9 nodes
-were down, all back after 41s` closes it when the last one is back. When the computer
+were down, all back after 41s` closes it when the last one is back. A network that fails
+slowly (nodes are probed minutes apart, so their downs trickle in over many minutes) is no burst: when
+6 or more of the servers that have answered before are down at once, and at least half of them,
+one `WARN`, `node outage: 11 of 21 servers that have answered are down, likely a lost network or the
+provider; their down and back reports are DEBUG until most are back`, says so, the down and back lines of the
+nodes are `DEBUG` while it lasts, and `node outage over: up to 14 of 21 servers were down, 2 still down,
+after 6h12m3s` (`INFO`) closes it when fewer than a quarter are still down. A burst in progress keeps its
+own lines. When the computer
 sleeps the angel is frozen and writes nothing; when it wakes, one `INFO` line,
 `the computer was asleep for 26h22m0s (or its clock jumped forward); probing the nodes again at once,
 failures in the next 2 minutes are expected`, says so, every node is probed at once, and for the next
@@ -1013,8 +1020,10 @@ interval). While the stored list is younger than twice the interval, the failure
 is an `INFO` line (`subscription main: refresh failed after 30.1s (two tries):
 FETCH_FAILED: ...; the list of 41m ago stays, next try in 10m`); it is a `WARN`
 with the third failure in a row, with a list older than twice the interval, or
-without any list, so `doctor` warns only for a failure that lasts. A successful
-refresh says how long it took (`refreshed, 22 nodes in 4.2s`). A fetched list
+without any list, so `doctor` warns only for a failure that lasts. While the failures go on, a subscription writes one `WARN`
+at the first and then one an hour (the line says so: `the next failures are DEBUG, a WARN again in 1h00m`); the
+others are `DEBUG` lines. A successful refresh says how long it took (`refreshed, 22 nodes in 4.2s`) and, after
+failures, how many it ended (`, after 35 failed refreshes in a row (6h12m)`). A fetched list
 that would leave an account without nodes is rejected and the old list stays. `reload.count` is how many times the angel applied changed
 files: new nodes and routes in place, keeping the open connections, and
 accounts, passwords or the port by restarting its listener; `last_at` the

@@ -27,6 +27,12 @@ const (
 	// is probed twice, so its down reports come together; a second one within
 	// the window is the same event.
 	twinWindow = 10 * time.Second
+	// outageMinNodes and the half rule: a network that fails slowly (nodes are
+	// probed minutes apart, so their downs trickle in) is no burst. When that
+	// many servers that have answered before are down at once, and they are at
+	// least half of those, it is an outage; it ends when fewer than a quarter
+	// are still down.
+	outageMinNodes = 6
 )
 
 type logFunc = func(format string, args ...any)
@@ -68,6 +74,11 @@ func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, quiet func(
 // per-node lines of the burst are INFO, so a network loss that takes ten nodes
 // down at once reads as one warning. When the last node of a burst is back an
 // INFO line closes it.
+// A network that fails slowly makes no burst: when at least outageMinNodes
+// servers that have answered before are down at once, and half of them or
+// more, one WARN ("node outage: ...") says so, the down and back lines of the
+// nodes are DEBUG while it lasts, and an INFO line ends it when fewer than a
+// quarter are still down. A burst in progress keeps its own lines.
 type nodeLog struct {
 	info, warn logFunc
 	debug      logFunc // repeats of fallback nodes; INFO unless set
@@ -89,6 +100,14 @@ type nodeLog struct {
 	burst       map[string]struct{}
 	burstSize   int
 	burstStart  time.Time
+	// The outage state: servers (not labels) that are down now, servers that
+	// never answered, and how many servers there are.
+	servers     int
+	downNow     map[string]struct{}
+	never       map[string]struct{}
+	outage      bool
+	outageStart time.Time
+	outagePeak  int
 }
 
 // drop is one recent down of a server; label is the one that reported it.
@@ -113,10 +132,14 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 		return nil
 	}
 	l := &nodeLog{info: info, warn: warn, debug: info, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
-		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}, lastBack: map[string]drop{}}
+		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}, lastBack: map[string]drop{},
+		downNow: map[string]struct{}{}, never: map[string]struct{}{}}
+	ids := map[string]struct{}{}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
+		ids[serverID(n.Label)] = struct{}{}
 	}
+	l.servers = len(ids)
 	return l
 }
 
@@ -133,7 +156,9 @@ func (l *nodeLog) event(ev core.NodeEvent) {
 
 func (l *nodeLog) down(ev core.NodeEvent) {
 	now := l.now()
+	id := serverID(ev.Label)
 	if ev.NeverOK {
+		l.never[id] = struct{}{}
 		line := l.describe(ev.Label) + " has never answered: " + ev.Reason
 		if twin, ok := l.twinOf(l.lastNever, ev, now); ok {
 			line += ", same server as " + twin
@@ -141,6 +166,8 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		l.info("%s", line)
 		return
 	}
+	delete(l.never, id)
+	l.downNow[id] = struct{}{}
 	line := l.describe(ev.Label) + " is down: " + ev.Reason
 	if ev.SinceOK > 0 {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
@@ -155,6 +182,18 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	}
 	if l.flaps(ev, now) {
 		l.repeat(ev.Label, "%s", line)
+		return
+	}
+	if l.outage {
+		l.outagePeak = max(l.outagePeak, len(l.downNow))
+		l.debug("%s", line)
+		return
+	}
+	if l.burst == nil && l.outageBegins() {
+		l.outage, l.outageStart, l.outagePeak = true, now, len(l.downNow)
+		l.warn("node outage: %d of %d servers that have answered are down, likely a lost network or the provider; their down and back reports are DEBUG until most are back",
+			len(l.downNow), l.live())
+		l.debug("%s", line)
 		return
 	}
 	if len(l.window) == 0 || now.Sub(l.windowStart) > burstWindow {
@@ -229,7 +268,7 @@ func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 // of a flapping server, a twin's down): INFO for a first-tier node, DEBUG for
 // the others, so the log of an account is not filled by nodes it never uses.
 func (l *nodeLog) repeat(label, format string, args ...any) {
-	if l.first == nil || l.first[label] {
+	if l.first == nil || (l.first[label] && !l.outage) {
 		l.info(format, args...)
 		return
 	}
@@ -251,13 +290,19 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	if ev.Downtime > 0 {
 		line += " after " + ev.Downtime.Round(time.Second).String() + " down"
 	}
+	id := serverID(ev.Label)
+	delete(l.never, id)
+	delete(l.downNow, id)
 	if twin, ok := l.twinOf(l.lastBack, ev, l.now()); ok {
 		l.repeat(ev.Label, "%s, same server as %s", line, twin)
-	} else if l.flapping[serverID(ev.Label)] {
+	} else if l.flapping[id] {
 		l.repeat(ev.Label, "%s", line)
+	} else if l.outage {
+		l.debug("%s", line)
 	} else {
 		l.info("%s", line)
 	}
+	l.outageEnds()
 	if _, in := l.burst[ev.Label]; !in {
 		return
 	}
@@ -266,6 +311,25 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 		l.info("node burst over: %d nodes were down, all back after %s", l.burstSize, l.now().Sub(l.burstStart).Round(time.Second))
 		l.burst, l.burstSize = nil, 0
 	}
+}
+
+// live is the number of servers that have answered at least once.
+func (l *nodeLog) live() int { return max(l.servers-len(l.never), 1) }
+
+// outageBegins reports whether the servers down now make an outage.
+func (l *nodeLog) outageBegins() bool {
+	return len(l.downNow) >= outageMinNodes && 2*len(l.downNow) >= l.live()
+}
+
+// outageEnds closes an outage once fewer than a quarter of the servers are
+// down, with one INFO line.
+func (l *nodeLog) outageEnds() {
+	if !l.outage || 4*len(l.downNow) >= l.live() {
+		return
+	}
+	l.info("node outage over: up to %d of %d servers were down, %d still down, after %s",
+		l.outagePeak, l.live(), len(l.downNow), l.now().Sub(l.outageStart).Round(time.Second))
+	l.outage, l.outagePeak = false, 0
 }
 
 // summary is the one WARN line of a burst.

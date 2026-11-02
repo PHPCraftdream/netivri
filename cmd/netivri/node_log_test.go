@@ -259,11 +259,13 @@ func TestNodeLogWithoutNodesHasNoHook(t *testing.T) {
 
 func TestIsNodeDownMessageCoversTheNewForms(t *testing.T) {
 	cases := map[string]bool{
-		"node main/a (FI, provider main, country FI) is down: 2 probe failures (timeout), last ok 3m0s ago":                      true,
-		"node main/a (provider main, country FI) is down: 3 dial failures":                                                       true,
-		"node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a lost network or a shared outage": true,
-		"node main/a (provider main, country FI) is back after 41s down":                                                         false,
-		"subscription main: refresh failed: is down: x":                                                                          false,
+		"node main/a (FI, provider main, country FI) is down: 2 probe failures (timeout), last ok 3m0s ago":                                                           true,
+		"node main/a (provider main, country FI) is down: 3 dial failures":                                                                                            true,
+		"node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a lost network or a shared outage":                                      true,
+		"node outage: 11 of 21 servers that have answered are down, likely a lost network or the provider; their down and back reports are DEBUG until most are back": true,
+		"node outage over: up to 14 of 21 servers were down, 2 still down, after 6h12m3s":                                                                             false,
+		"node main/a (provider main, country FI) is back after 41s down":                                                                                              false,
+		"subscription main: refresh failed: is down: x":                                                                                                               false,
 		"the node is down: no": false,
 	}
 	for message, want := range cases {
@@ -534,5 +536,153 @@ func TestNodeLogTwinBackOfFallbackNodeIsDebug(t *testing.T) {
 	f.log.event(core.NodeEvent{Label: "main/a", Downtime: time.Minute})
 	if f.countContaining("is back") != 1 || len(debug) != 1 || !strings.Contains(debug[0], "same server as own/a") {
 		t.Errorf("info = %q, debug = %q", f.lines, debug)
+	}
+}
+
+// withDebug makes the fixture collect DEBUG lines as "DEBUG ...".
+func (f *burstFixture) withDebug() *burstFixture {
+	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
+	return f
+}
+
+// minutes of calm between two downs: further apart than the burst window, so
+// the downs are never a burst.
+func (f *burstFixture) slowly(from, to int) {
+	for i := from; i < to; i++ {
+		f.down(i, "2 probe failures (timeout)")
+		f.now = f.now.Add(time.Minute)
+	}
+}
+
+func TestNodeLogSlowOutageIsOneWarningAndTheRestDebug(t *testing.T) {
+	f := newBurstFixture(t, 12).withDebug()
+	f.slowly(0, 5)
+	if f.count("WARN node p/n") != 5 || f.countContaining("node outage") != 0 {
+		t.Fatalf("five of twelve are separate warnings, no outage yet: %q", f.lines)
+	}
+	f.slowly(5, 9)
+	if got := f.count("WARN node outage: 6 of 12 servers that have answered are down"); got != 1 {
+		t.Fatalf("%d outage warnings, want 1: %q", got, f.lines)
+	}
+	if got := f.count("WARN"); got != 5+1 {
+		t.Errorf("%d warnings, want the five before and the outage line: %q", got, f.lines)
+	}
+	if got := f.count("DEBUG node p/n"); got != 4 { // the sixth node and the three after it
+		t.Errorf("%d DEBUG down lines, want 4: %q", got, f.lines)
+	}
+	if got := f.count("INFO"); got != 0 {
+		t.Errorf("info lines during the outage: %q", f.lines)
+	}
+
+	// The backs are DEBUG; it ends when fewer than a quarter are still down.
+	for i := 0; i < 6; i++ {
+		f.back(i, time.Hour)
+	}
+	if f.countContaining("node outage over") != 0 {
+		t.Fatalf("the outage ended with three of twelve still down: %q", f.lines)
+	}
+	f.now = f.now.Add(time.Minute)
+	f.back(6, time.Hour)
+	last := f.lines[len(f.lines)-1]
+	if !strings.HasPrefix(last, "INFO node outage over: up to 9 of 12 servers were down, 2 still down, after ") {
+		t.Errorf("last line = %q", last)
+	}
+	if got := f.count("INFO"); got != 1 {
+		t.Errorf("%d info lines, want only the end of the outage: %q", got, f.lines)
+	}
+	if got := f.count("DEBUG node p/n"); got != 4+7 {
+		t.Errorf("%d DEBUG lines, want 4 downs and 7 backs: %q", got, f.lines)
+	}
+
+	// A back after the end is an ordinary INFO line again.
+	f.back(7, time.Hour)
+	if got := f.lines[len(f.lines)-1]; !strings.HasPrefix(got, "INFO node p/n7 ") {
+		t.Errorf("back after the outage = %q", got)
+	}
+	// And a new slow failure of most nodes is a new outage.
+	f.slowly(0, 6)
+	if got := f.count("WARN node outage:"); got != 2 {
+		t.Errorf("%d outage warnings after the second failure, want 2: %q", got, f.lines)
+	}
+}
+
+func TestNodeLogOutageCountsServersThatHaveAnswered(t *testing.T) {
+	// Six of fourteen: not half of the fourteen...
+	f := newBurstFixture(t, 14).withDebug()
+	f.slowly(0, 6)
+	if f.countContaining("node outage") != 0 {
+		t.Fatalf("outage with six of fourteen down: %q", f.lines)
+	}
+	// ... but half of the seven that ever answered.
+	g := newBurstFixture(t, 14).withDebug()
+	for i := 8; i < 14; i++ {
+		g.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, Reason: "2 probe failures (timeout)", NeverOK: true})
+	}
+	g.slowly(0, 6)
+	if got := g.count("WARN node outage: 6 of 8 servers that have answered are down"); got != 1 {
+		t.Errorf("%d outage warnings, want 1: %q", got, g.lines)
+	}
+}
+
+func TestNodeLogOutageCountsServersNotLabels(t *testing.T) {
+	var infos []stats.NodeInfo
+	for i := 0; i < 8; i++ {
+		for _, p := range []string{"own", "main"} {
+			infos = append(infos, stats.NodeInfo{Label: fmt.Sprintf("%s/s%d", p, i), Provider: p, Country: "FI"})
+		}
+	}
+	f := &burstFixture{now: time.Unix(10_000, 0)}
+	f.log = newNodeLog(infos,
+		func(format string, args ...any) { f.lines = append(f.lines, "INFO "+fmt.Sprintf(format, args...)) },
+		func(format string, args ...any) { f.lines = append(f.lines, "WARN "+fmt.Sprintf(format, args...)) },
+		func() time.Time { return f.now })
+	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
+	f.now = f.now.Add(10 * time.Minute)
+	for i := 0; i < 6; i++ {
+		f.downLabel(fmt.Sprintf("own/s%d", i))
+		f.now = f.now.Add(twinWindow + time.Second) // the twin comes late: its own event
+		f.downLabel(fmt.Sprintf("main/s%d", i))
+		f.now = f.now.Add(time.Minute)
+		if got := f.count("WARN node outage:"); (i < 5 && got != 0) || (i == 5 && got != 1) {
+			t.Fatalf("after %d servers (%d labels) down: %d outage warnings: %q", i+1, 2*(i+1), got, f.lines)
+		}
+	}
+	if !strings.Contains(strings.Join(f.lines, "\n"), "WARN node outage: 6 of 8 servers") {
+		t.Errorf("outage line: %q", f.lines)
+	}
+}
+
+func TestNodeLogBurstInProgressKeepsItsOwnLines(t *testing.T) {
+	f := newBurstFixture(t, 12).withDebug()
+	for i := 0; i < 3; i++ {
+		f.down(i, "2 probe failures (timeout)")
+	}
+	f.slowly(3, 10)
+	if got := f.countContaining("node outage"); got != 0 {
+		t.Errorf("an outage inside a burst: %q", f.lines)
+	}
+	if got := f.count("WARN node burst"); got != 1 {
+		t.Errorf("%d burst warnings, want 1: %q", got, f.lines)
+	}
+	if got := f.count("DEBUG"); got != 0 {
+		t.Errorf("a burst wrote DEBUG lines: %q", f.lines)
+	}
+}
+
+func TestNodeLogOutageDemotesFirstTierRepeats(t *testing.T) {
+	f := newBurstFixture(t, 12).withDebug()
+	f.log.first = map[string]bool{"p/n0": true}
+	f.slowly(1, 8) // seven fallback nodes: an outage after the sixth
+	if f.count("WARN node outage:") != 1 {
+		t.Fatalf("no outage: %q", f.lines)
+	}
+	// A first-tier node that is down and flaps during the outage is DEBUG too.
+	for i := 0; i < 4; i++ {
+		f.down(0, "2 probe failures (timeout)")
+		f.now = f.now.Add(time.Minute)
+		f.back(0, time.Minute)
+	}
+	if got := f.count("INFO node p/n0"); got != 0 {
+		t.Errorf("%d INFO lines of a first-tier node during the outage, want 0: %q", got, f.lines)
 	}
 }

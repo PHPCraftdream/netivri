@@ -32,6 +32,10 @@ const (
 	// refreshWarnStreak is how many failed refreshes of one subscription in a
 	// row raise a WARN; fewer are INFO while the stored list is still recent.
 	refreshWarnStreak = 3
+	// refreshWarnEvery: while the refreshes of a subscription keep failing,
+	// one WARN per this long; the other failures are DEBUG lines. A network
+	// that is down for hours is one warning an hour, not one per try.
+	refreshWarnEvery = time.Hour
 )
 
 // refreshSchedule tracks when each subscription is due again.
@@ -189,10 +193,13 @@ func (l *liveAngel) refreshOne(ctx context.Context, store *subscription.Store, c
 		return false
 	}
 	l.noteRefresh(true, nil)
-	l.streakReset(s.Name)
+	fails, since := l.streakEnd(s.Name)
 	second := ""
 	if retried {
 		second = ", at the second try"
+	}
+	if fails > 0 {
+		second += fmt.Sprintf(", after %s in a row (%s)", count(fails, "failed refresh", "failed refreshes"), ageText(l.refreshTime().Sub(since)))
 	}
 	l.logf("subscription %s: refreshed, %d nodes in %s%s", s.Name, len(snap.Nodes), took, second)
 	return true
@@ -221,22 +228,61 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
+// refreshRun is the failed refreshes of one subscription in a row: how many,
+// since when, and when the last WARN about them was written.
+type refreshRun struct {
+	fails         int
+	since, warned time.Time
+}
+
+func (l *liveAngel) refreshTime() time.Time {
+	if l.refreshClock != nil {
+		return l.refreshClock()
+	}
+	return time.Now()
+}
+
 // streakUp counts one more failed refresh of a subscription in a row and
-// returns the count; streakReset forgets them.
+// returns the count; streakEnd forgets the run and returns what it was.
 func (l *liveAngel) streakUp(name string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.refreshStreaks == nil {
-		l.refreshStreaks = map[string]int{}
+	if l.refreshRuns == nil {
+		l.refreshRuns = map[string]*refreshRun{}
 	}
-	l.refreshStreaks[name]++
-	return l.refreshStreaks[name]
+	run := l.refreshRuns[name]
+	if run == nil {
+		run = &refreshRun{since: l.refreshTime()}
+		l.refreshRuns[name] = run
+	}
+	run.fails++
+	return run.fails
 }
 
-func (l *liveAngel) streakReset(name string) {
+func (l *liveAngel) streakEnd(name string) (fails int, since time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.refreshStreaks, name)
+	run := l.refreshRuns[name]
+	delete(l.refreshRuns, name)
+	if run == nil {
+		return 0, time.Time{}
+	}
+	return run.fails, run.since
+}
+
+// warnDue reports whether a WARN about the failing refreshes of a
+// subscription is due (none yet in this run, or refreshWarnEvery since the
+// last) and records it as written.
+func (l *liveAngel) warnDue(name string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	run := l.refreshRuns[name]
+	now := l.refreshTime()
+	if run == nil || (!run.warned.IsZero() && now.Sub(run.warned) < refreshWarnEvery) {
+		return false
+	}
+	run.warned = now
+	return true
 }
 
 // fetchFailed logs a refresh whose fetch failed. The stored list stays, so a
@@ -253,16 +299,26 @@ func (l *liveAngel) fetchFailed(store *subscription.Store, cfg *config.Config, n
 	line += ": " + errText(err)
 	snap, loadErr := store.Load(name)
 	if loadErr != nil {
-		l.warnf("%s; no stored list, next try in %s", line, ageText(retry))
+		l.failureLine(name, "%s; no stored list, next try in %s (%s in a row)", line, ageText(retry), count(streak, "failure", "failures"))
 		return
 	}
 	age := time.Since(snap.FetchedAt)
 	line += fmt.Sprintf("; the list of %s ago stays, next try in %s", ageText(age), ageText(retry))
 	if streak >= refreshWarnStreak || age > 2*interval {
-		l.warnf("%s (%s in a row)", line, count(streak, "failure", "failures"))
+		l.failureLine(name, "%s (%s in a row)", line, count(streak, "failure", "failures"))
 		return
 	}
 	l.logf("%s", line)
+}
+
+// failureLine writes a failed refresh that deserves a WARN: at WARN the first
+// time and once per refreshWarnEvery after, at DEBUG in between.
+func (l *liveAngel) failureLine(name, format string, args ...any) {
+	if l.warnDue(name) {
+		l.warnf(format+"; the next failures are DEBUG, a WARN again in %s", append(args, ageText(refreshWarnEvery))...)
+		return
+	}
+	l.debugf(format, args...)
 }
 
 // ageText renders a duration as minutes below an hour, as hours and minutes
