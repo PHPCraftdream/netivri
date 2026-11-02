@@ -47,6 +47,8 @@ type fakeMember struct {
 	udp   bool
 	err   error
 	dials atomic.Int32
+	// conn, when set, makes the connection a dial returns.
+	conn func() C.Conn
 }
 
 func (f *fakeMember) Name() string { return f.name }
@@ -55,6 +57,9 @@ func (f *fakeMember) DialContext(ctx context.Context, metadata *C.Metadata) (C.C
 	f.dials.Add(1)
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.conn != nil {
+		return f.conn(), nil
 	}
 	return &fakeConn{}, nil
 }

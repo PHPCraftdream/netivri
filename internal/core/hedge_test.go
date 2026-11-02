@@ -147,6 +147,15 @@ type dialOutcome struct {
 	err  error
 }
 
+// unwrapWatched gives the connection a node returned: the group always wraps it
+// in a watchConn.
+func unwrapWatched(c C.Conn) C.Conn {
+	if w, ok := c.(*watchConn); ok {
+		return w.Conn
+	}
+	return c
+}
+
 // dialAsync runs DialContext on its own goroutine.
 func dialAsync(g *stickyGroup, md *C.Metadata) <-chan dialOutcome {
 	out := make(chan dialOutcome, 1)
@@ -181,7 +190,7 @@ func TestHedgeWinsAndLoserClosed(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("DialContext: %v", result.err)
 	}
-	if result.conn != C.Conn(c2) {
+	if unwrapWatched(result.conn) != C.Conn(c2) {
 		t.Fatal("the hedge attempt did not win")
 	}
 	if got := g.table.hedgeCount(); got != 1 {
@@ -300,7 +309,7 @@ func TestHedgeFailsPrimaryWins(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("DialContext: %v", result.err)
 	}
-	if result.conn != C.Conn(c1) {
+	if unwrapWatched(result.conn) != C.Conn(c1) {
 		t.Fatal("the primary attempt did not win after the hedge failed")
 	}
 	if dials := obs.dialSamples(); len(dials) != 1 || !dials[0].ok {
@@ -368,7 +377,7 @@ func TestHedgeBudgetExhaustedNoHedge(t *testing.T) {
 	fire()
 	close(hold)
 	result := <-out
-	if result.err != nil || result.conn != C.Conn(c1) {
+	if result.err != nil || unwrapWatched(result.conn) != C.Conn(c1) {
 		t.Fatalf("outcome = %+v, want the primary connection", result)
 	}
 	if got := g.table.hedgeCount(); got != 0 {

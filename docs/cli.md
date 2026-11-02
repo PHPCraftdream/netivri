@@ -358,11 +358,14 @@ long they waited (median and longest), which tells one dead site that is retried
 gives up quickly from a wait that ran into a timeout. The two nodes most of them went through are named (`via NODE x300, NODE x40, other x5`), which tells a bad node from a bad network; a direct exit has none. The last part says how long the node's side took to
 start answering, from the first bytes the client sent to the first byte that came back (median and 95th
 percentile over the connections that got an answer; a node that spoke before the client did has none), which
-is what "slow" means when nothing failed.
+is what "slow" means when nothing failed. At `DEBUG` a second line names the (at most five) destinations the
+connections without an answer went to, `account alice: destinations without an answer in the last hour:
+149.154.167.51:443 x240, 149.154.175.53:443 x7`, which is how a destination that a node does not reach is told
+from a node that is bad.
 
 What happens to the connections of the accounts is reported once a minute, one line per account and
-node and kind, only when something went wrong, and never with a site, an address, an error text or a
-password: `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
+node and kind, only when something went wrong, and at `INFO` and above never with a site, an address, an error text or a
+password (the `DEBUG` lines name the destinations that do not answer, see below): `account alice via {NODE}: 3 dials failed (timeout x2, connection reset x1)` (`WARN` from 3
 failures, `INFO` below; for a route that has a `pre_socks5` or `post_socks5` hop the line says which stage the
 failure came from, `account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`, one line per
 stage: `pre hop`, `node`, `post hop`, or `unknown hop` when the error does not tell); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
@@ -375,6 +378,11 @@ when the sites of one account moved between several pairs of nodes in that minut
 (a node went down and its sites were spread over the rest), it is one line with the counts,
 `account alice: 41 sites moved from 12 nodes to 9 nodes: node down` (a side that is a single node is named),
 and the pairs are `DEBUG` lines;
+`account alice via {NODE}: 2 sites got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for them, up to 30m, and its connections take the next node of the route`
+(`INFO`: a node that passes its probes but never reaches a destination is blocked for that site, which goes on to the next node of the
+route, see `netivri help routing`; a `DEBUG` line per site names the destination, `account alice: no answer from
+149.154.167.51:443 via {NODE}, the node is blocked for it for 30m`; the sites then move with
+`account alice: 2 sites moved from {NODE} to {NODE}: no answer`, `INFO`);
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
@@ -606,7 +614,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   the first one that has nodes carries `"fallback": true`, and the top-level
   `fallback_connections` is the number of the account's open connections on
   such tiers (null without a running angel): traffic sits there while the
-  better tiers were down, and a site goes back for its next connection once a
+  better tiers were down (or while the node of a better tier is blocked for
+  that site, see `netivri help routing`), and a site goes back for its next connection once a
   node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` they also carry `own`, the account's own value
@@ -1411,5 +1420,7 @@ Raw proxy mappings (credentials) are never printed.
   site bindings: which sites (hostnames) each account visited and when.
   They stay in `{HOME}/stats.db` only, expire with the binding lifetime
   (24 hours idle; stale rows are deleted on every write and load) and are
-  never printed or logged: `status` reports only counts and times,
-  `netivri stats` has no binding view, and the angel log names no sites.
+  never printed: `status` reports only counts and times, `netivri stats` has
+  no binding view, and the angel log names no sites at `INFO` or above (at
+  `DEBUG` it names, as `host:port`, the destinations that get no answer from a
+  node, see `netivri help logs`).

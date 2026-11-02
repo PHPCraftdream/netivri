@@ -564,3 +564,129 @@ func TestConnLogNamesTheNodesOfTheSilentConnections(t *testing.T) {
 		t.Errorf("lines = %q", f.lines)
 	}
 }
+
+// debugged makes the fixture keep the DEBUG lines too, marked as such.
+func (f *connLogFixture) debugged() {
+	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
+}
+
+func (f *connLogFixture) blocked(login, label, target string, block time.Duration) {
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: login, Label: label, Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block})
+}
+
+func TestConnLogNamesABlockedSiteOnlyInDebug(t *testing.T) {
+	f := newConnLogFixture()
+	f.debugged()
+	f.blocked("alice", "main/us", "149.154.167.51:443", 30*time.Minute)
+	f.blocked("alice", "main/us", "91.108.56.130:80", time.Hour)
+	f.log.flush()
+	var info, debug []string
+	for _, line := range f.lines {
+		if strings.HasPrefix(line, "INFO ") {
+			info = append(info, line)
+		} else {
+			debug = append(debug, line)
+		}
+	}
+	wantInfo := "INFO account alice via main/us (United States, country US): 2 sites got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for them, up to 1h00m, and its connections take the next node of the route"
+	if len(info) != 1 || info[0] != wantInfo {
+		t.Fatalf("INFO lines = %q, want one: %q", info, wantInfo)
+	}
+	if strings.Contains(info[0], "149.154") || strings.Contains(info[0], "91.108") {
+		t.Errorf("the INFO line names a destination: %q", info[0])
+	}
+	if len(debug) != 2 || !strings.Contains(debug[0], "149.154.167.51:443") || !strings.Contains(debug[0], "30m") || !strings.Contains(debug[1], "91.108.56.130:80") {
+		t.Errorf("DEBUG lines = %q, want one per destination naming it and the time", debug)
+	}
+
+	f.lines = nil
+	f.log.flush()
+	if len(f.lines) != 0 {
+		t.Errorf("the next period repeats the blocks: %q", f.lines)
+	}
+}
+
+func TestConnLogOneBlockedSiteSaysIt(t *testing.T) {
+	f := newConnLogFixture()
+	f.blocked("alice", "own/nl", "", 30*time.Minute)
+	f.log.flush()
+	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+func TestConnLogBlockedEventsAreBoundedAndMakeNoHourlyLine(t *testing.T) {
+	f := newConnLogFixture()
+	for i := 0; i < 3*blockedCap; i++ {
+		f.blocked("alice", "main/us", fmt.Sprintf("10.0.%d.%d:443", i/250, i%250), time.Hour)
+	}
+	f.log.flush()
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], fmt.Sprintf("%d sites got no answer", blockedCap)) {
+		t.Fatalf("lines = %q, want one line counting %d sites", f.lines, blockedCap)
+	}
+	f.lines = nil
+	f.log.heartbeat()
+	if len(f.lines) != 0 {
+		t.Errorf("blocks alone made an hourly line: %q", f.lines)
+	}
+}
+
+func TestConnLogMovedForNoAnswerIsInfoNotWarn(t *testing.T) {
+	f := newConnLogFixture()
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: "main/us", Label: "own/nl", Why: core.MoveNoAnswer})
+	f.log.flush()
+	want := "INFO account alice: 1 site moved from main/us (United States, country US) to own/nl (country NL): no answer"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+func (f *connLogFixture) silentTo(login, label, target string, n int) {
+	for i := 0; i < n; i++ {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 300, Port: 443, Site: 1, Lifetime: 37 * time.Second, Target: target})
+	}
+}
+
+func TestConnLogHourlyDebugLineNamesTheSilentDestinations(t *testing.T) {
+	f := newConnLogFixture()
+	f.debugged()
+	f.silentTo("alice", "main/us", "149.154.167.51:443", 40)
+	f.silentTo("alice", "main/us", "149.154.175.53:443", 7)
+	f.silentTo("alice", "main/us", "a.example:80", 7)
+	f.log.heartbeat()
+	if len(f.lines) != 2 || !strings.HasPrefix(f.lines[0], "INFO account alice: last hour: 54 connections ended") {
+		t.Fatalf("lines = %q", f.lines)
+	}
+	if strings.Contains(f.lines[0], "149.154") || strings.Contains(f.lines[0], "a.example") {
+		t.Errorf("the INFO line names a destination: %q", f.lines[0])
+	}
+	want := "DEBUG account alice: destinations without an answer in the last hour: 149.154.167.51:443 x40, 149.154.175.53:443 x7, a.example:80 x7"
+	if f.lines[1] != want {
+		t.Errorf("DEBUG line = %q, want %q", f.lines[1], want)
+	}
+}
+
+func TestConnLogSilentDestinationsListIsShortAndBounded(t *testing.T) {
+	f := newConnLogFixture()
+	f.debugged()
+	for i := 0; i < silentTargetShown+3; i++ {
+		f.silentTo("alice", "main/us", fmt.Sprintf("h%d.example:443", i), 10-i)
+	}
+	f.log.heartbeat()
+	if len(f.lines) != 2 || !strings.HasSuffix(f.lines[1], "x6, and 3 more") || strings.Count(f.lines[1], ".example:443") != silentTargetShown {
+		t.Fatalf("lines = %q, want %d named destinations and \"and 3 more\"", f.lines, silentTargetShown)
+	}
+
+	tally := &hourTally{}
+	for i := 0; i < silentTargetCap+50; i++ {
+		tally.noteSilent(core.ConnEvent{Up: 1, Target: fmt.Sprintf("h%d:1", i)})
+	}
+	tally.noteSilent(core.ConnEvent{Up: 1, Target: "h0:1"}) // a known one still counts
+	if len(tally.targets) != silentTargetCap || tally.targets["h0:1"] != 2 {
+		t.Errorf("%d targets, h0 counted %d times; want %d and 2", len(tally.targets), tally.targets["h0:1"], silentTargetCap)
+	}
+	if (&hourTally{}).targetsDetail() != "" {
+		t.Error("an empty tally names destinations")
+	}
+}

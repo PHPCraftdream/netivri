@@ -225,7 +225,7 @@ command.
 - **Routing:** each account's providers and exit countries select a set of
   nodes, in priority tiers (countries first, then providers inside a
   country); a sticky group keeps one node per site and re-binds when it
-  degrades. Design notes are in [`docs/design/`](docs/design/).
+  degrades or never answers for that site. Design notes are in [`docs/design/`](docs/design/).
 - **Configuration:** a Ktav file in the state directory
   ([`docs/config.md`](docs/config.md)); passwords are stored as argon2id
   hashes.
