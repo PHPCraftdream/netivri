@@ -36,7 +36,8 @@ const (
 // another node) and failed proxy logins into a few log lines per period: one
 // per account and node and kind, only when something went wrong. A line holds
 // the account, the node and counts of error kinds from a fixed list, never a
-// site, an address, an error text or a password.
+// site, an address, an error text or a password; the destinations that do not
+// answer are named only in DEBUG lines.
 type connLog struct {
 	info, warn logFunc
 	// debug takes the detail that the summary lines leave out; nothing by default.
@@ -50,6 +51,9 @@ type connLog struct {
 	dials map[loginNode]map[string]int // failed dials by kind
 	ended map[loginNode]*endedTally
 	moves map[siteMove]int
+	// blocked are the nodes blocked for a site in this period (at most
+	// blockedCap), written by flush.
+	blocked []core.ConnEvent
 	// hour sums what the accounts did since the last hourly summary, so that a
 	// quiet log can be told from a counter that does not work.
 	hour map[string]*hourTally
@@ -75,6 +79,9 @@ type hourTally struct {
 	sites  map[uint64]struct{}
 	ports  map[uint16]int
 	waited []time.Duration
+	// targets counts them by destination (host:port), for a DEBUG line only;
+	// at most silentTargetCap different ones.
+	targets map[string]int
 	// via counts them by node label, so that a bad node can be told from a bad
 	// network.
 	via map[string]int
@@ -124,6 +131,12 @@ const (
 	// connections without an answer.
 	silentSiteCap   = 10000
 	silentWaitedCap = 8192
+	// silentTargetCap bounds the destinations an hour names, silentTargetShown
+	// is how many of them the DEBUG line lists.
+	silentTargetCap   = 2000
+	silentTargetShown = 5
+	// blockedCap bounds the blocked nodes one period keeps.
+	blockedCap = 200
 )
 
 // noteSilent records a connection that sent data and got no answer.
@@ -137,6 +150,14 @@ func (t *hourTally) noteSilent(ev core.ConnEvent) {
 		t.sites[ev.Site] = struct{}{}
 	}
 	t.ports[ev.Port]++
+	if ev.Target != "" {
+		if t.targets == nil {
+			t.targets = map[string]int{}
+		}
+		if _, known := t.targets[ev.Target]; known || len(t.targets) < silentTargetCap {
+			t.targets[ev.Target]++
+		}
+	}
 	if len(t.waited) < silentWaitedCap {
 		t.waited = append(t.waited, ev.Lifetime)
 	}
@@ -216,6 +237,34 @@ func (t *hourTally) viaDetail(describe func(string) string) string {
 	return "; via " + strings.Join(parts, ", ")
 }
 
+// targetsDetail lists the (at most silentTargetShown) destinations the most
+// connections without an answer went to: "a.example:443 x120, 10.0.0.1:80 x7";
+// empty when none is known.
+func (t *hourTally) targetsDetail() string {
+	if len(t.targets) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(t.targets))
+	for name := range t.targets {
+		names = append(names, name)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if t.targets[names[i]] != t.targets[names[j]] {
+			return t.targets[names[i]] > t.targets[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	var parts []string
+	for i, name := range names {
+		if i == silentTargetShown {
+			parts = append(parts, fmt.Sprintf("and %d more", len(names)-i))
+			break
+		}
+		parts = append(parts, fmt.Sprintf("%s x%d", name, t.targets[name]))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // waitText renders a wait: tenths of a second below 10 s, whole seconds above.
 func waitText(d time.Duration) string {
 	if d < 100*time.Millisecond {
@@ -259,7 +308,7 @@ func (c *connLog) event(ev core.ConnEvent) {
 	defer c.mu.Unlock()
 	key := loginNode{login: ev.Login, label: ev.Label}
 	tally := c.hour[ev.Login]
-	if tally == nil && ev.Kind != core.ConnSiteMoved {
+	if tally == nil && ev.Kind != core.ConnSiteMoved && ev.Kind != core.ConnSiteBlocked {
 		tally = &hourTally{}
 		c.hour[ev.Login] = tally
 	}
@@ -300,6 +349,10 @@ func (c *connLog) event(ev core.ConnEvent) {
 		}
 	case core.ConnSiteMoved:
 		c.moves[siteMove{ev.Login, ev.From, ev.Label, ev.Why}]++
+	case core.ConnSiteBlocked:
+		if len(c.blocked) < blockedCap {
+			c.blocked = append(c.blocked, ev)
+		}
 	}
 }
 
@@ -400,6 +453,9 @@ func (c *connLog) heartbeat() {
 		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
 			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
+		if targets := t.targetsDetail(); targets != "" {
+			c.debug("account %s: destinations without an answer in the last hour: %s", login, targets)
+		}
 	}
 }
 
@@ -437,10 +493,10 @@ func describeConnNode(nodes map[string]stats.NodeInfo, label string) string {
 // flush writes the lines of the period and starts a new one.
 func (c *connLog) flush() {
 	c.mu.Lock()
-	dials, ended, moves := c.dials, c.ended, c.moves
+	dials, ended, moves, blocked := c.dials, c.ended, c.moves, c.blocked
 	fails, unknown := c.loginFails, c.unknownLogins
 	nodes := c.nodes
-	c.dials, c.ended, c.moves = map[loginNode]map[string]int{}, map[loginNode]*endedTally{}, map[siteMove]int{}
+	c.dials, c.ended, c.moves, c.blocked = map[loginNode]map[string]int{}, map[loginNode]*endedTally{}, map[siteMove]int{}, nil
 	c.loginFails, c.unknownLogins = map[string]int{}, 0
 	c.mu.Unlock()
 
@@ -472,6 +528,7 @@ func (c *connLog) flush() {
 		}
 		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
 	}
+	c.writeBlocked(blocked, describe)
 	c.writeMoves(moves, describe)
 	if failed := sumCounts(fails) + unknown; failed > 0 {
 		var parts []string
@@ -483,6 +540,52 @@ func (c *connLog) flush() {
 		}
 		c.warn("%s failed (%s)", count(failed, "proxy login", "proxy logins"), strings.Join(parts, ", "))
 	}
+}
+
+// writeBlocked writes the nodes blocked for sites in the period: one INFO line
+// per account and node, with the sites counted and never named, and a DEBUG
+// line per site naming the destination.
+func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) string) {
+	type group struct {
+		login, label string
+		sites        int
+		longest      time.Duration
+	}
+	var order []*group
+	byKey := map[[2]string]*group{}
+	for _, ev := range blocked {
+		g := byKey[[2]string{ev.Login, ev.Label}]
+		if g == nil {
+			g = &group{login: ev.Login, label: ev.Label}
+			byKey[[2]string{ev.Login, ev.Label}] = g
+			order = append(order, g)
+		}
+		g.sites++
+		g.longest = max(g.longest, ev.Block)
+		target := ev.Target
+		if target == "" {
+			target = "an unknown destination"
+		}
+		c.debug("account %s: no answer from %s via %s, the node is blocked for it for %s", ev.Login, target, describe(ev.Label), ageText(ev.Block))
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].login != order[j].login {
+			return order[i].login < order[j].login
+		}
+		return order[i].label < order[j].label
+	})
+	for _, g := range order {
+		c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
+			g.login, describe(g.label), count(g.sites, "site", "sites"), pronoun(g.sites), ageText(g.longest))
+	}
+}
+
+// pronoun is "it" for one site and "them" for several.
+func pronoun(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
 }
 
 // writeMoves writes the moved sites of the period. Moves of one account for one

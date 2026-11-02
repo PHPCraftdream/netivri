@@ -5,6 +5,8 @@ import (
 	"hash/fnv"
 	"io"
 	"net"
+	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,18 +28,25 @@ const (
 	// the node it left, Label the node it goes to and Why is MoveNodeDown or
 	// MoveBetterTier.
 	ConnSiteMoved = "site_moved"
+	// ConnSiteBlocked: a node was blocked for a site of an account because the
+	// connections to it sent data and never got an answer (see siteBlocks);
+	// Label is the node, Block how long it is blocked, Target the destination.
+	ConnSiteBlocked = "site_blocked"
 )
 
 // Why of a ConnSiteMoved.
 const (
 	MoveNodeDown   = "node down"
 	MoveBetterTier = "better tier"
+	// MoveNoAnswer: the node was blocked for the site, see ConnSiteBlocked.
+	MoveNoAnswer = "no answer"
 )
 
 // ConnEvent is one thing that happened to a connection of an account, for
-// Options.OnConnEvent. It never holds a site, an address or an error text:
-// only the account, the node labels, a kind from a fixed list, a port and a
-// hash of the site that can only be compared.
+// Options.OnConnEvent. It holds no site, address or error text except Target
+// (set only on a connection that got no answer and on ConnSiteBlocked, and
+// meant for DEBUG lines): the account, the node labels, a kind from a fixed
+// list, a port and a hash of the site that can only be compared.
 type ConnEvent struct {
 	Kind  string
 	Login string
@@ -60,6 +69,11 @@ type ConnEvent struct {
 	// from the first bytes the client sent to the first byte that came back; 0
 	// when nothing came back, or the node spoke first.
 	Answer time.Duration
+	// ConnStreamEnded that sent data and got none back, and ConnSiteBlocked: the
+	// destination as host:port. Not for INFO lines.
+	Target string
+	// ConnSiteBlocked only: how long the node is blocked for the site.
+	Block time.Duration
 }
 
 // dialErrKind names the kind of a dial or stream error from a fixed list (the
@@ -80,16 +94,15 @@ func (g *stickyGroup) emit(ev ConnEvent) {
 	}
 }
 
-// watch wraps the connection a node returned so that its end is reported, or
-// returns it as it is when nobody listens.
-func (g *stickyGroup) watch(conn C.Conn, login, label string, md *C.Metadata) C.Conn {
-	if g.events == nil {
-		return conn
-	}
-	w := &watchConn{Conn: conn, events: g.events, login: login, label: label, start: time.Now()}
+// watch wraps the connection a node returned so that its end is reported and
+// the sites that never get an answer are noticed (see siteBlocks).
+func (g *stickyGroup) watch(conn C.Conn, login, label string, member int, md *C.Metadata) C.Conn {
+	w := &watchConn{Conn: conn, g: g, login: login, label: label, member: member, start: g.clock()}
 	if md != nil {
 		w.port = md.DstPort
+		w.host, w.ip = md.Host, md.DstIP
 		if site := siteKey(md.Host, md.DstIP); site != "" {
+			w.siteStr = site
 			h := fnv.New64a()
 			_, _ = h.Write([]byte(site))
 			w.site = h.Sum64()
@@ -105,11 +118,16 @@ func (g *stickyGroup) watch(conn C.Conn, login, label string, md *C.Metadata) C.
 // interrupt the other direction are not errors.
 type watchConn struct {
 	C.Conn
-	events       func(ConnEvent)
+	g            *stickyGroup
 	login, label string
+	member       int
 	start        time.Time
 	port         uint16
 	site         uint64
+	siteStr      string // the site key, "" when unknown
+	host         string
+	ip           netip.Addr
+	gotData      atomic.Bool // the first bytes came back, reported once
 
 	up, down    atomic.Int64
 	firstUp     atomic.Int64 // unix nanoseconds of the first bytes sent to the node; 0 before
@@ -139,6 +157,9 @@ func (w *watchConn) noteDown(n int) {
 		return
 	}
 	w.down.Add(int64(n))
+	if !w.gotData.Load() && w.gotData.CompareAndSwap(false, true) {
+		w.g.answered(w)
+	}
 	if w.answer.Load() != 0 {
 		return
 	}
@@ -223,7 +244,7 @@ func (w *watchConn) Close() error {
 	err := w.Conn.Close()
 	w.once.Do(func() {
 		ev := ConnEvent{Kind: ConnStreamEnded, Login: w.login, Label: w.label,
-			Lifetime: time.Since(w.start), Up: w.up.Load(), Down: w.down.Load(), Port: w.port, Site: w.site,
+			Lifetime: w.g.clock().Sub(w.start), Up: w.up.Load(), Down: w.down.Load(), Port: w.port, Site: w.site,
 		}
 		if answer := w.answer.Load(); answer > 0 {
 			ev.Answer = time.Duration(answer)
@@ -231,9 +252,26 @@ func (w *watchConn) Close() error {
 		if kind := w.failure.Load(); kind != nil {
 			ev.Why = *kind
 		}
-		w.events(ev)
+		if ev.Down == 0 && ev.Up > 0 {
+			ev.Target = w.target()
+		}
+		w.g.emit(ev)
+		w.g.ended(w, ev)
 	})
 	return err
+}
+
+// target is the destination as host:port, for the DEBUG lines about a
+// destination that does not answer.
+func (w *watchConn) target() string {
+	host := w.host
+	if host == "" && w.ip.IsValid() {
+		host = w.ip.String()
+	}
+	if host == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(w.port)))
 }
 
 // fail remembers the kind of the first error that is a fault of the node's

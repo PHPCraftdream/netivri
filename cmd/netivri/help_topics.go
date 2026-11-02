@@ -790,8 +790,8 @@ var helpTopics = []helpTopic{
 			"account uses are DEBUG lines, shown only with --level debug. A subscription that keeps failing to " +
 			"refresh is one warning an hour, and the refresh that ends the failures says how many there were. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
-			"failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
-			"passwords, and once an hour a summary per account: connections ended, broken, closed before any data " +
+			"nodes blocked for a site that never answers, failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
+			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account: connections ended, broken, closed before any data " +
 			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
 			"went through), failed dials, " +
 			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
@@ -814,6 +814,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"The newest entries", "netivri logs"},
 			{"Problems of the last day", "netivri logs --level warn --since 24h"},
+			{"Destinations that get no answer from a node (host:port, DEBUG)", "netivri logs --level debug --since 2h"},
 			{"Watch the angel live", "netivri logs --follow"},
 			{"Stream to a script, one JSON object per line", "netivri logs --follow --json"},
 		},
@@ -1044,6 +1045,16 @@ var helpTopics = []helpTopic{
 			"back to that tier (open connections stay). The bindings survive restarts and configuration reloads: the " +
 			"angel stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
 			"describes the affinity counters.\n\n" +
+			"A node that passes its probes can still never reach one destination (an address blocked on its side). " +
+			"When 3 connections of an account to one site went through a node within 10 minutes, each sent data, " +
+			"waited at least 5 seconds and got nothing back, and no connection to that site was answered through the node in " +
+			"that time, while the node itself answered a probe or a dial meanwhile, the node is blocked for that " +
+			"account and site: the site's next connection takes the next node of the route, a worse tier included, and " +
+			"other sites stay where they are. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
+			"answer through the node ends it at once, and a site that was answered through the node is never blocked by " +
+			"a stray dead connection. Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
+			"one ('netivri logs', the destination itself at DEBUG). A site whose server never answers on purpose (a " +
+			"long poll that is always closed first) can be moved too; it keeps working through the next node.\n\n" +
 			"The angel probes the route nodes in the background. A node is marked down after 2 consecutive " +
 			"failed probes or 3 consecutive failed dials to at least 2 different sites (one unreachable " +
 			"destination is not the node's fault) or 10 to one site; a failed probe does not count while data has come back " +
@@ -1063,6 +1074,7 @@ var helpTopics = []helpTopic{
 			"allows, never widen it.",
 		Examples: []helpExample{
 			{"The route of an account, tier by tier", "netivri account show alice"},
+			{"See which destinations a node did not reach (DEBUG lines)", "netivri logs --level debug --since 2h"},
 			{"Give an account providers and countries in priority order", "netivri account add alice --provider main,backup --country DE,NL"},
 			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
 		},

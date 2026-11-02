@@ -76,6 +76,7 @@ type stickyGroup struct {
 	observer Observer
 	events   func(ConnEvent) // optional, see Options.OnConnEvent
 	hedgeAll bool            // test seam: fake members are hedgeable when set
+	blocks   *siteBlocks     // nodes blocked for sites that never answer
 }
 
 // newStickyGroup builds the group over real Mihomo member proxies.
@@ -108,6 +109,7 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 	for i, label := range labels {
 		g.healths[i] = health.health(label)
 	}
+	g.blocks = newSiteBlocks(table.now)
 	g.isDownFn = g.memberDown
 	g.betterFn = g.betterTierStable
 	return g
@@ -117,11 +119,18 @@ func newStickyGroupMembers(name string, members []member, labels []string, table
 // creating or keeping the binding as needed. On a healthy binding hit it
 // neither allocates nor builds health views.
 func (g *stickyGroup) choose(login, site string) (int, bool) {
-	member, rebound, returned, from := g.table.acquireWith(affinityKey{login: login, site: site}, g.isDownFn, g.betterFn, g.pickFor(login, site))
+	isDown := g.isDownFn
+	if g.blocks.any() {
+		now := g.table.now()
+		isDown = func(m int) bool { return g.isDownFn(m) || g.blocks.blocked(login, site, m, now) }
+	}
+	member, rebound, returned, from := g.table.acquireWith(affinityKey{login: login, site: site}, isDown, g.betterFn, g.pickFor(login, site))
 	if g.events != nil && from >= 0 && from < len(g.labels) && member < len(g.labels) {
 		why := MoveNodeDown
 		if returned {
 			why = MoveBetterTier
+		} else if g.blocks.blocked(login, site, from, g.table.now()) {
+			why = MoveNoAnswer
 		}
 		g.emit(ConnEvent{Kind: ConnSiteMoved, Login: login, From: g.labels[from], Label: g.labels[member], Why: why})
 	}
@@ -161,6 +170,14 @@ func (g *stickyGroup) pickFor(login, site string) func() (int, bool) {
 		if len(g.tiers) == len(views) {
 			for i := range views {
 				views[i].Tier = g.tiers[i]
+			}
+		}
+		if g.blocks.any() {
+			now := g.table.now()
+			for i := range views {
+				if g.blocks.blocked(login, site, i, now) {
+					views[i].Down = true
+				}
 			}
 		}
 		index := selectMember(views, login, site)
@@ -220,7 +237,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	}
 	if err == nil {
 		conn.AppendToChains(g)
-		return g.watch(conn, login, label, metadata), nil
+		return g.watch(conn, login, label, index, metadata), nil
 	}
 	if !g.health.down(label) {
 		return nil, err
@@ -245,7 +262,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		return nil, retryErr
 	}
 	retryConn.AppendToChains(g)
-	return g.watch(retryConn, login, retryLabel, metadata), nil
+	return g.watch(retryConn, login, retryLabel, retry, metadata), nil
 }
 
 // ListenPacketContext implements C.ProxyAdapter. UDP associations use the

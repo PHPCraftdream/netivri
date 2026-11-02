@@ -56,6 +56,10 @@ type binding struct {
 	boundAt     time.Time
 	lastUsed    atomic.Int64 // unix nanoseconds
 	provisional bool
+	// answerNs is when a connection of the site last got data back, through
+	// answerMember; 0 before. See siteBlocks.
+	answerNs     atomic.Int64
+	answerMember atomic.Int32
 }
 
 type affinityShard struct {
@@ -191,6 +195,32 @@ func (t *affinityTable) peek(key affinityKey) (member int, ok bool) {
 		return 0, false
 	}
 	return b.member, true
+}
+
+// noteAnswer records that a connection of the key got data back through the
+// member. A key without a live binding is not recorded.
+func (t *affinityTable) noteAnswer(key affinityKey, member int, now time.Time) {
+	shard := t.shards[t.shardIndex(key.login, key.site)]
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+	if b := shard.bindings[key]; b != nil {
+		b.answerMember.Store(int32(member))
+		b.answerNs.Store(now.UnixNano())
+	}
+}
+
+// answeredWithin reports whether a connection of the key got data back through
+// the member within d before now.
+func (t *affinityTable) answeredWithin(key affinityKey, member int, d time.Duration, now time.Time) bool {
+	shard := t.shards[t.shardIndex(key.login, key.site)]
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+	b := shard.bindings[key]
+	if b == nil || int(b.answerMember.Load()) != member {
+		return false
+	}
+	at := b.answerNs.Load()
+	return at != 0 && now.UnixNano()-at < int64(d)
 }
 
 func (t *affinityTable) expired(b *binding, now time.Time) bool {
