@@ -167,7 +167,6 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		return
 	}
 	delete(l.never, id)
-	l.downNow[id] = struct{}{}
 	line := l.describe(ev.Label) + " is down: " + ev.Reason
 	if ev.SinceOK > 0 {
 		line += ", last ok " + ev.SinceOK.Round(time.Second).String() + " ago"
@@ -180,6 +179,7 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		l.info("%s, right after the computer woke up", line)
 		return
 	}
+	l.downNow[id] = struct{}{} // the downs of the quiet time are noise and count for nothing
 	if l.flaps(ev, now) {
 		l.repeat(ev.Label, "%s", line)
 		return
