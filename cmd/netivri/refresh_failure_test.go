@@ -192,3 +192,89 @@ func TestTransportFailureAndAgeText(t *testing.T) {
 		}
 	}
 }
+
+// A fetch that keeps failing for hours is one WARN an hour; the other
+// failures are DEBUG, and the success that ends the run says how long it was.
+func TestRefreshFailuresInALongRunWarnOncePerHour(t *testing.T) {
+	succeed := false
+	r := newRefreshRig(t, 3*time.Hour, func(int) (*fetch.Result, error) {
+		if succeed {
+			return okResult(0)
+		}
+		return nil, timeoutFailure()
+	})
+	now := time.Unix(2_000_000, 0)
+	r.l.refreshClock = func() time.Time { return now }
+	var debugs []string
+	r.l.debugf = func(format string, args ...any) { debugs = append(debugs, fmt.Sprintf(format, args...)) }
+
+	for i := 0; i < 7; i++ { // t = 0, 10, ... 60 minutes
+		r.refresh(t)
+		if want := map[int]int{0: 1, 5: 1, 6: 2}[i]; want != 0 && len(r.warns) != want {
+			t.Fatalf("after failure %d: %d warns, want %d: %q", i+1, len(r.warns), want, r.warns)
+		}
+		now = now.Add(10 * time.Minute)
+	}
+	if len(r.warns) != 2 {
+		t.Fatalf("%d warns in an hour of failures, want 2 (the first and the one an hour later): %q", len(r.warns), r.warns)
+	}
+	if len(debugs) != 5 {
+		t.Fatalf("%d DEBUG lines, want 5: %q", len(debugs), debugs)
+	}
+	for _, d := range debugs {
+		if !strings.Contains(d, "subscription main: refresh failed after ") || !strings.Contains(d, "in a row)") {
+			t.Errorf("debug line = %q", d)
+		}
+		if strings.Contains(d, "WARN again") {
+			t.Errorf("a debug line carries the warn notice: %q", d)
+		}
+	}
+	for _, w := range r.warns {
+		if !strings.Contains(w, "the next failures are DEBUG, a WARN again in 1h00m") {
+			t.Errorf("warn lacks the notice: %q", w)
+		}
+	}
+	if !strings.Contains(r.warns[1], "(7 failures in a row)") {
+		t.Errorf("second warn = %q", r.warns[1])
+	}
+
+	succeed = true
+	now = now.Add(-10 * time.Minute) // the clock of the last failure
+	r.infos = nil
+	if !r.refresh(t) {
+		t.Fatal("a good fetch failed")
+	}
+	if len(r.infos) != 1 || !strings.Contains(r.infos[0], "refreshed, 1 nodes in ") || !strings.HasSuffix(r.infos[0], ", after 7 failed refreshes in a row (1h00m)") {
+		t.Errorf("infos = %q", r.infos)
+	}
+}
+
+// Each subscription has its own run, and a run that ended starts the WARNs again.
+func TestRefreshWarnThrottleIsPerSubscriptionAndPerRun(t *testing.T) {
+	r := newRefreshRig(t, 0, func(int) (*fetch.Result, error) { return nil, timeoutFailure() })
+	now := time.Unix(3_000_000, 0)
+	r.l.refreshClock = func() time.Time { return now }
+	var debugs []string
+	r.l.debugf = func(format string, args ...any) { debugs = append(debugs, fmt.Sprintf(format, args...)) }
+
+	// No stored list: WARN at once, then DEBUG within the hour.
+	r.refresh(t)
+	now = now.Add(10 * time.Minute)
+	r.refresh(t)
+	if len(r.warns) != 1 || !strings.Contains(r.warns[0], "no stored list") || len(debugs) != 1 || !strings.Contains(debugs[0], "no stored list") {
+		t.Fatalf("warns %q debugs %q", r.warns, debugs)
+	}
+	// Another subscription is not silenced by this one.
+	other := config.Subscription{Name: "own", URL: "https://own.invalid/sub"}
+	r.l.fetchFailed(r.store, r.cfg, other.Name, timeoutFailure(), time.Second, false)
+	if len(r.warns) != 2 || !strings.Contains(r.warns[1], "subscription own: ") {
+		t.Errorf("the other subscription did not warn: %q", r.warns)
+	}
+	// After the run ended the next failure is a WARN again, inside the hour.
+	r.l.streakEnd("main")
+	now = now.Add(time.Minute)
+	r.refresh(t)
+	if len(r.warns) != 3 {
+		t.Errorf("a new run did not warn at once: %q", r.warns)
+	}
+}

@@ -62,7 +62,7 @@ func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
 	}
 	f.lines = nil
 	f.log.heartbeat()
-	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer (1 site; ports 0 x4; waited 1.0s median, 1.0s longest), 0 dials failed, 4.4 KiB down, 2.9 KiB up"
+	want := "INFO account alice: last hour: 16 connections ended, 1 broken, 6 closed before any data, 4 without an answer (1 site; ports 0 x4; waited 1.0s median, 1.0s longest; via main/us (United States, country US) x4), 0 dials failed, 4.4 KiB down, 2.9 KiB up"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Errorf("lines = %q, want %q", f.lines, want)
 	}
@@ -87,7 +87,7 @@ func TestConnLogSaysWhereTheSilentConnectionsWent(t *testing.T) {
 	f.endedUp("alice", "main/us", 300, 900, 4) // answered: not part of the detail
 	f.log.heartbeat()
 	want := "INFO account alice: last hour: 12 connections ended, 0 broken, 0 closed before any data, " +
-		"8 without an answer (6 sites; ports 443 x4, 9 x1, 80 x1, other x2; waited 2.0s median, 15s longest), " +
+		"8 without an answer (6 sites; ports 443 x4, 9 x1, 80 x1, other x2; waited 2.0s median, 15s longest; via main/us (United States, country US) x8), " +
 		"0 dials failed, 3.5 KiB down, 3.5 KiB up"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Fatalf("lines = %q, want %q", f.lines, want)
@@ -99,7 +99,7 @@ func TestConnLogSaysWhereTheSilentConnectionsWent(t *testing.T) {
 	f.lines = nil
 	f.endedSilent("alice", "main/us", 443, 7, 500*time.Millisecond, 1)
 	f.log.heartbeat()
-	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "1 without an answer (1 site; ports 443 x1; waited 0.5s median, 0.5s longest)") {
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "1 without an answer (1 site; ports 443 x1; waited 0.5s median, 0.5s longest; via main/us (United States, country US) x1)") {
 		t.Errorf("lines = %q", f.lines)
 	}
 }
@@ -524,5 +524,43 @@ func TestMovedSitesSummaryNamesASingleNode(t *testing.T) {
 	want := "WARN account alice: 3 sites moved from 2 nodes to own/nl (country NL): node down"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+}
+
+// The line names the nodes most of the silent connections went through, the
+// two busiest and the rest summed, and nothing for a direct exit.
+func TestConnLogNamesTheNodesOfTheSilentConnections(t *testing.T) {
+	f := newConnLogFixture()
+	f.log.setNodes([]stats.NodeInfo{
+		{Label: "main/us", Provider: "main", Country: "US", Name: "United States"},
+		{Label: "own/nl", Provider: "own", Country: "NL"},
+		{Label: "own/de", Provider: "own", Country: "DE"},
+		{Label: "own/fi", Provider: "own", Country: "FI"},
+	})
+	f.endedSilent("alice", "own/nl", 443, 1, time.Second, 5)
+	f.endedSilent("alice", "main/us", 443, 2, time.Second, 9)
+	f.endedSilent("alice", "own/de", 443, 3, time.Second, 2)
+	f.endedSilent("alice", "own/fi", 443, 4, time.Second, 1)
+	f.endedSilent("alice", "gone/xx", 443, 5, time.Second, 1) // a node that is no longer listed
+	f.log.heartbeat()
+	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "; via main/us (United States, country US) x9, own/nl (country NL) x5, other x4)") {
+		t.Fatalf("lines = %q", f.lines)
+	}
+
+	// Without a node (a direct exit) there is no "via".
+	f.lines = nil
+	f.endedSilent("bob", "", 443, 1, time.Second, 3)
+	f.log.heartbeat()
+	if len(f.lines) != 1 || strings.Contains(f.lines[0], "via") || !strings.Contains(f.lines[0], "3 without an answer (1 site; ports 443 x3; waited 1.0s median, 1.0s longest)") {
+		t.Errorf("lines = %q", f.lines)
+	}
+
+	// Connections that answered, or ended empty, are not counted by node.
+	f.lines = nil
+	f.endedUp("carol", "main/us", 300, 900, 4)
+	f.endedUp("carol", "main/us", 0, 0, 4)
+	f.log.heartbeat()
+	if len(f.lines) != 1 || strings.Contains(f.lines[0], "via") {
+		t.Errorf("lines = %q", f.lines)
 	}
 }

@@ -469,10 +469,10 @@ func (d *doctorContext) checkLog() doctorCheck {
 // isNodeDownMessage matches the angel's report of a route node going down,
 // in the current form ("node {LABEL} (...) is down: {REASON}"), the one
 // without a reason, the older one ("route node {LABEL} is down") and the
-// summary of nodes going down together ("node burst: ...") and the warning
+// summary of nodes going down together ("node burst: ...", "node outage: ...") and the warning
 // about a node that keeps going down ("node {LABEL} (...) is flapping: ...").
 func isNodeDownMessage(message string) bool {
-	if strings.HasPrefix(message, "node burst:") {
+	if strings.HasPrefix(message, "node burst:") || strings.HasPrefix(message, "node outage:") {
 		return true
 	}
 	if strings.HasPrefix(message, "node ") && strings.Contains(message, " is flapping: ") {

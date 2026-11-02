@@ -382,7 +382,10 @@ func e2eTrustTunnelNetworkReject(err error) bool {
 	if err == nil || e2eTrustTunnelIsTimeout(err) {
 		return false
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+	// The server answers 407 and closes the stream at once; the transport then
+	// closes the request body, so a write that comes after it fails on a closed
+	// pipe: the same rejection, seen from the write side (the PR 105 e2e run).
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
 		return true
 	}
 	var errno syscall.Errno
@@ -390,7 +393,7 @@ func e2eTrustTunnelNetworkReject(err error) bool {
 		return true
 	}
 	s := strings.ToLower(err.Error())
-	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted", "broken pipe", "unexpected status code: 407", "eof"} {
+	for _, phrase := range []string{"forcibly closed", "connection reset", "connection was aborted", "broken pipe", "closed pipe", "unexpected status code: 407", "eof"} {
 		if strings.Contains(s, phrase) {
 			return true
 		}
@@ -651,4 +654,31 @@ func e2eTrustTunnelRedact(text string, secrets []string) string {
 		}
 	}
 	return text
+}
+
+// A rejected probe fails in whichever step the rejection reaches first: the
+// write after the server closed the stream says "closed pipe", the read says
+// 407 or EOF. All of them are the rejection; a timeout or an unknown error is not.
+func TestE2ETrustTunnelClassifyRejections(t *testing.T) {
+	live := context.Background()
+	for name, err := range map[string]error{
+		"closed pipe":      io.ErrClosedPipe,
+		"wrapped pipe":     fmt.Errorf("write: %w", io.ErrClosedPipe),
+		"closed pipe text": errors.New("io: read/write on closed pipe"),
+		"407":              errors.New("unexpected status code: 407"),
+		"eof":              io.EOF,
+		"connection reset": syscall.ECONNRESET,
+	} {
+		if got := e2eTrustTunnelClassify(err, live); !errors.Is(got, e2eTrustTunnelRejectedError) {
+			t.Errorf("%s: classified as %v, want the rejection", name, got)
+		}
+	}
+	for name, err := range map[string]error{
+		"unknown":  errors.New("tls: handshake failure"),
+		"deadline": context.DeadlineExceeded,
+	} {
+		if got := e2eTrustTunnelClassify(err, live); errors.Is(got, e2eTrustTunnelRejectedError) {
+			t.Errorf("%s: taken for a rejection: %v", name, got)
+		}
+	}
 }

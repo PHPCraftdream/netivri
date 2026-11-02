@@ -784,12 +784,16 @@ var helpTopics = []helpTopic{
 			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
 			"reason) or coming back (with the downtime), each with a time and a level. Three or more nodes " +
 			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
-			"hour is one 'flapping' warning, not a warning per drop; the repeats of nodes no account uses are DEBUG " +
-			"lines, shown only with --level debug. Once a minute it also sums up what went wrong for the " +
+			"hour is one 'flapping' warning, not a warning per drop; when 6 or more servers (at least half of those " +
+			"that have answered) are down at once, as when the network fails slowly, one 'node outage' warning " +
+			"says so and the down and back lines of the nodes are DEBUG until most are back; the repeats of nodes no " +
+			"account uses are DEBUG lines, shown only with --level debug. A subscription that keeps failing to " +
+			"refresh is one warning an hour, and the refresh that ends the failures says how many there were. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
 			"failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
 			"passwords, and once an hour a summary per account: connections ended, broken, closed before any data " +
-			"or without an answer (with how many sites, which ports and how long they waited), failed dials, " +
+			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
+			"went through), failed dials, " +
 			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
 			"slept, one line says for how long, the nodes are probed at once and their failures for the next two " +
 			"minutes are INFO. A failure names its kind from a fixed list: timeout, connection refused, " +

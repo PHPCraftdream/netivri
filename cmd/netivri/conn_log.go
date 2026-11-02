@@ -75,6 +75,9 @@ type hourTally struct {
 	sites  map[uint64]struct{}
 	ports  map[uint16]int
 	waited []time.Duration
+	// via counts them by node label, so that a bad node can be told from a bad
+	// network.
+	via map[string]int
 	// how long the node took to start answering, of the connections that got
 	// an answer.
 	answers answerTimes
@@ -127,8 +130,9 @@ const (
 func (t *hourTally) noteSilent(ev core.ConnEvent) {
 	t.silent++
 	if t.sites == nil {
-		t.sites, t.ports = map[uint64]struct{}{}, map[uint16]int{}
+		t.sites, t.ports, t.via = map[uint64]struct{}{}, map[uint16]int{}, map[string]int{}
 	}
+	t.via[ev.Label]++
 	if len(t.sites) < silentSiteCap {
 		t.sites[ev.Site] = struct{}{}
 	}
@@ -140,8 +144,9 @@ func (t *hourTally) noteSilent(ev core.ConnEvent) {
 
 // silentDetail says where the connections without an answer went and how long
 // they waited, without naming a site: " (41 sites; ports 443 x340, 80 x23;
-// waited 2.3s median, 15s longest)".
-func (t *hourTally) silentDetail() string {
+// waited 2.3s median, 15s longest; via NODE x300, other x40)". describe names
+// a node by its label.
+func (t *hourTally) silentDetail(describe func(string) string) string {
 	if t.silent == 0 || len(t.waited) == 0 {
 		return ""
 	}
@@ -173,8 +178,42 @@ func (t *hourTally) silentDetail() string {
 	}
 	waited := append([]time.Duration(nil), t.waited...)
 	sort.Slice(waited, func(i, j int) bool { return waited[i] < waited[j] })
-	return fmt.Sprintf(" (%s; ports %s; waited %s median, %s longest)", sites, strings.Join(parts, ", "),
-		waitText(waited[len(waited)/2]), waitText(waited[len(waited)-1]))
+	return fmt.Sprintf(" (%s; ports %s; waited %s median, %s longest%s)", sites, strings.Join(parts, ", "),
+		waitText(waited[len(waited)/2]), waitText(waited[len(waited)-1]), t.viaDetail(describe))
+}
+
+// viaDetail names the (at most two) nodes most of the connections without an
+// answer went through: "; via NODE x300, NODE x40, other x5". Nothing when no
+// node is known (a direct exit).
+func (t *hourTally) viaDetail(describe func(string) string) string {
+	labels := make([]string, 0, len(t.via))
+	for label := range t.via {
+		if label != "" {
+			labels = append(labels, label)
+		}
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	sort.Slice(labels, func(i, j int) bool {
+		if t.via[labels[i]] != t.via[labels[j]] {
+			return t.via[labels[i]] > t.via[labels[j]]
+		}
+		return labels[i] < labels[j]
+	})
+	var parts []string
+	other := 0
+	for i, label := range labels {
+		if i < 2 {
+			parts = append(parts, fmt.Sprintf("%s x%d", describe(label), t.via[label]))
+		} else {
+			other += t.via[label]
+		}
+	}
+	if other > 0 {
+		parts = append(parts, fmt.Sprintf("other x%d", other))
+	}
+	return "; via " + strings.Join(parts, ", ")
 }
 
 // waitText renders a wait: tenths of a second below 10 s, whole seconds above.
@@ -346,7 +385,9 @@ func (c *connLog) heartbeat() {
 	c.mu.Lock()
 	hour := c.hour
 	c.hour = map[string]*hourTally{}
+	nodes := c.nodes
 	c.mu.Unlock()
+	describe := func(label string) string { return describeConnNode(nodes, label) }
 	logins := make([]string, 0, len(hour))
 	for login, t := range hour {
 		if t.ended > 0 || t.dialsFailed > 0 {
@@ -357,7 +398,7 @@ func (c *connLog) heartbeat() {
 	for _, login := range logins {
 		t := hour[login]
 		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
-			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(), t.dialsFailed,
+			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
 	}
 }
@@ -376,6 +417,23 @@ func humanBytes(n int64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMG"[exp])
 }
 
+// describeConnNode names a node in a connection line: label, name when known
+// and country.
+func describeConnNode(nodes map[string]stats.NodeInfo, label string) string {
+	n, ok := nodes[label]
+	if !ok {
+		return label
+	}
+	country := n.Country
+	if country == "" {
+		country = unknownCountry
+	}
+	if n.Name != "" {
+		return fmt.Sprintf("%s (%s, country %s)", label, n.Name, country)
+	}
+	return fmt.Sprintf("%s (country %s)", label, country)
+}
+
 // flush writes the lines of the period and starts a new one.
 func (c *connLog) flush() {
 	c.mu.Lock()
@@ -386,20 +444,7 @@ func (c *connLog) flush() {
 	c.loginFails, c.unknownLogins = map[string]int{}, 0
 	c.mu.Unlock()
 
-	describe := func(label string) string {
-		n, ok := nodes[label]
-		if !ok {
-			return label
-		}
-		country := n.Country
-		if country == "" {
-			country = unknownCountry
-		}
-		if n.Name != "" {
-			return fmt.Sprintf("%s (%s, country %s)", label, n.Name, country)
-		}
-		return fmt.Sprintf("%s (country %s)", label, country)
-	}
+	describe := func(label string) string { return describeConnNode(nodes, label) }
 
 	for _, key := range sortedKeys(dials) {
 		kinds := dials[key]

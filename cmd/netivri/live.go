@@ -115,18 +115,20 @@ type liveAngel struct {
 	refreshFail uint64
 	lastRefresh time.Time
 	refreshErr  string
-	// refreshStreaks counts the failed refreshes in a row by subscription.
-	refreshStreaks map[string]int
-	loopsCancel    context.CancelFunc
-	loopsRunning   sync.WaitGroup
-	retryCancel    context.CancelFunc
-	retryRunning   sync.WaitGroup
-	retryWait      func(context.Context, time.Duration) bool
-	retryApplied   chan struct{}
-	retryTarget    *desiredState
-	retryDesired   string
-	retryOpts      *core.Options
-	retryFailures  int
+	// refreshRuns tracks the failed refreshes in a row by subscription.
+	refreshRuns map[string]*refreshRun
+	// refreshClock is the clock of the refresh log; nil is time.Now.
+	refreshClock  func() time.Time
+	loopsCancel   context.CancelFunc
+	loopsRunning  sync.WaitGroup
+	retryCancel   context.CancelFunc
+	retryRunning  sync.WaitGroup
+	retryWait     func(context.Context, time.Duration) bool
+	retryApplied  chan struct{}
+	retryTarget   *desiredState
+	retryDesired  string
+	retryOpts     *core.Options
+	retryFailures int
 
 	// Persisted site bindings: when the stored set was last written, how
 	// many bindings the latest core start loaded, and the test seams of the
