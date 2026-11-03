@@ -73,6 +73,109 @@ func walkSecret(t *testing.T, v reflect.Value) {
 		}
 	}
 }
+func TestProviderUpdatePreservesReferencesAndSnapshot(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid/token", Via: "http://proxy.invalid:8080"})
+	cfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "p"}}
+	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	old := subscription.Snapshot{FetchedAt: testNow, Nodes: []subscription.Node{{ID: "cached"}}}
+	if err := store.Save("p", old); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Load("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newURL := "https://new.invalid/token"
+	if err := ProviderUpdate(home, "p", ProviderUpdateOptions{URL: &newURL}); err != nil {
+		t.Fatal(err)
+	}
+	clearVia := ""
+	if err := ProviderUpdate(home, "p", ProviderUpdateOptions{Via: &clearVia}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Subscriptions[0].URL != newURL || cfg.Subscriptions[0].Via != "" || len(cfg.Accounts) != 1 || cfg.Accounts[0].Provider != "p" {
+		t.Fatal("provider settings or account reference changed unexpectedly")
+	}
+	cached, err := store.Load("p")
+	if err != nil || !reflect.DeepEqual(cached, before) {
+		t.Fatal("provider update changed cached snapshot")
+	}
+}
+
+func TestProviderUpdateEditsURLAndVia(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid/token", Via: ""}, config.Subscription{Name: "other", URL: "https://other.invalid"})
+	newURL, via := "https://new.invalid/secret", "http://proxy.invalid:8080"
+	if err := ProviderUpdate(home, "p", ProviderUpdateOptions{URL: &newURL, Via: &via}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Subscriptions[0].URL != newURL || cfg.Subscriptions[0].Via != via || cfg.Subscriptions[1].Name != "other" {
+		t.Fatal("provider update did not preserve unrelated settings")
+	}
+}
+
+func TestProviderUpdateErrorsDoNotPersistAndRedact(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid"})
+	readConfig := func() *config.Config {
+		cfg, err := loadConfig(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	before := readConfig()
+	secret := "gopher://" + providerSecret
+	cases := []struct {
+		name    string
+		options ProviderUpdateOptions
+		code    string
+	}{
+		{"rename", ProviderUpdateOptions{NewName: providerUpdateString("renamed")}, codeSubExistsName},
+		{"unknown scheme", ProviderUpdateOptions{URL: &secret}, "CONFIG_INVALID"},
+		{"missing host", ProviderUpdateOptions{URL: providerUpdateString("https:///path")}, "CONFIG_INVALID"},
+		{"missing scheme", ProviderUpdateOptions{URL: providerUpdateString("//provider.invalid/path")}, "CONFIG_INVALID"},
+		{"malformed URL", ProviderUpdateOptions{URL: providerUpdateString("https://[invalid")}, "CONFIG_INVALID"},
+		{"empty URL", ProviderUpdateOptions{URL: providerUpdateString("")}, "CONFIG_INVALID"},
+		{"whitespace URL", ProviderUpdateOptions{URL: providerUpdateString(" \t\n")}, "CONFIG_INVALID"},
+		{"surrounding whitespace", ProviderUpdateOptions{URL: providerUpdateString(" https://provider.invalid")}, "CONFIG_INVALID"},
+		{"control character", ProviderUpdateOptions{URL: providerUpdateString("https://provider.invalid/\npath")}, "CONFIG_INVALID"},
+		{"invalid via", ProviderUpdateOptions{Via: providerUpdateString("gopher://" + providerSecret)}, "CONFIG_INVALID"},
+	}
+	for _, tc := range cases {
+		err := ProviderUpdate(home, "p", tc.options)
+		var ce *cli.Error
+		if !errors.As(err, &ce) || ce.Code != tc.code {
+			t.Fatal("provider update returned unexpected error")
+		}
+		if strings.Contains(err.Error(), providerSecret) {
+			t.Fatalf("%s leaked secret", tc.name)
+		}
+		if !reflect.DeepEqual(before, readConfig()) {
+			t.Fatal("provider update changed config")
+		}
+	}
+	err := ProviderUpdate(home, "absent", ProviderUpdateOptions{})
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != codeSubNotFound {
+		t.Fatalf("missing provider: %v", err)
+	}
+}
+
+func providerUpdateString(s string) *string { return &s }
 func TestProviderAddTypedAndSecretRedaction(t *testing.T) {
 	home := providerSeed(t)
 	r, e := ProviderAdd(home, ProviderAddOptions{URL: "https://provider.invalid/token?key=" + providerSecret}, providerFetcher([]byte(testBody)), func() time.Time { return testNow })

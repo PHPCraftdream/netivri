@@ -8,8 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -17,19 +17,21 @@ import (
 
 type serversStatusSource func(context.Context, string) (angel.State, angel.Status, error)
 type serversScreen struct {
-	home          string
-	env           tui.Env
-	status        serversStatusSource
-	rows          []serverView
-	angelRunning  bool
-	serverRunning map[string]bool
-	table         *tui.Table
-	detail        *serverView
-	detailRunning bool
-	pendingDetail string
-	generation    uint64
-	errText       string
-	visible       int
+	home             string
+	env              tui.Env
+	status           serversStatusSource
+	rows             []serverView
+	angelRunning     bool
+	serverRunning    map[string]bool
+	detail           *serverView
+	detailRunning    bool
+	pendingDetail    string
+	generation       uint64
+	detailGeneration uint64
+	errText          string
+	visible          int
+	workspace        *tui.Workspace
+	cardName         string
 }
 type serversLoaded struct {
 	id      uint64
@@ -47,18 +49,83 @@ type serversDetailLoaded struct {
 	err     error
 }
 
-var serversColumns = []tui.Column{{Title: "Name", Width: 16}, {Title: "Protocol", Width: 14}, {Title: "Bind", Width: 16}, {Title: "Port", Width: 6}, {Title: "Accounts", Width: 16}, {Title: "State", Width: 14}, {Title: "Counters", Width: 24}}
+var serversColumns = []tui.ListColumn{{Title: "Name", Min: 5, Max: 18, Flex: 3}, {Title: "Protocol", Min: 8, Max: 14, Flex: 3}, {Title: "Port", Min: 5, Max: 5}, {Title: "State", Min: 8, Max: 14, Flex: 2}}
 
 func newServersScreen(home string, env tui.Env) tui.Screen {
-	return &serversScreen{home: home, env: env, status: angelProbeLive, table: tui.NewTable(serversColumns, nil)}
+	l := tui.NewList(serversColumns, nil)
+	l.Title = "Servers"
+	l.EmptyText = "No servers configured"
+	l.AddLabel = ""
+	c := tui.NewCard("Server", nil)
+	return &serversScreen{home: home, env: env, status: angelProbeLive, workspace: tui.NewWorkspace(l, c)}
+}
+func (s *serversScreen) syncWorkspace() {
+	if s.workspace == nil {
+		return
+	}
+	l := s.workspace.List
+	rows := make([]tui.Row, 0, len(s.rows))
+	for _, v := range s.rows {
+		state := serverState(s.angelRunning, s.serverRunning[v.Name])
+		rows = append(rows, tui.Row{Data: v.Name, Cells: []string{v.Name, v.Protocol, strconv.Itoa(v.Port), state}})
+	}
+	l.SetRows(rows)
+	l.AddLabel = ""
+	if len(rows) == 0 {
+		l.EmptyText = "No servers configured"
+	}
+	if s.detail != nil {
+		v := s.detail
+		state := serverState(s.angelRunning, s.serverRunning[v.Name])
+		info := []string{"Protocol: " + serversSafeDetailValue(v.Protocol), "Bind: " + serversSafeDetailValue(v.Bind), "Port: " + strconv.Itoa(v.Port), "Accounts: " + serversSafeDetailValue(v.Accounts), "Public host: " + serversSafeDetailValue(v.PublicHost), "Members: " + serversSafeDetailValue(strings.Join(v.Members, ", ")), fmt.Sprintf("Default: %t", v.Default), fmt.Sprintf("Single user: %t", v.SingleUser), "Parameters: " + serversSafeDetailValue(strings.Join(v.Params, ", ")), "State: " + state}
+		if state == "running" {
+			info = append(info, fmt.Sprintf("Counters: u:%d s:%d r:%d a:%d", v.Unclassified, v.SlowFirstByte, v.Replayed, v.Ambiguous))
+		}
+		if !s.angelRunning {
+			info = append(info, "Changes saved; applied when angel starts")
+		}
+		info = append(info, "Changes: netivri server add · link · rotate · remove")
+		s.workspace.Card.Info = info
+		s.workspace.Card.Lines = []tui.CardLine{{ID: "reload", Label: "Reload", Hotkey: "r", Kind: tui.CardAction, Action: true}}
+	} else {
+		info := []string{"Changes: netivri server add · link · rotate · remove"}
+		if s.errText != "" {
+			info = append([]string{s.errText}, info...)
+		}
+		s.workspace.Card.Info = info
+		s.workspace.Card.Lines = []tui.CardLine{{ID: "reload", Label: "Reload", Hotkey: "r", Kind: tui.CardAction, Action: true}}
+	}
 }
 func (s *serversScreen) Title() string        { return "Servers" }
-func (s *serversScreen) CapturingInput() bool { return s.detail != nil }
-func (s *serversScreen) KeyHints() string {
-	if s.detail != nil {
-		return "Esc/q back  r reload"
+func (s *serversScreen) CapturingInput() bool { return false }
+func (s *serversScreen) SetPaneFocus(pane int) {
+	if s.workspace == nil || s.workspace.Width < 100 {
+		return
 	}
-	return "↑/↓ select  Enter details  r reload  q quit"
+	s.workspace.SetFocus(pane)
+}
+func (s *serversScreen) FocusPane(reverse bool) bool {
+	if s.workspace == nil || s.workspace.Width < 100 {
+		return false
+	}
+	if reverse && s.workspace.Focus() == tui.PaneCard {
+		s.workspace.SetFocus(tui.PaneList)
+		return true
+	}
+	if !reverse && s.workspace.Focus() == tui.PaneList {
+		s.workspace.SetFocus(tui.PaneCard)
+		return true
+	}
+	return false
+}
+func (s *serversScreen) Bindings() tui.ActionHints {
+	if s.workspace != nil && s.workspace.Focus() == tui.PaneCard {
+		return s.workspace.Card.Bindings()
+	}
+	return append(s.workspace.List.Bindings(), key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload")))
+}
+func (s *serversScreen) KeyHints() string {
+	return "↑/↓ select · Enter open · Tab pane · r Reload · Read-only"
 }
 func (s *serversScreen) Init() tea.Cmd  { return s.loadCmd() }
 func (s *serversScreen) nextID() uint64 { s.generation++; return s.generation }
@@ -102,37 +169,49 @@ func safeServersError(err error) error {
 }
 func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 	if m, ok := msg.(tea.WindowSizeMsg); ok {
-		s.visible = max(1, m.Height-4)
+		if s.workspace != nil {
+			s.workspace.SetSize(m.Width, m.Height)
+		}
 		return s, nil
 	}
 	if m, ok := msg.(tui.BackgroundMsg); ok {
 		msg = m.Value
 	}
 	switch v := msg.(type) {
+	case tui.ThemeMsg:
+		if s.workspace != nil {
+			s.workspace.SetTheme(v.Theme)
+		}
+		return s, nil
 	case serversLoaded:
 		if v.id != s.generation {
 			return s, nil
 		}
 		if v.err != nil {
 			s.errText = serversErrorText(v.err)
+			if s.workspace != nil {
+				s.workspace.Card.Info = []string{s.errText}
+			}
 			s.rows = nil
-			s.table.SetRows(nil)
+			s.syncWorkspace()
 			return s, nil
 		}
 		s.errText = ""
-		s.detail = nil
 		s.rows = v.rows
 		s.angelRunning = v.running
 		s.serverRunning = serverRunningMap(v.status)
-		s.table.SetRows(serverRows(s.rows, s.angelRunning, s.serverRunning))
-		return s, nil
+		s.syncWorkspace()
+		return s, s.detailCmdForSelected()
 	case serversDetailLoaded:
-		if v.id != s.generation || v.name != s.pendingDetail {
+		if v.id != s.detailGeneration || v.name != s.pendingDetail {
 			return s, nil
 		}
 		s.pendingDetail = ""
 		if v.err != nil {
 			s.errText = serversErrorText(v.err)
+			if s.workspace != nil {
+				s.workspace.Card.Info = []string{s.errText}
+			}
 			var ce *cli.Error
 			if errors.As(v.err, &ce) && ce.Code == "SERVER_NOT_FOUND" {
 				s.detail = nil
@@ -150,6 +229,23 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		s.serverRunning = serverRunningMap(v.status)
 		s.detailRunning = v.running && s.serverRunning[v.name]
 		s.detail = &vv[0]
+		s.cardName = v.name
+		s.syncWorkspace()
+		return s, nil
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		if s.workspace != nil {
+			old := s.workspace.List.Selected
+			activate := s.workspace.Update(msg)
+			if s.workspace.List.Selected != old {
+				if r, ok := s.workspace.List.SelectedRow(); ok {
+					name, _ := r.Data.(string)
+					return s, s.detailCmd(name)
+				}
+			}
+			if activate && s.workspace.Width >= 100 && s.detail != nil {
+				return s, s.detailCmd(s.detail.Name)
+			}
+		}
 		return s, nil
 	}
 	k, ok := msg.(tea.KeyPressMsg)
@@ -157,32 +253,74 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		return s, nil
 	}
 	switch k.String() {
+	case "tab":
+		if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneList {
+			s.workspace.SetFocus(tui.PaneCard)
+			return s, nil
+		}
+		return s, nil
+	case "shift+tab":
+		if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard {
+			s.workspace.SetFocus(tui.PaneList)
+			return s, nil
+		}
+		return s, nil
 	case "r":
-		if s.detail != nil {
-			return s, s.detailCmd(s.detail.Name)
+		if s.workspace != nil && s.workspace.Width < 100 && s.workspace.Drilled {
+			return s, s.detailCmdForSelected()
 		}
 		return s, s.loadCmd()
-	case "esc", "q":
+	case "esc":
+		if s.workspace != nil && s.workspace.Width < 100 && s.workspace.Drilled {
+			s.workspace.Update(k)
+			s.detailGeneration++
+			s.pendingDetail = ""
+			s.errText = ""
+			if s.detail == nil {
+				s.workspace.Card.Info = []string{"Changes: netivri server add · link · rotate · remove"}
+			}
+			return s, nil
+		}
 		s.errText = ""
+		if s.workspace != nil && s.workspace.Width >= 100 {
+			s.workspace.SetFocus(tui.PaneList)
+		}
 		if s.detail != nil || s.pendingDetail != "" {
-			s.nextID()
-			s.detail = nil
+			s.detailGeneration++
 			s.pendingDetail = ""
 		}
 		return s, nil
 	case "enter":
-		if s.detail == nil {
-			return s, s.detailCmdForSelected()
+		if s.workspace != nil {
+			if s.workspace.Width < 100 && !s.workspace.Drilled {
+				s.workspace.Update(k)
+				return s, s.detailCmdForSelected()
+			}
+			if s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard {
+				s.workspace.Update(k)
+				if s.detail != nil {
+					return s, s.detailCmd(s.detail.Name)
+				}
+				return s, nil
+			}
 		}
-	case "up", "down", "j", "k", "pgup", "pgdown", "home", "end":
-		if s.detail == nil {
-			s.table.UpdateKey(k.String(), max(1, s.visible))
+		return s, s.detailCmdForSelected()
+	case "up", "down", "j", "k", "pgup", "pgdown", "home", "end", "left", "right":
+		if s.workspace != nil {
+			old := s.workspace.List.Selected
+			s.workspace.Update(k)
+			if s.workspace.List.Selected != old {
+				if r, ok := s.workspace.List.SelectedRow(); ok {
+					name, _ := r.Data.(string)
+					return s, s.detailCmd(name)
+				}
+			}
 		}
 	}
 	return s, nil
 }
 func (s *serversScreen) detailCmdForSelected() tea.Cmd {
-	r, ok := s.table.SelectedRow()
+	r, ok := s.workspace.List.SelectedRow()
 	if !ok {
 		return nil
 	}
@@ -190,7 +328,8 @@ func (s *serversScreen) detailCmdForSelected() tea.Cmd {
 	return s.detailCmd(name)
 }
 func (s *serversScreen) detailCmd(name string) tea.Cmd {
-	id := s.nextID()
+	id := s.detailGeneration + 1
+	s.detailGeneration = id
 	s.pendingDetail = name
 	return s.deliver("server detail", func() tea.Msg {
 		v, err := ServerShow(s.home, name)
@@ -285,43 +424,9 @@ func (s *serversScreen) View(width, height int) string {
 	if width < 1 || height < 1 {
 		return ""
 	}
-	s.visible = max(1, height-4)
-	var lines []string
-	if s.errText != "" {
-		lines = []string{s.errText}
-	} else if v := s.detail; v != nil {
-		lines = []string{serversSafeDetailValue(v.Name), "Protocol: " + serversSafeDetailValue(v.Protocol), "Bind: " + serversSafeDetailValue(v.Bind), "Port: " + strconv.Itoa(v.Port), "Accounts: " + serversSafeDetailValue(v.Accounts), "Public host: " + serversSafeDetailValue(v.PublicHost), "Members: " + serversSafeDetailValue(strings.Join(v.Members, ", ")), fmt.Sprintf("Default: %t", v.Default), fmt.Sprintf("Single user: %t", v.SingleUser), "Parameters: " + serversSafeDetailValue(strings.Join(v.Params, ", "))}
-		state := serverState(s.angelRunning, s.serverRunning[v.Name])
-		lines = append(lines, "State: "+state)
-		if state == "running" {
-			lines = append(lines, fmt.Sprintf("Counters: u:%d s:%d r:%d a:%d", v.Unclassified, v.SlowFirstByte, v.Replayed, v.Ambiguous))
-		}
-	} else {
-		lines = append(lines, serversTableHeader(s.table, width))
-		if len(s.rows) == 0 {
-			lines = append(lines, "No servers configured")
-		} else {
-			lines = append(lines, strings.Split(s.table.View(width, max(1, height-4)), "\n")...)
-		}
+	if s.workspace == nil {
+		return ""
 	}
-	lines = append(lines, "", "Changes via netivri server add, server link, server rotate, server remove")
-	if len(lines) > height {
-		lines = lines[:height]
-	}
-	for i, l := range lines {
-		lines[i] = lipgloss.NewStyle().MaxWidth(width).Render(l)
-	}
-	return strings.Join(lines, "\n")
-}
-func serversTableHeader(t *tui.Table, width int) string {
-	h := tui.NewTable(t.Columns, []tui.Row{{Cells: serversColumnNames(t.Columns)}})
-	h.Selected = -1
-	return strings.TrimPrefix(h.View(width, 1), "> ")
-}
-func serversColumnNames(c []tui.Column) []string {
-	r := make([]string, len(c))
-	for i := range c {
-		r[i] = c[i].Title
-	}
-	return r
+	s.syncWorkspace()
+	return s.workspace.View(width, height)
 }

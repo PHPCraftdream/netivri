@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -28,6 +30,60 @@ type ProviderInfo struct {
 }
 type ProviderListResult struct{ Providers []ProviderInfo }
 type ProviderAddOptions struct{ URL, Name, Via string }
+type ProviderUpdateOptions struct{ NewName, URL, Via *string }
+
+func validProviderURL(raw string) bool {
+	if raw == "" || raw != strings.TrimSpace(raw) {
+		return false
+	}
+	for _, r := range raw {
+		if r < 0x20 || r == 0x7f || r == ' ' {
+			return false
+		}
+	}
+	u, err := url.Parse(raw)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// ProviderUpdate edits a provider's connection settings without fetching it.
+// Renames are refused because config references and stored snapshots cannot be
+// updated atomically by this operation.
+func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
+	cfg, err := loadConfig(home)
+	if err != nil {
+		return err
+	}
+	idx := -1
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
+	}
+	if o.NewName != nil && *o.NewName != name {
+		return &cli.Error{Code: codeSubExistsName, Message: "provider rename is unavailable because related configuration and stored data cannot be updated safely", Exit: cli.ExitConflict}
+	}
+	if o.URL != nil {
+		if !validProviderURL(*o.URL) {
+			return &cli.Error{Code: "CONFIG_INVALID", Message: "invalid subscription URL"}
+		}
+		cfg.Subscriptions[idx].URL = *o.URL
+	}
+	if o.Via != nil {
+		cfg.Subscriptions[idx].Via = *o.Via
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
+		return &cli.Error{Code: "INTERNAL", Message: "save config failed", Exit: cli.ExitInternal}
+	}
+	return nil
+}
+
 type ProviderAddResult struct {
 	Name            string
 	Added, Existing bool
