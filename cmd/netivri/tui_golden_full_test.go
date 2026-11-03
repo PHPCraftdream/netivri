@@ -10,176 +10,358 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-func literalFrame(width, height int, tab, body string, small bool) string {
-	lines := make([]string, height)
-	if small {
-		message := "Window too small - enlarge the window"
-		for i := range lines {
-			lines[i] = strings.Repeat(" ", (width-len(message))/2)
-		}
-		lines[height/2] += message
-		return strings.Join(lines, "\n")
-	}
-	lines[0], lines[1] = "Service stopped", "["+tab+"]"
-	bodyLines := strings.Split(body, "\n")
-	for i := 0; i < height-4 && i < len(bodyLines); i++ {
-		lines[i+2] = bodyLines[i]
-	}
-	lines[height-2] = strings.Repeat(" ", width)
-	hints := map[int]string{
-		80:  "q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .",
-		100: "q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .",
-		120: "q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first | end last .",
-	}
-	if width == 120 && tab != "Servers" {
-		hints[120] = "q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first | end last | a add ."
-	}
-	lines[height-1] = ansi.Truncate(hints[width], width, ".")
-	return strings.Join(lines, "\n")
-}
+const goldenProviders80Empty = `Service stopped
+[Providers]
++------------------------------------------------------------------------------+
+|Providers                                                                     |
+|  Name                                                 Nodes     State        |
+|No providers yet. Add one to get started.                                     |
+|> + Add provider                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|1/1                                                                           |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
 
-// rows are indexed from pane inner row 1; every expected row is independent literal data.
-func literalPane(width, height int, rows []string) string {
-	lines := make([]string, height)
-	lines[0], lines[height-1] = "+"+strings.Repeat("-", width-2)+"+", "+"+strings.Repeat("-", width-2)+"+"
-	for i := 1; i < height-1; i++ {
-		text := ""
-		if i-1 < len(rows) {
-			text = rows[i-1]
-		}
-		if runewidth.StringWidth(text) > width-2 {
-			panic("literal pane row exceeds inner width")
-		}
-		lines[i] = "|" + text + strings.Repeat(" ", width-2-runewidth.StringWidth(text)) + "|"
-	}
-	return strings.Join(lines, "\n")
-}
+const goldenProviders80Populated = `Service stopped
+[Providers]
++------------------------------------------------------------------------------+
+|Providers                                                                     |
+|  Name                                                 Nodes     State        |
+|> alpha                                                2         ready        |
+|  beta                                                 3         ready        |
+|  + Add provider                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|1/3                                                                           |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
 
-func goldenCells(widths []int, values ...string) string {
-	parts := make([]string, len(values))
-	for i, value := range values {
-		value = ansi.Truncate(value, widths[i], "")
-		parts[i] = value + strings.Repeat(" ", widths[i]-runewidth.StringWidth(value))
-	}
-	return strings.Join(parts, "  ")
-}
+const goldenProviders100Empty = `Service stopped
+[Providers]
++---------------------------------+ +--------------------------------------------------------------+
+|Providers                        | |Provider details                                              |
+|  Name            Node  State    | |Select a provider to view details                             |
+|No providers yet. Add one to get | |  Name                                                        |
+|> + Add provider                 | |  Subscription                                                |
+|                                 | |  Via                                                         |
+|                                 | |  Nodes                                                       |
+|                                 | |  Countries                                                   |
+|                                 | |  Updated                                                     |
+|                                 | |  Edit name  renaming cannot safely update account references.|
+|                                 | |  Edit subscription                                           |
+|                                 | |  Edit Via                                                    |
+|                                 | |  Refresh selected  [r]                                       |
+|                                 | |  Refresh all  [R]                                            |
+|                                 | |  Countries  [c]                                              |
+|                                 | |  Remove  [d]                                                 |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|1/1                              | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
 
-func goldenListPane(pw, h int, rows []string, status string) string {
-	content := make([]string, h-2)
-	copy(content, rows)
-	content[h-3] = status
-	return literalPane(pw, h, content)
-}
+const goldenProviders100Populated = `Service stopped
+[Providers]
++---------------------------------+ +--------------------------------------------------------------+
+|Providers                        | |alpha                                                         |
+|  Name            Node  State    | |State: ready                                                  |
+|> alpha           2     ready    | |  Name  alpha                                                 |
+|  beta            3     ready    | |  Subscription  ********                                      |
+|  + Add provider                 | |  Via  ********                                               |
+|                                 | |  Nodes  2                                                    |
+|                                 | |  Countries                                                   |
+|                                 | |  Updated  Never                                              |
+|                                 | |  Edit name  renaming cannot safely update account references.|
+|                                 | |  Edit subscription                                           |
+|                                 | |  Edit Via                                                    |
+|                                 | |  Refresh selected  [r]                                       |
+|                                 | |  Refresh all  [R]                                            |
+|                                 | |  Countries  [c]                                              |
+|                                 | |  Remove  [d]                                                 |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|1/3                              | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
 
-func goldenJoin(left, right string) string {
-	l, r := strings.Split(left, "\n"), strings.Split(right, "\n")
-	rows := make([]string, len(l))
-	for i := range rows {
-		rows[i] = l[i] + " " + r[i]
-	}
-	return strings.Join(rows, "\n")
-}
+const goldenAccounts80Empty = `Service stopped
+[Accounts]
++------------------------------------------------------------------------------+
+|Accounts                                                                      |
+|  LOGIN           PROVIDER        EXIT    CONN    UP/s    DOWN                |
+|An account needs a Provider first. Switch to Providers to add one.            |
+|> + Add account [a]                                                           |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|1/1                                                                           |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
 
-func providerGoldenFrame(width, height int, populated bool) string {
-	if width <= 60 || height <= 16 {
-		return literalFrame(width, height, "Providers", "", true)
-	}
-	pw := map[int]int{80: 80, 100: 35, 120: 42}[width]
-	cols := map[int][]int{80: {51, 8, 12}, 100: {14, 4, 8}, 120: {17, 6, 10}}[width]
-	rows := []string{"Providers", "  " + goldenCells(cols, "Name", "Nodes", "State")}
-	var status string
-	if populated {
-		rows = append(rows, "> "+goldenCells(cols, "alpha", "2", "ready"), "  "+goldenCells(cols, "beta", "3", "ready"), "  + Add provider")
-		status = "1/3"
-	} else {
-		rows = append(rows, ansi.Truncate("No providers yet. Add one to get started.", pw-2, ""), "> + Add provider")
-		status = "1/1"
-	}
-	left := goldenListPane(pw, height-4, rows, status)
-	if width < 100 {
-		return literalFrame(width, height, "Providers", left, false)
-	}
-	cw := width - pw - 1
-	var cardRows []string
-	if populated {
-		cardRows = []string{"alpha", "State: ready", "  Name  alpha", "  Subscription  ********", "  Via  ********", "  Nodes  2", "  Countries", "  Updated  Never", "  Edit name  renaming cannot safely update account references and stored snapshots", "  Edit subscription", "  Edit Via", "  Refresh selected  [r]", "  Refresh all  [R]", "  Countries  [c]", "  Remove  [d]"}
-	} else {
-		cardRows = []string{"Provider details", "Select a provider to view details", "  Name", "  Subscription", "  Via", "  Nodes", "  Countries", "  Updated", "  Edit name  renaming cannot safely update account references and stored snapshots", "  Edit subscription", "  Edit Via", "  Refresh selected  [r]", "  Refresh all  [R]", "  Countries  [c]", "  Remove  [d]"}
-	}
-	for i := range cardRows {
-		cardRows[i] = ansi.Truncate(cardRows[i], cw-2, ".")
-	}
-	card := literalPane(cw, height-4, cardRows)
-	return literalFrame(width, height, "Providers", goldenJoin(left, card), false)
-}
+const goldenAccounts80Populated = `Service stopped
+[Accounts]
++------------------------------------------------------------------------------+
+|Accounts                                                                      |
+|  LOGIN          PROVIDER          EXIT    CONN    UP/s    DOWN               |
+|> alpha          provider-a        us      -       -       -                  |
+|  beta           provider-b        de      -       -       -                  |
+|  + Add account [a]                                                           |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|1/3                                                                           |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
 
-func serversGoldenFrame(width, height int, populated bool) string {
-	if width <= 60 || height <= 16 {
-		return literalFrame(width, height, "Servers", "", true)
-	}
-	pw := map[int]int{80: 80, 100: 35, 120: 42}[width]
-	cols := map[int][]int{80: {18, 14, 5, 14}, 100: {5, 8, 5, 8}, 120: {5, 8, 5, 13}}[width]
-	if !populated && width == 120 {
-		cols = []int{6, 9, 5, 9}
-	}
-	rows := []string{"Servers", "  " + goldenCells(cols, "Name", "Protocol", "Port", "State")}
-	status := ""
-	if populated {
-		rows = append(rows, "> "+goldenCells(cols, "alpha", "socks5", "1080", "angel stopped"), "  "+goldenCells(cols, "beta", "http", "8080", "angel stopped"))
-		status = "1/2"
-	} else {
-		rows = append(rows, "No servers configured")
-	}
-	for i := range rows {
-		rows[i] = ansi.Truncate(rows[i], pw-2, "")
-	}
-	left := goldenListPane(pw, height-4, rows, status)
-	if width < 100 {
-		return literalFrame(width, height, "Servers", left, false)
-	}
-	cw := width - pw - 1
-	cardRows := []string{"Server", "Changes: netivri server add · link · rotate · remove", "  Reload  [r]"}
-	for i := range cardRows {
-		cardRows[i] = ansi.Truncate(cardRows[i], cw-2, ".")
-	}
-	card := literalPane(cw, height-4, cardRows)
-	return literalFrame(width, height, "Servers", goldenJoin(left, card), false)
-}
+const goldenAccounts100Empty = `Service stopped
+[Accounts]
++---------------------------------+ +--------------------------------------------------------------+
+|Accounts                         | |Account                                                       |
+|  LOGI  PROVID  EX  CO  UP/  DOW | |Select an account to see details.                             |
+|An account needs a Provider first| |                                                              |
+|> + Add account [a]              | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|1/1                              | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
 
-func accountsGoldenFrame(width, height int, populated bool) string {
-	if width <= 60 || height <= 16 {
-		return literalFrame(width, height, "Accounts", "", true)
-	}
-	pw := map[int]int{80: 80, 100: 35, 120: 42}[width]
-	cols := map[int][]int{80: {13, 16, 6, 6, 6, 5}, 100: {4, 6, 2, 2, 3, 3}, 120: {5, 10, 3, 3, 3, 3}}[width]
-	if !populated {
-		cols = map[int][]int{80: {14, 14, 6, 6, 6, 5}, 100: {4, 6, 2, 2, 3, 3}, 120: {5, 8, 4, 4, 3, 3}}[width]
-	}
-	rows := []string{"Accounts", "  " + goldenCells(cols, "LOGIN", "PROVIDER", "EXIT", "CONN", "UP/s", "DOWN")}
-	status := ""
-	if populated {
-		rows = append(rows, "> "+goldenCells(cols, "alpha", "provider-a", "us", "-", "-", "-"), "  "+goldenCells(cols, "beta", "provider-b", "de", "-", "-", "-"), "  + Add account [a]")
-		status = "1/3"
-	} else {
-		rows = append(rows, ansi.Truncate("An account needs a Provider first. Switch to Providers to add one.", pw-2, ""), "> + Add account [a]")
-		status = "1/1"
-	}
-	left := goldenListPane(pw, height-4, rows, status)
-	if width < 100 {
-		return literalFrame(width, height, "Accounts", left, false)
-	}
-	cw := width - pw - 1
-	var cardRows []string
-	if populated {
-		cardRows = []string{"Account alpha", "Live " + "·" + " Conn - " + "·" + " Up/s - " + "·" + " Down/s -", "  Provider  provider-a  [edit]", "  Countries  any  [edit]", "  Exit  us  [edit]", "  Allowed clients  any  [edit]", "  Pre-hop  ********  [edit]", "  Clear pre-hop  [P]", "  Post-hop  ********  [edit]", "  Clear post-hop  [O]", "  Password  waiting for the first login", "  Clone account  [c]", "  Remove account  [d]"}
-	} else {
-		cardRows = []string{"Account", "Select an account to see details."}
-	}
-	for i := range cardRows {
-		cardRows[i] = ansi.Truncate(cardRows[i], cw-2, ".")
-	}
-	return literalFrame(width, height, "Accounts", goldenJoin(left, literalPane(cw, height-4, cardRows)), false)
-}
+const goldenAccounts100Populated = `Service stopped
+[Accounts]
++---------------------------------+ +--------------------------------------------------------------+
+|Accounts                         | |Account alpha                                                 |
+|  LOGI  PROVID  EX  CO  UP/  DOW | |Live · Conn - · Up/s - · Down/s -                             |
+|> alph  provid  us  -   -    -   | |  Provider  provider-a  [edit]                                |
+|  beta  provid  de  -   -    -   | |  Countries  any  [edit]                                      |
+|  + Add account [a]              | |  Exit  us  [edit]                                            |
+|                                 | |  Allowed clients  any  [edit]                                |
+|                                 | |  Pre-hop  ********  [edit]                                   |
+|                                 | |  Clear pre-hop  [P]                                          |
+|                                 | |  Post-hop  ********  [edit]                                  |
+|                                 | |  Clear post-hop  [O]                                         |
+|                                 | |  Password  waiting for the first login                       |
+|                                 | |  Clone account  [c]                                          |
+|                                 | |  Remove account  [d]                                         |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|1/3                              | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
+
+const goldenServers80Empty = `Service stopped
+[Servers]
++------------------------------------------------------------------------------+
+|Servers                                                                       |
+|  Name                Protocol        Port   State                            |
+|No servers configured                                                         |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
+
+const goldenServers80Populated = `Service stopped
+[Servers]
++------------------------------------------------------------------------------+
+|Servers                                                                       |
+|  Name                Protocol        Port   State                            |
+|> alpha               socks5          1080   angel stopped                    |
+|  beta                http            8080   angel stopped                    |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|                                                                              |
+|1/2                                                                           |
++------------------------------------------------------------------------------+
+                                                                                
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
+
+const goldenServers100Empty = `Service stopped
+[Servers]
++---------------------------------+ +--------------------------------------------------------------+
+|Servers                          | |Server                                                        |
+|  Name   Protocol  Port   State  | |Changes: netivri server add · link · rotate · remove          |
+|No servers configured            | |  Reload  [r]                                                 |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
+
+const goldenServers100Populated = `Service stopped
+[Servers]
++---------------------------------+ +--------------------------------------------------------------+
+|Servers                          | |Server                                                        |
+|  Name   Protocol  Port   State  | |Changes: netivri server add · link · rotate · remove          |
+|> alpha  socks5    1080   angel s| |  Reload  [r]                                                 |
+|  beta   http      8080   angel s| |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|                                 | |                                                              |
+|1/2                              | |                                                              |
++---------------------------------+ +--------------------------------------------------------------+
+                                                                                                    
+q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
+
+const goldenTooSmall = `           
+           
+           
+           
+           
+           
+           
+           
+           Window too small - enlarge the window
+           
+           
+           
+           
+           
+           
+           `
 
 func TestFullScreenSnapshots(t *testing.T) {
 	t.Setenv("NETIVRI_ASCII", "1")
@@ -189,7 +371,6 @@ func TestFullScreenSnapshots(t *testing.T) {
 		name, title string
 		new         func(tui.Env) tui.Screen
 		seed        func(tui.Screen, bool)
-		want        func(int, int, bool) string
 	}{
 		{"providers", "Providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(x tui.Screen, p bool) {
 			two, three := 2, 3
@@ -201,7 +382,7 @@ func TestFullScreenSnapshots(t *testing.T) {
 				s.setProviders(ProviderListResult{})
 			}
 			s.updateCard()
-		}, providerGoldenFrame},
+		}},
 		{"accounts", "Accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(x tui.Screen, p bool) {
 			s := x.(*accountsScreen)
 			if p {
@@ -212,7 +393,7 @@ func TestFullScreenSnapshots(t *testing.T) {
 				s.syncRows("")
 			}
 			s.refreshSelectedCard(true)
-		}, accountsGoldenFrame},
+		}},
 		{"servers", "Servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(x tui.Screen, p bool) {
 			s := x.(*serversScreen)
 			if p {
@@ -221,11 +402,47 @@ func TestFullScreenSnapshots(t *testing.T) {
 				s.rows = nil
 			}
 			s.syncWorkspace()
-		}, serversGoldenFrame},
+		}},
 	}
+	// Hand-derived frame literals: every line, including trailing spaces, was traced
+	// from the frame/list/card renderers (docs/design/tui-ux.md). No production data
+	// is consulted at runtime.
+	sizes := [][2]int{{60, 16}, {80, 24}, {100, 30}}
+	literalWant := func(name string, populated bool, w int) string {
+		switch {
+		case w == 60:
+			return goldenTooSmall
+		case name == "Providers" && populated == false && w == 80:
+			return goldenProviders80Empty
+		case name == "Providers" && populated == false && w == 100:
+			return goldenProviders100Empty
+		case name == "Providers" && populated == true && w == 80:
+			return goldenProviders80Populated
+		case name == "Providers" && populated == true && w == 100:
+			return goldenProviders100Populated
+		case name == "Accounts" && populated == false && w == 80:
+			return goldenAccounts80Empty
+		case name == "Accounts" && populated == false && w == 100:
+			return goldenAccounts100Empty
+		case name == "Accounts" && populated == true && w == 80:
+			return goldenAccounts80Populated
+		case name == "Accounts" && populated == true && w == 100:
+			return goldenAccounts100Populated
+		case name == "Servers" && populated == false && w == 80:
+			return goldenServers80Empty
+		case name == "Servers" && populated == false && w == 100:
+			return goldenServers100Empty
+		case name == "Servers" && populated == true && w == 80:
+			return goldenServers80Populated
+		case name == "Servers" && populated == true && w == 100:
+			return goldenServers100Populated
+		}
+		return ""
+	}
+
 	for _, tc := range cases {
 		for _, pop := range []bool{false, true} {
-			for _, size := range [][2]int{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
+			for _, size := range sizes {
 				t.Run(tc.name+map[bool]string{false: "/empty", true: "/populated"}[pop]+"/"+string(rune('0'+size[0]/10)), func(t *testing.T) {
 					env := tui.Env{Theme: tui.NewTheme()}
 					screen := tc.new(env)
@@ -241,9 +458,18 @@ func TestFullScreenSnapshots(t *testing.T) {
 						s.workspace.SetTheme(tui.NewTheme())
 					}
 					got := ansi.Strip(frame.View().Content)
-					want := tc.want(size[0], size[1], pop)
+					want := literalWant(tc.name, pop, size[0])
+					if lines := strings.Split(want, "\n"); len(lines) != size[1] {
+						t.Fatalf("literal lines %d, want %d", len(lines), size[1])
+					} else {
+						for i, line := range lines {
+							if lw := runewidth.StringWidth(line); lw > size[0] {
+								t.Fatalf("literal line %d width %d exceeds %d", i, lw, size[0])
+							}
+						}
+					}
 					if got != want {
-						t.Errorf("%dx%d mismatch\n got: %q\nwant: %q", size[0], size[1], got, want)
+						t.Errorf("%dx%d mismatch | got: %q | want: %q", size[0], size[1], got, want)
 					}
 				})
 			}

@@ -90,7 +90,7 @@ func (s *serversScreen) syncWorkspace() {
 	} else {
 		info := []string{"Changes: netivri server add · link · rotate · remove"}
 		if s.errText != "" {
-			info = append([]string{s.errText}, info...)
+			info = []string{s.errText}
 		}
 		s.workspace.Card.Info = info
 		s.workspace.Card.Lines = []tui.CardLine{{ID: "reload", Label: "Reload", Hotkey: "r", Kind: tui.CardAction, Action: true}}
@@ -266,7 +266,7 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		}
 		return s, nil
 	case "r":
-		if s.workspace != nil && s.workspace.Width < 100 && s.workspace.Drilled {
+		if s.workspace != nil && (s.workspace.Width < 100 && s.workspace.Drilled || s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard) {
 			return s, s.detailCmdForSelected()
 		}
 		return s, s.loadCmd()
@@ -276,9 +276,8 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 			s.detailGeneration++
 			s.pendingDetail = ""
 			s.errText = ""
-			if s.detail == nil {
-				s.workspace.Card.Info = []string{"Changes: netivri server add · link · rotate · remove"}
-			}
+			s.detail = nil
+			s.syncWorkspace()
 			return s, nil
 		}
 		s.errText = ""
@@ -289,6 +288,8 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 			s.detailGeneration++
 			s.pendingDetail = ""
 		}
+		s.detail = nil
+		s.syncWorkspace()
 		return s, nil
 	case "enter":
 		if s.workspace != nil {

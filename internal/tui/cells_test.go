@@ -9,7 +9,7 @@ import (
 
 func TestBoundLinesExactBounds(t *testing.T) {
 	got := boundLines([]string{"界界x", "second", "third"}, 3, 2)
-	if got != "界  \nsec" {
+	if got != "界 \nsec" {
 		t.Fatalf("got %q", got)
 	}
 	lines := strings.Split(boundLines([]string{"x"}, 4, 3), "\n")

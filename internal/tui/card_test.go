@@ -117,11 +117,18 @@ func TestCardMouseFieldFirstClickAndActionSecondClick(t *testing.T) {
 	c := NewCard("T", []CardLine{{Label: "Field", Kind: CardField}, {Label: "Action", Kind: CardAction}})
 	c.SetSize(20, 6)
 	// The title is the first body row, followed by the field and action.
-	if c.Update(tea.MouseClickMsg{X: 10, Y: 2, Button: tea.MouseLeft}) || c.Selected != 0 {
+	if c.Update(tea.MouseClickMsg{X: 4, Y: 2, Button: tea.MouseLeft}) || c.Selected != 0 {
 		t.Fatal("first field click should select without activating")
 	}
-	if !c.Update(tea.MouseClickMsg{X: 10, Y: 2, Button: tea.MouseLeft}) || c.Selected != 0 {
-		t.Fatal("field click on edit affordance should activate")
+	if !c.Update(tea.MouseClickMsg{X: 4, Y: 2, Button: tea.MouseLeft}) || c.Selected != 0 {
+		t.Fatal("second field click should activate")
+	}
+	// A click on the printed [edit] range activates immediately.
+	c2 := NewCard("T", []CardLine{{Label: "Field", Kind: CardField}, {Label: "Action", Kind: CardAction}})
+	c2.SetSize(20, 6)
+	editX, _ := c2.editRange(c2.Lines[0])
+	if !c2.Update(tea.MouseClickMsg{X: editX, Y: 2, Button: tea.MouseLeft}) {
+		t.Fatal("first click on the printed edit should activate immediately")
 	}
 	if c.Update(tea.MouseClickMsg{X: 4, Y: 3, Button: tea.MouseLeft}) || c.Selected != 1 {
 		t.Fatal("first action click should select, not activate")
@@ -139,8 +146,11 @@ func TestCardNavigationScrollsAcrossAllLines(t *testing.T) {
 	c := NewCard("T", lines)
 	c.SetSize(20, 6) // four visible rows, including the title.
 	c.Focused = true
-	c.Update(tuiTestKey("home"))
 	c.Update(tuiTestKey("end"))
+	if c.Selected != 7 || c.Scroll != 5 {
+		t.Fatalf("end selection/scroll = %d/%d, want 7/5", c.Selected, c.Scroll)
+	}
+	c.Update(tuiTestKey("home"))
 	if c.Selected != 0 {
 		t.Fatalf("home selection = %d, want 0", c.Selected)
 	}

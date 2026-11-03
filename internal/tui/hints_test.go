@@ -52,14 +52,22 @@ func TestHintClippingUsesCells(t *testing.T) {
 }
 func TestConfirmActions(t *testing.T) {
 	for _, tc := range []struct {
-		key                 string
+		key                 tea.KeyPressMsg
 		confirmed, canceled bool
-	}{{"enter", false, true}, {"y", true, false}, {"n", false, true}, {"esc", false, true}} {
+	}{
+		{tea.KeyPressMsg{Code: tea.KeyEnter}, false, true},
+		{tea.KeyPressMsg{Code: 'y', Text: "y"}, true, false},
+		{tea.KeyPressMsg{Code: 'n', Text: "n"}, false, true},
+		{tea.KeyPressMsg{Code: tea.KeyEscape}, false, true},
+	} {
 		c := &Confirm{Prompt: "Remove?"}
-		_, cmd := c.Update(tuiTestKey(tc.key))
+		_, cmd := c.Update(tc.key)
+		if cmd == nil {
+			t.Fatalf("key %v: expected a result command", tc.key)
+		}
 		got := cmd().(ConfirmResultMsg)
 		if got.Confirmed != tc.confirmed || got.Canceled != tc.canceled {
-			t.Fatalf("%s: %+v", tc.key, got)
+			t.Fatalf("key %v: %+v", tc.key, got)
 		}
 	}
 }

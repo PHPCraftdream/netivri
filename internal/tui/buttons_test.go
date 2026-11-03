@@ -26,9 +26,17 @@ func TestButtonsFixedMarkerAndMouseBounds(t *testing.T) {
 	if !strings.Contains(v, "› [ Save ]") {
 		t.Fatalf("focused marker missing: %q", v)
 	}
-	i, ok := b.Update(tea.MouseClickMsg{X: lipgloss.Width("› [ Save ]") - 1, Y: 7, Button: tea.MouseLeft}, 7)
+	// Hit-testing uses the same 2-space-marker segments the unfocused view prints,
+	// so the last cell of "  [ Save ]" is inside the Save segment.
+	b.Focus = -1
+	saveW := lipgloss.Width("  [ Save ]")
+	i, ok := b.Update(tea.MouseClickMsg{X: saveW - 1, Y: 7, Button: tea.MouseLeft}, 7)
+	if !ok || i != 0 {
+		t.Fatalf("Save click: %d %v", i, ok)
+	}
+	i, ok = b.Update(tea.MouseClickMsg{X: saveW + 3, Y: 7, Button: tea.MouseLeft}, 7)
 	if !ok || i != 1 {
-		t.Fatalf("first click: %d %v", i, ok)
+		t.Fatalf("Cancel click: %d %v", i, ok)
 	}
 	i, ok = b.Update(tea.MouseClickMsg{X: 100, Y: 7, Button: tea.MouseLeft}, 7)
 	if ok || i != -1 {

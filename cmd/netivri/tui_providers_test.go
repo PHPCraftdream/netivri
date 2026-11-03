@@ -262,6 +262,14 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	if c != nil {
 		drainProvider(s, c)
 	}
+	// Third Enter leaves the optional via step and reaches the review step.
+	if s.wizard == nil || !s.wizard.Review || s.wizard.Saving {
+		t.Fatal("third Enter did not reach the review step")
+	}
+	// Fourth Enter activates Create: the first fetch fails, so the wizard is
+	// retained with the entered values and no credential on screen.
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	drainProvider(s, c)
 	if s.wizard == nil || s.wizard.Saving || s.mode != "add-wizard" || s.wizard.Values["name"] != "wizard" || s.wizard.Values["url"] != "https://user:wizard-secret@provider.invalid/?token=wizard-secret" || s.wizard.Values["via"] != "" {
 		t.Fatal("wizard did not retain actual entered values after failed submission")
 	}
@@ -269,6 +277,7 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	if strings.Contains(visible, "wizard-secret") {
 		t.Fatal("wizard failure exposed a credential")
 	}
+	// Fifth Enter retries Create from review and succeeds on the second fetch.
 	_, c = s.Update(key(tea.KeyEnter, ""))
 	drainProvider(s, c)
 	r, err := ProviderList(h)
@@ -369,5 +378,28 @@ func TestProviderDisabledEditsExplainMissingOperation(t *testing.T) {
 	}
 	if s.card.Lines[7].Disabled || s.card.Lines[8].Disabled {
 		t.Fatal("URL and Via edits should be enabled")
+	}
+}
+
+func TestProviderCountriesViewIsStableAndExactHeight(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
+	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
+		t.Fatal(e)
+	}
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s.selected = "p"
+	s.mode = "countries"
+	drainProvider(s, s.countriesCmd())
+	before := ansi.Strip(s.View(80, 20))
+	if lines := strings.Split(before, "\n"); len(lines) != 20 {
+		t.Fatalf("countries view has %d lines, want 20", len(lines))
+	}
+	s.busy = "Loading countries"
+	s.message = "failed operation"
+	s.hint = "retry it"
+	after := ansi.Strip(s.View(80, 20))
+	if after != before {
+		t.Fatalf("busy/message changed the countries body:\nbefore %q\nafter  %q", before, after)
 	}
 }

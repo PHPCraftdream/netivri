@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -121,9 +123,23 @@ func TestInteractiveHeaderStatus(t *testing.T) {
 	if init == nil {
 		t.Fatal("frame init command is nil")
 	}
-	frame.Update(init())
-	if !strings.Contains(frame.View().Content, "Uptime: 1h2m3s") {
-		t.Fatalf("header frame = %q", frame.View().Content)
+	// Frame.Init batches screen init and the header poll; feed every returned
+	// message so the polled header actually lands in the frame.
+	if batch, ok := init().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c != nil {
+				frame.Update(c())
+			}
+		}
+	}
+	content := frame.View().Content
+	for _, want := range []string{"netivri", "running", "127.0.0.1:7890", "up 1h2m3s", "v1"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("header frame missing %q: %q", want, content)
+		}
+	}
+	if strings.Contains(content, "Uptime:") {
+		t.Fatalf("legacy header format: %q", content)
 	}
 	for _, tc := range []struct {
 		name      string

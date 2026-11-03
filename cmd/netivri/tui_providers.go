@@ -74,7 +74,13 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	l.EmptyText = "No providers yet. Add one to get started."
 	l.AddLabel = "+ Add provider"
 	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardReadOnly, Secret: true}, {ID: "via", Label: "Via", Kind: tui.CardReadOnly, Secret: true}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Edit name", Value: "renaming cannot safely update account references and stored snapshots", Kind: tui.CardAction, Disabled: true}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
-	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: tui.NewWorkspace(l, c), providers: map[string]ProviderInfo{}}
+	ws := tui.NewWorkspace(l, c)
+	theme := e.Theme
+	if theme.Accent == nil {
+		theme = tui.NewTheme()
+	}
+	ws.SetTheme(theme)
+	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}}
 }
 func (s *providersScreen) Title() string        { return "Providers" }
 func (s *providersScreen) CapturingInput() bool { return s.dialog != nil }
@@ -321,6 +327,7 @@ func (s *providersScreen) startWizard() {
 	u := tui.NewPrompt(tui.SecretPrompt, "Add provider — URL", "Subscription URL", "The URL is a credential and is hidden", "")
 	v := tui.NewPrompt(tui.SecretPrompt, "Add provider — Via", "Via URL", "Optional proxy URL; hidden", "")
 	s.wizard = tui.NewWizard("Add provider", []tui.WizardStep{{Key: "name", Prompt: n, Optional: true}, {Key: "url", Prompt: u}, {Key: "via", Prompt: v, Optional: true}})
+	s.wizard.SetTheme(s.workspace.Theme)
 	s.dialog = s.wizard
 	s.mode = "add-wizard"
 }
@@ -331,11 +338,13 @@ func (s *providersScreen) startEditPrompt(field string) {
 		label = "Subscription URL"
 	}
 	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Edit provider — "+label, label, "Credential hidden while editing", "")
+	s.prompt.SetTheme(s.workspace.Theme)
 	s.dialog = s.prompt
 	s.mode = "edit-prompt"
 }
 func (s *providersScreen) startPrompt() {
 	s.confirm = &tui.Confirm{Prompt: fmt.Sprintf("Remove %s? Accounts using this provider: %s", s.confirmName, strings.Join(s.confirmDeps, ", "))}
+	s.confirm.SetTheme(s.workspace.Theme)
 	s.dialog = s.confirm
 	s.mode = "confirm-remove"
 }
@@ -690,11 +699,7 @@ func (s *providersScreen) View(w, h int) string {
 }
 func (s *providersScreen) viewCountries(w, h int) string {
 	lines := []string{"Countries: " + s.selected}
-	if s.busy != "" {
-		lines = append(lines, s.busy+"…")
-	} else if s.message != "" {
-		lines = append(lines, s.scrub(s.message+hintText(s.hint)))
-	} else if s.countries.Nodes == nil {
+	if s.countries.Nodes == nil {
 		lines = append(lines, "No stored snapshot")
 	} else {
 		lines = append(lines, fmt.Sprintf("%d nodes  Unknown: %d", *s.countries.Nodes, ptrInt(s.countries.Unknown)))
@@ -727,6 +732,9 @@ func boundedProvider(lines []string, w, h int) string {
 		if lipgloss.Width(x) > w {
 			lines[i] = lipgloss.NewStyle().MaxWidth(w).Render(x)
 		}
+	}
+	for len(lines) < h {
+		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
 }

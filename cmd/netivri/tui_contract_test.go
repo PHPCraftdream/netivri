@@ -84,19 +84,27 @@ func TestTUIFrameASCIIAndNoColorPreservePositions(t *testing.T) {
 			}{{"providers", 0, "fixture"}, {"accounts", 1, "fixture"}, {"servers", 2, "fixture"}} {
 				t.Run(screenCase.name, func(t *testing.T) {
 					frame, _, _, screen := contractFrame(t, screenCase.index)
+					_ = frame.Init() // ensure the tab screen exists before sizing
 					frame.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 					contractRows(screen())
 					frame.Update(tui.ThemeMsg{Theme: tui.NewThemeFor(true)})
 					lines := strings.Split(ansi.Strip(frame.View().Content), "\n")
+					// The label may also appear in the detail card title on the
+					// right pane; only the left list pane (columns < 35 at 120
+					// wide) is the contract surface. Pick the lowest row, then
+					// the smallest column.
 					row, col, found := -1, -1, false
 					for i, line := range lines {
-						if at := strings.Index(line, screenCase.label); at >= 0 {
-							row, col, found = i, ansi.StringWidth(line[:at]), true
-							break
+						at := strings.Index(line, screenCase.label)
+						if at < 0 {
+							continue
+						}
+						if c := ansi.StringWidth(line[:at]); c < 35 && (!found || i < row || (i == row && c < col)) {
+							row, col, found = i, c, true
 						}
 					}
 					if !found {
-						t.Fatalf("fixture label %q missing", screenCase.label)
+						t.Fatalf("fixture label %q missing from the list pane", screenCase.label)
 					}
 					if row != 5 || col != 3 {
 						t.Errorf("fixture label at row %d column %d, want row 5 column 3", row, col)

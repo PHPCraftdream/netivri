@@ -192,6 +192,9 @@ func (c *Card) Update(msg tea.Msg) bool {
 func (c *Card) View(w, h int) string {
 	c.SetSize(w, h)
 	if w < 2 || h < 2 {
+		if w <= 0 || h <= 0 {
+			return ""
+		}
 		return strings.Repeat("\n", max(0, h-1)) + strings.Repeat(" ", max(0, w))
 	}
 	t := c.Theme
@@ -240,15 +243,28 @@ func (c *Card) View(w, h int) string {
 	if t.ASCII {
 		b = lipgloss.Border{Top: "-", Bottom: "-", Left: "|", Right: "|", TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+"}
 	}
-	s := lipgloss.NewStyle().Width(max(0, w)).Height(max(0, h)).Border(b)
-	if !t.NoColor {
-		if c.Focused {
-			s = s.BorderForeground(t.Accent)
-		} else {
-			s = s.BorderForeground(t.Muted)
+	inner := max(0, w-2)
+	lines := make([]string, 0, h)
+	lines = append(lines, b.TopLeft+strings.Repeat(b.Top, inner)+b.TopRight)
+	for i := 0; i < h-2; i++ {
+		cell := ""
+		if i < len(body) {
+			cell = body[i]
 		}
+		cell += strings.Repeat(" ", max(0, inner-lipgloss.Width(cell)))
+		lines = append(lines, b.Left+cell+b.Right)
 	}
-	return s.Render(strings.Join(body, "\n"))
+	lines = append(lines, b.BottomLeft+strings.Repeat(b.Bottom, inner)+b.BottomRight)
+	if !t.NoColor {
+		border := t.Muted
+		if c.Focused {
+			border = t.Accent
+		}
+		styled := lipgloss.NewStyle().Foreground(border).Render
+		lines[0] = styled(lines[0])
+		lines[len(lines)-1] = styled(lines[len(lines)-1])
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (c *Card) editRange(l CardLine) (int, int) {

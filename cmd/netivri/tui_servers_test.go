@@ -88,18 +88,30 @@ func TestServersTUIFramePaneFocus(t *testing.T) {
 	if screen.workspace.Focus() != tui.PaneCard {
 		t.Fatal("Tab did not focus card pane")
 	}
+	// Second Tab leaves the card at its boundary and moves frame focus to the
+	// tab strip; the workspace keeps the card pane focused.
 	frame.Update(serversKey(tea.KeyTab, ""))
 	if screen.workspace.Focus() != tui.PaneCard {
-		t.Fatal("Tab moved focus out of card pane")
+		t.Fatal("Tab to tab strip moved workspace focus out of card pane")
 	}
+	// Third Tab returns from the tab strip to the list pane.
 	frame.Update(serversKey(tea.KeyTab, ""))
-	if screen.workspace.Focus() != tui.PaneCard {
-		t.Fatal("Tab did not retain card focus")
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("Tab from tab strip did not return focus to list pane")
 	}
-	frame.Update(serversKey(tea.KeyTab, ""))
+	// Shift+Tab from the list enters the tab strip (workspace stays on list),
+	// then goes back through the card, then to the list.
 	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
 	if screen.workspace.Focus() != tui.PaneList {
-		t.Fatal("Shift+Tab did not focus list pane")
+		t.Fatal("Shift+Tab to tab strip changed workspace focus")
+	}
+	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if screen.workspace.Focus() != tui.PaneCard {
+		t.Fatal("Shift+Tab from tab strip did not focus card pane")
+	}
+	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("Shift+Tab from card did not return focus to list pane")
 	}
 }
 

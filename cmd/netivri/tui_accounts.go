@@ -283,6 +283,9 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 	case tui.ThemeMsg:
 		s.theme = m.Theme
 		s.workspace.SetTheme(m.Theme)
+		if s.workspace.Card != nil {
+			s.workspace.Card.SetTheme(m.Theme)
+		}
 		if s.dialog != nil {
 			s.dialog.SetTheme(m.Theme)
 		}
@@ -496,6 +499,10 @@ func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
 		}
 		return s, nil
 	}
+	before := -1
+	if s.workspace.List != nil {
+		before = s.workspace.List.Selected
+	}
 	if s.workspace.List.Update(m) {
 		if s.workspace.List.IsAdd() {
 			if len(s.providers) == 0 {
@@ -504,6 +511,10 @@ func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
 			return s, s.beginAdd()
 		}
 		return s, s.selectionChanged()
+	}
+	if before >= 0 && s.workspace.List.Selected != before && !s.workspace.List.IsAdd() {
+		s.refreshSelectedCard(true)
+		return s, s.loadDetail(s.selectedLogin())
 	}
 	return s, nil
 }
@@ -660,6 +671,7 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 	if !ok {
 		if force || s.workspace.Card == nil || s.workspace.Card.Title != "Account" {
 			s.workspace.Card = tui.NewCard("Account", nil)
+			s.workspace.Card.SetTheme(s.theme)
 			s.workspace.Card.Info = []string{"Select an account to see details."}
 		}
 		return
@@ -677,6 +689,7 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 		s.workspace.Card.Focused = true
 	}
 	s.workspace.Card = tui.NewCard("Account "+a.Login, lines)
+	s.workspace.Card.SetTheme(s.theme)
 	s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
 	if a, ok := s.selectedAccount(); ok {
 		activity := "-"

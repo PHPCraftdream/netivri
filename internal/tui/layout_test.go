@@ -94,8 +94,9 @@ func TestWorkspaceMouseSelectedListRowDoesNotActivate(t *testing.T) {
 	if w.Update(tea.MouseClickMsg{X: 2, Y: 1, Button: tea.MouseLeft}) {
 		t.Fatal("first row click should only select")
 	}
-	if w.Update(tea.MouseClickMsg{X: 2, Y: 1, Button: tea.MouseLeft}) {
-		t.Fatal("selected row second click should not cause workspace action")
+	// Spec: clicking a list row selects and, on the second click, activates it.
+	if !w.Update(tea.MouseClickMsg{X: 2, Y: 1, Button: tea.MouseLeft}) {
+		t.Fatal("second click on the selected row should activate it")
 	}
 	if w.Drilled {
 		t.Fatal("mouse click unexpectedly drilled into row")

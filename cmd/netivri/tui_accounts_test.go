@@ -369,3 +369,180 @@ func TestAccountsProviderPrerequisiteSwitch(t *testing.T) {
 		t.Fatal("did not switch to Providers")
 	}
 }
+
+func TestAccountsListNavigationRefreshesCardAndDetail(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.show = func(_, login string) (AccountShowResult, error) { return AccountShowResult{Login: login}, nil }
+	s.rows = []accountInfo{{Login: "alice"}, {Login: "bob"}}
+	s.syncRows("alice")
+	s.workspace.SetSize(120, 30)
+	s.workspace.SetFocus(tui.PaneList)
+	if s.workspace.Card.Title != "Account alice" {
+		t.Fatalf("initial card = %q", s.workspace.Card.Title)
+	}
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.workspace.List.Selected != 1 {
+		t.Fatalf("KeyDown did not change selection: %d", s.workspace.List.Selected)
+	}
+	if cmd == nil {
+		t.Fatal("selection change did not schedule a detail load")
+	}
+	if s.workspace.Card.Title != "Account bob" {
+		t.Fatalf("card did not follow selection: %q", s.workspace.Card.Title)
+	}
+	runAccountCmd(s, cmd)
+	if s.cardResult == nil || s.cardResult.Login != "bob" {
+		t.Fatalf("detail for new selection missing: %+v", s.cardResult)
+	}
+}
+
+func TestAccountsCardThemeFollowsScreenTheme(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s.theme = tui.NewThemeFor(false)
+	s.rows = []accountInfo{{Login: "alice"}}
+	s.syncRows("alice")
+	s.refreshSelectedCard(true)
+	if s.workspace.Card.Theme.Dark {
+		t.Fatal("account card kept a dark theme on a light screen")
+	}
+	s.workspace.Card = tui.NewCard("Account", nil)
+	s.workspace.Card.SetTheme(tui.NewThemeFor(true))
+	_, _ = s.Update(tui.ThemeMsg{Theme: tui.NewThemeFor(false)})
+	if s.workspace.Card.Theme.Dark {
+		t.Fatal("ThemeMsg did not retheme the account card")
+	}
+}
+
+func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.beginAdd()
+	d := s.dialog
+	if d == nil || d.wizard == nil {
+		t.Fatal("beginAdd did not open the wizard")
+	}
+	typeKey := func(r rune) {
+		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	enter := func() tea.Cmd {
+		_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		return c
+	}
+	for _, r := range "bob" {
+		typeKey(r)
+	}
+	if d.wizard.Steps[0].Prompt.Value != "bob" {
+		t.Fatalf("login input = %q", d.wizard.Steps[0].Prompt.Value)
+	}
+	// Seven Enters walk Login -> Provider -> Country -> Exit -> Clients ->
+	// CustomClients -> Pre-hop -> Post-hop -> Review; every step keeps its default.
+	for i := 0; i < 7; i++ {
+		if c := enter(); c != nil {
+			t.Fatalf("step %d advance produced a command", i)
+		}
+		if d.wizard.Index != i+1 {
+			t.Fatalf("after enter %d wizard index = %d", i, d.wizard.Index)
+		}
+	}
+	if !d.wizard.Review {
+		t.Fatal("last step enter did not reach review")
+	}
+	// Review Enter activates the focused [Create] button; accountsDialog.Update
+	// converts the WizardResultMsg from that command into accountsDialogResult,
+	// which the screen then turns into the account-creation command.
+	cmd := enter()
+	if cmd == nil {
+		t.Fatal("review create did not return a result command")
+	}
+	msg := cmd()
+	result, ok := msg.(accountsDialogResult)
+	if !ok || result.Canceled {
+		t.Fatalf("wizard result command produced %#v", msg)
+	}
+	_, cmd = s.Update(msg)
+	if cmd == nil {
+		t.Fatal("dialog result did not start account creation")
+	}
+	runAccountCmd(s, cmd)
+	cfg, err := config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].AllowedClients != "*" {
+		t.Fatalf("account config did not persist wildcard access: %#v", cfg.Accounts)
+	}
+	if s.dialog != nil || s.selectedLogin() != "bob" {
+		t.Fatal("successful wizard did not close and select the new account")
+	}
+}
+
+func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
+	h := accountsHome(t)
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "bob", Exit: "direct", ExitGiven: true}); e != nil {
+		t.Fatal(e)
+	}
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	s.rows, _ = AccountList(h)
+	s.syncRows("bob")
+	// (a) Click the first list row. Workspace mouse translation leaves the left
+	// pane unoffset: row y = border(1) + title(1) + header(1), so alice is at y=3.
+	_, _ = s.Update(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
+	if s.selectedLogin() != "alice" || s.workspace.Card.Title != "Account alice" {
+		t.Fatalf("row click selected %q card %q", s.selectedLogin(), s.workspace.Card.Title)
+	}
+	// (b) Focus the card and click the Provider field line at its label X
+	// (y=3: border(1) + title(1) + info(1); screen x=45 -> card-local x=2,
+	// left of the [edit] range, so the first click only selects).
+	s.workspace.SetFocus(tui.PaneCard)
+	s.refreshSelectedCard(true)
+	s.workspace.SetSize(120, 30)
+	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.workspace.Card.Selected != 1 {
+		t.Fatalf("card selection = %d", s.workspace.Card.Selected)
+	}
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 3, Button: tea.MouseLeft})
+	if s.dialog != nil || s.workspace.Card.Selected != 0 {
+		t.Fatalf("first card click opened a dialog or ignored the selection: %v %d", s.dialog != nil, s.workspace.Card.Selected)
+	}
+	// Second click on the same line activates it and opens the provider editor.
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 3, Button: tea.MouseLeft})
+	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Label != "Provider" {
+		t.Fatalf("card activation did not open the Provider prompt: %+v", s.dialog)
+	}
+	// (c) Type a provider, then click [ Save ] on the button row (buttonY = h-1
+	// after rendering the dialog at height 26; segment [ Save ] spans x 0..9).
+	provider := s.dialog.prompt
+	for _, r := range "main" {
+		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if provider.Value != "main" {
+		t.Fatalf("prompt value = %q", provider.Value)
+	}
+	_ = s.View(120, 26) // render so the prompt lays out its buttons at y=25
+	_, cmd := s.Update(tea.MouseClickMsg{X: 4, Y: 25, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("Save click did not produce a result command")
+	}
+	if msg := cmd(); msg != nil {
+		if _, ok := msg.(accountsDialogResult); !ok {
+			t.Fatalf("save command produced %#v", msg)
+		}
+		_, cmd = s.Update(msg)
+		runAccountCmd(s, cmd)
+	}
+	if s.dialog != nil {
+		t.Fatal("save did not close the dialog")
+	}
+	cfg, err := config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Accounts[0].Login != "alice" || cfg.Accounts[0].Provider != "main" {
+		t.Fatalf("save did not persist the provider edit: %#v", cfg.Accounts[0])
+	}
+}
