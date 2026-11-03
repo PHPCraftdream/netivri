@@ -127,7 +127,7 @@ const goldenAccounts80Empty = `Service stopped
 +------------------------------------------------------------------------------+
 |Accounts                                                                      |
 |  LOGIN           PROVIDER        EXIT    CONN    UP/s    DOWN                |
-|An account needs a Provider first. Switch to Providers to add one.            |
+|An account needs a provider. Add one on the Providers tab, then add the accoun|
 |> + Add account [a]                                                           |
 |                                                                              |
 |                                                                              |
@@ -177,7 +177,7 @@ const goldenAccounts100Empty = `Service stopped
 +---------------------------------+ +--------------------------------------------------------------+
 |Accounts                         | |Account                                                       |
 |  LOGI  PROVID  EX  CO  UP/  DOW | |Select an account to see details.                             |
-|An account needs a Provider first| |                                                              |
+|An account needs a provider. Add | |                                                              |
 |> + Add account [a]              | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |

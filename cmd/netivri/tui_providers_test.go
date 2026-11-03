@@ -169,19 +169,30 @@ func TestProviderRefreshRemoveAndDependencies(t *testing.T) {
 		t.Fatal("dependency provider removed")
 	}
 }
-func TestProviderCountriesAndRedaction(t *testing.T) {
+func TestProviderCountriesDialogOpensPreselected(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	drainProvider(s, s.Init())
 	s.selected = "p"
-	s.mode = "countries"
+	s.updateCard()
 	drainProvider(s, s.countriesCmd())
-	v := ansi.Strip(s.View(80, 8))
-	if !strings.Contains(v, "3 nodes") || !strings.Contains(v, "DE: 2") || !strings.Contains(v, "NL: 1") {
-		t.Fatalf("countries: %q", v)
+	if s.mode != "countries-prompt" || s.dialog == nil || s.prompt == nil || s.prompt.Kind != tui.MultiChoicePrompt {
+		t.Fatalf("countries dialog state: mode=%q prompt=%v", s.mode, s.prompt)
+	}
+	for _, want := range []string{"DE", "NL"} {
+		found := false
+		for _, v := range s.prompt.Selected {
+			if v == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("preselect missing %s: %v", want, s.prompt.Selected)
+		}
 	}
 	got := redactProviderSecrets("token example.invalid", "https://u:token@example.invalid/path?key=token")
 	if strings.Contains(got, "token") || strings.Contains(got, "example.invalid") {
@@ -306,7 +317,7 @@ func TestProviderRefreshAllRetainsRedactedResults(t *testing.T) {
 		t.Fatal("refresh screen exposed credential")
 	}
 }
-func TestProviderCountryPagingKeysAndResize(t *testing.T) {
+func TestProviderCountriesDialogKeysAndFrame(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	codes := []string{"AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU"}
 	nodes := make([]subscription.Node, 0, len(codes))
@@ -317,30 +328,34 @@ func TestProviderCountryPagingKeysAndResize(t *testing.T) {
 		t.Fatal("save country snapshot failed")
 	}
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.selected, s.mode = "p", "countries"
-	s.height = 8
+	s.selected = "p"
 	drainProvider(s, s.countriesCmd())
-	check := func(w, height int, wantOffset int) {
-		s.Update(tea.WindowSizeMsg{Width: w, Height: height})
-		v := ansi.Strip(s.View(w, height))
-		if s.countryOffset != wantOffset || !strings.Contains(v, "13 nodes") || !strings.Contains(v, " of 13") || strings.Count(v, ": 1") > height-4 {
-			t.Fatalf("country page/resize mismatch at offset %d", wantOffset)
-		}
+	if s.mode != "countries-prompt" || s.dialog == nil {
+		t.Fatal("countries dialog did not open")
+	}
+	for _, z := range []struct{ w, hgt int }{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
+		v := ansi.Strip(s.View(z.w, z.hgt))
 		for _, line := range strings.Split(v, "\n") {
-			if strings.HasPrefix(line, "A") && !strings.Contains(line, ": ") {
-				t.Fatal("invalid country row")
+			if ansi.StringWidth(line) > z.w {
+				t.Fatalf("line wider than %d: %q", z.w, line)
+			}
+			if strings.Count(v, "\n")+1 != z.hgt {
+				t.Fatalf("countries dialog view has %d lines, want %d", strings.Count(v, "\n")+1, z.hgt)
 			}
 		}
 	}
-	check(80, 8, 0)
-	s.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	check(80, 8, 4)
-	s.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
-	check(80, 8, 9)
-	s.Update(tea.KeyPressMsg{Code: tea.KeyHome})
-	check(80, 8, 0)
-	s.Update(tea.WindowSizeMsg{Width: 100, Height: 10})
-	check(100, 10, 0)
+	if !strings.Contains(ansi.Strip(s.View(80, 24)), "Provider p: countries") {
+		t.Fatal("countries dialog title missing")
+	}
+	before := s.card.Lines[4].Value
+	// Esc cancels without changing anything.
+	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if s.dialog != nil || s.prompt != nil || s.mode != "" {
+		t.Fatal("esc did not close the countries dialog")
+	}
+	if s.card.Lines[4].Value != before {
+		t.Fatalf("esc changed the card countries line: %q -> %q", before, s.card.Lines[4].Value)
+	}
 }
 func TestProviderResultReturnsToastCommand(t *testing.T) {
 	h := providerSeed(t)
@@ -369,19 +384,19 @@ func TestProviderResultReturnsToastCommand(t *testing.T) {
 	}
 }
 
-func TestProviderDisabledEditsExplainMissingOperation(t *testing.T) {
+func TestProviderRenameActionEnabledAndEditsKept(t *testing.T) {
 	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
 	s.selected = "p"
 	s.updateCard()
-	if !s.card.Lines[6].Disabled || !strings.Contains(s.card.Lines[6].Value, "account references") {
-		t.Fatalf("rename reason missing: %+v", s.card.Lines[6])
+	if s.card.Lines[6].Disabled || s.card.Lines[6].Label != "Rename" {
+		t.Fatalf("rename action missing: %+v", s.card.Lines[6])
 	}
 	if s.card.Lines[7].Disabled || s.card.Lines[8].Disabled {
 		t.Fatal("URL and Via edits should be enabled")
 	}
 }
 
-func TestProviderCountriesViewIsStableAndExactHeight(t *testing.T) {
+func TestProviderCountriesDialogIsStableAndExactHeight(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
@@ -389,17 +404,17 @@ func TestProviderCountriesViewIsStableAndExactHeight(t *testing.T) {
 	}
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
 	s.selected = "p"
-	s.mode = "countries"
 	drainProvider(s, s.countriesCmd())
+	s.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 	before := ansi.Strip(s.View(80, 20))
 	if lines := strings.Split(before, "\n"); len(lines) != 20 {
-		t.Fatalf("countries view has %d lines, want 20", len(lines))
+		t.Fatalf("countries dialog view has %d lines, want 20", len(lines))
 	}
 	s.busy = "Loading countries"
 	s.message = "failed operation"
 	s.hint = "retry it"
 	after := ansi.Strip(s.View(80, 20))
 	if after != before {
-		t.Fatalf("busy/message changed the countries body:\nbefore %q\nafter  %q", before, after)
+		t.Fatalf("busy/message changed the countries dialog:\nbefore %q\nafter  %q", before, after)
 	}
 }

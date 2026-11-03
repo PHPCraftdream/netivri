@@ -50,7 +50,8 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
   an account can narrow it with its own rule, checked before its password.
 - **Accounts you can copy and inspect.** `netivri account clone` makes a new
-  login from an existing one (same password, a new one, or `init`), and
+  login from an existing one (a fresh placeholder password by default — the
+  first client that authenticates sets it; a new one with `--password`), and
   `netivri account show` prints its route tier by tier with live node state.
 - **See what is going on.** `netivri status` is short by default (`--full`
   for everything); `netivri status --watch` is a live view of who is active,
@@ -60,7 +61,22 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
-- **Interactive terminal shell.** Browse and manage providers and accounts, and inspect servers, with masked secrets and read-only server screens. Start it with `netivri -i` (or `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
+- **Interactive terminal shell.** A full-screen shell to manage providers,
+  accounts and servers, with masked secrets. Start it with `netivri -i` (or
+  `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires
+  terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
+  The screen has a fixed layout: a header (angel state, listen address,
+  uptime), a tab line (Providers, Accounts, Servers), and from 100 columns a
+  list pane on the left with the selected item's card on the right; below
+  that, a single pane that drills down. Arrows and Tab/Shift-Tab move, Enter
+  opens, Esc goes back, `a` adds, `d` removes, `r` refreshes, `R` refreshes
+  all, `c` shows a provider's countries, `/` filters a list in place, `?`
+  opens help and `q` quits; the mouse clicks rows, tabs, lines and buttons
+  and scrolls. Adding and editing are short wizard walks with a review step;
+  every list ends with a `+ Add` line, and an empty list says what it is with
+  that line focused. Secrets are masked everywhere: the shell never prints a
+  secret except the explicit, warned `Show client link` reveal on the Servers
+  screen.
 - **Help that stands on its own.** `netivri help` covers every command, the
   configuration file (`netivri help config`), routing (`netivri help routing`)
   and the fields each command prints (`netivri help output`); `--json` gives
@@ -115,7 +131,7 @@ directive.
 netivri -i
 ```
 
-The shell starts on Accounts; use `netivri sub -i` for Providers and `netivri server -i` for Servers. It requires terminal stdin and stdout.
+The shell starts on Accounts; use `netivri sub -i` for Providers and `netivri server -i` for Servers. It requires terminal stdin and stdout. `?` opens the key help inside the shell; `q` quits.
 
 Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country. With explicit-direct-only accounts, a server update restarts the listener if the core cannot reconfigure it in place; other server transaction errors leave the running configuration unchanged.
 

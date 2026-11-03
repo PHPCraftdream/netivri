@@ -66,23 +66,26 @@ func assertNoPasswordData(t *testing.T, out []byte, secrets ...string) {
 	}
 }
 
-func TestAccountCloneCopiesRouteAndPassword(t *testing.T) {
+func TestAccountCloneCopiesRouteButNotPassword(t *testing.T) {
 	home := cloneHome(t)
 	res, out := runClone(t, home, "alice", "bob")
-	if res.Account.Login != "bob" || res.Account.Provider != "p1" || res.Account.ExitCountry != "DE" || !res.Account.PasswordSet {
+	if res.Account.Login != "bob" || res.Account.Provider != "p1" || res.Account.ExitCountry != "DE" || res.Account.PasswordSet {
 		t.Fatalf("account = %+v", res.Account)
 	}
-	if res.ClonedFrom != "alice" || res.Password != "copied" {
+	if res.ClonedFrom != "alice" || res.Password != "init" {
 		t.Fatalf("result = %+v", res)
 	}
 	assertNoPasswordData(t, out, cloneSourcePassword)
 
 	alice, bob := loadedAccount(t, home, "alice"), loadedAccount(t, home, "bob")
-	if bob.Password != alice.Password || bob.Provider != "p1" || bob.ExitCountry != "DE" {
+	if bob.Password != config.InitPlaceholder || bob.Provider != "p1" || bob.ExitCountry != "DE" {
 		t.Fatalf("bob = %+v, alice = %+v", bob, alice)
 	}
-	if ok, err := auth.VerifyHash(bob.Password, cloneSourcePassword); err != nil || !ok {
-		t.Fatalf("the copied password does not verify: %v %v", ok, err)
+	if bob.Password == alice.Password {
+		t.Fatal("the clone received the source's password or hash")
+	}
+	if ok, err := auth.VerifyHash(alice.Password, cloneSourcePassword); err != nil || !ok {
+		t.Fatalf("the source's password changed: %v %v", ok, err)
 	}
 }
 
@@ -149,9 +152,9 @@ func TestAccountCloneOverridesTheRoute(t *testing.T) {
 	if res.Account.Provider != "p2,p1" || res.Account.ExitCountry != "DE" {
 		t.Fatalf("account = %+v", res.Account)
 	}
-	// The password is still the copied one.
-	if bob := loadedAccount(t, home, "bob"); bob.Password != loadedAccount(t, home, "alice").Password {
-		t.Fatal("overriding the route changed the password")
+	// The clone still waits for its first login to set a password.
+	if bob := loadedAccount(t, home, "bob"); bob.Password != config.InitPlaceholder {
+		t.Fatal("route override changed the fresh placeholder password")
 	}
 	// Only the country is replaced: the provider stays.
 	res, _ = runClone(t, home, "alice", "carol", "--country", "NL")

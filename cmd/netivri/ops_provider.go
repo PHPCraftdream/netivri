@@ -84,6 +84,68 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 	return nil
 }
 
+// ProviderRename renames a provider, rewriting every account's provider list
+// member and moving the stored snapshot so references keep resolving. Nothing
+// is written when validation fails.
+func ProviderRename(home, oldName, newName string) error {
+	if !validSubName(newName) {
+		return cli.Usage("sub rename: --name must match [A-Za-z0-9._-]{1,64}")
+	}
+	cfg, e := loadConfig(home)
+	if e != nil {
+		return e
+	}
+	idx := -1
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].Name == oldName {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
+	}
+	if oldName != newName {
+		for _, s := range cfg.Subscriptions {
+			if s.Name == newName {
+				return &cli.Error{Code: codeSubExistsName, Message: "subscription name is already used", Exit: cli.ExitConflict}
+			}
+		}
+	}
+	cfg.Subscriptions[idx].Name = newName
+	for i := range cfg.Accounts {
+		p, ok := config.ParseProviderList(cfg.Accounts[i].Provider)
+		if !ok || !hasProvider(p, oldName) {
+			continue
+		}
+		for j := range p {
+			if p[j] == oldName {
+				p[j] = newName
+			}
+		}
+		cfg.Accounts[i].Provider = config.JoinList(p)
+	}
+	if e = cfg.Validate(); e != nil {
+		return e
+	}
+	if e = config.Save(config.ConfigPath(home), cfg); e != nil {
+		return &cli.Error{Code: "INTERNAL", Message: "save config: " + e.Error(), Exit: cli.ExitInternal}
+	}
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	snap, err := store.Load(oldName)
+	if err == nil {
+		if err = store.Save(newName, *snap); err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "store subscription: " + err.Error(), Exit: cli.ExitInternal}
+		}
+		if err = store.Remove(oldName); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return &cli.Error{Code: "INTERNAL", Message: "remove stored subscription: " + err.Error(), Exit: cli.ExitInternal}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return snapshotError(oldName)
+	}
+	return nil
+}
+
 type ProviderAddResult struct {
 	Name            string
 	Added, Existing bool

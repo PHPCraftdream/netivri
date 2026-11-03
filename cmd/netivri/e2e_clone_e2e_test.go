@@ -23,8 +23,8 @@ func e2eAuthStatus(t *testing.T, proxy, user, pass string) byte {
 }
 
 // TestE2EAccountClone clones an account three ways and signs in to a real
-// angel with each: the copied password, a new one, and the init placeholder
-// whose first password sticks.
+// angel with each: the init placeholder whose first password sticks, a new
+// one, and a second init placeholder.
 func TestE2EAccountClone(t *testing.T) {
 	home := t.TempDir()
 	hash, err := auth.Hash(accountsDEPass)
@@ -45,7 +45,7 @@ func TestE2EAccountClone(t *testing.T) {
 		assertNoSecrets(t, out, stderr, accountsDEPass, "carol-own-password", hash)
 		return out
 	}
-	if out := clone("bob"); !strings.Contains(out, `"password":"copied"`) {
+	if out := clone("bob"); !strings.Contains(out, `"password":"init"`) {
 		t.Fatalf("bob: %s", out)
 	}
 	if out := clone("carol", "--password", "carol-own-password"); !strings.Contains(out, `"password":"new"`) {
@@ -64,7 +64,7 @@ func TestE2EAccountClone(t *testing.T) {
 	assertStatusSuccess(t, p.Status())
 	listen := p.Status().Data.Listen
 
-	// The copy opens with the source's password.
+	// The clone starts unclaimed; its first login claims the password.
 	bob := socks5AuthConnect(t, listen, "bob", accountsDEPass, backend)
 	echoRoundTrip(t, bob, bob)
 	_ = bob.Close()

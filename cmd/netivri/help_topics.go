@@ -97,7 +97,7 @@ func herr(code string, exit int, meaning string) helpError {
 
 var helpTopics = []helpTopic{
 	{
-		Name: "interactive", Group: groupConcepts, Summary: "Browse accounts, providers, and servers in a terminal",
+		Name: "interactive", Group: groupConcepts, Summary: "Browse and manage providers, accounts, and servers in a terminal",
 		Usage:       []string{"netivri -i", "netivri sub -i", "netivri account -i", "netivri server -i"},
 		Description: "Opens the interactive terminal shell. The default screen is Accounts; `sub` starts on Providers, `account` on Accounts, and `server` on Servers. Only these entry points are supported. It requires terminal stdin and stdout and cannot be combined with JSON output. State directory options (`--home {DIR}` and `--local`) work as for ordinary commands. `--quiet` and `--no-color` are not accepted in interactive mode.",
 		Flags:       []helpFlag{{"-i, --interactive[={BOOL}]", "Enable interactive mode; `=true` enables and `=false` disables it. The accepted values are `true` and `false`."}},
@@ -107,7 +107,47 @@ var helpTopics = []helpTopic{
 			{"Open Accounts explicitly with another state directory", "netivri account -i --home {DIR}"},
 			{"Open Servers", "netivri server -i"},
 		},
-		Notes:  []string{"Tabs are ordered Providers, Accounts, Servers; default starts at Accounts. Tab/Shift-Tab or Left/Right navigates, 1/2/3 selects, ? opens help (Esc/? closes), q/Ctrl-C quits. Capturing forms/detail views receive keys instead of global navigation/help/quit; Ctrl-C always quits. Providers: table arrows/j/k/PgUp/PgDn/Home/End; r reload, a add, u refresh selected, U refresh all, d remove after confirmation, Enter countries. Add fields Name/URL/Via; URL and Via masked. Tab/Enter advances; at the final field either submits. Shift-Tab back; Esc cancels. Countries scroll with arrows/j/k/PgUp/PgDn/Home/End; r reload, Esc back. Accounts: table arrows/j/k/PgUp/PgDn/Home/End; Enter details, a add, e edit, c clone, d delete, r reload; detail Esc/Backspace returns. Forms use Tab/Enter to advance; at final field either submits, Shift-Tab back, Esc cancel; arrows change choices, Space toggles. Account details also return on Esc or Backspace. Confirm provider/account deletions with y; n or Enter means no; Esc cancels. Add takes login/providers/country/exit/clients/pre/post hops; edit takes providers/country/exit/clients/hops (empty hop unchanged, none clears); clone takes new login and optional overrides. Hop fields masked. Passwords are never shown or set. Account password status alone (set / waiting for first use). Servers are read-only: arrows/j/k/PgUp/PgDn/Home/End select, Enter details, r reload, Esc/q back. Parameters show keys only. Saved edits use existing operations and a running angel picks them up. NOT_A_TERMINAL (exit 2) means stdin/stdout are not terminals. Header shows stopped/CLI version fallback or running angel listen address, uptime, and version."},
+		Notes: []string{
+			"The frame is fixed: a one-line header (angel state, listen address, uptime, version), " +
+				"a tab line (Providers, Accounts, Servers), the body and one-line toast and hint lines. " +
+				"From 100 columns the body is two panes, the list on the left and the card of the selected " +
+				"item on the right; below that it is a single pane that drills down (Enter opens the card, " +
+				"Esc goes back, a breadcrumb names the path); below 60x16 only an enlarge-the-window line. " +
+				"Tab/Shift-Tab move between the list and the card (Left/Right switch tabs), Up/Down move over " +
+				"rows and lines, Enter does the obvious thing, Esc goes back one level, ? opens the full help, " +
+				"q quits. The mouse clicks rows, tabs, field and action lines and buttons and scrolls with the wheel. " +
+				"Every list ends with a `+ Add` line (hotkey a), empty lists say what they are with it focused, and " +
+				"`/` opens an in-pane filter: typing narrows the rows, Esc clears, Enter keeps and selects the first match. " +
+				"Editing a field and every wizard step is one prompt dialog with a hint above the input, an error under " +
+				"it and Save/Cancel buttons; adding is a walk of such steps with Back/Next and a final review step. " +
+				"Secrets are masked everywhere; the shell never prints a secret except the explicit, warned " +
+				"Show client link reveal on the Servers screen.",
+			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
+				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
+				"Updated. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
+				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
+				"written when the name is not valid), Remove... (d; the confirm names dependent accounts). " +
+				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, fetch with a " +
+				"cancel. Empty state: A provider is a subscription of proxy nodes. Add one to start.",
+			"Accounts: the list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
+				"Allowed clients, Pre-hop and Post-hop (set or none, never the value) and the Password state " +
+				"(set or waiting for the first login). Actions: Clear pre-hop (P), Clear post-hop (O, disabled " +
+				"when there is no such hop), Clone... (c; the copy gets the route, clients and hops and a fresh " +
+				"placeholder password: the first client that authenticates sets it, the password is never copied), " +
+				"Remove (d). Passwords are never shown or set in the shell. Adding (a) is a wizard: login, provider, countries, exit, allowed clients, optional " +
+				"hops. Empty state: An account needs a provider. Add one on the Providers tab, then add the " +
+				"account here.",
+			"Servers: the list shows Name, Protocol, Port and State; the card shows Bind, Port, Accounts and " +
+				"the protocol's own parameters with secrets masked. Adding (a) is a wizard driven by the " +
+				"protocol's parameter schema: protocol choice (with a sentence and the transport per protocol), " +
+				"one prompt per parameter with defaults pre-filled and explained, a port step that shows a " +
+				"port-conflict error inline, a review step and a result screen with Show client link, the " +
+				"explicit, warned reveal of the credential. Actions: Show client link..., Rotate keys..., " +
+				"Remove... (the confirm says which clients stop working). The state comes from the running angel " +
+				"(running, not applied, angel stopped); with the angel stopped edits are saved and applied when " +
+				"it starts. The earlier version's Servers are read-only screens are replaced by this management.",
+			"NOT_A_TERMINAL (exit 2) means stdin or stdout is not a terminal; --json with -i is a usage error.",
+		},
 		Errors: []helpError{herr("NOT_A_TERMINAL", cli.ExitUsage, "interactive mode requires terminal stdin and stdout"), herr("USAGE", cli.ExitUsage, "unsupported command or arguments")},
 	},
 	{
@@ -505,18 +545,17 @@ var helpTopics = []helpTopic{
 			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init]",
 			"netivri account clone {SOURCE} {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
 		},
-		Description: "Creates {ACCOUNT} with the provider, exit country, exit mode and allowed_clients of {SOURCE} and, unless " +
-			"--password says " +
-			"otherwise, with the same password: the stored hash is copied, so both logins accept the same password. " +
-			"If {SOURCE} still has the placeholder 'init', so does the copy.\n\n" +
-			"--password {PASSWORD} gives the new account a password of its own (1 to 1024 bytes, stored as an " +
+		Description: "Creates {ACCOUNT} with the provider, exit country, exit mode and allowed_clients of {SOURCE}. By default the copy " +
+			"gets a fresh placeholder password: the first client that authenticates with {ACCOUNT} sets it, and " +
+			"the password of {SOURCE} is not copied. --password {PASSWORD} gives the new account a password of " +
+			"its own (1 to 1024 bytes, stored as an " +
 			"argon2id hash); --password init leaves it to the first client that connects. --provider and --country " +
 			"replace the copied route, each as in 'account add', and the new route must have stored nodes, otherwise " +
 			"nothing is created. {SOURCE} is never changed. A running angel picks the new account up within a few " +
 			"seconds.",
 		Flags: []helpFlag{
 			{"--exit {route|direct}", "Exit mode to copy over (default) or override; direct requires empty provider and country."},
-			{"--password {PASSWORD}", "A new password for {ACCOUNT}. Default: copy the password of {SOURCE}."},
+			{"--password {PASSWORD}", "A password for {ACCOUNT}. Default: a fresh placeholder, so the first client that authenticates sets it; the password of {SOURCE} is never copied."},
 			{"--password init", "Use the placeholder: the first password a client sends for {ACCOUNT} becomes its password."},
 			{"--provider {SUBSCRIPTION}[,...]", "Replace the copied provider (or list of providers, in priority order)."},
 			{"--country {COUNTRY}[,...]", "Replace the copied exit country (or list, in priority order; * stands for every country not named)."},
@@ -525,7 +564,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Clone alice but keep route mode", "netivri account clone alice bob --exit route"},
 			{"Clone an account with an explicit direct exit", "netivri account clone {SOURCE} {ACCOUNT} --exit direct"},
-			{"A second login with the same route and the same password", "netivri account clone alice bob"},
+			{"A second login with the same route; the first client sets the password", "netivri account clone alice bob"},
 			{"The same route, a password of its own", "netivri account clone alice bob --password choose-a-password"},
 			{"The same route, the first client sets the password", "netivri account clone alice bob --password init"},
 			{"The same login settings, another country", "netivri account clone alice carol --password init --country NL"},
@@ -543,7 +582,7 @@ var helpTopics = []helpTopic{
 		Notes: []string{
 			"A password given on the command line is visible in the shell history and to other local users in the " +
 				"process list. Use --password init to avoid typing it.",
-			"The password is never printed; 'password' in the result says copied, new or init.",
+			"The password is never printed; 'password' in the result says new or init.",
 		},
 		SeeAlso: []string{"account add", "account list", "account set-country"},
 	},

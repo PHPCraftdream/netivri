@@ -26,19 +26,21 @@ which handles interaction locally and does not change command behavior.
 
 Supported entry points are `netivri -i` (starts at Accounts), `netivri sub -i` (starts at Providers), `netivri account -i` (starts at Accounts), and `netivri server -i` (starts at Servers). `--home {DIR}` and `--local` use normal state-directory resolution. The shell requires terminal stdin and stdout; otherwise it returns `NOT_A_TERMINAL` (exit 2), with a hint listing all entry points. Interactive mode rejects `--json` and `NETIVRI_OUTPUT=json` with `USAGE` (exit 2). `--quiet` and `--no-color` are not accepted. Unsupported entry commands such as `status -i`, nested subcommands such as `sub add -i`, positional arguments, and arguments after a bare `--` are `USAGE` errors. Invalid `--home`/`--local` combinations or missing home values are also `USAGE` errors; all interactive usage errors carry the entry-point hint. `NO_COLOR` requests Bubble Tea's ASCII color profile.
 
-The frame tab order is Providers, Accounts, Servers. Tab/Right and Shift-Tab/Left move between tabs; 1/2/3 select a tab; `?` opens key help, closed by Esc or `?`; `q` and Ctrl-C quit. When a form or detail view captures input, global tab/help/quit keys do not apply; Ctrl-C always quits. The header polls in the background: a running angel supplies its listen address, uptime, and version; when stopped, the header shows stopped status and the CLI version fallback.
+The frame tab order is Providers, Accounts, Servers. The layout is fixed: a one-line header (a running angel supplies its listen address, uptime, and version; when stopped, the header shows stopped status and the CLI version fallback), a one-line tab bar, the body, and one-line toast and hint lines that never wrap. From 100 columns the body is two panes: the list on the left and the card of the selected item on the right; below 100 columns it is a single pane that drills down (Enter opens the card as its own screen, Esc goes back, a breadcrumb names the path); below 60x16 only a centred "enlarge the window" line is drawn.
+
+Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list and the card, Left/Right switch tabs, Enter opens or activates, Esc goes back one level, `?` opens the key help, `q` quits. Every list ends with a selectable `+ Add` line (`a` jumps to it), an empty list shows what it is with that line focused, and `/` opens an in-pane filter: typing narrows the rows, Esc clears it, Enter keeps it and selects the first match. The mouse clicks tabs, rows, field and action lines and buttons and scrolls with the wheel. Editing a field and every wizard step is one prompt dialog with a hint above the input and an error under it, with Save/Cancel buttons; adding is a walk of such steps with Back/Next and a final review step. Secrets are masked everywhere: the shell never prints a secret except the explicit, warned `Show client link` reveal on the Servers screen.
 
 ### Providers
 
-The table uses Up/Down or j/k, PgUp/PgDn, Home/End to select and scroll. `r` reloads; `a` adds; `u` refreshes the selected provider; `U` refreshes all; `d` removes the selected provider; Enter opens its countries. Confirm removal with `y`; `n` or Enter means no; Esc cancels. Countries use Up/Down or j/k, PgUp/PgDn, Home/End; `r` reloads and Esc returns. Refresh results scroll with PgUp/PgDn, Up/Down, j/k, Home/End; Esc closes them. Add has Name, URL, and Via fields; URLs/proxies are masked. Tab or Enter advances; at the final field either submits. Shift-Tab goes back; Esc cancels. Errors redact secret values.
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated; Enter on a field line edits it. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot atomically; nothing is written when the name is not valid), Remove... (`d`; the confirmation names the dependent accounts).
 
 ### Accounts
 
-The table uses Up/Down or j/k, PgUp/PgDn, Home/End; Enter shows details, `a` adds, `e` edits, `c` clones, `d` deletes after a `y`/`n`/Esc confirmation, and `r` reloads. In details, Esc or Backspace returns. Confirm deletion with `y`; `n` or Enter means no; Esc cancels. Forms use Tab or Enter to advance; at the final field either submits. Shift-Tab goes back, and Esc cancels. Up/Down changes choice selection; Space toggles multi-choice options. Add fields cover login, providers, country, exit route, allowed clients, and optional pre/post hop URLs. Edit covers providers, country, exit, allowed clients, and pre/post hop URLs: an empty hop value leaves it unchanged; `none` clears it. Clone takes a new login and optional overrides. Hop URLs are masked and errors redact them. Passwords are never displayed or set; account views show only whether a password is set or awaiting first use. The first proxy password used for an account establishes it. Provider and account edits persist using existing operations; a running angel automatically picks up saved changes.
+The list shows Login, Provider and Exit. `a` adds (wizard: login, provider, countries, exit, allowed clients, optional hops). The card shows Provider, Countries, Exit, Allowed clients, Pre-hop and Post-hop (shown only as set or none, never the value; Enter on them opens a prompt where empty clears) and the Password state (`set` or `waiting for the first login`). Actions: Clear pre-hop (`P`) and Clear post-hop (`O`, disabled when the account has no such hop), Clone... (`c`; the copy gets the provider, countries, exit and clients of the source and a fresh placeholder password — the first client that authenticates sets it; the password is never copied), Remove (`d`). Passwords are never displayed or set by the shell.
 
 ### Servers
 
-This screen is read-only. Up/Down or j/k, PgUp/PgDn, Home/End select; Enter opens details; `r` reloads. Esc or `q` returns from details. Add, link, rotate, and remove remain `netivri server` commands. Configured parameters are shown by key, not secret value; runtime status/counters appear when available.
+Full management in the shell. The list shows Name, Protocol, Port and State. `a` adds: a wizard driven by the chosen protocol's parameter schema — protocol choice (with a sentence and the transport per protocol), then one prompt per parameter with the default pre-filled and explained, a port step that shows a port-conflict error inline — followed by a review step, creation and a result screen with `[ Show client link ]`, the explicit, warned reveal of the client credential. The card shows Bind, Port, Accounts and the protocol's own parameters, with secrets masked. Actions: Show client link..., Rotate keys... and Remove... (the confirmation says which clients stop working). The state comes from the running angel (`running`, `not applied`, `angel stopped`); with the angel stopped edits are saved and applied when it starts.
 
 See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation details.
 
@@ -597,19 +599,20 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
 - `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider, exit
-  country, `allowed_clients`, `pre_socks5` and `post_socks5` of `{SOURCE}` and, by default, its password: the stored hash is copied,
-  so both logins accept the same password (a source that still has the `init`
-  placeholder gives a copy with the placeholder). `--exit {route|direct}`
+  country, `allowed_clients`, `pre_socks5` and `post_socks5` of `{SOURCE}` and,
+  by default, a fresh placeholder password: the first client that
+  authenticates with `{ACCOUNT}` sets it, and the password of `{SOURCE}` is
+  not copied. `--exit {route|direct}`
   overrides the copied exit; otherwise it is inherited. `--password {PASSWORD}` gives
   the new account a password of its own (1 to 1024 bytes, hashed with argon2id
   like any other), and `--password init` leaves it to the first client that
-  connects. `--clients {RULES}` replaces the copied `allowed_clients` with the
+  connects as well. `--clients {RULES}` replaces the copied `allowed_clients` with the
   same rules as `add`. `--provider` and `--country` replace the copied route with the same
   rules as `add`; a replaced route is checked like `set-country` checks it, and
   with no stored node nothing is created (`NO_NODES_FOR_COUNTRY`). Unlike
   `add`, an existing `{ACCOUNT}` is always `ACCOUNT_EXISTS` (exit 6), and an
   unknown `{SOURCE}` is `ACCOUNT_NOT_FOUND` (exit 5). The result carries
-  `account` (as in `list`), `cloned_from` and `password` (`copied`, `new` or
+  `account` (as in `list`), `cloned_from` and `password` (`new` or
   `init`); the password and its hash are never printed. A password given with
   `--password` is visible in the shell history and the process list: prefer
   `--password init` when that matters. `{SOURCE}` is not changed.

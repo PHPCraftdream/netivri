@@ -150,7 +150,7 @@ func newAccountsScreen(home string, env tui.Env) tui.Screen {
 	}
 	l := tui.NewList([]tui.ListColumn{{Title: "LOGIN", Min: 8, Flex: 2}, {Title: "PROVIDER", Min: 8, Flex: 2}, {Title: "EXIT", Min: 5, Flex: 1}}, nil)
 	l.Title = "Accounts"
-	l.EmptyText = "An account needs a Provider first. Switch to Providers to add one."
+	l.EmptyText = "An account needs a provider. Add one on the Providers tab, then add the account here."
 	l.AddLabel = "+ Add account [a]"
 	s.workspace = tui.NewWorkspace(l, tui.NewCard("Account", nil))
 	s.workspace.SetTheme(s.theme)
@@ -203,7 +203,7 @@ func (s *accountsScreen) Bindings() tui.ActionHints {
 	return tui.ActionHints(bindings)
 }
 func (s *accountsScreen) KeyHints() string {
-	return "↑↓ select · Enter open · a add · e edit · c clone · d remove · r reload · Tab pane"
+	return "↑↓ select · Enter open · a add · e edit · c clone · d remove · r reload · / filter · Tab pane"
 }
 func (s *accountsScreen) Init() tea.Cmd { return tea.Batch(s.reload(), s.loadChoices(), s.rateTick()) }
 func (s *accountsScreen) now() time.Time {
@@ -684,7 +684,7 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 		pw = "set"
 	}
 	pre, post := accountsHopLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
-	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: true}, {ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: pre == "none"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: true}, {ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: post == "none"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
+	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: true}, {ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: a.PreSOCKS5.Source != "account"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: true}, {ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
 	if s.workspace.Card != nil {
 		s.workspace.Card.Focused = true
 	}
@@ -915,8 +915,23 @@ func (s *accountsScreen) providerOptions() []tui.PromptOption {
 	}
 	return out
 }
+
+// nextCloneLogin proposes login-2, login-3, ... for the clone of a, bumping
+// the number until the login is free among the loaded accounts.
+func (s *accountsScreen) nextCloneLogin(login string) string {
+	taken := map[string]bool{}
+	for _, r := range s.rows {
+		taken[r.Login] = true
+	}
+	for n := 2; ; n++ {
+		candidate := login + "-" + strconv.Itoa(n)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+}
 func (s *accountsScreen) beginClone(a accountInfo) tea.Cmd {
-	p := prompt(tui.TextPrompt, "Clone account", "New login", "Other fields, password state and hops are copied.", "")
+	p := prompt(tui.TextPrompt, "Clone account", "New login", "Provider, countries, exit, clients and hops are copied; the clone's password is set by its first login.", s.nextCloneLogin(a.Login))
 	p.Validate = func(v string) error {
 		if !config.ValidAccountLogin(v) {
 			return errors.New("invalid account login")
