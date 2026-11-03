@@ -137,11 +137,10 @@ func runServer(args []string, stdout io.Writer) error {
 		if len(rest) != 0 {
 			return usage()
 		}
-		items := make([]serverView, 0, len(cfg.Servers))
-		for _, s := range cfg.Servers {
-			items = append(items, serverPublic(cfg, s))
+		items, err := serverListConfig(home, cfg)
+		if err != nil {
+			return err
 		}
-		overlayServerRuntimeCounters(home, items)
 		cli.Success(stdout, map[string]any{"servers": items})
 		return nil
 	case "add":
@@ -301,9 +300,11 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		switch sub {
 		case "show":
-			view := []serverView{serverPublic(cfg, *entry)}
-			overlayServerRuntimeCounters(home, view)
-			cli.Success(stdout, map[string]any{"server": view[0]})
+			view, err := serverShowConfig(home, cfg, name)
+			if err != nil {
+				return err
+			}
+			cli.Success(stdout, map[string]any{"server": view})
 			return nil
 		case "remove":
 			_, i := cfg.GetServer(name)
