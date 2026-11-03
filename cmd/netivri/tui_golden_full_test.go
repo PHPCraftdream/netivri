@@ -458,7 +458,7 @@ func TestFullScreenSnapshots(t *testing.T) {
 						s.workspace.SetTheme(tui.NewTheme())
 					}
 					got := ansi.Strip(frame.View().Content)
-					want := literalWant(tc.name, pop, size[0])
+					want := literalWant(tc.title, pop, size[0])
 					if lines := strings.Split(want, "\n"); len(lines) != size[1] {
 						t.Fatalf("literal lines %d, want %d", len(lines), size[1])
 					} else {

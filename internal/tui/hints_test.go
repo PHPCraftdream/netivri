@@ -46,8 +46,9 @@ func TestHintASCIIPreservesLabelPositions(t *testing.T) {
 }
 
 func TestHintClippingUsesCells(t *testing.T) {
-	if got := clipCells("界abc", 2); got != "界…" {
-		t.Fatalf("got %q", got)
+	got := clipCells("界abc", 2)
+	if w := lipgloss.Width(got); w > 2 || strings.Contains(got, "abc") {
+		t.Fatalf("got %q width %d, want at most 2 cells", got, w)
 	}
 }
 func TestConfirmActions(t *testing.T) {

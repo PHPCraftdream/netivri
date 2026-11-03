@@ -445,6 +445,10 @@ func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
 			t.Fatalf("after enter %d wizard index = %d", i, d.wizard.Index)
 		}
 	}
+	// The eighth Enter accepts the last step and opens the review.
+	if c := enter(); c != nil {
+		t.Fatal("last step advance produced a command")
+	}
 	if !d.wizard.Review {
 		t.Fatal("last step enter did not reach review")
 	}
@@ -479,6 +483,11 @@ func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
 
 func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	h := accountsHome(t)
+	cfg0 := config.Default()
+	cfg0.Subscriptions = []config.Subscription{{Name: "main", URL: "https://x.invalid/a"}}
+	if e := config.Save(config.ConfigPath(h), cfg0); e != nil {
+		t.Fatal(e)
+	}
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
 		t.Fatal(e)
 	}

@@ -46,7 +46,7 @@ func contractRows(screen tui.Screen) {
 		s.rows = []accountInfo{{Login: "fixture"}}
 		s.syncRows("fixture")
 	case *serversScreen:
-		s.rows = []serverView{{Name: "fixture", Protocol: "test", Port: 1234}}
+		s.rows = []serverView{{Name: "fxt", Protocol: "test", Port: 1234}}
 		s.syncWorkspace()
 	}
 }
@@ -81,7 +81,7 @@ func TestTUIFrameASCIIAndNoColorPreservePositions(t *testing.T) {
 				name  string
 				index int
 				label string
-			}{{"providers", 0, "fixture"}, {"accounts", 1, "fixture"}, {"servers", 2, "fixture"}} {
+			}{{"providers", 0, "fixture"}, {"accounts", 1, "fixture"}, {"servers", 2, "fxt"}} {
 				t.Run(screenCase.name, func(t *testing.T) {
 					frame, _, _, screen := contractFrame(t, screenCase.index)
 					_ = frame.Init() // ensure the tab screen exists before sizing

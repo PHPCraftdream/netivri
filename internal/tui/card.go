@@ -263,6 +263,9 @@ func (c *Card) View(w, h int) string {
 		styled := lipgloss.NewStyle().Foreground(border).Render
 		lines[0] = styled(lines[0])
 		lines[len(lines)-1] = styled(lines[len(lines)-1])
+		for i := 1; i < len(lines)-1; i++ {
+			lines[i] = styled(b.Left) + strings.TrimSuffix(strings.TrimPrefix(lines[i], b.Left), b.Right) + styled(b.Right)
+		}
 	}
 	return strings.Join(lines, "\n")
 }
