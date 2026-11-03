@@ -711,8 +711,10 @@ jobs:
         run: |
           set -euo pipefail
           VER="${{ steps.version.outputs.version }}"
+          # The .rpm is unsigned (the checksums and the build provenance vouch for
+          # it) and current rpm refuses an unsigned package unless told otherwise.
           docker run --rm -v "${PWD}/linux-pkgs:/pkgs:ro" fedora:latest sh -euc "
-            rpm -i /pkgs/netivri_${VER}_linux_amd64.rpm
+            rpm -i --nosignature /pkgs/netivri_${VER}_linux_amd64.rpm
             netivri version
             rpm -qi netivri
             test -f /usr/share/doc/netivri/LICENSE

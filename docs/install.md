@@ -61,7 +61,9 @@ them listed there and covered by the build provenance):
   (`releases/latest/download/install.sh` always points at the newest one.)
 - `netivri_{VERSION}_linux_{ARCH}.deb` and `.rpm` (amd64 and arm64): the binary
   in `/usr/bin` and the licenses under `/usr/share/doc/netivri`. Install with
-  `sudo dpkg -i` or `sudo rpm -i`; remove with `dpkg -r netivri` or
+  `sudo dpkg -i` or `sudo rpm -i --nosignature` (the `.rpm` is not signed, and
+  current rpm refuses an unsigned package with `does not verify: no signature`;
+  check it against `SHA256SUMS` first); remove with `dpkg -r netivri` or
   `rpm -e netivri`. The amd64 packages are installed and removed again by the
   release workflow before anything is published.
 - `netivri.json` — a Scoop manifest: `scoop install https://github.com/PHPCraftdream/netivri/releases/download/v{VERSION}/netivri.json`.

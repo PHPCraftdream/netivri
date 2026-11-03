@@ -116,6 +116,11 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **Installing the `.rpm` on a current Fedora.** The `.rpm` is unsigned and recent rpm
+  refuses such a package (`does not verify: no signature`), which also failed the Fedora
+  install check of the release workflow. The check and `docs/install.md` now use
+  `rpm -i --nosignature` (verify the file against `SHA256SUMS`).
+
 - **Direct-only server reloads fall back safely.** Adding servers when explicit direct accounts leave no in-place route table now restarts the listener on `ErrReconfigureUnsupported`; server transaction errors still remain visible without a restart.
 
 - Account commands no longer write a configuration that the next load refuses (account add init).
