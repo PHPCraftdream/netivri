@@ -7,6 +7,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestActionHintsShortAndFullUseEnabledBindings(t *testing.T) {
@@ -14,7 +15,7 @@ func TestActionHintsShortAndFullUseEnabledBindings(t *testing.T) {
 	if len(bindings.ShortHelp()) != 2 || len(bindings.FullHelp()) != 1 || len(bindings.FullHelp()[0]) != 2 {
 		t.Fatal("bindings not grouped")
 	}
-	line := HintLine(bindings, 80)
+	line := ansi.Strip(HintLine(bindings, 80))
 	if !strings.Contains(line, "a add") || !strings.Contains(line, "d remove") {
 		t.Fatalf("hints: %q", line)
 	}
@@ -22,7 +23,7 @@ func TestActionHintsShortAndFullUseEnabledBindings(t *testing.T) {
 		t.Fatal("hint over width")
 	}
 	bindings[1].SetEnabled(false)
-	if strings.Contains(HintLine(bindings, 80), "remove") {
+	if strings.Contains(ansi.Strip(HintLine(bindings, 80)), "remove") {
 		t.Fatal("disabled binding rendered")
 	}
 }

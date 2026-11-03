@@ -504,8 +504,8 @@ func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	if s.selectedLogin() != "alice" || s.workspace.Card.Title != "Account alice" {
 		t.Fatalf("row click selected %q card %q", s.selectedLogin(), s.workspace.Card.Title)
 	}
-	// (b) Focus the card and click the Provider field line at its label X
-	// (y=3: border(1) + title(1) + info(1); screen x=45 -> card-local x=2,
+	// (b) Focus the card and click the Allowed clients field line at its label X
+	// (y=6: border(1) + title(1) + info(1) + 3 fields; screen x=45 -> card-local x=2,
 	// left of the [edit] range, so the first click only selects).
 	s.workspace.SetFocus(tui.PaneCard)
 	s.refreshSelectedCard(true)
@@ -514,22 +514,25 @@ func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	if s.workspace.Card.Selected != 1 {
 		t.Fatalf("card selection = %d", s.workspace.Card.Selected)
 	}
-	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 3, Button: tea.MouseLeft})
-	if s.dialog != nil || s.workspace.Card.Selected != 0 {
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 6, Button: tea.MouseLeft})
+	if s.dialog != nil || s.workspace.Card.Selected != 3 {
 		t.Fatalf("first card click opened a dialog or ignored the selection: %v %d", s.dialog != nil, s.workspace.Card.Selected)
 	}
-	// Second click on the same line activates it and opens the provider editor.
-	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 3, Button: tea.MouseLeft})
-	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Label != "Provider" {
-		t.Fatalf("card activation did not open the Provider prompt: %+v", s.dialog)
+	// Second click on the same line activates it and opens the clients editor.
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 6, Button: tea.MouseLeft})
+	if s.dialog == nil || s.dialog.prompt == nil {
+		t.Fatalf("card activation did not open the Allowed clients prompt: %+v", s.dialog)
 	}
-	// (c) Type a provider, then click [ Save ] on the button row (buttonY = h-1
+	// (c) Type a CIDR, then click [ Save ] on the button row (buttonY = h-1
 	// after rendering the dialog at height 26; segment [ Save ] spans x 0..9).
 	provider := s.dialog.prompt
-	for _, r := range "main" {
+	for range provider.Value {
+		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range "10.0.0.0/8" {
 		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	if provider.Value != "main" {
+	if provider.Value != "10.0.0.0/8" {
 		t.Fatalf("prompt value = %q", provider.Value)
 	}
 	_ = s.View(120, 26) // render so the prompt lays out its buttons at y=25
@@ -551,7 +554,7 @@ func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Accounts[0].Login != "alice" || cfg.Accounts[0].Provider != "main" {
-		t.Fatalf("save did not persist the provider edit: %#v", cfg.Accounts[0])
+	if cfg.Accounts[0].Login != "alice" || cfg.Accounts[0].AllowedClients != "10.0.0.0/8" {
+		t.Fatalf("save did not persist the clients edit: %#v", cfg.Accounts[0])
 	}
 }

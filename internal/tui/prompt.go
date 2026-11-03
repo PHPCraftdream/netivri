@@ -277,7 +277,7 @@ func (p *Prompt) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			return p, nil
 		}
 	}
-	if key == " " && p.Kind == MultiChoicePrompt {
+	if (key == " " || key == "space") && p.Kind == MultiChoicePrompt {
 		p.toggle()
 		return p, nil
 	}

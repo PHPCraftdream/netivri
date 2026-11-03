@@ -574,7 +574,12 @@ func (f *Frame) activitySlot() string {
 	if len(f.background) == 0 {
 		return padCells("", activityWidth)
 	}
-	return padCells(f.spinner.View()+" "+itoa(len(f.background))+" tasks", activityWidth)
+	n := len(f.background)
+	label := " tasks"
+	if n == 1 {
+		label = " task"
+	}
+	return padCells(f.spinner.View()+" "+itoa(n)+label, activityWidth)
 }
 func (f *Frame) hintLine() string {
 	bindings := append([]bubbleskey.Binding{}, globalShortBindings...)
