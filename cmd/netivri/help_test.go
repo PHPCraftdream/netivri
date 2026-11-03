@@ -394,6 +394,9 @@ func topicFor(line string) *helpTopic {
 	if len(f) < 2 || f[0] != "netivri" {
 		return nil
 	}
+	if f[1] == "-i" || f[1] == "--interactive" {
+		return findHelpTopic("interactive")
+	}
 	if len(f) >= 3 {
 		if t := findHelpTopic(f[1] + " " + f[2]); t != nil {
 			return t
@@ -403,7 +406,7 @@ func topicFor(line string) *helpTopic {
 }
 
 func documentedFlags(t *helpTopic) map[string]bool {
-	ok := map[string]bool{"--home": true, "--local": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true}
+	ok := map[string]bool{"--home": true, "--local": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true, "-i": true, "--interactive": true}
 	for _, f := range t.Flags {
 		for _, part := range strings.Split(f.Name, ",") {
 			if fields := strings.Fields(part); len(fields) > 0 {
