@@ -68,6 +68,10 @@ func interactiveOptions(w io.Writer, home string, start int) tui.Options {
 	tabs := make([]tui.Tab, 0, 3)
 	for _, name := range []string{"Providers", "Accounts", "Servers"} {
 		n := name
+		if n == "Servers" {
+			tabs = append(tabs, tui.Tab{Title: n, New: func(env tui.Env) tui.Screen { return newServersScreen(home, env) }})
+			continue
+		}
 		tabs = append(tabs, tui.Tab{Title: n, New: func(tui.Env) tui.Screen { return &interactiveScreen{title: n} }})
 	}
 	return tui.Options{Tabs: tabs, Start: start, Home: home, Input: os.Stdin, Output: w, Header: tuiHeader{home: home, now: time.Now}, Now: time.Now}
