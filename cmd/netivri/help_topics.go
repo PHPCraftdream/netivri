@@ -68,7 +68,7 @@ var helpGlobalFlags = []helpFlag{
 	{"--quiet", "Accepted for compatibility; changes nothing today."},
 	{"--no-color", "Accepted for compatibility; there is no color output."},
 	{"-h, --help", "Show help for a command, for example: netivri up --help"},
-	{"-i, --interactive[={BOOL}]", "Open the interactive terminal shell; use with no command, sub, account, or server. Requires terminal stdin/stdout and cannot be combined with JSON output. `true` and `false` are the accepted boolean values; the flag is not supported by the JSON Schema."},
+	{"-i, --interactive[={BOOL}]", "Open the interactive terminal shell; use with no command, sub, account, or server. Requires terminal stdin/stdout and cannot be combined with JSON output. `true` and `false` are the accepted boolean values; the flag is not supported by the JSON Schema. See `netivri help interactive` for screens and keys."},
 }
 
 const helpOutput = `Every command prints one document on stdout, in Ktav by default: ` +
@@ -107,13 +107,13 @@ var helpTopics = []helpTopic{
 			{"Open Accounts explicitly with another state directory", "netivri account -i --home {DIR}"},
 			{"Open Servers", "netivri server -i"},
 		},
-		Notes:  []string{"Tabs are ordered Providers, Accounts, Servers; the default starts at Accounts. Use Tab/Shift-Tab or Left/Right to move, 1/2/3 to select, ? for key help and q to quit. The shell currently shows placeholder screens, each labeled {TAB} not available yet. When no angel is running, the header shows the stopped state and the CLI version fallback; a running angel supplies listen address, uptime and version."},
+		Notes:  []string{"Tabs are ordered Providers, Accounts, Servers; default starts at Accounts. Tab/Shift-Tab or Left/Right navigates, 1/2/3 selects, ? opens help (Esc/? closes), q/Ctrl-C quits. Capturing forms/detail views receive keys instead of global navigation/help/quit; Ctrl-C always quits. Providers: table arrows/j/k/PgUp/PgDn/Home/End; r reload, a add, u refresh selected, U refresh all, d remove after confirmation, Enter countries. Add fields Name/URL/Via; URL and Via masked. Tab/Enter advances; at the final field either submits. Shift-Tab back; Esc cancels. Countries scroll with arrows/j/k/PgUp/PgDn/Home/End; r reload, Esc back. Accounts: table arrows/j/k/PgUp/PgDn/Home/End; Enter details, a add, e edit, c clone, d delete, r reload; detail Esc/Backspace returns. Forms use Tab/Enter to advance; at final field either submits, Shift-Tab back, Esc cancel; arrows change choices, Space toggles. Account details also return on Esc or Backspace. Confirm provider/account deletions with y; n or Enter means no; Esc cancels. Add takes login/providers/country/exit/clients/pre/post hops; edit takes providers/country/exit/clients/hops (empty hop unchanged, none clears); clone takes new login and optional overrides. Hop fields masked. Passwords are never shown or set. Account password status alone (set / waiting for first use). Servers are read-only: arrows/j/k/PgUp/PgDn/Home/End select, Enter details, r reload, Esc/q back. Parameters show keys only. Saved edits use existing operations and a running angel picks them up. NOT_A_TERMINAL (exit 2) means stdin/stdout are not terminals. Header shows stopped/CLI version fallback or running angel listen address, uptime, and version."},
 		Errors: []helpError{herr("NOT_A_TERMINAL", cli.ExitUsage, "interactive mode requires terminal stdin and stdout"), herr("USAGE", cli.ExitUsage, "unsupported command or arguments")},
 	},
 	{
 		Name:        "server",
 		Summary:     "Manage protocol server listeners",
-		Usage:       []string{"netivri server {protocols|add|list|show|link|rotate|remove} [arguments]"},
+		Usage:       []string{"netivri server {protocols|add|list|show|link|rotate|remove} [arguments]", "netivri server -i"},
 		Description: "Manages protocol server endpoints. `status` and server `list`/`show` expose runtime counters when a local angel is available; zero-valued counters are omitted. `doctor` reports safe aggregate counter summaries. `status --watch` includes its existing server fields when listeners are running; its counter coverage is unchanged.",
 		Examples:    []helpExample{{"List registered server protocols", "netivri server protocols"}},
 		Notes:       []string{"Registered protocols in this build: " + strings.Join(servers.Names(), ", ")},
@@ -271,7 +271,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub",
 		Summary: "Manage provider subscriptions",
-		Usage:   []string{"netivri sub {add|list|update|rm|countries} [arguments]"},
+		Usage:   []string{"netivri sub {add|list|update|rm|countries} [arguments]", "netivri sub -i"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
 			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
@@ -422,6 +422,7 @@ var helpTopics = []helpTopic{
 		Usage: []string{
 			"netivri account {add|clone|list|show|set-exit|set-country}",
 			"netivri account {set-provider|set-clients|set-socks5|rm} [arguments]",
+			"netivri account -i",
 		},
 		Description: "An account is a proxy login. Several accounts share one port. Each may name a provider (a " +
 			"subscription) and an exit country, and its traffic leaves only through matching nodes, with no fallback " +

@@ -22,11 +22,25 @@ which handles interaction locally and does not change command behavior.
 
 ## Interactive shell
 
-`-i` and `--interactive` enable the interactive terminal shell, and the flag may appear anywhere before a bare `--`; the last encountered interactive value wins. `-i=true` and `--interactive=true` enable it; `-i=false` and `--interactive=false` disable it. Invalid boolean values are `USAGE` errors. The global scan stops at `--`; flags after it are not scanned. With interactive mode disabled, ordinary command and help behavior is preserved.
+`-i` and `--interactive` enable the interactive terminal shell; the flag may appear before or after the supported command and the last encountered value wins. `-i=true` and `--interactive=true` enable it; `-i=false` and `--interactive=false` disable it. Invalid boolean values are `USAGE` errors. The global scan stops at `--`; flags after it are not scanned. With interactive mode disabled, ordinary command and help behavior is preserved.
 
-Supported entry points are `netivri -i` (starts at Accounts), `netivri sub -i` (starts at Providers), `netivri account -i` (starts at Accounts), and `netivri server -i` (starts at Servers). Tab order is Providers, Accounts, Servers. Use Tab/Shift-Tab or Left/Right to move, 1/2/3 to select, ? for key help, and q to quit. These are the only accepted interactive entry points; no nested subcommands or positional arguments are allowed. `--local` uses the normal state-directory resolution. The `--home` option accepts `{DIR}` after any entry point. `--quiet` and `--no-color` are not accepted by the interactive shell.
+Supported entry points are `netivri -i` (starts at Accounts), `netivri sub -i` (starts at Providers), `netivri account -i` (starts at Accounts), and `netivri server -i` (starts at Servers). `--home {DIR}` and `--local` use normal state-directory resolution. The shell requires terminal stdin and stdout; otherwise it returns `NOT_A_TERMINAL` (exit 2), with a hint listing all entry points. Interactive mode rejects `--json` and `NETIVRI_OUTPUT=json` with `USAGE` (exit 2). `--quiet` and `--no-color` are not accepted. Unsupported entry commands such as `status -i`, nested subcommands such as `sub add -i`, positional arguments, and arguments after a bare `--` are `USAGE` errors. Invalid `--home`/`--local` combinations or missing home values are also `USAGE` errors; all interactive usage errors carry the entry-point hint. `NO_COLOR` requests Bubble Tea's ASCII color profile.
 
-Interactive mode rejects `--json` and `NETIVRI_OUTPUT=json` with `USAGE`; it also requires both stdin and the supplied stdout to be terminals. Otherwise it returns additive error `NOT_A_TERMINAL` (exit 2) with a hint listing the four entry points and recommending plain commands or `--json`. If no angel is running, the header shows it stopped and uses the CLI version fallback; a running angel supplies its listen address, uptime, and version. The current Providers, Accounts, and Servers screens are placeholders, each labeled `{TAB} not available yet`. `NO_COLOR` remains respected by the terminal renderer.
+The frame tab order is Providers, Accounts, Servers. Tab/Right and Shift-Tab/Left move between tabs; 1/2/3 select a tab; `?` opens key help, closed by Esc or `?`; `q` and Ctrl-C quit. When a form or detail view captures input, global tab/help/quit keys do not apply; Ctrl-C always quits. The header polls in the background: a running angel supplies its listen address, uptime, and version; when stopped, the header shows stopped status and the CLI version fallback.
+
+### Providers
+
+The table uses Up/Down or j/k, PgUp/PgDn, Home/End to select and scroll. `r` reloads; `a` adds; `u` refreshes the selected provider; `U` refreshes all; `d` removes the selected provider; Enter opens its countries. Confirm removal with `y`; `n` or Enter means no; Esc cancels. Countries use Up/Down or j/k, PgUp/PgDn, Home/End; `r` reloads and Esc returns. Refresh results scroll with PgUp/PgDn, Up/Down, j/k, Home/End; Esc closes them. Add has Name, URL, and Via fields; URLs/proxies are masked. Tab or Enter advances; at the final field either submits. Shift-Tab goes back; Esc cancels. Errors redact secret values.
+
+### Accounts
+
+The table uses Up/Down or j/k, PgUp/PgDn, Home/End; Enter shows details, `a` adds, `e` edits, `c` clones, `d` deletes after a `y`/`n`/Esc confirmation, and `r` reloads. In details, Esc or Backspace returns. Confirm deletion with `y`; `n` or Enter means no; Esc cancels. Forms use Tab or Enter to advance; at the final field either submits. Shift-Tab goes back, and Esc cancels. Up/Down changes choice selection; Space toggles multi-choice options. Add fields cover login, providers, country, exit route, allowed clients, and optional pre/post hop URLs. Edit covers providers, country, exit, allowed clients, and pre/post hop URLs: an empty hop value leaves it unchanged; `none` clears it. Clone takes a new login and optional overrides. Hop URLs are masked and errors redact them. Passwords are never displayed or set; account views show only whether a password is set or awaiting first use. The first proxy password used for an account establishes it. Provider and account edits persist using existing operations; a running angel automatically picks up saved changes.
+
+### Servers
+
+This screen is read-only. Up/Down or j/k, PgUp/PgDn, Home/End select; Enter opens details; `r` reloads. Esc or `q` returns from details. Add, link, rotate, and remove remain `netivri server` commands. Configured parameters are shown by key, not secret value; runtime status/counters appear when available.
+
+See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation details.
 
 ## Commands
 

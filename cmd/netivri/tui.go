@@ -9,21 +9,11 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
 	"golang.org/x/term"
 )
-
-type interactiveScreen struct{ title string }
-
-func (s *interactiveScreen) Title() string                        { return s.title }
-func (s *interactiveScreen) Init() tea.Cmd                        { return nil }
-func (s *interactiveScreen) Update(tea.Msg) (tui.Screen, tea.Cmd) { return s, nil }
-func (s *interactiveScreen) View(_, _ int) string                 { return s.title + " not available yet\n" }
-func (s *interactiveScreen) KeyHints() string                     { return "q quit" }
-func (s *interactiveScreen) CapturingInput() bool                 { return false }
 
 type tuiHeader struct {
 	home string
@@ -65,22 +55,10 @@ var interactiveOutputTerminal = func(w io.Writer) bool { f, ok := w.(*os.File); 
 var interactiveRunner = func(w io.Writer, home string, start int) error { return tui.Start(interactiveOptions(w, home, start)) }
 
 func interactiveOptions(w io.Writer, home string, start int) tui.Options {
-	tabs := make([]tui.Tab, 0, 3)
-	for _, name := range []string{"Providers", "Accounts", "Servers"} {
-		n := name
-		if n == "Servers" {
-			tabs = append(tabs, tui.Tab{Title: n, New: func(env tui.Env) tui.Screen { return newServersScreen(home, env) }})
-			continue
-		}
-		if n == "Providers" {
-			tabs = append(tabs, tui.Tab{Title: n, New: func(env tui.Env) tui.Screen { return newProvidersScreen(home, env) }})
-			continue
-		}
-		if n == "Accounts" {
-			tabs = append(tabs, tui.Tab{Title: n, New: func(env tui.Env) tui.Screen { return newAccountsScreen(home, env) }})
-			continue
-		}
-		tabs = append(tabs, tui.Tab{Title: n, New: func(tui.Env) tui.Screen { return &interactiveScreen{title: n} }})
+	tabs := []tui.Tab{
+		{Title: "Providers", New: func(env tui.Env) tui.Screen { return newProvidersScreen(home, env) }},
+		{Title: "Accounts", New: func(env tui.Env) tui.Screen { return newAccountsScreen(home, env) }},
+		{Title: "Servers", New: func(env tui.Env) tui.Screen { return newServersScreen(home, env) }},
 	}
 	return tui.Options{Tabs: tabs, Start: start, Home: home, Input: os.Stdin, Output: w, Header: tuiHeader{home: home, now: time.Now}, Now: time.Now}
 }
