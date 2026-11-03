@@ -413,7 +413,7 @@ func (a *loggedAuth) Users() []string { return a.inner.Users() }
 
 // run writes the reports every period, the summary of the accounts every beat
 // and the last period when ctx ends.
-func (c *connLog) run(ctx context.Context, every, beat time.Duration) {
+func (c *connLog) run(ctx context.Context, every, beat time.Duration, tick func()) {
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	beats := time.NewTicker(beat)
@@ -422,9 +422,15 @@ func (c *connLog) run(ctx context.Context, every, beat time.Duration) {
 		select {
 		case <-ctx.Done():
 			c.flush()
+			if tick != nil {
+				tick()
+			}
 			return
 		case <-ticker.C:
 			c.flush()
+			if tick != nil {
+				tick()
+			}
 		case <-beats.C:
 			c.heartbeat()
 		}

@@ -394,10 +394,14 @@ stage that speaks that protocol (an HTTP proxy's `need auth` to the only HTTP st
 `unknown hop`. A route that is only a node has no stage in its lines, and a connection that breaks while it
 runs is not attributed. The address is matched, never printed. The
 same node id under two providers is one server: when its twin goes down within 10 seconds,
-that line is `INFO` and ends with `, same server as {LABEL}`, and the pair counts once for
-bursts and flapping. A node
-that has never answered since it was added (no probe or dial has ever succeeded) is one
-`INFO` line, `node ... has never answered: 2 probe failures (timeout)`, and counts toward
+that line ends with `, same server as {LABEL}`, and the pair counts once for burst and
+flapping. A node
+that has never answered since it was added is grouped by distinct server id (the label suffix after its
+provider): the first two unique servers in each 30-second window get individual `INFO` lines; the third
+emits its node detail at `DEBUG` and one `INFO` summary, and later unique servers emit individual `DEBUG`
+details. Twins keep the annotation and the server’s chosen level (`DEBUG` when collapsed), without counting
+again. When the window expires, the minute connection-log tick writes one final summary only if the initial
+summary was emitted and the total grew, then starts a fresh collection window. All such reports count toward
 neither a burst nor flapping. When 3
 or more nodes go down within 10 seconds (a lost network on this machine, a shared
 outage, or the first probes after a start) the third one raises a single `WARN`,

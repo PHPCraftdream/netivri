@@ -395,11 +395,15 @@ slowly makes no burst (the downs are minutes apart: unused nodes are probed rare
 set of servers (by id, a twin counts once) that are down now and those that never answered. At 6 or more down
 servers, and at least half of the servers that have answered, one `WARN` (`node outage: ...`) opens an outage
 (not while a burst is in progress), the downs and backs of nodes are `DEBUG` while it lasts, and an `INFO`
-line (`node outage over: ...`) closes it when fewer than a quarter are down. A node that has
-never answered (`NeverOK`: it did not go down, it never came up) is one `INFO`
-line, `... has never answered: ...`, and counts toward neither a burst nor
-flapping, so the dead nodes of a subscription do not raise a burst at every
-start. A node with 3
+line (`node outage over: ...`) closes it when fewer than a quarter are down. A node that has never answered (`NeverOK`: it did not go down, it never came up) is
+reported by distinct server id (the label suffix after its provider): the first two unique servers in each
+30-second window get individual `INFO` lines. A twin keeps the `, same server as {LABEL}` annotation and
+follows its server's chosen level without counting again (`DEBUG` when collapsed). The third unique server
+writes its node-detail line at `DEBUG` and one `INFO` summary; third and later unique servers write individual
+`DEBUG` lines. The minute connection-log tick flushes a final summary only after expiry when the initial
+summary was emitted and the total grew, then resets the collection so later servers start a new window. These
+reports count toward neither bursts nor flapping,
+so the dead nodes of a subscription do not raise a burst at every start. A node with 3
 downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
 the reason kinds), then its down and back lines are `INFO` until its recent
 downs drop below 3 again (checked at its next down), and its downs do not count

@@ -240,7 +240,7 @@ func TestConnLogRunFlushesOnTickAndAtTheEnd(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		f.log.run(ctx, 20*time.Millisecond, time.Hour)
+		f.log.run(ctx, 20*time.Millisecond, time.Hour, nil)
 		close(done)
 	}()
 	f.dialFail("alice", "main/us", "timeout", 3)
@@ -420,7 +420,7 @@ func TestConnLogRunWritesTheHeartbeat(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		f.log.run(ctx, time.Hour, 20*time.Millisecond)
+		f.log.run(ctx, time.Hour, 20*time.Millisecond, nil)
 		close(done)
 	}()
 	f.ended("alice", "main/us", "", 10, 4)

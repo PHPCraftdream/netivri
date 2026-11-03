@@ -786,7 +786,11 @@ var helpTopics = []helpTopic{
 			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
 			"hour is one 'flapping' warning, not a warning per drop; when 6 or more servers (at least half of those " +
 			"that have answered) are down at once, as when the network fails slowly, one 'node outage' warning " +
-			"says so and the down and back lines of the nodes are DEBUG until most are back; the repeats of nodes no " +
+			"says so and the down and back lines of the nodes are DEBUG until most are back; nodes that have never answered are " +
+			"reported individually for the first two unique servers, then one INFO summary (with the third node's detail also at DEBUG) and DEBUG details within a 30-second window. " +
+			"Twins keep their annotation and the server's chosen level (DEBUG when collapsed), without counting again. " +
+			"Two labels for the same server within 10 seconds keep the annotation and follow the server's chosen level. " +
+			"The repeats of nodes no " +
 			"account uses are DEBUG lines, shown only with --level debug. A subscription that keeps failing to " +
 			"refresh is one warning an hour, and the refresh that ends the failures says how many there were. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
