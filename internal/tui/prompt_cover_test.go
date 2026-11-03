@@ -276,6 +276,7 @@ func TestPromptChoiceNavigation(t *testing.T) {
 	t.Run("down wraps at end", func(t *testing.T) {
 		p := NewPrompt(ChoicePrompt, "T", "L", "H", "")
 		p.Options = opts
+		p.initialize() // the first Update would reset the choice from Value
 		p.choice = 2
 		p.Update(promptKey("down"))
 		if p.choice != 0 {

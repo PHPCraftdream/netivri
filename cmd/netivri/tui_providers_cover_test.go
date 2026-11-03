@@ -197,8 +197,12 @@ func TestProvidersCoverFocusPaneAndSetPaneFocus(t *testing.T) {
 		t.Fatal("FocusPane should refuse while a dialog is open")
 	}
 	s.dialog = nil
+	s.workspace.SetFocus(tui.PaneList)
+	if !s.FocusPane(false) || s.workspace.Focus() != tui.PaneCard {
+		t.Fatal("forward FocusPane from list did not move to card")
+	}
 	if s.FocusPane(false) {
-		t.Fatal("FocusPane forward should refuse at the list pane")
+		t.Fatal("FocusPane forward should refuse at the card pane")
 	}
 	s.workspace.SetFocus(tui.PaneCard)
 	if !s.FocusPane(true) || s.workspace.Focus() != tui.PaneList {
@@ -395,6 +399,7 @@ func TestProvidersCoverViewHeightsDialogAndScrub(t *testing.T) {
 		t.Fatal("dialog view passthrough failed")
 	}
 	s.dialog = nil
+	s.wizard = nil
 	s.startEditPrompt("url")
 	s.prompt.Value = "https://u:hush-secret@quiet.invalid"
 	got := s.scrub("fetch failed at hush-secret")

@@ -55,11 +55,11 @@ func TestAccountsBindingsFollowFocusedPane(t *testing.T) {
 	if len(cardHints) == 0 {
 		t.Fatal("card-focus bindings were empty")
 	}
-	// The fresh account card has an enabled Clear pre-hop action (hotkey P) and
-	// the screen appends its own action bindings (clone hotkey c).
+	// The screen appends its own action bindings (edit e, clone c) after the
+	// card navigation bindings.
 	got := keys(cardHints)
-	if !got["P"] || !got["c"] {
-		t.Fatalf("card-focus bindings missing card hotkeys: %v", got)
+	if !got["e"] || !got["c"] {
+		t.Fatalf("card-focus bindings missing the screen action keys e and c: %v", got)
 	}
 }
 

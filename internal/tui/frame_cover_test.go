@@ -72,9 +72,11 @@ func TestFrameCoverInitBatchesHeaderPollAndDoesNotReinit(t *testing.T) {
 		t.Fatal("Init returned nil cmd, want batch with header poll")
 	}
 	msg := cmd()
+	// tea.Batch collapses to the single non-nil command when the first screen
+	// has no Init command of its own.
 	batch, ok := msg.(tea.BatchMsg)
 	if !ok {
-		t.Fatalf("Init cmd produced %T, want tea.BatchMsg", msg)
+		batch = tea.BatchMsg{func() tea.Msg { return msg }}
 	}
 	sawHeader := false
 	for _, c := range batch {

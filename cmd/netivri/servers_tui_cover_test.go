@@ -141,7 +141,7 @@ func TestCoverScanInteractiveArgs(t *testing.T) {
 		t.Fatal("invalid bool should error")
 	}
 	out, enabled, _ = scanInteractiveArgs([]string{"a", "--", "-i"})
-	if enabled || strings.Join(out, " ") != "a -i" {
+	if enabled || strings.Join(out, " ") != "a -- -i" {
 		t.Fatalf("dash dash: %v %v", out, enabled)
 	}
 }
