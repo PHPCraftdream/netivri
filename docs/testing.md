@@ -46,6 +46,16 @@ Unit test files have **no** build tag.
   available to integration tests only) — never hardcode ports.
 - **Files** go into `t.TempDir()`; **environment** is set with `t.Setenv`
   (or `testutil.TempHome` for `NETIVRI_HOME`).
+- **Clock ticks.** The Windows clock advances about every 15 ms. A test that
+  needs "B strictly after A" (a probe after a connection began, a timestamp
+  newer than another) must put real time, or an injected clock step, between
+  the two events; two events a few milliseconds apart can tie there and pass
+  on Linux and macOS only.
+- **Terminal screens** (`netivri -i`, `internal/tui`) are tested without a
+  terminal: drive the screen's `Update` and `View` (or `teatest`) and assert
+  on the rendered text with ANSI stripped and on the config read back from a
+  temporary home. Send keys as real key messages (`tea.KeyPressMsg{Code:
+  tea.KeySpace}`; a message with only `Text: " "` is not a space press).
 - **Table-driven** tests where the cases are natural.
 - **No real internet.** Anything network-facing is tested against a local
   fake HTTP/SOCKS server on loopback.
