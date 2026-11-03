@@ -799,7 +799,7 @@ func TestHelpLogsDescribesWhatTheLogHolds(t *testing.T) {
 		t.Fatal("no logs topic")
 	}
 	text := conceptText(tp)
-	for _, want := range []string{"node burst", "flapping", "once an hour", "start answering", "slept", "proxy auth failed", "proxy refused", "slow answers"} {
+	for _, want := range []string{"node burst", "flapping", "once an hour", "start answering", "slept", "proxy auth failed", "proxy refused", "slow answers", "never answered", "third node's detail"} {
 		if !strings.Contains(strings.ToLower(text), strings.ToLower(want)) {
 			t.Errorf("the logs help does not mention %q", want)
 		}

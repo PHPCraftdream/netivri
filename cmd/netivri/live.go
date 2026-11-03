@@ -91,6 +91,8 @@ type liveAngel struct {
 	// connLog().
 	conns     *connLog
 	connsOnce sync.Once
+	nodeMu    sync.Mutex
+	nodeLog   *nodeLog
 	// sleeper notices that the computer slept; made on first use.
 	sleeper     *sleepWatch
 	sleeperOnce sync.Once
@@ -128,6 +130,7 @@ type liveAngel struct {
 	retryTarget   *desiredState
 	retryDesired  string
 	retryOpts     *core.Options
+	retryNodeLog  *nodeLog
 	retryFailures int
 
 	// Persisted site bindings: when the stored set was last written, how
@@ -182,19 +185,34 @@ func portOf(addr string) int {
 }
 
 func (l *liveAngel) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
-	o := l.routeOptions(d, a, store)
-	o.InitialBindings = initialBindings(store, l.warnf)
+	o, _ := l.coreOptionsWithLogger(d, a, store)
 	return o
+}
+
+func (l *liveAngel) coreOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog) {
+	o, nodesLog := l.routeOptionsWithLogger(d, a, store)
+	o.InitialBindings = initialBindings(store, l.warnf)
+	return o, nodesLog
 }
 
 // routeOptions is coreOptions without the stored bindings, which only a
 // starting core reads.
 func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
+	o, _ := l.routeOptionsWithLogger(d, a, store)
+	return o
+}
+
+func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog) {
 	var observer core.Observer
 	if store != nil {
 		observer = statsObserver{store: store}
 	}
 	l.connLog().setNodes(d.pool.infos)
+	nodesLog := makeNodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf, time.Now)
+	var nodeHook func(core.NodeEvent)
+	if nodesLog != nil {
+		nodeHook = nodesLog.event
+	}
 	return core.Options{
 		HomeDir:               l.opts.Home,
 		Bind:                  d.bind,
@@ -211,16 +229,39 @@ func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store 
 		NodeLabels:            d.pool.labels,
 		NodeTiers:             d.pool.tiers,
 		OnConnEvent:           l.connLog().event,
-		OnNodeHealth:          nodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf),
+		OnNodeHealth:          nodeHook,
 		Observer:              observer,
 		Warm:                  warmOptions(d.pool.nodes),
 		AffinityTTL:           stats.BindingTTL,
+	}, nodesLog
+}
+
+func (l *liveAngel) activeNodeLogger() *nodeLog {
+	l.nodeMu.Lock()
+	defer l.nodeMu.Unlock()
+	return l.nodeLog
+}
+
+func (l *liveAngel) installNodeLogger(next *nodeLog) {
+	l.nodeMu.Lock()
+	defer l.nodeMu.Unlock()
+	if l.nodeLog != nil && l.nodeLog != next {
+		l.nodeLog.flushNow()
+	}
+	l.nodeLog = next
+}
+
+func (l *liveAngel) flushNodeLogger() {
+	l.nodeMu.Lock()
+	defer l.nodeMu.Unlock()
+	if l.nodeLog != nil {
+		l.nodeLog.flush()
 	}
 }
 
 // start opens the first core instance.
 func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authenticator, store *stats.Store) error {
-	o := l.coreOptions(d, a, store)
+	o, nodesLog := l.coreOptionsWithLogger(d, a, store)
 	inst, err := coreStart(ctx, o)
 	if err != nil {
 		return err
@@ -234,6 +275,7 @@ func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authent
 	l.actualPort = port
 	l.noteBindingsRestored(inst)
 	l.mu.Unlock()
+	l.installNodeLogger(nodesLog)
 	l.logServerDelta(nil, d.servers)
 	return nil
 }
@@ -473,7 +515,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-	o := l.routeOptions(d, auth, store)
+	o, nodesLog := l.routeOptionsWithLogger(d, auth, store)
 	if err := inst.Reconfigure(o); err != nil {
 		if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
 			l.noteReloadError("server configuration not applied", err)
@@ -496,6 +538,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.installNodeLogger(nodesLog)
 	l.logServerDelta(oldServers, d.servers)
 	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	return true
@@ -542,6 +585,9 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	}
 	l.mu.Lock()
 	store, prev, old := l.store, l.startOpts, l.inst
+	l.mu.Unlock()
+	oldNodeLog := l.activeNodeLogger()
+	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
 		return
@@ -564,7 +610,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-	o := l.coreOptions(d, a, store)
+	o, nodesLog := l.coreOptionsWithLogger(d, a, store)
 	l.mu.Lock()
 	l.store = store
 	l.mu.Unlock()
@@ -573,7 +619,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 		text := errText(err)
 		if wasDown {
 			l.mu.Lock()
-			l.retryTarget, l.retryOpts = cloneDesired(&d), &o
+			l.retryTarget, l.retryOpts, l.retryNodeLog = cloneDesired(&d), &o, nodesLog
 			l.retryFailures = 0
 			l.reloadErr = text
 			l.mu.Unlock()
@@ -590,7 +636,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 		backInst, err2 := startCore(ctx, back)
 		if err2 != nil {
 			l.mu.Lock()
-			l.retryTarget, l.retryOpts = cloneDesired(&l.applied), &back
+			l.retryTarget, l.retryOpts, l.retryNodeLog = cloneDesired(&l.applied), &back, oldNodeLog
 			l.retryFailures = 0
 			l.reloadErr = text + "; previous configuration could not be restored: " + errText(err2)
 			l.mu.Unlock()
@@ -604,9 +650,10 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 			_ = backInst.Close()
 			return
 		}
-		l.inst = backInst
+		l.inst, l.startOpts = backInst, back
 		l.noteBindingsRestored(backInst)
 		l.mu.Unlock()
+		l.installNodeLogger(oldNodeLog)
 		return
 	}
 	l.mu.Lock()
@@ -616,7 +663,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 		return
 	}
 	l.inst, l.applied, l.latest, l.startOpts = inst, d, d.cfg, o
-	l.retryTarget, l.retryOpts, l.retryDesired = nil, nil, ""
+	l.retryTarget, l.retryOpts, l.retryNodeLog, l.retryDesired = nil, nil, nil, ""
 	l.noteBindingsRestored(inst)
 	l.actualPort = portOf(inst.Addr())
 	l.startOpts.Port, l.applied.port = l.actualPort, l.actualPort
@@ -624,6 +671,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.installNodeLogger(nodesLog)
 	l.logf("configuration applied: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	l.logServerDelta(oldServers, d.servers)
 }
@@ -683,12 +731,14 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 		l.mu.Lock()
 		success := err == nil && !l.closed && l.inst == nil && l.retryTarget != nil && fingerprint(*l.retryTarget) == fingerprint(*d)
 		var failures int
+		var nodesLog *nodeLog
 		if success {
 			l.inst = inst
 			l.applied, l.startOpts = *d, o
 			l.actualPort = portOf(inst.Addr())
 			l.startOpts.Port, l.applied.port = l.actualPort, l.actualPort
-			l.retryTarget, l.retryOpts = nil, nil
+			nodesLog = l.retryNodeLog
+			l.retryTarget, l.retryOpts, l.retryNodeLog = nil, nil, nil
 			l.retryDesired = ""
 			l.retryFailures, l.reloadErr = 0, ""
 			l.noteBindingsRestored(inst)
@@ -700,6 +750,7 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 		closed := l.closed
 		l.mu.Unlock()
 		if success {
+			l.installNodeLogger(nodesLog)
 			l.reloadMu.Unlock()
 			l.logf("previous configuration restored")
 			if l.retryApplied != nil {
@@ -856,7 +907,7 @@ func (l *liveAngel) startLoops() {
 	}()
 	go func() {
 		defer l.loopsRunning.Done()
-		l.connLog().run(ctx, connLogEvery, connBeatEvery)
+		l.connLog().run(ctx, connLogEvery, connBeatEvery, l.flushNodeLogger)
 	}()
 	go func() {
 		defer l.loopsRunning.Done()

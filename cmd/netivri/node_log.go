@@ -27,6 +27,10 @@ const (
 	// is probed twice, so its down reports come together; a second one within
 	// the window is the same event.
 	twinWindow = 10 * time.Second
+	// neverWindow and neverSolo keep a large set of dead-at-start servers from
+	// filling the log: report two unique servers individually, then summarize.
+	neverWindow = 30 * time.Second
+	neverSolo   = 2
 	// outageMinNodes and the half rule: a network that fails slowly (nodes are
 	// probed minutes apart, so their downs trickle in) is no burst. When that
 	// many servers that have answered before are down at once, and they are at
@@ -49,27 +53,38 @@ type logFunc = func(format string, args ...any)
 // woke up a moment ago), turns the downs into plain INFO lines that count for
 // nothing else; nil is never quiet.
 func nodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, quiet func() bool, debug, info, warn logFunc) func(core.NodeEvent) {
-	l := newNodeLog(infos, info, warn, time.Now)
+	l := makeNodeHealthLogger(infos, first, quiet, debug, info, warn, time.Now)
+	if l == nil {
+		return nil
+	}
+	return l.event
+}
+
+// makeNodeHealthLogger builds the stateful node-health logger for one route snapshot.
+func makeNodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, quiet func() bool, debug, info, warn logFunc, now func() time.Time) *nodeLog {
+	l := newNodeLog(infos, info, warn, now)
 	if l == nil {
 		return nil
 	}
 	if debug != nil {
 		l.debug = debug
 	}
-	l.first = first
-	l.quiet = quiet
-	return l.event
+	l.first, l.quiet = first, quiet
+	return l
 }
 
 // nodeLog turns node down/back events into log lines. A node that has never
-// answered (it did not go down, it never came up) is one INFO line and takes
-// no part in the rest. A node that keeps going
-// down (flapDowns times within flapWindow) is flapping: one WARN says so, its
-// further down and back lines are INFO until it has been quiet for flapWindow,
-// and it does not count toward a burst. One server under two labels (the same
-// id from two providers) is one node for all of this: its twin's down within
-// twinWindow is an INFO line and counts for nothing. For the others, the first burstNodes-1
-// nodes that go down within burstWindow get a WARN line each. The next one
+// answered is grouped by server id in 30-second windows: the first two are
+// individual INFO lines, then an INFO summary and DEBUG detail (including the
+// third node); later unique servers and twins of collapsed servers are DEBUG.
+// These reports remain outside burst and flapping accounting.
+// A node that keeps going down (flapDowns times within flapWindow) is flapping:
+// one WARN says so, its further down and back lines are INFO until it has been
+// quiet for flapWindow, and it does not count toward a burst. One server under
+// two labels (the same id from two providers) is one node for all of this: its
+// twin's down within twinWindow keeps its annotation and follows the server's
+// chosen level. For the others, the first burstNodes-1 nodes that go down within
+// burstWindow get a WARN line each. The next one
 // also raises a single WARN summary ("node burst: ...") and from then on the
 // per-node lines of the burst are INFO, so a network loss that takes ten nodes
 // down at once reads as one warning. When the last node of a burst is back an
@@ -102,12 +117,18 @@ type nodeLog struct {
 	burstStart  time.Time
 	// The outage state: servers (not labels) that are down now, servers that
 	// never answered, and how many servers there are.
-	servers     int
-	downNow     map[string]struct{}
-	never       map[string]struct{}
-	outage      bool
-	outageStart time.Time
-	outagePeak  int
+	servers        int
+	downNow        map[string]struct{}
+	never          map[string]struct{}
+	neverStart     time.Time
+	neverLabels    map[string]struct{}
+	neverKinds     map[string]int
+	neverCountries map[string]int
+	neverDebug     map[string]bool
+	neverSummary   int
+	outage         bool
+	outageStart    time.Time
+	outagePeak     int
 }
 
 // drop is one recent down of a server; label is the one that reported it.
@@ -133,7 +154,7 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 	}
 	l := &nodeLog{info: info, warn: warn, debug: info, now: now, byLabel: make(map[string]stats.NodeInfo, len(infos)), started: now(),
 		drops: map[string][]drop{}, flapping: map[string]bool{}, lastDown: map[string]drop{}, lastNever: map[string]drop{}, lastBack: map[string]drop{},
-		downNow: map[string]struct{}{}, never: map[string]struct{}{}}
+		downNow: map[string]struct{}{}, never: map[string]struct{}{}, neverKinds: map[string]int{}, neverCountries: map[string]int{}}
 	ids := map[string]struct{}{}
 	for _, n := range infos {
 		l.byLabel[n.Label] = n
@@ -141,6 +162,51 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 	}
 	l.servers = len(ids)
 	return l
+}
+
+// flush writes a changed never-answered summary once its collection window expires.
+func (l *nodeLog) flush() {
+	l.flushNever(false)
+}
+
+// flushNow writes a pending never-answered summary when the active logger is replaced.
+func (l *nodeLog) flushNow() {
+	l.flushNever(true)
+}
+
+func (l *nodeLog) flushNever(force bool) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.flushNeverLocked(l.now(), force)
+}
+
+// flushNeverLocked writes a changed summary when its window expires or is forced, then resets that window.
+func (l *nodeLog) flushNeverLocked(now time.Time, force bool) {
+	if l.neverLabels == nil || (!force && now.Sub(l.neverStart) < neverWindow) {
+		return
+	}
+	if l.neverSummary > 0 && len(l.neverLabels) > l.neverSummary {
+		l.info("%s", l.neverSummaryLine())
+	}
+	l.neverLabels, l.neverKinds, l.neverCountries, l.neverDebug, l.neverSummary = nil, nil, nil, nil, 0
+}
+
+// neverSummaryLine formats the current collection's total, reason kinds and sorted country counts.
+func (l *nodeLog) neverSummaryLine() string {
+	countries := l.neverCountries
+	keys := make([]string, 0, len(countries))
+	for k := range countries {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s x%d", k, countries[k]))
+	}
+	return fmt.Sprintf("%d servers have never answered since start (%s; %s); probed rarely, one DEBUG line each", len(l.neverLabels), joinKinds(l.neverKinds), strings.Join(parts, ", "))
 }
 
 // event is the OnNodeHealth hook.
@@ -160,10 +226,44 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	if ev.NeverOK {
 		l.never[id] = struct{}{}
 		line := l.describe(ev.Label) + " has never answered: " + ev.Reason
+		l.flushNeverLocked(now, false)
+		if l.neverLabels == nil {
+			l.neverStart, l.neverLabels, l.neverKinds, l.neverCountries, l.neverDebug = now, map[string]struct{}{}, map[string]int{}, map[string]int{}, map[string]bool{}
+		}
 		if twin, ok := l.twinOf(l.lastNever, ev, now); ok {
 			line += ", same server as " + twin
+			if _, chosen := l.neverLabels[id]; chosen && l.neverDebug[id] {
+				l.debug("%s", line)
+			} else {
+				l.info("%s", line)
+			}
+			return
 		}
-		l.info("%s", line)
+		if _, seen := l.neverLabels[id]; seen {
+			if l.neverDebug[id] {
+				l.debug("%s", line)
+			} else {
+				l.info("%s", line)
+			}
+			return
+		}
+		l.neverLabels[id] = struct{}{}
+		l.neverDebug[id] = len(l.neverLabels) > neverSolo
+		l.neverKinds[reasonKind(ev.Reason)]++
+		country := l.byLabel[ev.Label].Country
+		if country == "" {
+			country = unknownCountry
+		}
+		l.neverCountries[country]++
+		if len(l.neverLabels) < neverSolo+1 {
+			l.info("%s", line)
+		} else if len(l.neverLabels) == neverSolo+1 {
+			l.neverSummary = len(l.neverLabels)
+			l.info("%s", l.neverSummaryLine())
+			l.debug("%s", line)
+		} else {
+			l.debug("%s", line)
+		}
 		return
 	}
 	delete(l.never, id)

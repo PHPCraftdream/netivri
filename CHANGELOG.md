@@ -15,6 +15,11 @@ versions; every such change is listed here.
   A dial through a node that times out now counts like a silent connection
   towards blocking that node for the site (3 within 10 minutes, none answered),
   so a destination blackholed at connect level also moves to the next node.
+- **Never-answered nodes no longer fill the angel log.**
+  In each 30-second window, the first two unique servers are `INFO`; the third starts
+  one `INFO` summary and is also detailed at `DEBUG`, with later unique servers at
+  `DEBUG`. Twins keep their annotation and the server’s chosen level (`DEBUG` when
+  collapsed), without counting again. Expiry flushes a changed summary once.
 - **Quieter log in a long network failure.** A network that fails slowly (nodes go down minutes apart, so there is no burst) now raises one `node outage` warning when at least half of the servers that have answered (6 or more) are down; their down and back lines are `DEBUG` until fewer than a quarter are still down, and one `node outage over` line closes it. A subscription whose refresh keeps failing writes one `WARN` an hour instead of one per try, and the refresh that ends the failures says how many there were. The hourly line of an account names the two nodes most of its connections without an answer went through (`via NODE x300`). See [`docs/cli.md`](docs/cli.md).
 - **Angel log on stderr for a foreground run.** `NETIVRI_LOG_STDERR=1 netivri up --foreground` writes the angel log (debug level included) to stderr; without the variable a foreground run stays silent. The e2e tests set it, so a failed run shows what the angel did.
 - **Protocol servers and account routing.** Add and manage anytls, hysteria2,

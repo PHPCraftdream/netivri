@@ -222,32 +222,186 @@ func TestNodeLogForgetsOldDowns(t *testing.T) {
 	}
 }
 
+func TestNodeLogNeverAnsweredCollapsesUniqueServers(t *testing.T) {
+	now := time.Unix(10000, 0)
+	var infoLines, debugLines []string
+	labels := []string{"p/s1", "q/s1", "p/s2", "q/s2", "p/s3", "q/s3", "p/s4", "q/s4", "p/s5"}
+	countries := []string{"FI", "FI", "US", "US", "DE", "DE", "NL", "NL", "SE"}
+	infos := make([]stats.NodeInfo, 0, len(labels))
+	for i, label := range labels {
+		infos = append(infos, stats.NodeInfo{Label: label, Provider: label[:1], Country: countries[i]})
+	}
+	l := makeNodeHealthLogger(infos, nil, nil,
+		func(format string, args ...any) { debugLines = append(debugLines, fmt.Sprintf(format, args...)) },
+		func(format string, args ...any) { infoLines = append(infoLines, fmt.Sprintf(format, args...)) }, nil, func() time.Time { return now })
+	for _, label := range labels {
+		l.event(core.NodeEvent{Label: label, Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	}
+	wantInfo := []string{
+		"node p/s1 (provider p, country FI) has never answered: 2 probe failures (timeout)",
+		"node q/s1 (provider q, country FI) has never answered: 2 probe failures (timeout), same server as p/s1",
+		"node p/s2 (provider p, country US) has never answered: 2 probe failures (timeout)",
+		"node q/s2 (provider q, country US) has never answered: 2 probe failures (timeout), same server as p/s2",
+		"3 servers have never answered since start (probe failures (timeout) x3; DE x1, FI x1, US x1); probed rarely, one DEBUG line each",
+	}
+	wantDebug := []string{
+		"node p/s3 (provider p, country DE) has never answered: 2 probe failures (timeout)",
+		"node q/s3 (provider q, country DE) has never answered: 2 probe failures (timeout), same server as p/s3",
+		"node p/s4 (provider p, country NL) has never answered: 2 probe failures (timeout)",
+		"node q/s4 (provider q, country NL) has never answered: 2 probe failures (timeout), same server as p/s4",
+		"node p/s5 (provider p, country SE) has never answered: 2 probe failures (timeout)",
+	}
+	if !reflect.DeepEqual(infoLines, wantInfo) {
+		t.Fatalf("INFO lines = %q, want %q", infoLines, wantInfo)
+	}
+	if !reflect.DeepEqual(debugLines, wantDebug) {
+		t.Fatalf("DEBUG lines = %q, want %q", debugLines, wantDebug)
+	}
+	l.event(core.NodeEvent{Label: "p/s3", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	wantDebug = append(wantDebug, "node p/s3 (provider p, country DE) has never answered: 2 probe failures (timeout)")
+	if !reflect.DeepEqual(infoLines, wantInfo) || !reflect.DeepEqual(debugLines, wantDebug) {
+		t.Fatalf("repeat of summarized server changed logs: INFO=%q DEBUG=%q", infoLines, debugLines)
+	}
+	now = now.Add(neverWindow)
+	l.flush()
+	wantInfo = append(wantInfo, "5 servers have never answered since start (probe failures (timeout) x5; DE x1, FI x1, NL x1, SE x1, US x1); probed rarely, one DEBUG line each")
+	if !reflect.DeepEqual(infoLines, wantInfo) {
+		t.Fatalf("INFO after flush = %q, want %q", infoLines, wantInfo)
+	}
+	beforeDebug := append([]string(nil), debugLines...)
+	l.event(core.NodeEvent{Label: "p/s3", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
+	wantInfo = append(wantInfo, "node p/s3 (provider p, country DE) has never answered: 2 probe failures (timeout)")
+	if !reflect.DeepEqual(debugLines, wantDebug) || !reflect.DeepEqual(infoLines, wantInfo) {
+		t.Fatalf("post-expiry repeat level changed incorrectly: INFO=%q DEBUG=%q (before DEBUG %q)", infoLines, debugLines, beforeDebug)
+	}
+	l.flushNow()
+	if !reflect.DeepEqual(infoLines, wantInfo) {
+		t.Fatalf("forced flush duplicated summary: %q", infoLines)
+	}
+}
+
+func TestNodeLogNeverAnsweredMixedKindsAndUnknownCountry(t *testing.T) {
+	now := time.Unix(10000, 0)
+	var lines []string
+	infos := []stats.NodeInfo{{Label: "p/a", Country: ""}, {Label: "p/b", Country: "US"}, {Label: "p/c", Country: "DE"}}
+	l := makeNodeHealthLogger(infos, nil, nil, func(format string, args ...any) { lines = append(lines, "DEBUG "+fmt.Sprintf(format, args...)) }, func(format string, args ...any) { lines = append(lines, "INFO "+fmt.Sprintf(format, args...)) }, nil, func() time.Time { return now })
+	for _, ev := range []core.NodeEvent{{Label: "p/a", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"}, {Label: "p/b", Down: true, NeverOK: true, Reason: "3 probe failures (connection refused)"}, {Label: "p/c", Down: true, NeverOK: true, Reason: "4 dial failures (timeout)"}} {
+		l.event(ev)
+	}
+	want := "INFO 3 servers have never answered since start (dial failures (timeout) x1, probe failures (connection refused) x1, probe failures (timeout) x1; DE x1, US x1, unknown x1); probed rarely, one DEBUG line each"
+	if lines[2] != want {
+		t.Fatalf("mixed/unknown summary = %q, want %q", lines[2], want)
+	}
+}
+
+func TestNodeLogNeverAnsweredForceFlushSummary(t *testing.T) {
+	f := newBurstFixture(t, 5)
+	for i := 0; i < 5; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	before := f.count("INFO 5 servers have never answered")
+	f.log.flushNow()
+	if before != 0 || f.count("INFO 5 servers have never answered") != 1 {
+		t.Fatalf("forced summary flush: %q", f.lines)
+	}
+	f.log.flushNow()
+	if f.count("INFO 5 servers have never answered") != 1 {
+		t.Fatalf("forced summary repeated: %q", f.lines)
+	}
+}
+
+func TestNodeLogNeverAnsweredWindowExpiresOnEvent(t *testing.T) {
+	f := newBurstFixture(t, 4)
+	for i := 0; i < 3; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	f.now = f.now.Add(neverWindow)
+	f.log.event(core.NodeEvent{Label: "p/n3", Down: true, NeverOK: true, Reason: "timeout"})
+	if f.count("INFO 3 servers have never answered since start") != 1 || f.count("INFO node p/n3") != 1 || f.count("DEBUG node p/n3") != 0 {
+		t.Fatalf("expired event handling: %q", f.lines)
+	}
+}
+
+func TestNodeLogNeverAnsweredFirstTwoStayIndividual(t *testing.T) {
+	f := newBurstFixture(t, 4)
+	for i := 0; i < 2; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	before := append([]string(nil), f.lines...)
+	first := "INFO node p/n0 (provider p, country DE) has never answered: timeout"
+	second := "INFO node p/n1 (provider p, country DE) has never answered: timeout"
+	if !reflect.DeepEqual(before, []string{first, second}) {
+		t.Fatalf("first two lines = %q", before)
+	}
+	f.now = f.now.Add(neverWindow)
+	f.log.flush()
+	if !reflect.DeepEqual(f.lines, before) {
+		t.Fatalf("two-node expiry wrote output: %q", f.lines)
+	}
+}
+
+func TestNodeLogNeverAnsweredFlushWithoutGrowthDoesNothing(t *testing.T) {
+	f := newBurstFixture(t, 4)
+	for i := 0; i < 3; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	if f.count("INFO 3 servers have never answered since start") != 1 {
+		t.Fatalf("initial third-server summary missing: %q", f.lines)
+	}
+	f.now = f.now.Add(neverWindow)
+	before := len(f.lines)
+	f.log.flush()
+	if len(f.lines) != before || f.count("INFO 3 servers have never answered since start") != 1 {
+		t.Fatalf("final flush without growth wrote output: %q", f.lines)
+	}
+	f.log.flush()
+	if len(f.lines) != before {
+		t.Fatalf("repeated flush wrote output: %q", f.lines)
+	}
+}
+
+func TestNodeLogNeverAnsweredNilFlush(t *testing.T) { var l *nodeLog; l.flush() }
+func TestNodeLogNeverAnsweredRecoveryIsInfo(t *testing.T) {
+	f := newBurstFixture(t, 4).withDebug()
+	for i := 0; i < 3; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	f.back(2, time.Minute)
+	if f.count("INFO node p/n2 (provider p, country DE) is back after 1m0s down") != 1 {
+		t.Fatalf("recovery line: %q", f.lines)
+	}
+}
+
+func TestNodeLogNeverAnsweredDoesNotChangeOutageAccounting(t *testing.T) {
+	f := newBurstFixture(t, 12).withDebug()
+	for i := 6; i < 12; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	f.slowly(0, 5)
+	if f.countContaining("node outage") != 0 {
+		t.Fatalf("never nodes counted as answered/down: %q", f.lines)
+	}
+	f.down(5, "timeout")
+	if f.count("WARN node outage: 6 of 6 servers that have answered are down") != 1 {
+		t.Fatalf("outage accounting changed: %q", f.lines)
+	}
+}
 func TestNodeLogNeverAnsweredNodesAreInfoAndOutsideTheBurst(t *testing.T) {
-	f := newBurstFixture(t, 10)
+	f := newBurstFixture(t, 10).withDebug()
 	for i := 0; i < 8; i++ {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, Reason: "2 probe failures (timeout)", NeverOK: true})
 	}
-	if got := f.count("WARN"); got != 0 {
-		t.Fatalf("%d warnings for nodes that never answered: %q", got, f.lines)
+	if f.count("INFO node p/n") != 2 || f.count("INFO ") != 3 || f.count("DEBUG node p/") != 6 || f.count("WARN") != 0 {
+		t.Fatalf("never answered levels: %q", f.lines)
 	}
-	if got := f.count("INFO node p/n"); got != 8 {
-		t.Fatalf("%d info lines, want 8: %q", got, f.lines)
-	}
-	want := "INFO node p/n0 (provider p, country DE) has never answered: 2 probe failures (timeout)"
-	if f.lines[0] != want {
-		t.Errorf("line = %q, want %q", f.lines[0], want)
-	}
-	// They are not part of a burst either: two real downs stay two warnings.
 	f.down(8, "2 probe failures (timeout)")
 	f.down(9, "2 probe failures (timeout)")
-	if got := f.count("WARN node p/n"); got != 2 || f.count("WARN node burst") != 0 {
-		t.Errorf("lines = %q, want two plain warnings and no burst", f.lines)
+	if f.count("WARN node p/n") != 2 || f.count("WARN node burst") != 0 {
+		t.Fatalf("never reports affected down accounting: %q", f.lines)
 	}
-	// And they do not count toward flapping: a node that never answered and
-	// then went down and up again is still new to the flap count.
 	f.back(0, time.Minute)
-	if got := f.count("INFO node p/n0 (provider p, country DE) is back after 1m0s down"); got != 1 {
-		t.Errorf("back line missing: %q", f.lines)
+	if f.countContaining("is back after 1m0s down") != 1 {
+		t.Fatalf("recovery missing: %q", f.lines)
 	}
 }
 
@@ -365,21 +519,28 @@ func TestServerID(t *testing.T) {
 	}
 }
 
+func TestNodeLogNeverAnsweredTwinsStayAnnotatedInfo(t *testing.T) {
+	f := twinFixture(t)
+	f.log.event(core.NodeEvent{Label: "own/a", Down: true, NeverOK: true, Reason: "timeout"})
+	f.log.event(core.NodeEvent{Label: "main/a", Down: true, NeverOK: true, Reason: "timeout"})
+	if len(f.lines) != 2 || !strings.Contains(f.lines[1], "same server as own/a") || !strings.HasPrefix(f.lines[1], "INFO ") {
+		t.Fatalf("twin line: %q", f.lines)
+	}
+}
 func TestNodeLogNeverAnsweredTwinIsNamed(t *testing.T) {
 	f := twinFixture(t)
 	f.log.event(core.NodeEvent{Label: "own/a", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
 	f.log.event(core.NodeEvent{Label: "main/a", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
 	f.log.event(core.NodeEvent{Label: "own/c", Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
-	if got := f.countContaining("same server as own/a"); got != 1 {
-		t.Errorf("%d lines name the twin, want 1: %q", got, f.lines)
-	}
 	if got := f.countContaining("has never answered"); got != 3 {
-		t.Errorf("%d never-answered lines, want 3: %q", got, f.lines)
+		t.Errorf("never-answered lines including twin and third server = %d, want 3: %q", got, f.lines)
 	}
-	// A never-answered report is not a down of its twin.
+	if len(f.lines) < 2 || !strings.Contains(f.lines[1], "same server as own/a") || !strings.HasPrefix(f.lines[1], "INFO ") {
+		t.Fatalf("twin line: %q", f.lines)
+	}
 	f.downLabel("main/a")
-	if got := f.countContaining("is down: 2 probe failures (timeout), same server"); got != 0 {
-		t.Errorf("a down was taken for the twin of a never-answered node: %q", f.lines)
+	if f.countContaining("is down: 2 probe failures (timeout), same server") != 0 {
+		t.Errorf("never event changed down twin state: %q", f.lines)
 	}
 }
 
