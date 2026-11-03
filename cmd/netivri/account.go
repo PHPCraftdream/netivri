@@ -102,65 +102,20 @@ func runAccount(args []string, stdout io.Writer) error {
 		if len(pos) != 1 {
 			return usage("requires LOGIN")
 		}
-		login := pos[0]
-		if !config.ValidAccountLogin(login) {
-			return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
-		}
-		cc := ""
-		if *country != "" {
-			var err error
-			if cc, err = parseCountries(*country); err != nil {
-				return err
-			}
-		}
-		prov := ""
-		if *provider != "" {
-			var err error
-			if prov, err = parseProviders(cfg, *provider); err != nil {
-				return err
-			}
-		}
-		exitMode := ""
+		o := AccountAddOptions{Login: pos[0], Provider: *provider, Country: *country, Clients: *clients, PreSOCKS5: *pre, PostSOCKS5: *post}
 		if exitModeGiven {
-			exitMode = *exitFlag
-			if exitMode != "route" && exitMode != "direct" {
-				return invalidAccountExitAt(len(cfg.Accounts))
-			}
+			o.Exit = *exitFlag
 		}
-		clientsVal := ""
-		if *clients != "" {
-			if _, err := config.ParseAllowedClients(*clients); err != nil {
-				return &cli.Error{Code: "CONFIG_INVALID", Message: "invalid --clients: " + err.Error(), Exit: cli.ExitUsage}
-			}
-			clientsVal = config.NormalizeAllowedClients(*clients)
-		}
-		if a, _ := cfg.Account(login); a != nil {
-			if a.ExitCountry == cc && a.Provider == prov && effectiveExit(a) == effectiveExit(&config.Account{Exit: exitMode}) && a.AllowedClients == clientsVal && a.PreSOCKS5 == *pre && a.PostSOCKS5 == *post {
-				if a.Exit == "direct" {
-					cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true, "hint": directExitHint})
-				} else {
-					cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, a), "existing": true})
-				}
-				return nil
-			}
-			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country, exit or clients rule", Exit: cli.ExitConflict}
-		}
-		if cfg.Auth.Login == login && cfg.Auth.Login != config.InitPlaceholder {
-			return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
-		}
-		next := config.Account{Login: login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, Exit: exitMode, AllowedClients: clientsVal, PreSOCKS5: *pre, PostSOCKS5: *post}
-		if err := validateAccountCandidate(cfg, map[int]config.Account{len(cfg.Accounts): next}); err != nil {
+		result := AccountAddResult{}
+		o.ExitGiven = exitModeGiven
+		if err := accountAddWith(home, cfg, o, save, &result); err != nil {
 			return err
 		}
-		cfg.Accounts = append(cfg.Accounts, next)
-		if err := save(); err != nil {
-			return err
+		out := map[string]any{"account": result.Account, "existing": result.Existing}
+		if result.Hint != "" {
+			out["hint"] = result.Hint
 		}
-		if exitMode == "direct" {
-			cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false, "hint": directExitHint})
-		} else {
-			cli.Success(stdout, map[string]any{"account": infoForAccount(cfg, &cfg.Accounts[len(cfg.Accounts)-1]), "existing": false})
-		}
+		cli.Success(stdout, out)
 		return nil
 	case "clone":
 		return accountClone(home, cfg, rest, save, stdout)
@@ -182,12 +137,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		if !config.ValidAccountLogin(login) {
 			return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
 		}
-		_, i := cfg.Account(login)
-		if i < 0 {
-			return accountNotFound()
-		}
-		cfg.Accounts = append(cfg.Accounts[:i], cfg.Accounts[i+1:]...)
-		if err := save(); err != nil {
+		if err := accountRemoveWith(cfg, login, save); err != nil {
 			return err
 		}
 		cli.Success(stdout, map[string]any{"removed": login})
@@ -245,53 +195,15 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 			return err
 		}
 	}
-	changed := func(a *config.Account, to string) config.Account {
-		c := *a
-		if field == "country" {
-			c.ExitCountry = to
-		} else if field == "clients" {
-			c.AllowedClients = to
-		} else {
-			c.Provider = to
-		}
-		return c
-	}
-	updates := make(map[int]config.Account, len(targets))
-	for _, a := range targets {
-		next := changed(a, value)
-		_, index := cfg.Account(a.Login)
-		updates[index] = next
-	}
-	if err := validateAccountCandidate(cfg, updates); err != nil {
+	items, err := updateAccountTargets(home, cfg, field, targets, spec, *all, value, save)
+	if err != nil {
 		return err
-	}
-	if field != "clients" {
-		for _, a := range targets {
-			_, index := cfg.Account(a.Login)
-			next := updates[index]
-			if next == *a {
-				continue
-			}
-			if err := checkRoute(home, cfg, next); err != nil {
-				return err
-			}
-		}
-	}
-	for _, a := range targets {
-		*a = changed(a, value)
-	}
-	if err := save(); err != nil {
-		return err
-	}
-	items := make([]accountInfo, 0, len(targets))
-	for _, a := range targets {
-		items = append(items, infoForAccount(cfg, a))
 	}
 	if !*all && !strings.Contains(spec, ",") {
 		cli.Success(stdout, map[string]any{"account": items[0]})
-		return nil
+	} else {
+		cli.Success(stdout, map[string]any{"accounts": items})
 	}
-	cli.Success(stdout, map[string]any{"accounts": items})
 	return nil
 }
 

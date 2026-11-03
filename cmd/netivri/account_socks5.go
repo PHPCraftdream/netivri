@@ -28,66 +28,15 @@ func accountSetSOCKS5(cfg *config.Config, rest []string, save func() error, stdo
 	if err != nil {
 		return err
 	}
-	normalize := func(s, side string) (string, error) {
-		if strings.EqualFold(s, "inherit") {
-			return "", nil
-		}
-		if strings.EqualFold(s, "none") {
-			return "none", nil
-		}
-		if err := validateCLIChain(s, "--"+side); err != nil {
-			return "", err
-		}
-		return s, nil
-	}
-	var pv, qv string
-	if given["pre"] {
-		pv, err = normalize(*pre, "pre")
-		if err != nil {
-			return err
-		}
-	}
-	if given["post"] {
-		qv, err = normalize(*post, "post")
-		if err != nil {
-			return err
-		}
-	}
-	updates := make(map[int]config.Account, len(targets))
-	for _, a := range targets {
-		next := *a
-		if given["pre"] {
-			next.PreSOCKS5 = pv
-		}
-		if given["post"] {
-			next.PostSOCKS5 = qv
-		}
-		_, index := cfg.Account(a.Login)
-		updates[index] = next
-	}
-	if err := validateAccountCandidate(cfg, updates); err != nil {
+	out, err := mutateAccountSOCKS5(cfg, targets, given["pre"], given["post"], *pre, *post, save)
+	if err != nil {
 		return err
 	}
-	for _, a := range targets {
-		if given["pre"] {
-			a.PreSOCKS5 = pv
-		}
-		if given["post"] {
-			a.PostSOCKS5 = qv
-		}
-	}
-	if err := save(); err != nil {
-		return err
-	}
-	out := make([]accountInfo, 0, len(targets))
-	for _, a := range targets {
-		out = append(out, infoForAccount(cfg, a))
-	}
-	if len(targets) == 1 {
+	if len(out) == 1 {
 		cli.Success(stdout, map[string]any{"account": out[0]})
-		return nil
+	} else {
+		cli.Success(stdout, map[string]any{"accounts": out})
 	}
-	cli.Success(stdout, map[string]any{"accounts": out})
 	return nil
 }
 func validateCLIChain(s, flagName string) error {

@@ -65,6 +65,20 @@ func effectiveExit(a *config.Account) string {
 	return a.Exit
 }
 
+func validateAccountExitMode(value string) error {
+	if value != "route" && value != "direct" {
+		return configInvalidAt(0, "must be empty, route or direct")
+	}
+	return nil
+}
+
+func validateAccountExitChange(account config.Account, index int) error {
+	if account.Exit == "direct" && (account.Provider != "" || account.ExitCountry != "" || (account.PreSOCKS5 != "" && !strings.EqualFold(account.PreSOCKS5, "none"))) {
+		return configInvalidAt(index, "direct requires empty provider and exit_country and no pre_socks5")
+	}
+	return nil
+}
+
 func invalidAccountExitAt(index int) error {
 	return &cli.Error{Code: config.CodeConfigInvalid, Message: "invalid accounts[" + strconv.Itoa(index) + "].exit: use route or direct", Exit: cli.ExitUsage}
 }
@@ -90,57 +104,28 @@ func accountSetExit(home string, cfg *config.Config, rest []string, save func() 
 		}
 		spec, value = pos[0], pos[1]
 	}
-	if value != "route" && value != "direct" {
-		return configInvalidAt(0, "must be empty, route or direct")
+	if err := validateAccountExitMode(value); err != nil {
+		return err
 	}
 	targets, err := accountTargets(cfg, spec, all)
 	if err != nil {
 		return err
 	}
-	nexts := make([]config.Account, len(targets))
-	for i, a := range targets {
-		nexts[i] = *a
-		nexts[i].Exit = value
-		_, index := cfg.Account(a.Login)
-		if value == "direct" && (a.Provider != "" || a.ExitCountry != "" || (a.PreSOCKS5 != "" && !strings.EqualFold(a.PreSOCKS5, "none"))) {
-			return configInvalidAt(index, "direct requires empty provider and exit_country and no pre_socks5")
-		}
-		if value == "route" && effectiveExit(a) != "route" {
-			if err := checkRoute(home, cfg, nexts[i]); err != nil {
-				return err
-			}
-		}
-	}
-	validated := *cfg
-	validated.Accounts = append([]config.Account(nil), cfg.Accounts...)
-	for i, a := range targets {
-		_, index := cfg.Account(a.Login)
-		validated.Accounts[index] = nexts[i]
-	}
-	if err := validated.Validate(); err != nil {
+	out, err := mutateAccountExit(home, cfg, targets, value, save)
+	if err != nil {
 		return err
-	}
-	for i, a := range targets {
-		*a = nexts[i]
-	}
-	if err := save(); err != nil {
-		return err
-	}
-	out := make([]accountInfo, 0, len(targets))
-	for _, a := range targets {
-		out = append(out, infoForAccount(cfg, a))
 	}
 	multi := all || strings.Contains(spec, ",")
 	if value == "direct" {
-		if !multi {
-			cli.Success(stdout, map[string]any{"account": out[0], "hint": directExitHint})
-		} else {
+		if multi {
 			cli.Success(stdout, map[string]any{"accounts": out, "hint": directExitHint})
+		} else {
+			cli.Success(stdout, map[string]any{"account": out[0], "hint": directExitHint})
 		}
-	} else if !multi {
-		cli.Success(stdout, map[string]any{"account": out[0]})
-	} else {
+	} else if multi {
 		cli.Success(stdout, map[string]any{"accounts": out})
+	} else {
+		cli.Success(stdout, map[string]any{"account": out[0]})
 	}
 	return nil
 }

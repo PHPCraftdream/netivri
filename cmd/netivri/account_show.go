@@ -63,38 +63,11 @@ func accountShow(home string, cfg *config.Config, rest []string, stdout io.Write
 	if len(rest) != 1 {
 		return cli.Usage("account show: requires ACCOUNT")
 	}
-	login := rest[0]
-	if !config.ValidAccountLogin(login) {
-		return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
-	}
-	a, _ := cfg.Account(login)
-	if a == nil {
-		return accountNotFound()
-	}
-	providers, countries := routeLists(*a)
-	tiers, err := accountShowTiers(home, cfg, providers, countries)
+	view, err := accountShowResult(context.Background(), home, cfg, rest[0])
 	if err != nil {
 		return err
 	}
-	if effectiveExit(a) == "direct" {
-		tiers = []accountShowTier{}
-	}
-	live := accountShowLive(context.Background(), home, login, tiers)
-	info := infoForAccount(cfg, a)
-	cli.Success(stdout, map[string]any{
-		"login":        a.Login,
-		"provider":     a.Provider,
-		"exit_country": a.ExitCountry,
-		"exit":         effectiveExit(a),
-		"pre_socks5":   showChainInfoForAccount(info.PreSOCKS5),
-		"post_socks5":  showChainInfoForAccount(info.PostSOCKS5),
-		"providers":    providers,
-		"countries":    countries,
-		"tiers":        tiers,
-		"live":         live,
-		// Open connections on the fallback tiers; null without a running angel.
-		"fallback_connections": fallbackConnections(tiers),
-	})
+	cli.Success(stdout, view.document())
 	return nil
 }
 
