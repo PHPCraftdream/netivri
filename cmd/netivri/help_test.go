@@ -72,7 +72,7 @@ func TestHelpOverviewListsEveryCommandAndExample(t *testing.T) {
 			t.Errorf("overview does not list %q", c.Name)
 		}
 	}
-	for _, want := range []string{"netivri sub add", "netivri account add", "netivri up", "netivri status", "NOT IMPLEMENTED YET", "node test"} {
+	for _, want := range []string{"netivri sub add", "netivri account add", "netivri up", "netivri status", "netivri -i", "NOT IMPLEMENTED YET", "node test"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("overview lacks %q", want)
 		}
@@ -81,7 +81,7 @@ func TestHelpOverviewListsEveryCommandAndExample(t *testing.T) {
 
 // conceptTopics are the help topics that are not commands: concepts about
 // configuring and operating netivri.
-var conceptTopics = []string{"config", "routing", "output"}
+var conceptTopics = []string{"config", "routing", "output", "interactive"}
 
 func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	seen := map[string]bool{}
@@ -119,6 +119,11 @@ func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	}
 	if findHelpTopic("help") == nil {
 		t.Error("no help topic for help itself")
+	}
+	for _, want := range []string{"netivri -i", "netivri sub -i", "netivri account -i --home {DIR}", "netivri server -i", "Tab/Shift-Tab", "{TAB} not available yet", "NOT_A_TERMINAL"} {
+		if !strings.Contains(renderTopic(findHelpTopic("interactive")), want) {
+			t.Errorf("interactive topic lacks %q", want)
+		}
 	}
 }
 
@@ -389,6 +394,9 @@ func topicFor(line string) *helpTopic {
 	if len(f) < 2 || f[0] != "netivri" {
 		return nil
 	}
+	if f[1] == "-i" || f[1] == "--interactive" {
+		return findHelpTopic("interactive")
+	}
 	if len(f) >= 3 {
 		if t := findHelpTopic(f[1] + " " + f[2]); t != nil {
 			return t
@@ -398,7 +406,7 @@ func topicFor(line string) *helpTopic {
 }
 
 func documentedFlags(t *helpTopic) map[string]bool {
-	ok := map[string]bool{"--home": true, "--local": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true}
+	ok := map[string]bool{"--home": true, "--local": true, "--json": true, "--quiet": true, "--no-color": true, "--help": true, "-h": true, "-i": true, "--interactive": true}
 	for _, f := range t.Flags {
 		for _, part := range strings.Split(f.Name, ",") {
 			if fields := strings.Fields(part); len(fields) > 0 {

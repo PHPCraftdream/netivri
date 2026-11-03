@@ -36,6 +36,7 @@ const helpIntro = "netivri keeps a local proxy running on one port (SOCKS5, SOCK
 var helpOverviewUsage = []string{
 	"netivri {COMMAND} [{ARGUMENTS}] [flags]",
 	"netivri help [{COMMAND}]",
+	"netivri -i | netivri sub -i | netivri account -i | netivri server -i",
 }
 
 var helpQuickStart = []string{
@@ -48,6 +49,8 @@ var helpQuickStart = []string{
 	"netivri status",
 	"# 4. use it; the first password you send as alice becomes her password",
 	"curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org",
+	"# interactive shell (requires a terminal)",
+	"netivri -i",
 }
 
 var helpGlobalFlags = []helpFlag{
@@ -65,6 +68,7 @@ var helpGlobalFlags = []helpFlag{
 	{"--quiet", "Accepted for compatibility; changes nothing today."},
 	{"--no-color", "Accepted for compatibility; there is no color output."},
 	{"-h, --help", "Show help for a command, for example: netivri up --help"},
+	{"-i, --interactive[={BOOL}]", "Open the interactive terminal shell; use with no command, sub, account, or server. Requires terminal stdin/stdout and cannot be combined with JSON output. `true` and `false` are the accepted boolean values; the flag is not supported by the JSON Schema."},
 }
 
 const helpOutput = `Every command prints one document on stdout, in Ktav by default: ` +
@@ -76,7 +80,7 @@ const helpOutput = `Every command prints one document on stdout, in Ktav by defa
 var helpExitCodes = []helpExit{
 	{cli.ExitOK, "success"},
 	{cli.ExitInternal, "unexpected internal error"},
-	{cli.ExitUsage, "invalid arguments or usage"},
+	{cli.ExitUsage, "invalid arguments or usage (including NOT_A_TERMINAL when interactive mode has no terminal)"},
 	{cli.ExitNetwork, "network error (fetching a subscription, diagnosing a node)"},
 	{cli.ExitNoAngel, "the angel is not running (for commands that need it)"},
 	{cli.ExitNotFound, "not found (subscription, account, node, nodes for a country)"},
@@ -92,6 +96,20 @@ func herr(code string, exit int, meaning string) helpError {
 }
 
 var helpTopics = []helpTopic{
+	{
+		Name: "interactive", Group: groupConcepts, Summary: "Browse accounts, providers, and servers in a terminal",
+		Usage:       []string{"netivri -i", "netivri sub -i", "netivri account -i", "netivri server -i"},
+		Description: "Opens the interactive terminal shell. The default screen is Accounts; `sub` starts on Providers, `account` on Accounts, and `server` on Servers. Only these entry points are supported. It requires terminal stdin and stdout and cannot be combined with JSON output. State directory options (`--home {DIR}` and `--local`) work as for ordinary commands. `--quiet` and `--no-color` are not accepted in interactive mode.",
+		Flags:       []helpFlag{{"-i, --interactive[={BOOL}]", "Enable interactive mode; `=true` enables and `=false` disables it. The accepted values are `true` and `false`."}},
+		Examples: []helpExample{
+			{"Open the shell at Accounts", "netivri -i"},
+			{"Open Providers", "netivri sub -i"},
+			{"Open Accounts explicitly with another state directory", "netivri account -i --home {DIR}"},
+			{"Open Servers", "netivri server -i"},
+		},
+		Notes:  []string{"Tabs are ordered Providers, Accounts, Servers; the default starts at Accounts. Use Tab/Shift-Tab or Left/Right to move, 1/2/3 to select, ? for key help and q to quit. The shell currently shows placeholder screens, each labeled {TAB} not available yet. When no angel is running, the header shows the stopped state and the CLI version fallback; a running angel supplies listen address, uptime and version."},
+		Errors: []helpError{herr("NOT_A_TERMINAL", cli.ExitUsage, "interactive mode requires terminal stdin and stdout"), herr("USAGE", cli.ExitUsage, "unsupported command or arguments")},
+	},
 	{
 		Name:        "server",
 		Summary:     "Manage protocol server listeners",
