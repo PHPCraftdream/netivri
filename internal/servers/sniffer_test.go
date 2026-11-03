@@ -134,6 +134,11 @@ func (snifferCustomProtocol) MatchKeys(params map[string]string) ([]string, []st
 
 func TestSnifferCustomMatchKeysCapability(t *testing.T) {
 	Register(snifferCustomProtocol{})
+	t.Cleanup(func() {
+		registryMu.Lock()
+		delete(registry, "sniffer-custom-matchkeys-test")
+		registryMu.Unlock()
+	})
 	spec := Spec{Protocol: "sniffer-custom-matchkeys-test", Params: map[string]string{"custom_host": "custom.example", "custom_application": "custom/1"}}
 	sni, alpn, explicit, capable := TLSMatchKeys(spec)
 	if !capable || !explicit || !reflect.DeepEqual(sni, []string{"custom.example"}) || !reflect.DeepEqual(alpn, []string{"custom/1"}) {
