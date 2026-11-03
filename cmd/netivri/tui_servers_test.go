@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/servers"
 	"github.com/PHPCraftdream/netivri/internal/tui"
 )
 
@@ -25,6 +26,19 @@ func serversFixture(t *testing.T) string {
 	}
 	if err := config.Save(config.ConfigPath(home), c); err != nil {
 		t.Fatal(err)
+	}
+	// Materialize server secrets so link/rotate/remove paths are real:
+	// ServerLink and ServerRotate fail ("server secrets not found",
+	// internal/servers/store.go Apply) against an empty store.
+	specs, err := c.ResolveServers()
+	if err != nil {
+		t.Fatalf("resolve fixture servers: %v", err)
+	}
+	store := servers.NewStore(home)
+	for _, spec := range specs {
+		if _, err := store.EnsureSecrets(spec); err != nil {
+			t.Fatalf("ensure secrets for %s: %v", spec.Name, err)
+		}
 	}
 	return home
 }

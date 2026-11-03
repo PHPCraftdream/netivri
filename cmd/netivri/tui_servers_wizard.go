@@ -2,13 +2,17 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -40,9 +44,10 @@ type serversRemoveDone struct {
 	err    error
 }
 type serversLinkDone struct {
-	name string
-	link string
-	err  error
+	name   string
+	link   string
+	format string
+	err    error
 }
 
 type serversDialog struct {
@@ -113,6 +118,7 @@ func (d *serversDialog) updateWizard(msg tea.Msg) (tui.Modal, tea.Cmd) {
 	if proto, ok := d.wizard.Values["Protocol"]; ok && proto != d.protocol && d.rebuild != nil {
 		d.protocol = proto
 		nw := d.rebuild(proto, d.wizard.Values)
+		nw.Values = serverCarryValues(d.wizard.Values, nw)
 		nw.Index = 1
 		nw.Buttons = tui.Buttons{Labels: []string{"Back", "Next"}}
 		d.wizard = nw
@@ -130,26 +136,44 @@ func (d *serversDialog) updateWizard(msg tea.Msg) (tui.Modal, tea.Cmd) {
 	return d, out
 }
 
+func serverCarryValues(old map[string]string, nw *tui.Wizard) map[string]string {
+	out := map[string]string{}
+	for _, s := range nw.Steps {
+		if v, ok := old[s.Key]; ok {
+			out[s.Key] = v
+		}
+	}
+	return out
+}
+
 type serversMenuModal struct {
-	title   string
-	lines   []string
-	buttons tui.Buttons
-	onPick  func(int) tea.Cmd
-	theme   tui.Theme
-	width   int
-	height  int
+	title      string
+	lines      []string
+	buttons    tui.Buttons
+	onPick     func(int) tea.Cmd
+	theme      tui.Theme
+	width      int
+	height     int
+	scrollable bool
+	offset     int
 }
 
 func newServersMenuModal(theme tui.Theme, title string, lines []string, labels []string, focus int, onPick func(int) tea.Cmd) *serversMenuModal {
 	return &serversMenuModal{title: title, lines: lines, buttons: tui.Buttons{Labels: labels, Focus: focus}, onPick: onPick, theme: theme}
 }
-func newServersLinkModal(theme tui.Theme, name, link string) *serversMenuModal {
+func newServersLinkModal(theme tui.Theme, name, link, format string) *serversMenuModal {
 	lines := []string{"", "The link below contains credentials and is shown in plain text.", "", "Server: " + name}
 	for _, l := range strings.Split(link, "\n") {
 		lines = append(lines, l)
 	}
 	lines = append(lines, "", "Clear the link from your scrollback after copying.")
-	return newServersMenuModal(theme, "Client link · "+name, lines, []string{"Close"}, 0, nil)
+	title := "Client link · " + name
+	if format == "mihomo" {
+		title += " (mihomo yaml)"
+	}
+	m := newServersMenuModal(theme, title, lines, []string{"Close"}, 0, nil)
+	m.scrollable = true
+	return m
 }
 func (m *serversMenuModal) SetTheme(t tui.Theme) { m.theme = t }
 func (m *serversMenuModal) CapturingInput() bool { return true }
@@ -170,6 +194,26 @@ func (m *serversMenuModal) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 			m.buttons.Move(1)
 		case "enter":
 			return m, m.pick(m.buttons.Focus)
+		case "up":
+			m.scroll(-1)
+		case "down":
+			m.scroll(1)
+		case "pgup":
+			m.scroll(-5)
+		case "pgdown":
+			m.scroll(5)
+		case "home":
+			m.offset = 0
+		case "end":
+			m.offset = int(^uint(0) >> 1)
+		}
+		return m, nil
+	}
+	if wl, ok := msg.(tea.MouseWheelMsg); ok {
+		if wl.Button == tea.MouseWheelUp {
+			m.scroll(-1)
+		} else if wl.Button == tea.MouseWheelDown {
+			m.scroll(1)
 		}
 		return m, nil
 	}
@@ -179,6 +223,10 @@ func (m *serversMenuModal) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+func (m *serversMenuModal) scroll(d int) {
+	slots := max(1, m.height-4)
+	m.offset = max(0, min(max(0, len(m.lines)-slots), m.offset+d))
 }
 func (m *serversMenuModal) View(w, h int) string {
 	m.width, m.height = w, h
@@ -192,31 +240,76 @@ func (m *serversMenuModal) View(w, h int) string {
 			rows[y] = s
 		}
 	}
-	put(0, m.title)
-	for i, l := range m.lines {
-		if 2+i >= h-2 {
-			break
+	put(0, ansi.Truncate(m.title, w, ""))
+	var body []string
+	for _, l := range m.lines {
+		body = append(body, serversWrapLine(l, w)...)
+	}
+	indicator := h - 2
+	if m.scrollable && len(body) > h-4 {
+		slots := h - 4
+		m.offset = max(0, min(m.offset, len(body)-slots))
+		first, last := m.offset+1, min(m.offset+slots, len(body))
+		put(indicator, fmt.Sprintf("lines %d-%d of %d · ↑/↓ scroll", first, last, len(body)))
+		for i := 0; i < slots; i++ {
+			put(2+i, body[m.offset+i])
 		}
-		put(2+i, l)
+	} else {
+		for i, l := range body {
+			if 2+i >= h-2 {
+				break
+			}
+			put(2+i, l)
+		}
 	}
 	put(h-1, m.buttons.View(t))
 	return serversBound(rows, w, h)
 }
-func serversBound(rows []string, w, h int) string {
-	out := make([]string, h)
-	for i := range out {
-		r := ""
-		if i < len(rows) {
-			r = rows[i]
-		}
-		runes := []rune(r)
-		if len(runes) > w {
-			runes = runes[:max(0, w)]
-			r = string(runes)
-		}
-		out[i] = r + strings.Repeat(" ", max(0, w-len([]rune(r))))
+func serversWrapLine(s string, w int) []string {
+	if w <= 0 {
+		return []string{s}
 	}
-	return strings.Join(out, "\n")
+	var out []string
+	cur := ""
+	for _, word := range strings.Split(s, " ") {
+		for lipgloss.Width(word) > w {
+			chunk := ansi.Truncate(word, w, "")
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+			}
+			out = append(out, chunk)
+			word = strings.TrimPrefix(word, chunk)
+		}
+		switch {
+		case cur == "":
+			cur = word
+		case lipgloss.Width(cur)+1+lipgloss.Width(word) <= w:
+			cur += " " + word
+		default:
+			out = append(out, cur)
+			cur = word
+		}
+	}
+	return append(out, cur)
+}
+func serversBound(rows []string, w, h int) string {
+	if w <= 0 || h <= 0 {
+		return ""
+	}
+	if len(rows) > h {
+		rows = rows[:h]
+	}
+	for i, line := range rows {
+		if lipgloss.Width(line) > w {
+			line = ansi.Truncate(line, w, "")
+		}
+		rows[i] = line + strings.Repeat(" ", max(0, w-lipgloss.Width(line)))
+	}
+	for len(rows) < h {
+		rows = append(rows, strings.Repeat(" ", w))
+	}
+	return strings.Join(rows, "\n")
 }
 
 func serverProtocolByName(name string) (ServerProtocol, bool) {
@@ -229,6 +322,18 @@ func serverProtocolByName(name string) (ServerProtocol, bool) {
 }
 func serverParamAdvanced(p ServerParameter) bool {
 	return strings.HasPrefix(p.Description, "Advanced option;")
+}
+
+func serverAutoGenSteps(proto ServerProtocol) []tui.WizardStep {
+	steps := []tui.WizardStep{}
+	for _, sp := range proto.Parameters {
+		if !sp.AutoGenerated {
+			continue
+		}
+		g := tui.NewPrompt(tui.TextPrompt, "Add server · "+sp.Label, sp.Label, "", serverAutoText)
+		steps = append(steps, tui.WizardStep{Key: serverGenPrefix + sp.Name, Prompt: g})
+	}
+	return steps
 }
 
 func newServerWizard(s *serversScreen, protocol string, keep map[string]string) *tui.Wizard {
@@ -258,7 +363,7 @@ func newServerWizard(s *serversScreen, protocol string, keep map[string]string) 
 	bind := tui.NewPrompt(tui.TextPrompt, "Add server · Bind", "Bind address", "Address to listen on.", shared("Bind", "0.0.0.0"))
 	steps = append(steps, tui.WizardStep{Key: "Bind", Prompt: bind})
 	port := tui.NewPrompt(tui.TextPrompt, "Add server · Port", "Port", "Port to listen on; leave empty to let netivri pick one.", shared("Port", ""))
-	port.Validate = func(v string) error {
+	portValidate := func(v string) error {
 		if v == "" {
 			return nil
 		}
@@ -266,8 +371,9 @@ func newServerWizard(s *serversScreen, protocol string, keep map[string]string) 
 		if e != nil || n < 1 || n > 65535 {
 			return errors.New("port must be between 1 and 65535")
 		}
-		return nil
+		return serverPortConflicts(s.home, protocol, bind.Value, n)
 	}
+	port.Validate = portValidate
 	steps = append(steps, tui.WizardStep{Key: "Port", Prompt: port})
 	if !hasProto || proto.PublicHost.Name != "" {
 		host := tui.NewPrompt(tui.TextPrompt, "Add server · Public host", "Public host", "Host advertised in generated links; leave empty for none.", shared("PublicHost", ""))
@@ -275,28 +381,33 @@ func newServerWizard(s *serversScreen, protocol string, keep map[string]string) 
 	}
 	if hasProto {
 		steps = append(steps, serverParamSteps(proto, shared)...)
+		steps = append(steps, serverAutoGenSteps(proto)...)
 	}
-	acct := tui.NewPrompt(tui.MultiChoicePrompt, "Add server · Accounts", "Accounts", "Accounts served by this server; leave all unchecked to serve every account.", "")
-	acct.Options = []tui.PromptOption{}
-	for _, l := range s.accountLogins {
-		acct.Options = append(acct.Options, tui.PromptOption{Label: l, Value: l})
-	}
-	if saved, ok := keep["Accounts"]; ok {
-		acct.Selected = nil
-		if saved != "" {
-			acct.Selected = strings.Split(saved, ",")
+	if hasProto && proto.SingleUser {
+		acct := tui.NewPrompt(tui.ChoicePrompt, "Add server · Accounts", "Account", "Choose the account served by this server.", shared("Accounts", ""))
+		acct.Options = []tui.PromptOption{}
+		for _, l := range s.accountLogins {
+			acct.Options = append(acct.Options, tui.PromptOption{Label: l, Value: l})
 		}
+		if acct.Value == "" && len(s.accountLogins) == 1 {
+			acct.Value = s.accountLogins[0]
+		}
+		steps = append(steps, tui.WizardStep{Key: "Accounts", Prompt: acct})
 	} else {
-		acct.Selected = append([]string(nil), s.accountLogins...)
-	}
-	steps = append(steps, tui.WizardStep{Key: "Accounts", Prompt: acct})
-	if hasProto {
-		for _, sp := range proto.Parameters {
-			if sp.AutoGenerated {
-				g := tui.NewPrompt(tui.TextPrompt, "Add server · "+sp.Label, sp.Label, "", serverAutoText)
-				steps = append(steps, tui.WizardStep{Key: serverGenPrefix + sp.Name, Prompt: g})
-			}
+		acct := tui.NewPrompt(tui.MultiChoicePrompt, "Add server · Accounts", "Accounts", "Accounts served by this server; leave all unchecked to serve every account.", "")
+		acct.Options = []tui.PromptOption{}
+		for _, l := range s.accountLogins {
+			acct.Options = append(acct.Options, tui.PromptOption{Label: l, Value: l})
 		}
+		if saved, ok := keep["Accounts"]; ok {
+			acct.Selected = nil
+			if saved != "" {
+				acct.Selected = strings.Split(saved, ",")
+			}
+		} else {
+			acct.Selected = append([]string(nil), s.accountLogins...)
+		}
+		steps = append(steps, tui.WizardStep{Key: "Accounts", Prompt: acct})
 	}
 	return tui.NewWizard("Add server", steps)
 }
@@ -354,6 +465,30 @@ func serverParamStep(p ServerParameter, shared func(string, string) string) tui.
 	return tui.WizardStep{Key: key, Prompt: prompt}
 }
 
+func serverPortConflicts(home, protocol, bind string, port int) error {
+	c, e := loadConfig(home)
+	if e != nil {
+		return nil
+	}
+	entry := config.Server{Protocol: protocol, Bind: strings.TrimSpace(bind), Port: port}
+	if entry.Bind == "" {
+		entry.Bind = "0.0.0.0"
+	}
+	return checkPortConflict(c, entry)
+}
+func serverPickPort(bind string) (int, error) {
+	host := strings.TrimSpace(bind)
+	if host == "" || host == "0.0.0.0" {
+		host = ""
+	}
+	l, e := net.Listen("tcp", host+":0")
+	if e != nil {
+		return 0, &cli.Error{Code: "CONFIG_INVALID", Message: "could not find a free port", Hint: "set the port manually and try again", Exit: cli.ExitUsage}
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 func serverAddOptionsFromWizard(v map[string]string) ServerAddOptions {
 	port := 0
 	if v["Port"] != "" {
@@ -401,8 +536,18 @@ func (s *serversScreen) beginAddWizard() tea.Cmd {
 		return newServerWizard(s, protocol, keep)
 	}}
 	d.onResult = func(v map[string]string) tea.Cmd {
+		if v["Protocol"] == "" {
+			v["Protocol"] = d.protocol
+		}
 		opts := serverAddOptionsFromWizard(v)
 		return s.deliver("add server", func() tea.Msg {
+			if opts.Port == 0 {
+				p, e := serverPickPort(opts.Bind)
+				if e != nil {
+					return serversAddDone{err: e}
+				}
+				opts.Port = p
+			}
 			res, e := ServerAdd(s.home, opts)
 			return serversAddDone{result: res, err: e}
 		})
@@ -606,8 +751,14 @@ func (s *serversScreen) confirmServerLink(name, account string) tea.Cmd {
 	p.Buttons = tui.Buttons{Labels: []string{"Cancel", "Show"}, Focus: 0}
 	s.dialog = &serversDialog{prompt: p, onResult: func(v map[string]string) tea.Cmd {
 		return s.deliver("server link", func() tea.Msg {
-			link, e := ServerLink(s.home, name, ServerLinkOptions{Account: account, Format: "uri"})
-			return serversLinkDone{name: name, link: link, err: e}
+			format := "uri"
+			link, e := ServerLink(s.home, name, ServerLinkOptions{Account: account, Format: format})
+			if e != nil {
+				if l, e2 := ServerLink(s.home, name, ServerLinkOptions{Account: account, Format: "mihomo"}); e2 == nil {
+					link, format, e = l, "mihomo", nil
+				}
+			}
+			return serversLinkDone{name: name, link: link, format: format, err: e}
 		})
 	}}
 	return nil
@@ -619,8 +770,7 @@ func (s *serversScreen) beginRotate(v *serverView) tea.Cmd {
 	}
 	s.pendingConfirm = "rotate"
 	s.pendingServer = v.Name
-	s.env.OpenModal(&tui.Confirm{Prompt: serverRotatePrompt(v, s.detailAccounts)})
-	return nil
+	return s.env.OpenModal(&tui.Confirm{Prompt: serverRotatePrompt(v, s.detailAccounts)})
 }
 func (s *serversScreen) beginRemove(v *serverView) tea.Cmd {
 	if v == nil || s.env.OpenModal == nil {
@@ -628,8 +778,7 @@ func (s *serversScreen) beginRemove(v *serverView) tea.Cmd {
 	}
 	s.pendingConfirm = "remove"
 	s.pendingServer = v.Name
-	s.env.OpenModal(&tui.Confirm{Prompt: serverRemovePrompt(v, s.detailAccounts)})
-	return nil
+	return s.env.OpenModal(&tui.Confirm{Prompt: serverRemovePrompt(v, s.detailAccounts)})
 }
 func serverAccountList(v *serverView, resolved []string) string {
 	if v.Accounts == "*" {
@@ -643,7 +792,7 @@ func serverAccountList(v *serverView, resolved []string) string {
 func serverRotatePrompt(v *serverView, resolved []string) string {
 	accounts := serverAccountList(v, resolved)
 	if v.SingleUser {
-		return "Rotate keys for server " + v.Name + "? The shared credentials change and existing client links stop working."
+		return "Rotate keys for server " + v.Name + "? The shared credentials for " + serversSafeDetailValue(accounts) + " change and existing client links stop working."
 	}
 	return "Rotate keys for server " + v.Name + "? Credentials for " + serversSafeDetailValue(accounts) + " change and existing client links stop working."
 }

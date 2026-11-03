@@ -79,13 +79,18 @@ func serversWizardProtocol(t *testing.T, s *serversScreen, name string) {
 			cur = i
 		}
 	}
-	// ChoicePrompt Down only moves p.choice; the value lands in Values on Enter.
+	// ChoicePrompt Down only moves p.choice; the value lands in Values on
+	// Enter (wizard activate(1) -> saveCurrent commits Values["Protocol"],
+	// then serversDialog.updateWizard detects the protocol change, rebuilds
+	// via newServerWizard and carries committed Values with
+	// serverCarryValues, landing on Index 1 — all inside this one Update).
 	serversDownKeys(s, (idx-cur+len(p.Options))%len(p.Options))
 	if serversEnterKey(s) != nil {
 		t.Fatal("protocol advance produced a command")
 	}
+	// Assert the committed (carried) value on the REBUILT wizard.
 	if s.dialog.wizard.Values["Protocol"] != name {
-		t.Fatalf("wizard protocol value = %q", s.dialog.wizard.Values["Protocol"])
+		t.Fatalf("rebuilt wizard protocol value = %q", s.dialog.wizard.Values["Protocol"])
 	}
 	if s.dialog.wizard.Index != 1 {
 		t.Fatalf("after protocol step wizard index = %d", s.dialog.wizard.Index)
@@ -213,18 +218,25 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	if d.wizard.Steps[6].Prompt.Value != "false" {
 		t.Fatalf("udp default = %q", d.wizard.Steps[6].Prompt.Value)
 	}
-	serversEnterKey(s) // UDP -> Accounts (multi choice, all accounts preselected)
+	serversEnterKey(s) // UDP -> Accounts (ChoicePrompt: shadowsocks is single-user,
+	// newServerWizard builds a one-of-many choice with the first account seeded;
+	// two accounts cannot be selected for this protocol, config.Validate
+	// requires exactly one)
 	acct := d.wizard.Steps[7]
-	if acct.Key != "Accounts" || strings.Join(acct.Prompt.Selected, ",") != "alice,bob" {
-		t.Fatalf("accounts step = %q selected=%v", acct.Key, acct.Prompt.Selected)
+	if acct.Key != "Accounts" || acct.Prompt.Kind != tui.ChoicePrompt {
+		t.Fatalf("shadowsocks accounts step = %q kind=%v", acct.Key, acct.Prompt.Kind)
 	}
-	serversEnterKey(s) // Accounts -> review
+	_ = s.View(120, 30) // initialize the choice prompt
+	if acct.Prompt.Value != "alice" || len(acct.Prompt.Options) != 2 {
+		t.Fatalf("accounts choice = %q options=%d", acct.Prompt.Value, len(acct.Prompt.Options))
+	}
+	serversEnterKey(s) // Accounts (commits "alice") -> review
 	if !d.wizard.Review {
 		t.Fatal("last step enter did not reach review")
 	}
 	review := s.View(120, 30)
 	snap()
-	for _, want := range []string{"Review", "Create", "Name: wss01", "Port: 45701", "Bind address: 0.0.0.0", "Accounts: alice,bob"} {
+	for _, want := range []string{"Review", "Create", "Name: wss01", "Port: 45701", "Bind address: 0.0.0.0", "Accounts: alice"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review missing %q: %q", want, review)
 		}
@@ -267,7 +279,7 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry, _ := cfg.GetServer("wss01")
-	if entry == nil || entry.Protocol != "shadowsocks" || entry.Port != 45701 || entry.Bind != "0.0.0.0" || entry.Accounts != "alice,bob" || entry.PublicHost != "link.test" {
+	if entry == nil || entry.Protocol != "shadowsocks" || entry.Port != 45701 || entry.Bind != "0.0.0.0" || entry.Accounts != "alice" || entry.PublicHost != "link.test" {
 		t.Fatalf("stored server wrong: %#v", entry)
 	}
 	if entry.Params["cipher"] != "2022-blake3-aes-128-gcm" || entry.Params["udp"] != "false" {
@@ -383,12 +395,34 @@ func TestServersWizardBackChangesProtocolAndRebuildsSteps(t *testing.T) {
 	if d.wizard.Steps[2].Prompt.Value != "0.0.0.0" {
 		t.Fatalf("bind answer lost across rebuild: %q", d.wizard.Steps[2].Prompt.Value)
 	}
+	// C: committed Values survive the rebuild via serverCarryValues: the
+	// rebuilt wizard has Protocol/Name/Bind/Port/PublicHost/Accounts steps,
+	// so those keys are carried; the stale shadowsocks param key has no
+	// matching step and is dropped.
+	if d.wizard.Values["Protocol"] != "mieru" {
+		t.Fatalf("rebuilt Values protocol = %q", d.wizard.Values["Protocol"])
+	}
+	for k, want := range map[string]string{"Name": "keepname", "Bind": "0.0.0.0"} {
+		if got := d.wizard.Values[k]; got != want {
+			t.Fatalf("Values[%q] = %q, want %q", k, got, want)
+		}
+	}
+	if _, ok := d.wizard.Values["param:cipher"]; ok {
+		t.Fatal("stale param:cipher key survived the rebuild in Values")
+	}
 	opts := serverAddOptionsFromWizard(d.wizard.Values)
 	if _, ok := opts.Params["cipher"]; ok {
 		t.Fatal("stale cipher param reached the add options")
 	}
 	if opts.Protocol != "mieru" || opts.Name != "keepname" || opts.Bind != "0.0.0.0" {
 		t.Fatalf("add options wrong: %+v", opts)
+	}
+	if opts.Protocol != d.wizard.Values["Protocol"] {
+		t.Fatal("add options protocol diverged from the committed Values")
+	}
+	// The Index-1 Name prompt was seeded from the carried shared answer.
+	if seeded := d.wizard.Steps[1].Prompt.Value; seeded != "keepname" {
+		t.Fatalf("rebuilt Name prompt not seeded from shared(): %q", seeded)
 	}
 }
 
@@ -470,7 +504,7 @@ func TestServersEditPortViaMouseClickSavesThroughPrompt(t *testing.T) {
 		t.Fatalf("save command produced %#v", msg)
 	}
 	_, cmd = s.Update(msg)
-	serversRun(t, s, cmd)
+	serversDrain(t, s, cmd)
 	if s.dialog != nil {
 		t.Fatal("save did not close the prompt")
 	}
@@ -543,12 +577,10 @@ func TestServersLinkRevealAppearsOnlyInRevealFrame(t *testing.T) {
 	}
 	reveal := s.View(120, 30)
 	frames = append(frames, reveal)
-	// The modal truncates lines at the frame width; assert on the visible prefix.
-	linkShown := link
-	if r := []rune(link); len(r) > 100 {
-		linkShown = string(r[:100])
-	}
-	if !strings.Contains(reveal, "Client link · ss") || !strings.Contains(reveal, linkShown) || !strings.Contains(reveal, "Close") {
+	// At 120 columns the ~70-char link fits one wrap row, so the FULL link
+	// is visible verbatim (see the chunk-exact assertion in
+	// TestServersRevealShowsFullLinkAndScrolls).
+	if !strings.Contains(reveal, "Client link · ss") || !strings.Contains(reveal, link) || !strings.Contains(reveal, "Close") {
 		t.Fatalf("reveal frame wrong: %q", reveal)
 	}
 	// Esc closes the reveal modal (serversMenuModal esc -> serversModalAction{-1}).
@@ -561,7 +593,7 @@ func TestServersLinkRevealAppearsOnlyInRevealFrame(t *testing.T) {
 	}
 	reveals := 0
 	for _, f := range frames {
-		if strings.Contains(f, linkShown) {
+		if strings.Contains(f, link) {
 			reveals++
 		}
 	}
@@ -569,130 +601,6 @@ func TestServersLinkRevealAppearsOnlyInRevealFrame(t *testing.T) {
 		t.Fatalf("link appeared in %d frames, want only the reveal dialog", reveals)
 	}
 	serversAssertNoLeaks(t, home, link, frames[:len(frames)-2]) // everything except reveal + after-close still must not leak secrets
-}
-
-func TestServersRotateAndRemoveConfirms(t *testing.T) {
-	home := serversFixture(t)
-	// Materialize the secrets so rotation has something to rotate.
-	if _, err := ServerLink(home, "ss", ServerLinkOptions{Account: "alice", Format: "uri"}); err != nil {
-		t.Fatal(err)
-	}
-	s := newServersTestScreen(t, home)
-	var toasts []string
-	s.env.Toast = func(text string) tea.Cmd { toasts = append(toasts, text); return nil }
-	var modal *tui.Confirm
-	s.env.OpenModal = func(m tui.Modal) tea.Cmd {
-		if c, ok := m.(*tui.Confirm); ok {
-			modal = c
-		}
-		return func() tea.Msg { return m }
-	}
-	serversRun(t, s, s.Init())
-	serversLoadDetail(t, s)
-	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
-	s.workspace.SetFocus(tui.PaneCard)
-
-	// Rotate: confirm names the server and the affected account.
-	if _, c := s.Update(serversKey('k', "k")); c != nil {
-		t.Fatal("rotate hotkey produced a command")
-	}
-	if modal == nil {
-		t.Fatal("rotate did not open a confirm modal")
-	}
-	if got := modal.Prompt; !strings.Contains(got, "Rotate keys for server ss") || !strings.Contains(got, "alice") {
-		t.Fatalf("rotate prompt = %q", got)
-	}
-	// Default is No: Confirm.selected == 0, so Enter cancels (confirm.go).
-	if _, c := modal.Update(tea.KeyPressMsg{Code: tea.KeyEnter}); c == nil {
-		t.Fatal("confirm enter produced no command")
-	} else if m := c(); m != nil {
-		r, ok := m.(tui.ConfirmResultMsg)
-		if !ok || r.Confirmed || !r.Canceled {
-			t.Fatalf("default confirm result = %#v", m)
-		}
-		_, _ = s.Update(r)
-	}
-	modal = nil
-
-	// Confirmed rotate runs the op and toasts.
-	if _, c := s.Update(serversKey('k', "k")); c != nil {
-		t.Fatal("second rotate hotkey produced a command")
-	}
-	if modal == nil {
-		t.Fatal("rotate confirm did not reopen")
-	}
-	_, cmd := s.Update(tui.ConfirmResultMsg{Confirmed: true})
-	if cmd == nil {
-		t.Fatal("confirmed rotate produced no command")
-	}
-	serversRun(t, s, cmd)
-	cfg, err := loadConfig(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, i := cfg.GetServer("ss"); i < 0 {
-		t.Fatal("rotate removed the server entry")
-	}
-	found := false
-	for _, x := range toasts {
-		if strings.Contains(x, "Keys rotated for ss") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("rotate toast missing: %v", toasts)
-	}
-	modal = nil
-
-	// Remove: confirm names the server and the account; confirming removes it.
-	if _, c := s.Update(serversKey('d', "d")); c != nil {
-		t.Fatal("remove hotkey produced a command")
-	}
-	if modal == nil {
-		t.Fatal("remove did not open a confirm modal")
-	}
-	if got := modal.Prompt; !strings.Contains(got, "Remove server ss") || !strings.Contains(got, "alice") {
-		t.Fatalf("remove prompt = %q", got)
-	}
-	_, cmd = s.Update(tui.ConfirmResultMsg{Confirmed: true})
-	serversRun(t, s, cmd)
-	cfg, err = loadConfig(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, i := cfg.GetServer("ss"); i >= 0 {
-		t.Fatal("confirmed remove did not delete the server")
-	}
-	if len(cfg.Servers) != 1 {
-		t.Fatalf("unrelated server lost: %#v", cfg.Servers)
-	}
-	if s.dialog != nil {
-		t.Fatal("remove left a dialog open")
-	}
-	found = false
-	for _, x := range toasts {
-		if strings.Contains(x, "Server removed") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("remove toast missing: %v", toasts)
-	}
-	if _, err := os.Stat(filepath.Join(home, "server-secrets.ktav")); err == nil {
-		var doc struct {
-			Servers map[string]struct{} `json:"servers"`
-		}
-		b, rerr := os.ReadFile(filepath.Join(home, "server-secrets.ktav"))
-		if rerr != nil {
-			t.Fatal(rerr)
-		}
-		if perr := pure.LoadsInto(string(b), &doc); perr != nil {
-			t.Fatal(perr)
-		}
-		if _, ok := doc.Servers["ss"]; ok {
-			t.Fatal("removed server secrets survived")
-		}
-	}
 }
 
 func TestServersAngelStoppedEditSavesAndReportsPendingApply(t *testing.T) {
@@ -726,7 +634,7 @@ func TestServersAngelStoppedEditSavesAndReportsPendingApply(t *testing.T) {
 		if _, cmd = s.Update(msg); cmd == nil {
 			t.Fatal("save result did not start the update")
 		}
-		serversRun(t, s, cmd)
+		serversDrain(t, s, cmd)
 	}
 	cfg, err := loadConfig(home)
 	if err != nil {
@@ -782,7 +690,7 @@ func TestServersFrameContractAndWeakGoldens(t *testing.T) {
 		goldens []string
 	}{
 		{"empty", empty, []string{"No servers configured", "+ Add a server [a]", "Name", "Reload"}},
-		{"two-servers", loaded, []string{"shadowsocks", "vless-reality", "1234", "angel stopped", "Protocol", "Show client link...", "Rotate keys...", "Remove...", "[l]", "[k]", "[d]"}},
+		{"two-servers", loaded, []string{"shadowsocks", "vless-reality", "1234", "angel stopped", "Protocol", "Show client link...", "Rotate keys...", "Remove...", "[l]", "[t]", "[d]"}},
 		{"wizard", wizard, []string{"Add server", "Shadowsocks", "Choose the server protocol."}},
 		{"edit-port", edit, []string{"Server ss · Port", "Port"}},
 		{"link-warning", reveal, []string{"Show client link", "contains credentials"}},

@@ -142,7 +142,7 @@ func serverCardLines(s *serversScreen, v *serverView) []tui.CardLine {
 	return append(lines,
 		tui.CardLine{ID: "add", Label: "Add a server...", Hotkey: "a", Kind: tui.CardAction, Action: true},
 		tui.CardLine{ID: "link", Label: "Show client link...", Hotkey: "l", Kind: tui.CardAction, Action: true},
-		tui.CardLine{ID: "rotate", Label: "Rotate keys...", Hotkey: "k", Kind: tui.CardAction, Action: true},
+		tui.CardLine{ID: "rotate", Label: "Rotate keys...", Hotkey: "t", Kind: tui.CardAction, Action: true},
 		tui.CardLine{ID: "remove", Label: "Remove...", Hotkey: "d", Kind: tui.CardAction, Action: true},
 		tui.CardLine{ID: "reload", Label: "Reload", Hotkey: "r", Kind: tui.CardAction, Action: true})
 }
@@ -451,7 +451,7 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 			s.dialog = nil
 			return s, s.notice(serversSafePromptError(v.err))
 		}
-		s.dialog = &serversDialog{modal: newServersLinkModal(s.theme, v.name, v.link)}
+		s.dialog = &serversDialog{modal: newServersLinkModal(s.theme, v.name, v.link, v.format)}
 		return s, nil
 	case tui.ConfirmResultMsg:
 		action, name := s.pendingConfirm, s.pendingServer
@@ -505,13 +505,10 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		if s.dialog == nil && !(s.workspace.Width < 100 && s.workspace.Drilled) {
 			return s, s.beginAddWizard()
 		}
-	case "l", "k", "d":
+	case "l", "t", "d":
 		if s.dialog == nil && s.detail != nil && (s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard || s.workspace.Width < 100 && s.workspace.Drilled) {
-			id := map[string]string{"l": "link", "k": "rotate", "d": "remove"}[k.String()]
+			id := map[string]string{"l": "link", "t": "rotate", "d": "remove"}[k.String()]
 			return s, s.cardAction(id)
-		}
-		if k.String() == "k" {
-			return s, s.moveSelection(k)
 		}
 	case "tab":
 		if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneList {
@@ -570,7 +567,7 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 			return s, s.activateCard()
 		}
 		return s, s.detailCmdForSelected()
-	case "up", "down", "j", "pgup", "pgdown", "home", "end", "left", "right":
+	case "up", "down", "j", "k", "pgup", "pgdown", "home", "end", "left", "right":
 		return s, s.moveSelection(k)
 	}
 	return s, nil
