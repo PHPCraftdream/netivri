@@ -79,7 +79,12 @@ func (*storeTestProtocol) Link(Spec, string, string) (string, error) { return ""
 func TestStoreRepairEmptyAndNilFields(t *testing.T) {
 	registerStoreTestProtocol(t)
 	s := NewStore(t.TempDir())
-	if err := os.WriteFile(s.Path(), []byte("servers: {\n  test: {\n    material: { key: '', extra: stable }\n    users: { alice: null }\n  }\n}\n"), 0o600); err != nil {
+	if err := s.write(map[string]storeEntry{
+		"test": {
+			Material: map[string]string{"key": "", "extra": "stable"},
+			Users:    map[string]map[string]string{"alice": nil},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	spec := Spec{Name: "test", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
@@ -347,19 +352,82 @@ func TestStoreEnsureValidatedStorageErrorsAreNotValidationErrors(t *testing.T) {
 	}
 }
 
+func TestStoreReadKTAVQuotedScalarsRemainLiteral(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("servers: {\n  quoted: {\n    material: {\n      single: ''\n      double: \"\"\n      empty:\n    }\n    users: {}\n  }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := entries["quoted"].Material
+	if got := len(material["single"]); got != 2 {
+		t.Errorf("single-quoted scalar length=%d, want 2", got)
+	}
+	if got := len(material["double"]); got != 2 {
+		t.Errorf("double-quoted scalar length=%d, want 2", got)
+	}
+	if value, present := material["empty"]; !present || len(value) != 0 {
+		t.Errorf("bare empty scalar presence=%t length=%d, want present empty scalar", present, len(value))
+	}
+}
+
 func TestStoreTrackedCleanupRestoresRepairedEmptyFields(t *testing.T) {
 	registerStoreTestProtocol(t)
 	s := NewStore(t.TempDir())
-	if err := os.WriteFile(s.Path(), []byte("servers: {\n  tracked: {\n    material: { key: '' }\n    users: { alice: { password: '' } }\n  }\n}\n"), 0o600); err != nil {
+	if err := s.write(map[string]storeEntry{
+		"tracked": {
+			Material: map[string]string{"key": ""},
+			Users:    map[string]map[string]string{"alice": {"password": ""}},
+		},
+	}); err != nil {
 		t.Fatal(err)
+	}
+	entriesBefore, err := s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := entriesBefore["tracked"]
+	key, keyPresent := before.Material["key"]
+	password, passwordPresent := before.Users["alice"]["password"]
+	if !keyPresent || len(key) != 0 || !passwordPresent || len(password) != 0 {
+		t.Fatalf("empty fixture was not loaded: key_present=%t key_len=%d password_present=%t password_len=%d", keyPresent, len(key), passwordPresent, len(password))
 	}
 	spec := Spec{Name: "tracked", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
 	_, receipt, err := s.EnsureSecretsTracked(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(receipt.Material) != 1 || !receipt.Material[0].HadPrevious || receipt.Material[0].Previous != "" || len(receipt.Users["alice"]) != 2 {
-		t.Fatalf("receipt did not capture empty prior values: %s", receipt)
+	if len(receipt.Material) != 1 {
+		t.Errorf("created material field count = %d, want 1", len(receipt.Material))
+	} else {
+		if !receipt.Material[0].HadPrevious {
+			t.Errorf("created material field had previous=%t, want true", receipt.Material[0].HadPrevious)
+		}
+		if len(receipt.Material[0].Previous) != 0 {
+			t.Errorf("created material previous value length=%d, want 0", len(receipt.Material[0].Previous))
+		}
+	}
+	if got := len(receipt.Users["alice"]); got != 2 {
+		t.Errorf("created user field count = %d, want 2", got)
+	}
+	seenUserFields := map[string]bool{}
+	for _, field := range receipt.Users["alice"] {
+		if field.Key != "password" && field.Key != "token" {
+			t.Errorf("unexpected created user field name %q", field.Key)
+		}
+		seenUserFields[field.Key] = true
+		wantHadPrevious := field.Key == "password"
+		if field.HadPrevious != wantHadPrevious {
+			t.Errorf("user field %s had previous=%t, want %t", field.Key, field.HadPrevious, wantHadPrevious)
+		}
+		if len(field.Previous) != 0 {
+			t.Errorf("user field %s previous value length=%d, want 0", field.Key, len(field.Previous))
+		}
+	}
+	if len(seenUserFields) != 2 || !seenUserFields["password"] || !seenUserFields["token"] {
+		t.Errorf("created user field names = %v, want password and token", seenUserFields)
 	}
 	entries, err := s.read()
 	if err != nil {

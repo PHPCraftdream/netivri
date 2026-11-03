@@ -9,8 +9,53 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
-func TestMetadataExhaustiveAndDefaultsValid(t *testing.T) {
-	want := map[string][]string{
+func auditedProtocols(t *testing.T) []servers.Protocol {
+	t.Helper()
+	registered := servers.Registered()
+	registeredNames := make([]string, 0, len(registered))
+	for _, protocol := range registered {
+		registeredNames = append(registeredNames, protocol.Name())
+	}
+	allowedTestOnly := map[string]bool{
+		"a-test": true, "z-test": true,
+		"sniffer-custom-matchkeys-test": true,
+		"store-test":                    true,
+	}
+	unexpected := make([]string, 0)
+	for _, name := range registeredNames {
+		if _, audited := auditedMetadata()[name]; !audited && !allowedTestOnly[name] {
+			unexpected = append(unexpected, name)
+		}
+	}
+	for name := range auditedMetadata() {
+		if !containsString(registeredNames, name) {
+			unexpected = append(unexpected, "missing:"+name)
+		}
+	}
+	sort.Strings(unexpected)
+	if len(unexpected) != 0 {
+		t.Fatalf("registry differs from audited protocols; registered=%v unexpected=%v", registeredNames, unexpected)
+	}
+	protocols := make([]servers.Protocol, 0, len(auditedMetadata()))
+	for _, protocol := range registered {
+		if _, audited := auditedMetadata()[protocol.Name()]; audited {
+			protocols = append(protocols, protocol)
+		}
+	}
+	return protocols
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func auditedMetadata() map[string][]string {
+	return map[string][]string{
 		"anytls":      {"sni", "padding_scheme", "cert_file", "key_file"},
 		"hysteria2":   {"sni", "cert_file", "key_file", "obfs", "up", "down"},
 		"mieru":       {"transport", "multiplexing"},
@@ -22,10 +67,11 @@ func TestMetadataExhaustiveAndDefaultsValid(t *testing.T) {
 		"tuic":          {"sni", "alpn", "cert_file", "key_file", "congestion", "udp_relay_mode"},
 		"vless-reality": {"dest", "sni", "flow", "fingerprint"}, "vmess": {"cipher"},
 	}
-	if len(servers.Registered()) != len(want) {
-		t.Fatalf("registered count = %d, audited protocols = %d", len(servers.Registered()), len(want))
-	}
-	for _, p := range servers.Registered() {
+}
+
+func TestMetadataExhaustiveAndDefaultsValid(t *testing.T) {
+	want := auditedMetadata()
+	for _, p := range auditedProtocols(t) {
 		metadata, ok := servers.Metadata(p.Name())
 		if !ok {
 			t.Errorf("missing metadata %s", p.Name())
@@ -89,50 +135,50 @@ func TestMetadataExhaustiveAndDefaultsValid(t *testing.T) {
 }
 
 func TestMetadataConfigLayerValidation(t *testing.T) {
-	for _, protocol := range servers.Registered() {
-		metadata, _ := servers.Metadata(protocol.Name())
+	for _, p := range auditedProtocols(t) {
+		metadata, _ := servers.Metadata(p.Name())
 		defaults := map[string]string{}
-		for _, p := range metadata.Parameters {
-			if p.Default != "" {
-				defaults[p.Name] = p.Default
+		for _, parameter := range metadata.Parameters {
+			if parameter.Default != "" {
+				defaults[parameter.Name] = parameter.Default
 			}
 		}
 		base := config.Default()
 		base.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
-		base.Servers = []config.Server{{Name: "schema", Protocol: protocol.Name(), Port: 9000, Accounts: "alice", PublicHost: "node.example", Params: cloneParams(defaults)}}
+		base.Servers = []config.Server{{Name: "schema", Protocol: p.Name(), Port: 9000, Accounts: "alice", PublicHost: "node.example", Params: cloneParams(defaults)}}
 		if err := base.Validate(); err != nil {
-			t.Errorf("%s declared defaults rejected by config validation: %v", protocol.Name(), err)
+			t.Errorf("%s declared defaults rejected by config validation: %v", p.Name(), err)
 		}
-		for _, p := range metadata.Parameters {
+		for _, parameter := range metadata.Parameters {
 			candidateParams := cloneParams(defaults)
-			candidateParams[p.Name] = safeParameterValue(protocol.Name(), p.Name, p)
-			if p.Default != "" {
-				candidateParams[p.Name] = p.Default
+			candidateParams[parameter.Name] = safeParameterValue(p.Name(), parameter.Name, parameter)
+			if parameter.Default != "" {
+				candidateParams[parameter.Name] = parameter.Default
 			}
-			if p.Name == "cert_file" || p.Name == "key_file" {
+			if parameter.Name == "cert_file" || parameter.Name == "key_file" {
 				candidateParams["cert_file"], candidateParams["key_file"] = "cert.pem", "key.pem"
 			}
-			if protocol.Name() == "anytls" && p.Name == "padding_scheme" {
-				candidateParams[p.Name] = "stop=0"
+			if p.Name() == "anytls" && parameter.Name == "padding_scheme" {
+				candidateParams[parameter.Name] = "stop=0"
 			}
-			if protocol.Name() == "snell" && p.Name == "obfs_host" {
+			if p.Name() == "snell" && parameter.Name == "obfs_host" {
 				candidateParams["obfs"] = "http"
 			}
-			if protocol.Name() == "snell" && (candidateParams["obfs"] == "http" || candidateParams["obfs"] == "tls") {
+			if p.Name() == "snell" && (candidateParams["obfs"] == "http" || candidateParams["obfs"] == "tls") {
 				candidateParams["obfs_host"] = "obfs.example"
 			}
 			candidate := config.Default()
 			candidate.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
-			candidate.Servers = []config.Server{{Name: "schema", Protocol: protocol.Name(), Port: 9000, Accounts: "alice", PublicHost: "node.example", Params: candidateParams}}
+			candidate.Servers = []config.Server{{Name: "schema", Protocol: p.Name(), Port: 9000, Accounts: "alice", PublicHost: "node.example", Params: candidateParams}}
 			if err := candidate.Validate(); err != nil {
-				t.Errorf("%s/%s rejected by config validation: %v", protocol.Name(), p.Name, err)
+				t.Errorf("%s/%s rejected by config validation: %v", p.Name(), parameter.Name, err)
 			}
 		}
 		reserved := config.Default()
 		reserved.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
-		reserved.Servers = []config.Server{{Name: "schema", Protocol: protocol.Name(), Port: 9000, Accounts: "alice", Params: map[string]string{"public_host": "node.example"}}}
+		reserved.Servers = []config.Server{{Name: "schema", Protocol: p.Name(), Port: 9000, Accounts: "alice", Params: map[string]string{"public_host": "node.example"}}}
 		if err := reserved.Validate(); err == nil {
-			t.Errorf("%s config accepted reserved public_host parameter", protocol.Name())
+			t.Errorf("%s config accepted reserved public_host parameter", p.Name())
 		}
 	}
 }

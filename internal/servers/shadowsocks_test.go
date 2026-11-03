@@ -27,12 +27,12 @@ func TestRegistry(t *testing.T) {
 	for _, n := range []string{"z-test", "a-test"} {
 		Register(testProtocol(n))
 	}
-	defer func() {
+	t.Cleanup(func() {
 		registryMu.Lock()
 		delete(registry, "z-test")
 		delete(registry, "a-test")
 		registryMu.Unlock()
-	}()
+	})
 	func() {
 		defer func() {
 			if recover() == nil {
