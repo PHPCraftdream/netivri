@@ -103,6 +103,9 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 	if _, err := last.Write([]byte("hello")); err != nil {
 		t.Fatal(err)
 	}
+	// The node's answer must be strictly later than the connection's start; a
+	// coarse Windows clock can tie when both happen within a few milliseconds.
+	time.Sleep(100 * time.Millisecond)
 	if err := tryDialAccountSOCKS5(t, instance.Addr(), fine, backend, "alice", alicePassword); err != nil {
 		t.Fatalf("another site: %v", err)
 	}
