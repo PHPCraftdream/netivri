@@ -2,7 +2,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"net/netip"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 
@@ -35,6 +40,12 @@ func blockGroup(t *testing.T, tiers []int) (*stickyGroup, *healthTable, *fakeClo
 		health.recordProbe(label, true, 50*time.Millisecond)
 	}
 	return g, health, clock, sink
+}
+
+func setNodeLastOK(h *nodeHealth, at time.Time) {
+	h.mu.Lock()
+	h.lastOK = at
+	h.mu.Unlock()
 }
 
 // connEnd says how a test connection ends.
@@ -509,7 +520,6 @@ func TestLastOKAtIsWhenTheNodeLastAnswered(t *testing.T) {
 	}
 }
 
-// A binding that is picked again onto the same node keeps what it remembers.
 func TestSamePickKeepsTheBindingAndItsAnswerMemory(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	table := newAffinityTable(now, 0)
@@ -526,5 +536,230 @@ func TestSamePickKeepsTheBindingAndItsAnswerMemory(t *testing.T) {
 	}
 	if table.rebindCount() != 0 {
 		t.Fatalf("%d rebinds, want 0", table.rebindCount())
+	}
+}
+
+func TestDialTimeoutBlocksOnceWithTargetDetails(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	g.blocks.minLife = 0
+	md := dialMetadata("alice", "timeout.example")
+	md.DstPort = 8443
+	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
+	f.err = &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	g.members[0] = f
+	for i := 0; i < silentNeeded; i++ {
+		c, e := g.DialContext(context.Background(), md)
+		if c != nil || !errors.Is(e, os.ErrDeadlineExceeded) {
+			t.Fatalf("dial=%v %v", c, e)
+		}
+		clock.advance(time.Second)
+	}
+	got := ofKind(sink, ConnSiteBlocked)
+	if len(got) != 1 || got[0].Label != "n0" || got[0].Target != "timeout.example:8443" || got[0].Port != 8443 || got[0].Why != MoveNoAnswer || got[0].Site == 0 {
+		t.Fatalf("events=%+v", got)
+	}
+	if got := chosen(t, g, "timeout.example"); got != 1 {
+		t.Fatalf("route=%d, want 1", got)
+	}
+}
+
+type timeoutMember struct {
+	*fakeMember
+	during func()
+}
+
+func (m *timeoutMember) DialContext(context.Context, *C.Metadata) (C.Conn, error) {
+	m.dials.Add(1)
+	m.during()
+	return nil, m.err
+}
+
+func TestRecordDialTimeoutUsesIPTargetFallback(t *testing.T) {
+	g, _, clock, sink := blockGroup(t, []int{0})
+	g.blocks.minLife = 0
+	md := &C.Metadata{DstIP: netip.MustParseAddr("2001:db8::7"), DstPort: 443}
+	for i := 0; i < silentNeeded; i++ {
+		start := clock.now
+		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
+		g.recordDialTimeout("alice", "v6", 0, "n0", md, start, time.Second)
+		clock.advance(time.Second)
+	}
+	got := ofKind(sink, ConnSiteBlocked)
+	if len(got) != 1 || got[0].Target != "[2001:db8::7]:443" {
+		t.Fatalf("events=%+v", got)
+	}
+}
+
+func TestDialTimeoutDoesNotCountBelowMinimumLife(t *testing.T) {
+	g, _, clock, sink := blockGroup(t, []int{0})
+	g.blocks.minLife = time.Hour
+	md := dialMetadata("alice", "short.example")
+	for i := 0; i < silentNeeded; i++ {
+		start := clock.now
+		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
+		g.recordDialTimeout("alice", "short", 0, "n0", md, start, time.Second)
+		if g.blocks.any() {
+			t.Fatal("short-lived evidence was recorded")
+		}
+		clock.advance(time.Second)
+	}
+	start := clock.now
+	setNodeLastOK(g.healths[0], start.Add(time.Hour))
+	g.recordDialTimeout("alice", "short", 0, "n0", md, start, time.Hour)
+	if !g.blocks.any() {
+		t.Fatal("evidence at minLife was not recorded")
+	}
+	if got := ofKind(sink, ConnSiteBlocked); len(got) != 0 {
+		t.Fatalf("events=%+v", got)
+	}
+}
+
+func TestDialTimeoutDoesNotCountWithoutLaterNodeAnswer(t *testing.T) {
+	g, _, clock, sink := blockGroup(t, []int{0})
+	g.blocks.minLife = 0
+	md := dialMetadata("alice", "outage.example")
+	start := clock.now
+	setNodeLastOK(g.healths[0], start)
+	for i := 0; i < silentNeeded+1; i++ {
+		g.recordDialTimeout("alice", "outage", 0, "n0", md, start, time.Second)
+		clock.advance(time.Second)
+	}
+	if len(ofKind(sink, ConnSiteBlocked)) != 0 {
+		t.Fatal("blocked without later node answer")
+	}
+}
+
+func TestDialTimeoutEvidenceRequiresAnswerAfterStart(t *testing.T) {
+	g, _, clock, _ := blockGroup(t, []int{0})
+	g.blocks.minLife = 0
+	start := clock.now
+	setNodeLastOK(g.healths[0], start)
+	md := dialMetadata("alice", "no-later-answer.example")
+	for i := 0; i < silentNeeded+1; i++ {
+		g.recordDialTimeout("alice", "same", 0, "n0", md, start, time.Second)
+		clock.advance(time.Second)
+	}
+	if g.blocks.any() {
+		t.Fatal("timeouts without a later answer created evidence")
+	}
+}
+
+func TestDialTimeoutAnswerResetsRun(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	g.blocks.minLife = 0
+	md := dialMetadata("alice", "reset.example")
+	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+		clock.advance(time.Nanosecond)
+		nodeUp(health, "n0")
+	}}
+	f.err = &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	g.members[0] = f
+	dialTimeout := func() { t.Helper(); _, _ = g.DialContext(context.Background(), md); clock.advance(time.Second) }
+	dialTimeout()
+	dialTimeout()
+	g.members[0] = &fakeMember{name: "n0", conn: func() C.Conn { return &scriptConn{} }}
+	endConn(t, g, health, clock, "reset.example", connEnd{answer: true, wait: time.Second})
+	g.members[0] = f
+	for i := 0; i < silentNeeded; i++ {
+		dialTimeout()
+	}
+	if g.blocks.blockedCount() != 0 || len(ofKind(sink, ConnSiteBlocked)) != 0 {
+		t.Fatal("timeouts spanning an answer created a block")
+	}
+}
+
+func TestDialTimeoutEvidenceIsPerAccountAndSite(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	g.blocks.minLife = 0
+	md := dialMetadata("alice", "isolated.example")
+	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
+	f.err = &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	g.members[0] = f
+	for i := 0; i < silentNeeded; i++ {
+		_, _ = g.DialContext(context.Background(), md)
+		clock.advance(time.Second)
+	}
+	if g.blocks.blocked("bob", "isolated.example", 0, clock.now) {
+		t.Fatal("alice's timeout block affected bob")
+	}
+	if g.blocks.blocked("alice", "other.example", 0, clock.now) {
+		t.Fatal("timeout block affected another site")
+	}
+	if len(ofKind(sink, ConnSiteBlocked)) != 1 {
+		t.Fatalf("block events=%+v, want only alice's site", ofKind(sink, ConnSiteBlocked))
+	}
+}
+
+func TestDialTimeoutRetryRecordsEvidenceOnlyForRetryNode(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	g.blocks.minLife = 0
+	md := dialMetadata("alice", "retry.example")
+	timeoutErr := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	f0 := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+		clock.advance(time.Nanosecond)
+		nodeUp(health, "n0")
+		health.recordDialAt("n0", "seed-one", errors.New("failure"), time.Second)
+		health.recordDialAt("n0", "seed-two", errors.New("failure"), time.Second)
+	}}
+	f0.err = timeoutErr
+	f1 := &timeoutMember{fakeMember: g.members[1].(*fakeMember), during: func() {
+		clock.advance(time.Nanosecond)
+		nodeUp(health, "n1")
+	}}
+	f1.err = timeoutErr
+	g.members[0] = f0
+	g.members[1] = f1
+	_, err := g.DialContext(context.Background(), md)
+	if !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("dial error = %v, want deadline exceeded", err)
+	}
+	if !health.down("n0") {
+		t.Fatal("n0 did not go down")
+	}
+	g.blocks.mu.RLock()
+	_, key1 := g.blocks.m[blockKey{"alice", siteKey("retry.example", netip.Addr{}), 1}]
+	_, key0 := g.blocks.m[blockKey{"alice", siteKey("retry.example", netip.Addr{}), 0}]
+	silent1 := 0
+	if record := g.blocks.m[blockKey{"alice", siteKey("retry.example", netip.Addr{}), 1}]; record != nil {
+		silent1 = record.silent
+	}
+	g.blocks.mu.RUnlock()
+	if key0 || !key1 || silent1 != 1 {
+		t.Fatalf("retry evidence: node0=%v node1=%v silent=%d, want no node0 evidence and one silent node1 record", key0, key1, silent1)
+	}
+	if got := f0.dials.Load(); got != 1 {
+		t.Errorf("n0 dials = %d, want 1", got)
+	}
+	if got := f1.dials.Load(); got != 1 {
+		t.Errorf("n1 dials = %d, want 1", got)
+	}
+	if got := ofKind(sink, ConnSiteBlocked); len(got) != 0 {
+		t.Errorf("blocked events = %+v, want none", got)
+	}
+}
+
+func TestDialTimeoutFailureKindsDoNotCreateEvidence(t *testing.T) {
+	for _, err := range []error{
+		&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+		&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNRESET},
+		&net.DNSError{Err: "no such host", Name: "x.example"},
+		&net.OpError{Op: "dial", Net: "tls", Err: errors.New("handshake failed")},
+		errors.New("other"),
+	} {
+		g, health, clock, sink := blockGroup(t, []int{0})
+		g.blocks.minLife = 0
+		f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+			clock.advance(time.Nanosecond)
+			nodeUp(health, "n0")
+		}}
+		f.err = err
+		g.members[0] = f
+		for i := 0; i < silentNeeded+1; i++ {
+			_, _ = g.DialContext(context.Background(), dialMetadata("alice", "x.example"))
+			clock.advance(time.Second)
+		}
+		if g.blocks.any() || len(ofKind(sink, ConnSiteBlocked)) != 0 {
+			t.Fatalf("%v created evidence", err)
+		}
 	}
 }

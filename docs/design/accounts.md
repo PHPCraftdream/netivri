@@ -75,23 +75,23 @@ Rules:
   connections on them; `doctor` notes them.
 - A node that is not down can still never reach one destination, so a site can
   leave a node for another reason: **no answer**. When three connections of an
-  account to one site went through one node within 10 minutes, each sent data,
-  lived at least 5 seconds and got nothing back, none of the site's connections
-  was answered through the node in that time, and the node itself answered a
-  probe or a dial after the connection began and again after the first of the
-  silent connections ended (so it is not a network outage that ended them
-  together), counting the wait from the first bytes the connection sent,
-  the node is blocked for that (account, site): the next connection is picked
-  again with the node counted as down, and goes to the next node of the route,
-  a worse tier included (counted in `affinity.rebinds`, logged as a move for
-  `no answer`). The block lasts 30 minutes and doubles on every repeat up to 8
-  hours; an answer through the node (a connection opened before the block
-  included) ends it and clears the count. When every node is blocked for the
-  site the choice is the one for "every node is down". The blocks live in
-  memory in the sticky group (`siteBlocks`), per account and site, bounded to
-  4096 records, and are lost on a restart or a reload. The unit is the site (the
-  registrable domain, or the IP), the same as a binding's; a site that was
-  answered through the node within the 10 minutes is never blocked.
+  account to one site went through one node within 10 minutes, each sent data
+  and got nothing back, or a dial to that site timed out, after at least 5 seconds,
+  none of the site's connections was answered through the node in that time,
+  and the node itself answered a probe or a dial after the attempt began and
+  again after the first of them ended (so it is not a network outage that ended
+  them together), the node is blocked for that (account, site): the next connection
+  is picked again with the node counted as down, and goes to the next node of
+  the route, a worse tier included (counted in `affinity.rebinds`, logged as a move
+  for `no answer`). A dial counts from its start, a connection from its first
+  bytes; a successful dial is not an answer. The block lasts 30 minutes and
+  doubles on every repeat up to 8 hours; an answer through the node (a connection
+  opened before the block included) ends it and clears the count. When every
+  node is blocked for the site the choice is the one for "every node is down".
+  The blocks live in memory in the sticky group (`siteBlocks`), per account and
+  site, bounded to 4096 records, and are lost on a restart or a reload. The unit
+  is the site (the registrable domain, or the IP), the same as a binding's; a site
+  that was answered through the node within the 10 minutes is never blocked.
 - Lists never reach beyond themselves: no fallback to a provider or country
   that is not listed, and none to a direct connection.
 - The canonical stored form drops blanks and repeats (the first occurrence

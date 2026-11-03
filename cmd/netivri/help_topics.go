@@ -790,7 +790,7 @@ var helpTopics = []helpTopic{
 			"account uses are DEBUG lines, shown only with --level debug. A subscription that keeps failing to " +
 			"refresh is one warning an hour, and the refresh that ends the failures says how many there were. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
-			"nodes blocked for a site that never answers, failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
+			"nodes blocked for a site after silent connections or timeout dials, failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
 			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account: connections ended, broken, closed before any data " +
 			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
 			"went through), failed dials, " +
@@ -1046,11 +1046,12 @@ var helpTopics = []helpTopic{
 			"angel stores them in stats.db and loads them back when it starts or reloads. 'netivri help status' " +
 			"describes the affinity counters.\n\n" +
 			"A node that passes its probes can still never reach one destination (an address blocked on its side). " +
-			"When 3 connections of an account to one site went through a node within 10 minutes, each sent data, " +
-			"waited at least 5 seconds for an answer to the first bytes they sent and got nothing back, and no connection to that site was answered through the node in " +
-			"that time (data still coming back on an open one counts), while the node itself answered a probe or a dial after the first of them ended, the node is blocked for that " +
+			"When 3 connections of an account to one site went through a node within 10 minutes, each sent data " +
+			"and got nothing back, or a dial to that site timed out, after at least 5 seconds, and no connection to that site was answered through the node in " +
+			"that time (data still coming back on an open one counts), while the node itself answered a probe or a dial after the attempt began and " +
+			"after the first of them ended, the node is blocked for that " +
 			"account and site: the site's next connection takes the next node of the route, a worse tier included, and " +
-			"other sites stay where they are. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
+			"other sites stay where they are. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
 			"answer through the node ends it at once, and a site that was answered through the node is never blocked by " +
 			"a stray dead connection. Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
 			"one ('netivri logs', the destination itself at DEBUG). A site whose server never answers on purpose (a " +
