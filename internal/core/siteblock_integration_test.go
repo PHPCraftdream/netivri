@@ -187,6 +187,9 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 					}
 				}
 				// Deliberately withhold CONNECT's reply until the dial context expires.
+				// The node's probe lands well after the dial began (a coarse Windows
+				// clock can tie with the dial's start and the gate needs "after").
+				time.Sleep(100 * time.Millisecond)
 				probeDuringDial()
 				_, _ = io.Copy(io.Discard, c)
 			}(c)
