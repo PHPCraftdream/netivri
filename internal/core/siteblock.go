@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	C "github.com/metacubex/mihomo/constant"
 )
 
 // A node can pass its probes and carry most sites and still never reach one
@@ -103,15 +105,8 @@ func (b *siteBlocks) answered(login, site string, member int) {
 	}
 }
 
-// silentEnd records a connection that sent data and got nothing back for waited
-// (from its first bytes); the caller has checked that the node itself is up and
-// answered a probe or a dial (okAt, the last time) after the connection began.
-// A site that was answered through the node within silentWindow
-// (answeredRecently) is not blocked by a stray dead connection. A run of silent
-// connections blocks the node only once the node has answered something after
-// the first of them ended, so that connections that all end in a network outage
-// do not. It reports the new block, if this connection made one, and how long it
-// lasts.
+// silentEnd records a connection or dial timeout that waited without an answer.
+// It needs no recent site answer and a node answer after the run began.
 func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Duration, answeredRecently bool, okAt time.Time) (time.Duration, bool) {
 	if waited < b.minLife || answeredRecently {
 		return 0, false
@@ -196,11 +191,44 @@ func (g *stickyGroup) answered(w *watchConn) {
 	g.blocks.answered(w.login, w.siteStr, w.member)
 }
 
-// ended is called when a connection ends. One that sent data and got nothing
-// back counts towards blocking the node for the site, unless the node is down
-// or has not answered a probe or a dial since the connection began (then the
-// network is the likelier culprit), or the site was answered through the node
-// not long ago. How long it waited is counted from its first bytes.
+// recordNoAnswer records a sufficiently long silent attempt for an up node.
+// The node must answer after the attempt starts; a recent site answer gates it.
+func (g *stickyGroup) recordNoAnswer(login, site string, member int, label string, started time.Time, waited time.Duration, target string, port uint16, siteHash uint64) {
+	if g.blocks == nil || g.table == nil || site == "" || member < 0 || member >= len(g.healths) || g.healths[member] == nil || g.memberDown(member) {
+		return
+	}
+	okAt := g.healths[member].lastOKAt()
+	if !okAt.After(started) || g.health.down(label) {
+		return
+	}
+	now := g.clock()
+	recent := g.table.answeredWithin(affinityKey{login: login, site: site}, member, silentWindow, now)
+	ttl, blocked := g.blocks.silentEnd(login, site, member, waited, recent, okAt)
+	if blocked {
+		g.emit(ConnEvent{Kind: ConnSiteBlocked, Login: login, Label: label, Why: MoveNoAnswer, Port: port, Site: siteHash, Target: target, Block: ttl})
+	}
+}
+
+// recordDialTimeout records dials that timed out after the minimum wait.
+// recordNoAnswer enforces the node-health and recent-site-answer gates.
+func (g *stickyGroup) recordDialTimeout(login, site string, member int, label string, md *C.Metadata, started time.Time, took time.Duration) {
+	if g.blocks == nil || g.blocks.minLife > took {
+		return
+	}
+	var port uint16
+	var hash uint64
+	var target string
+	if md != nil {
+		port = md.DstPort
+		target = destination(md.Host, md.DstIP, port)
+		hash = siteHash(site)
+	}
+	g.recordNoAnswer(login, site, member, label, started, took, target, port, hash)
+}
+
+// ended records a connection that sent data and got nothing back. It waits
+// from the first bytes, and requires an up node with a later answer and no
+// recent site answer; a run blocks only after the node answers after its first end.
 func (g *stickyGroup) ended(w *watchConn, ev ConnEvent) {
 	if g.blocks == nil || g.table == nil || w.siteStr == "" || ev.Down != 0 || ev.Up == 0 {
 		return
@@ -208,15 +236,7 @@ func (g *stickyGroup) ended(w *watchConn, ev ConnEvent) {
 	if w.member < 0 || w.member >= len(g.healths) || g.healths[w.member] == nil || g.memberDown(w.member) {
 		return
 	}
-	okAt := g.healths[w.member].lastOKAt()
-	if !okAt.After(w.start) {
-		return
-	}
 	now := g.clock()
 	waited := now.Sub(time.Unix(0, w.firstUp.Load()))
-	recent := g.table.answeredWithin(affinityKey{login: w.login, site: w.siteStr}, w.member, silentWindow, now)
-	ttl, blocked := g.blocks.silentEnd(w.login, w.siteStr, w.member, waited, recent, okAt)
-	if blocked {
-		g.emit(ConnEvent{Kind: ConnSiteBlocked, Login: w.login, Label: w.label, Why: MoveNoAnswer, Port: w.port, Site: w.site, Target: ev.Target, Block: ttl})
-	}
+	g.recordNoAnswer(w.login, w.siteStr, w.member, w.label, w.start, waited, ev.Target, w.port, w.site)
 }

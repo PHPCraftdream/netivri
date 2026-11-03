@@ -378,9 +378,8 @@ when the sites of one account moved between several pairs of nodes in that minut
 (a node went down and its sites were spread over the rest), it is one line with the counts,
 `account alice: 41 sites moved from 12 nodes to 9 nodes: node down` (a side that is a single node is named),
 and the pairs are `DEBUG` lines;
-`account alice via {NODE}: 2 sites got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for them, up to 30m, and its connections take the next node of the route`
-(`INFO`: a node that passes its probes but never reaches a destination is blocked for that site, which goes on to the next node of the
-route, see `netivri help routing`; a `DEBUG` line per site names the destination, `account alice: no answer from
+`account alice via {NODE}: 2 sites got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for them, up to 30m, and its connections take the next node of the route`
+(`INFO`: a node that passes its probes but never reaches a destination is blocked for that site after connections sent data and got nothing back, or a dial to that site timed out; the site goes on to the next node of the route. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. See `netivri help routing`; a `DEBUG` line per site names the destination, `account alice: no answer from
 149.154.167.51:443 via {NODE}, the node is blocked for it for 30m`; the sites then move with
 `account alice: 2 sites moved from {NODE} to {NODE}: no answer`, `INFO`);
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).

@@ -29,7 +29,7 @@ const (
 	// MoveBetterTier.
 	ConnSiteMoved = "site_moved"
 	// ConnSiteBlocked: a node was blocked for a site of an account because the
-	// connections to it sent data and never got an answer (see siteBlocks);
+	// connections that got no answer or its dial timed out (see siteBlocks);
 	// Label is the node, Block how long it is blocked, Target the destination.
 	ConnSiteBlocked = "site_blocked"
 )
@@ -87,6 +87,25 @@ func dialErrKind(err error) string {
 	return kind
 }
 
+func siteHash(site string) uint64 {
+	if site == "" {
+		return 0
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(site))
+	return h.Sum64()
+}
+
+func destination(host string, ip netip.Addr, port uint16) string {
+	if host == "" && ip.IsValid() {
+		host = ip.String()
+	}
+	if host == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(port)))
+}
+
 // emit reports an event; the group has no sink when events is nil.
 func (g *stickyGroup) emit(ev ConnEvent) {
 	if g.events != nil {
@@ -103,9 +122,7 @@ func (g *stickyGroup) watch(conn C.Conn, login, label string, member int, md *C.
 		w.host, w.ip = md.Host, md.DstIP
 		if site := siteKey(md.Host, md.DstIP); site != "" {
 			w.siteStr = site
-			h := fnv.New64a()
-			_, _ = h.Write([]byte(site))
-			w.site = h.Sum64()
+			w.site = siteHash(site)
 		}
 	}
 	return w
@@ -272,14 +289,7 @@ func (w *watchConn) Close() error {
 // target is the destination as host:port, for the DEBUG lines about a
 // destination that does not answer.
 func (w *watchConn) target() string {
-	host := w.host
-	if host == "" && w.ip.IsValid() {
-		host = w.ip.String()
-	}
-	if host == "" {
-		return ""
-	}
-	return net.JoinHostPort(host, strconv.Itoa(int(w.port)))
+	return destination(w.host, w.ip, w.port)
 }
 
 // fail remembers the kind of the first error that is a fault of the node's

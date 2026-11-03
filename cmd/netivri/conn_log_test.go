@@ -588,7 +588,7 @@ func TestConnLogNamesABlockedSiteOnlyInDebug(t *testing.T) {
 			debug = append(debug, line)
 		}
 	}
-	wantInfo := "INFO account alice via main/us (United States, country US): 2 sites got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for them, up to 1h00m, and its connections take the next node of the route"
+	wantInfo := "INFO account alice via main/us (United States, country US): 2 sites got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for them, up to 1h00m, and its connections take the next node of the route"
 	if len(info) != 1 || info[0] != wantInfo {
 		t.Fatalf("INFO lines = %q, want one: %q", info, wantInfo)
 	}
@@ -610,7 +610,7 @@ func TestConnLogOneBlockedSiteSaysIt(t *testing.T) {
 	f := newConnLogFixture()
 	f.blocked("alice", "own/nl", "", 30*time.Minute)
 	f.log.flush()
-	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
+	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
 	if len(f.lines) != 1 || f.lines[0] != want {
 		t.Fatalf("lines = %q, want %q", f.lines, want)
 	}

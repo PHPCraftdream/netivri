@@ -575,7 +575,7 @@ func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) s
 		return order[i].label < order[j].label
 	})
 	for _, g := range order {
-		c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
+		c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
 			g.login, describe(g.label), count(g.sites, "site", "sites"), pronoun(g.sites), ageText(g.longest))
 	}
 }

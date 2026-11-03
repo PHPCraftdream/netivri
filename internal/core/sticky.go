@@ -233,6 +233,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	login, site := metadata.InUser, siteKey(metadata.Host, metadata.DstIP)
 	index, _ := g.choose(login, site)
 	label := g.labels[index]
+	started := g.clock()
 
 	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
 	if recorded {
@@ -242,7 +243,11 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		}
 		g.observeDial(label, err == nil, took)
 		g.observeAccountDial(login, label, err == nil, took)
-		if h := g.healths[index]; h != nil {
+		h := g.healths[index]
+		if err != nil && dialErrKind(err) == "timeout" {
+			g.recordDialTimeout(login, site, index, label, metadata, started, took)
+		}
+		if h != nil {
 			h.hedgeRefillDial()
 		}
 	}
@@ -260,6 +265,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		return nil, err
 	}
 	retryLabel := g.labels[retry]
+	retryStarted := g.clock()
 	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
 	if retryRecorded {
 		g.health.recordDialAt(retryLabel, site, retryErr, retryTook)
@@ -268,6 +274,9 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		}
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
 		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
+		if retryErr != nil && dialErrKind(retryErr) == "timeout" {
+			g.recordDialTimeout(login, site, retry, retryLabel, metadata, retryStarted, retryTook)
+		}
 	}
 	if retryErr != nil {
 		return nil, retryErr
