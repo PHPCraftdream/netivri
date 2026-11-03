@@ -98,17 +98,39 @@ func TestAccountsDynamicProviderCountryHintModal(t *testing.T) {
 	}
 	f.Focus = p
 	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" {
+		t.Fatalf("after Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
 	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	modal, _ = modal.Update(tea.KeyPressMsg{Text: " "})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" {
-		t.Fatalf("selection %v", got)
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "backup" {
+		t.Fatalf("after Down: selected=%v highlighted=%q", got, f.Fields[p].Value)
 	}
 	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if len(f.Fields[p].Selected) != 0 || !strings.Contains(f.Fields[c].Name, "DE,NL,US") {
-		t.Fatal("last provider deselection")
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "backup" {
+		t.Fatalf("after provider Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "any" {
+		t.Fatalf("after Up: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "any" {
+		t.Fatalf("after any Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "backup" {
+		t.Fatalf("after Down from any: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "backup" {
+		t.Fatalf("after Space replacing any: selected=%v highlighted=%q", got, f.Fields[p].Value)
+	}
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if len(f.Fields[p].Selected) != 0 || f.Fields[p].Value != "backup" || !strings.Contains(f.Fields[c].Name, "DE,NL,US") {
+		t.Fatalf("after deselecting last provider: selected=%v highlighted=%q hint=%q", f.Fields[p].Selected, f.Fields[p].Value, f.Fields[c].Name)
 	}
 	f.Focus = 4
-	modal, _ = modal.Update(tea.KeyPressMsg{Text: " "})
+	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
 	if len(f.Fields[p].Selected) != 0 || f.Fields[4].Value != " " {
 		t.Fatal("text space")
 	}
@@ -203,18 +225,22 @@ func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
 	s.providers = []string{"backup", "main"}
 	s.openForm("add", nil)
 	ck := countryKey(s.form.Form)
-	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "loopback", "Pre-hop URL": "socks5://u:stored-secret@host:1080", "Post-hop URL": ""}
+	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "loopback", "Pre-hop URL": "", "Post-hop URL": "socks5://u:stored-secret@host:1080"}
 	v[ck] = ""
 	accountsRunBackground(s, accountsSubmit(s, v))
 	rows, e := AccountList(h)
 	if e != nil || len(rows) != 1 || rows[0].PasswordSet {
-		t.Fatal("add")
+		errorText := ""
+		if s.form != nil && s.form.Form != nil {
+			errorText = s.form.Form.View(100, 18)
+		}
+		t.Fatalf("add: inline error %q; rows %d; readback error %v", errorText, len(rows), e)
 	}
 	if !strings.Contains(s.View(140, 10), "alice") || s.makeRows()[0].Cells[6] != "waiting for first use" {
 		t.Fatal("render")
 	}
 	raw, e := config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PreSOCKS5 != v["Pre-hop URL"] {
+	if e != nil || raw.Accounts[0].PostSOCKS5 != v["Post-hop URL"] {
 		t.Fatal("persist hop")
 	}
 	s.rows = rows
@@ -228,7 +254,7 @@ func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cfg.Accounts[0].ExitCountry = "DE"
+	cfg.Accounts[0].AllowedClients = "198.51.100.0/24"
 	if e = config.Save(config.ConfigPath(h), cfg); e != nil {
 		t.Fatal(e)
 	}
@@ -236,7 +262,7 @@ func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
 	edit[ck] = ""
 	accountsRunBackground(s, accountsSubmit(s, edit))
 	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PreSOCKS5 != v["Pre-hop URL"] || raw.Accounts[0].AllowedClients != "192.0.2.0/24" {
+	if e != nil || raw.Accounts[0].PostSOCKS5 != v["Post-hop URL"] || raw.Accounts[0].AllowedClients != "192.0.2.0/24" {
 		t.Fatal("blank hop")
 	}
 	rows, _ = AccountList(h)
@@ -248,15 +274,16 @@ func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cfg.Accounts[0].ExitCountry = "NL"
+	cfg.Accounts[0].AllowedClients = "198.51.100.0/24"
 	if e = config.Save(config.ConfigPath(h), cfg); e != nil {
 		t.Fatal(e)
 	}
-	edit[ck] = rows[0].ExitCountry
-	edit["Pre-hop empty unchanged; none clears"] = "none"
+	edit[ck] = ""
+	edit["Allowed clients"] = rows[0].AllowedClients
+	edit["Post-hop empty unchanged; none clears"] = "none"
 	accountsRunBackground(s, accountsSubmit(s, edit))
 	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PreSOCKS5 != "none" || raw.Accounts[0].ExitCountry != "NL" {
+	if e != nil || raw.Accounts[0].PostSOCKS5 != "none" || raw.Accounts[0].AllowedClients != "198.51.100.0/24" {
 		t.Fatal("edit")
 	}
 	rows, _ = AccountList(h)
@@ -272,7 +299,7 @@ func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
 		t.Fatal("clone")
 	}
 	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[1].PreSOCKS5 != "none" {
+	if e != nil || raw.Accounts[1].PostSOCKS5 != "none" {
 		t.Fatal("clone config")
 	}
 	s.rows = rows
@@ -300,10 +327,10 @@ func TestAccountsDuplicateFailureRetainsWholeForm(t *testing.T) {
 	s.openForm("add", nil)
 	f := s.form.Form
 	ck := countryKey(f)
-	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "", "Pre-hop URL": "socks5://u:proxy-password@host:1080", "Post-hop URL": ""}
+	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "", "Pre-hop URL": "", "Post-hop URL": "socks5://u:proxy-password@host:1080"}
 	v[ck] = ""
 	accountsRunBackground(s, accountsSubmit(s, v))
-	if s.form == nil || s.form.Form != f || len(f.Fields) != 8 || f.Fields[0].Value != "alice" || f.Fields[5].Value == "" || captured != 2 {
+	if s.form == nil || s.form.Form != f || len(f.Fields) != 8 || f.Fields[0].Value != "alice" || f.Fields[6].Value == "" || captured != 2 {
 		t.Fatal("form retention")
 	}
 	view := f.View(100, 18)
