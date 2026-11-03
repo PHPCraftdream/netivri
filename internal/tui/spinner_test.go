@@ -50,11 +50,11 @@ func TestFrameBackgroundSpinnerIntegration(t *testing.T) {
 		t.Fatal("background work or spinner tick command missing")
 	}
 	view := f.View().Content
-	if !strings.Contains(view, "| sync") {
-		t.Fatalf("initial spinner label missing: %q", view)
+	if !strings.Contains(view, "| 1 task") {
+		t.Fatalf("initial spinner activity missing: %q", view)
 	}
 	_, nextTick := f.Update(tickCmd())
-	if nextTick == nil || !strings.Contains(f.View().Content, "/ sync") {
+	if nextTick == nil || !strings.Contains(f.View().Content, "/ 1 task") {
 		t.Fatalf("spinner did not advance: %q", f.View().Content)
 	}
 	f.Update(workCmd())

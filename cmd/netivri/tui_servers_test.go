@@ -41,19 +41,34 @@ func newServersTestScreen(t *testing.T, home string) *serversScreen {
 	s.status = func(ctx context.Context, h string) (angel.State, angel.Status, error) { return angelProbeLive(ctx, h) }
 	return s
 }
-func serversRun(t *testing.T, s *serversScreen, c tea.Cmd) tea.Cmd {
+func serversRunOne(t *testing.T, s *serversScreen, c tea.Cmd) (tea.Msg, tea.Cmd) {
 	t.Helper()
 	if c == nil {
-		return nil
+		return nil, nil
 	}
-	_, next := s.Update(c())
-	return next
+	msg := c()
+	_, next := s.Update(msg)
+	return msg, next
+}
+func serversRun(t *testing.T, s *serversScreen, c tea.Cmd) tea.Cmd {
+	t.Helper()
+	for n := 0; c != nil && n < 20; n++ {
+		_, c = serversRunOne(t, s, c)
+	}
+	if c != nil {
+		t.Fatal("server commands did not settle")
+	}
+	return nil
 }
 func serversKey(code rune, text string) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code, Text: text})
 }
 func serversLoadDetail(t *testing.T, s *serversScreen) {
 	t.Helper()
+	if s.workspace != nil {
+		s.workspace.SetSize(180, 30)
+		s.workspace.SetFocus(tui.PaneList)
+	}
 	_, cmd := s.Update(serversKey(tea.KeyEnter, ""))
 	if cmd == nil {
 		t.Fatal("enter did not schedule detail")
@@ -61,34 +76,87 @@ func serversLoadDetail(t *testing.T, s *serversScreen) {
 	serversRun(t, s, cmd)
 }
 
+func TestServersTUIFramePaneFocus(t *testing.T) {
+	screen := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Servers", New: func(tui.Env) tui.Screen { return screen }}}})
+	frame.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	frame.Init()
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("expected list pane focus initially")
+	}
+	frame.Update(serversKey(tea.KeyTab, ""))
+	if screen.workspace.Focus() != tui.PaneCard {
+		t.Fatal("Tab did not focus card pane")
+	}
+	// Second Tab leaves the card at its boundary and moves frame focus to the
+	// tab strip; the workspace keeps the card pane focused.
+	frame.Update(serversKey(tea.KeyTab, ""))
+	if screen.workspace.Focus() != tui.PaneCard {
+		t.Fatal("Tab to tab strip moved workspace focus out of card pane")
+	}
+	// Third Tab returns from the tab strip to the list pane.
+	frame.Update(serversKey(tea.KeyTab, ""))
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("Tab from tab strip did not return focus to list pane")
+	}
+	// Shift+Tab from the list enters the tab strip (workspace stays on list),
+	// then goes back through the card, then to the list.
+	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("Shift+Tab to tab strip changed workspace focus")
+	}
+	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if screen.workspace.Focus() != tui.PaneCard {
+		t.Fatal("Shift+Tab from tab strip did not focus card pane")
+	}
+	frame.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift}))
+	if screen.workspace.Focus() != tui.PaneList {
+		t.Fatal("Shift+Tab from card did not return focus to list pane")
+	}
+}
+
+func TestServersTUIFramePaneFocusBindings(t *testing.T) {
+	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	s.workspace.SetSize(120, 40)
+	hints := s.Bindings()
+	if len(hints) < 2 {
+		t.Fatal("list bindings and reload hint missing")
+	}
+	s.workspace.SetFocus(tui.PaneCard)
+	hints = s.Bindings()
+	if len(hints) == 0 {
+		t.Fatal("card bindings missing")
+	}
+}
+
 func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 	home := serversFixture(t)
 	s := newServersTestScreen(t, home)
 	serversRun(t, s, s.Init())
 	for _, w := range []string{"Name", "Protocol", "shadowsocks", "vless-reality", "1234", "angel stopped"} {
-		if !strings.Contains(s.View(180, 24), w) {
+		if !strings.Contains(s.View(180, 30), w) {
 			t.Errorf("list missing %q", w)
 		}
 	}
 	for _, secret := range []string{"fake-hash", "fake-chain-password", "aes-128-gcm", "secret-reality-sni.example"} {
-		if strings.Contains(s.View(180, 24), secret) {
+		if strings.Contains(s.View(180, 30), secret) {
 			t.Errorf("list leaked %q", secret)
 		}
 	}
 	serversLoadDetail(t, s)
 	for _, w := range []string{"ss", "shadowsocks", "127.0.0.1", "1234", "alice", "pub.test", "Parameters: cipher", "State: angel stopped"} {
-		if !strings.Contains(s.View(180, 24), w) {
+		if !strings.Contains(s.View(180, 30), w) {
 			t.Errorf("detail missing %q", w)
 		}
 	}
 	_, _ = s.Update(serversKey(tea.KeyEsc, ""))
 	_, _ = s.Update(serversKey(tea.KeyDown, ""))
 	serversLoadDetail(t, s)
-	if !strings.Contains(s.View(180, 24), "Parameters: sni") || strings.Contains(s.View(180, 24), "secret-reality-sni.example") {
+	if !strings.Contains(s.View(180, 30), "Parameters: sni") || strings.Contains(s.View(180, 30), "secret-reality-sni.example") {
 		t.Fatal("VLESS detail exposed parameter value")
 	}
 	for _, secret := range []string{"fake-hash", "fake-chain-password", "aes-128-gcm", "secret-reality-sni.example"} {
-		if strings.Contains(s.View(180, 24), secret) {
+		if strings.Contains(s.View(180, 30), secret) {
 			t.Errorf("detail leaked %q", secret)
 		}
 	}
@@ -108,7 +176,7 @@ func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 		t.Fatal("detail reload missing")
 	}
 	serversRun(t, s, cmd)
-	if !strings.Contains(s.View(180, 24), "changed.test") {
+	if !strings.Contains(s.View(180, 30), "changed.test") {
 		t.Fatal("detail reload stale")
 	}
 	cfg.Servers[0].PublicHost = "pub.test"
@@ -225,7 +293,7 @@ func TestServersTUIListReloadEmptyErrorsResizeBoundsAndStale(t *testing.T) {
 	empty := newServersTestScreen(t, t.TempDir())
 	serversRun(t, empty, empty.Init())
 	v := empty.View(180, 12)
-	for _, x := range []string{"No servers configured", "server add", "server link", "server rotate", "server remove"} {
+	for _, x := range []string{"No servers configured", "Changes: netivri server add", "link", "rotate", "remove"} {
 		if !strings.Contains(v, x) {
 			t.Errorf("empty/footer missing %q", x)
 		}
@@ -270,21 +338,27 @@ func TestServersTUIDetailNotFoundRecovery(t *testing.T) {
 	if err = config.Save(config.ConfigPath(home), cfg); err != nil {
 		t.Fatal(err)
 	}
+	s.workspace.SetFocus(tui.PaneCard)
 	_, cmd := s.Update(serversKey('r', "r"))
 	if cmd == nil {
 		t.Fatal("detail reload missing")
 	}
-	msg := cmd()
-	next := serversRun(t, s, func() tea.Msg { return msg })
+	msg, next := serversRunOne(t, s, cmd)
+	if _, ok := msg.(tui.BackgroundMsg); !ok {
+		t.Fatalf("expected background not-found result, got %T", msg)
+	}
 	if next == nil || !strings.Contains(s.View(180, 20), "server no longer exists") {
 		t.Fatal("not-found did not show error and schedule reload")
+	}
+	if strings.Contains(s.View(180, 20), "Changes: netivri server add") {
+		t.Fatal("not-found returned before detail error was visible")
 	}
 	_, _ = s.Update(serversKey(tea.KeyEsc, ""))
 	if s.errText != "" || strings.Contains(s.View(180, 20), "server no longer exists") {
 		t.Fatal("escape did not clear the visible not-found error")
 	}
 	serversRun(t, s, next)
-	if s.detail != nil || s.errText != "" || len(s.rows) != 1 || s.rows[0].Name != "vless" || strings.Contains(s.View(180, 20), "shadowsocks") || strings.Contains(s.View(180, 20), "1234") {
+	if s.detail == nil || s.detail.Name != "vless" || s.errText != "" || len(s.rows) != 1 || s.rows[0].Name != "vless" || strings.Contains(s.View(180, 20), "shadowsocks") || strings.Contains(s.View(180, 20), "1234") {
 		t.Fatalf("removed row remained: rows=%+v view=%s", s.rows, s.View(180, 20))
 	}
 }

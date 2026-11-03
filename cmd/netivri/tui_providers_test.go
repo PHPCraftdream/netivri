@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -21,510 +20,386 @@ func providerEnv(h string) tui.Env {
 	return tui.Env{Home: h, Background: func(_ string, w func() tea.Msg) tea.Cmd { return w }}
 }
 func drainProvider(s *providersScreen, c tea.Cmd) {
-	queue := []tea.Cmd{c}
-	for steps := 0; len(queue) > 0 && steps < 80; steps++ {
-		cmd := queue[0]
-		queue = queue[1:]
-		if cmd == nil {
+	q := []tea.Cmd{c}
+	for i := 0; len(q) > 0 && i < 100; i++ {
+		x := q[0]
+		q = q[1:]
+		if x == nil {
 			continue
 		}
-		m := cmd()
-		if batch, ok := m.(tea.BatchMsg); ok {
-			queue = append(queue, batch...)
+		m := x()
+		if b, ok := m.(tea.BatchMsg); ok {
+			q = append(q, b...)
 			continue
 		}
-		_, next := s.Update(m)
-		if next != nil {
-			queue = append(queue, next)
+		_, n := s.Update(m)
+		if n != nil {
+			q = append(q, n)
 		}
 	}
-	if len(queue) > 0 {
+	if len(q) > 0 {
 		panic("provider command loop exceeded")
 	}
 }
-func TestProvidersEmptyReloadBounds(t *testing.T) {
-	h := providerSeed(t)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	if s.Init() != nil {
-		t.Fatal("init")
-	}
-	if !strings.Contains(s.View(30, 3), "No rows") {
-		t.Fatal("empty")
-	}
-	s.Update(tea.WindowSizeMsg{Width: 4, Height: 2})
-	if s.width != 4 || s.height != 2 {
-		t.Fatal("resize")
-	}
-	if s.View(0, 2) != "" || s.View(3, 0) != "" {
-		t.Fatal("bounds")
-	}
-	_, c := s.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	drainProvider(s, c)
-	if s.busy != "" {
-		t.Fatal("reload")
+func providerType(s *providersScreen, text string) {
+	for _, r := range text {
+		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
 }
-func TestProviderAddRetainedErrorsSecretsAndPersist(t *testing.T) {
+
+func TestProvidersWorkspaceLayoutsAndSelection(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:secret@provider.invalid/path?token=abc"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"})
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	drainProvider(s, s.Init())
+	if s.list.AddLabel != "+ Add provider" || !strings.Contains(ansi.Strip(s.View(80, 20)), "Providers") {
+		t.Fatal("list/add row missing")
+	}
+	if strings.Contains(ansi.Strip(s.View(80, 20)), "No providers yet") {
+		t.Fatal("unexpected empty message for non-empty provider list")
+	}
+	if strings.Contains(s.View(100, 18), "secret") || strings.Contains(s.View(120, 30), "token=abc") {
+		t.Fatal("subscription secret rendered")
+	}
+	s.View(120, 30)
+	if s.workspace.Width != 120 || s.workspace.Focus() != tui.PaneList {
+		t.Fatal("wide workspace")
+	}
+	s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s.View(80, 24)
+	s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !s.workspace.Drilled {
+		t.Fatal("narrow Enter did not drill")
+	}
+	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if s.workspace.Drilled {
+		t.Fatal("Esc did not return")
+	}
+	for _, z := range []struct{ w, h int }{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
+		v := s.View(z.w, z.h)
+		if strings.Count(v, "\n")+1 > z.h {
+			t.Fatalf("overflow %dx%d", z.w, z.h)
+		}
+	}
+}
+func TestProviderAddRetainsFailureRedactsAndSelects(t *testing.T) {
 	h := providerSeed(t)
 	calls := 0
-	get := func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+	get := func(_ context.Context, _ string, _ fetch.Options) (*fetch.Result, error) {
 		calls++
 		if calls == 1 {
-			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed token", Hint: "retry token"}
+			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed private-token", Hint: "retry private-token"}
 		}
 		return &fetch.Result{Body: []byte(testBody)}, nil
 	}
-	toast := ""
-	env := providerEnv(h)
-	env.Toast = func(v string) tea.Cmd { toast = v; return nil }
-	s := newProvidersScreenWith(h, env, get, func() time.Time { return testNow })
-	s.Update(tea.KeyPressMsg{Text: "a"})
-	s.form.Fields[0].Value = "custom"
-	s.form.Fields[1].Value = "https://name:token@provider.invalid/path?api_key=token"
-	s.form.Fields[2].Value = "http://u:proxypass@proxy.invalid"
-	s.form.Focus = 2
-	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })
+	s.startWizard()
+	s.wizard.Values["name"] = "custom"
+	s.wizard.Values["url"] = "https://user:private-token@provider.invalid/path?key=private-token"
+	s.wizard.Values["via"] = "http://u:proxysecret@proxy.invalid"
+	s.wizard.Index = 2
+	s.wizard.SetSaving(true)
+	s.mode = "add-wizard"
+	_, c := s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}})
 	drainProvider(s, c)
-	v := ansi.Strip(s.View(100, 20))
-	if !strings.Contains(v, "failed [redacted]") || !strings.Contains(v, "retry [redacted]") {
-		t.Fatalf("errors %s", v)
+	v := ansi.Strip(s.View(100, 24))
+	if strings.Contains(v, "private-token") || strings.Contains(v, "proxysecret") || !strings.Contains(v, "[redacted]") {
+		t.Fatalf("unsafe retained error: %q", v)
 	}
-	for _, secret := range []string{"token", "proxypass", "https://name"} {
-		if strings.Contains(v, secret) {
-			t.Fatalf("leak %s", v)
-		}
+	if s.dialog == nil || s.wizard.Saving {
+		t.Fatal("wizard not retained")
 	}
-	if s.form.Fields[1].Value != "https://name:token@provider.invalid/path?api_key=token" || s.form.Fields[2].Value != "http://u:proxypass@proxy.invalid" {
-		t.Fatal("form not retained")
-	}
-	s.form.Focus = 2
-	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	s.wizard.SetSaving(false)
+	_, c = s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}})
 	drainProvider(s, c)
-	p, e := ProviderList(h)
-	if e != nil || len(p.Providers) != 1 || p.Providers[0].Name != "custom" {
-		t.Fatalf("provider %+v %v", p, e)
-	}
-	if toast == "" || !strings.Contains(toast, "nodes") || s.form != nil || len(s.table.Rows) != 1 || s.table.Rows[0].Data != "custom" {
-		t.Fatal("success state")
+	r, e := ProviderList(h)
+	if e != nil || len(r.Providers) != 1 || r.Providers[0].Name != "custom" || s.selected != "custom" {
+		t.Fatalf("added provider %+v %v selected=%q", r, e, s.selected)
 	}
 	snap, e := subscription.NewStore(h + "/subscriptions").Load("custom")
 	if e != nil || !snap.FetchedAt.Equal(testNow) {
-		t.Fatalf("timestamp %v %v", snap.FetchedAt, e)
+		t.Fatalf("snapshot %v %v", snap.FetchedAt, e)
 	}
 }
-func TestProviderRefreshAllAndSelected(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "one", URL: "https://one.invalid"}, config.Subscription{Name: "two", URL: "https://two.invalid"})
+func TestProviderRefreshRemoveAndDependencies(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	calls := 0
-	get := func(_ context.Context, u string, _ fetch.Options) (*fetch.Result, error) {
+	get := func(context.Context, string, fetch.Options) (*fetch.Result, error) {
 		calls++
-		if strings.Contains(u, "two") {
-			return nil, errors.New("secret detail")
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	}
+	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })
+	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
+	drainProvider(s, s.refresh("p", false))
+	if calls != 1 || len(s.refreshLines) != 1 {
+		t.Fatalf("refresh %d %v", calls, s.refreshLines)
+	}
+	cfg, e := loadConfig(h)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "p"}}
+	if e = config.Save(config.ConfigPath(h), cfg); e != nil {
+		t.Fatal(e)
+	}
+	drainProvider(s, s.preflight("p"))
+	if s.dialog == nil || !strings.Contains(strings.Join(s.confirmDeps, ","), "alice") {
+		t.Fatal("missing dependency confirmation")
+	}
+	_, c := s.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if c != nil {
+		drainProvider(s, c)
+	}
+	if s.dialog != nil {
+		t.Fatal("decline did not close confirmation")
+	}
+	s.mode = ""
+	drainProvider(s, s.preflight("p"))
+	_, c = s.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if c != nil {
+		drainProvider(s, c)
+	}
+	if s.dialog != nil {
+		t.Fatal("confirmation should have completed")
+	}
+	if !strings.Contains(s.message, "SUB_IN_USE") && !strings.Contains(s.message, "alice") {
+		t.Fatalf("dependency refusal: %s", s.message)
+	}
+	cfg, e = loadConfig(h)
+	if e != nil || len(cfg.Subscriptions) != 1 {
+		t.Fatal("dependency provider removed")
+	}
+}
+func TestProviderCountriesAndRedaction(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
+	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
+		t.Fatal(e)
+	}
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s.selected = "p"
+	s.mode = "countries"
+	drainProvider(s, s.countriesCmd())
+	v := ansi.Strip(s.View(80, 8))
+	if !strings.Contains(v, "3 nodes") || !strings.Contains(v, "DE: 2") || !strings.Contains(v, "NL: 1") {
+		t.Fatalf("countries: %q", v)
+	}
+	got := redactProviderSecrets("token example.invalid", "https://u:token@example.invalid/path?key=token")
+	if strings.Contains(got, "token") || strings.Contains(got, "example.invalid") {
+		t.Fatalf("redaction: %q", got)
+	}
+}
+func TestProviderErrorsAreGenericWithoutTypedError(t *testing.T) {
+	h := providerSeed(t)
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s.setError(errors.New("private data"))
+	if s.message != "Provider operation failed" {
+		t.Fatalf("unsafe error %q", s.message)
+	}
+}
+func TestProviderEditPromptsPersistURLAndVia(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid", Via: "http://old-proxy.invalid"})
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	drainProvider(s, s.load())
+	s.startEditPrompt("url")
+	providerType(s, "https://new.invalid/path")
+	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	drainProvider(s, c)
+	cfg, err := loadConfig(h)
+	if err != nil {
+		t.Fatal("load provider config failed")
+	}
+	if len(cfg.Subscriptions) != 1 || cfg.Subscriptions[0].URL != "https://new.invalid/path" || cfg.Subscriptions[0].Via != "http://old-proxy.invalid" {
+		t.Fatal("URL edit did not preserve unrelated provider settings")
+	}
+	s.startEditPrompt("via")
+	providerType(s, "http://new-proxy.invalid")
+	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	drainProvider(s, c)
+	cfg, err = loadConfig(h)
+	if err != nil || cfg.Subscriptions[0].Via != "http://new-proxy.invalid" || cfg.Subscriptions[0].URL != "https://new.invalid/path" {
+		t.Fatal("Via edit did not persist while preserving other settings")
+	}
+	s.startEditPrompt("url")
+	providerType(s, "not a URL")
+	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	drainProvider(s, c)
+	if s.prompt == nil || s.prompt.Value != "not a URL" || s.prompt.Saving {
+		t.Fatal("invalid URL edit did not retain input and release saving state")
+	}
+	_, _ = s.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	providerType(s, "https://retry.invalid")
+	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	drainProvider(s, c)
+	cfg, err = loadConfig(h)
+	if err != nil || cfg.Subscriptions[0].URL != "https://retry.invalid" {
+		t.Fatal("corrected URL retry was not persisted")
+	}
+}
+func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
+	h := providerSeed(t)
+	calls := 0
+	get := func(_ context.Context, _ string, _ fetch.Options) (*fetch.Result, error) {
+		calls++
+		if calls == 1 {
+			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed wizard-secret", Hint: "retry wizard-secret"}
+		}
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	}
+	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })
+	s.startWizard()
+	key := func(code rune, text string) tea.KeyPressMsg { return tea.KeyPressMsg{Code: code, Text: text} }
+	providerType(s, "wizard")
+	_, c := s.Update(key(tea.KeyEnter, ""))
+	if c != nil {
+		drainProvider(s, c)
+	}
+	providerType(s, "https://user:wizard-secret@provider.invalid/?token=wizard-secret")
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	if c != nil {
+		drainProvider(s, c)
+	}
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	if c != nil {
+		drainProvider(s, c)
+	}
+	// Third Enter leaves the optional via step and reaches the review step.
+	if s.wizard == nil || !s.wizard.Review || s.wizard.Saving {
+		t.Fatal("third Enter did not reach the review step")
+	}
+	// Fourth Enter activates Create: the first fetch fails, so the wizard is
+	// retained with the entered values and no credential on screen.
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	drainProvider(s, c)
+	if s.wizard == nil || s.wizard.Saving || s.mode != "add-wizard" || s.wizard.Values["name"] != "wizard" || s.wizard.Values["url"] != "https://user:wizard-secret@provider.invalid/?token=wizard-secret" || s.wizard.Values["via"] != "" {
+		t.Fatal("wizard did not retain actual entered values after failed submission")
+	}
+	visible := ansi.Strip(s.View(100, 24))
+	if strings.Contains(visible, "wizard-secret") {
+		t.Fatal("wizard failure exposed a credential")
+	}
+	// Fifth Enter retries Create from review and succeeds on the second fetch.
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	drainProvider(s, c)
+	r, err := ProviderList(h)
+	if err != nil || len(r.Providers) != 1 || r.Providers[0].Name != "wizard" || calls != 2 {
+		t.Fatal("wizard retry did not add provider")
+	}
+}
+func TestProviderRefreshAllRetainsRedactedResults(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:refresh-secret@alpha.invalid/?token=refresh-secret"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"})
+	get := func(_ context.Context, raw string, _ fetch.Options) (*fetch.Result, error) {
+		if strings.Contains(raw, "alpha") {
+			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed refresh-secret", Hint: "retry refresh-secret"}
 		}
 		return &fetch.Result{Body: []byte(testBody)}, nil
 	}
 	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })
 	drainProvider(s, s.refresh("", true))
-	if len(s.refreshLines) != 2 || strings.Contains(strings.Join(s.refreshLines, " "), "secret detail") {
-		t.Fatalf("refresh %v", s.refreshLines)
+	if s.mode != "results" || len(s.refreshLines) != 2 || !strings.Contains(s.refreshLines[0], "alpha") || !strings.Contains(s.refreshLines[1], "beta") {
+		t.Fatal("refresh-all did not retain per-provider results")
 	}
-	if _, e := subscription.NewStore(h + "/subscriptions").Load("one"); e != nil {
-		t.Fatal(e)
+	if strings.Contains(strings.Join(s.refreshLines, " "), "refresh-secret") {
+		t.Fatal("refresh result exposed credential")
 	}
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "one"}, {Name: "two"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
-	drainProvider(s, c)
-	if len(s.refreshLines) != 1 || !strings.HasPrefix(s.refreshLines[0], "one:") || calls != 3 {
-		t.Fatalf("selected %v calls %d", s.refreshLines, calls)
+	v := ansi.Strip(s.View(100, 24))
+	if strings.Contains(v, "refresh-secret") {
+		t.Fatal("refresh screen exposed credential")
 	}
 }
-func TestProviderRemoveActualPreflightConfirmNoAndDependencies(t *testing.T) {
+func TestProviderCountryPagingKeysAndResize(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	codes := []string{"AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU"}
+	nodes := make([]subscription.Node, 0, len(codes))
+	for _, code := range codes {
+		nodes = append(nodes, subscription.Node{Country: code})
+	}
+	if err := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); err != nil {
+		t.Fatal("save country snapshot failed")
+	}
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	drainProvider(s, c)
-	if !strings.Contains(ansi.Strip(s.View(120, 3)), "Remove provider p?") {
-		t.Fatal("missing confirmation prompt")
+	s.selected, s.mode = "p", "countries"
+	s.height = 8
+	drainProvider(s, s.countriesCmd())
+	check := func(w, height int, wantOffset int) {
+		s.Update(tea.WindowSizeMsg{Width: w, Height: height})
+		v := ansi.Strip(s.View(w, height))
+		if s.countryOffset != wantOffset || !strings.Contains(v, "13 nodes") || !strings.Contains(v, " of 13") || strings.Count(v, ": 1") > height-4 {
+			t.Fatalf("country page/resize mismatch at offset %d", wantOffset)
+		}
+		for _, line := range strings.Split(v, "\n") {
+			if strings.HasPrefix(line, "A") && !strings.Contains(line, ": ") {
+				t.Fatal("invalid country row")
+			}
+		}
 	}
-	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	drainProvider(s, c)
-	cfg, err := loadConfig(h)
-	if err != nil || len(cfg.Subscriptions) != 1 {
-		t.Fatal("Enter changed config")
-	}
-	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "p"}}
-	if err = config.Save(config.ConfigPath(h), cfg); err != nil {
-		t.Fatal(err)
-	}
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c = s.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	drainProvider(s, c)
-	if !strings.Contains(ansi.Strip(s.View(120, 3)), "alice") {
-		t.Fatal("dependent account missing from prompt")
-	}
-	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Providers", New: func(tui.Env) tui.Screen { return s }}}})
-	_, c = frame.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
-	if c == nil {
-		t.Fatal("y not forwarded")
-	}
-	msg := c()
-	if msg == nil {
-		t.Fatal("y result missing")
-	}
-	_, c = frame.Update(msg)
-	drainProvider(s, c)
-	if !strings.Contains(s.message, "alice") {
-		t.Fatalf("dependency refusal %q", s.message)
-	}
-	cfg, err = loadConfig(h)
-	if err != nil || len(cfg.Subscriptions) != 1 {
-		t.Fatal("dependent provider removed")
-	}
-	_, c = s.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	drainProvider(s, c)
-	frame = tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Providers", New: func(tui.Env) tui.Screen { return s }}}})
-	_, c = frame.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if c == nil {
-		t.Fatal("escape not forwarded")
-	}
-	msg = c()
-	if msg == nil {
-		t.Fatal("escape result missing")
-	}
-	frame.Update(msg)
-	if s.confirm != nil || s.mode != "" {
-		t.Fatal("escape did not clear confirmation")
-	}
-	cfg, err = loadConfig(h)
-	if err != nil || len(cfg.Subscriptions) != 1 {
-		t.Fatal("Esc changed config")
-	}
+	check(80, 8, 0)
+	s.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	check(80, 8, 4)
+	s.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	check(80, 8, 9)
+	s.Update(tea.KeyPressMsg{Code: tea.KeyHome})
+	check(80, 8, 0)
+	s.Update(tea.WindowSizeMsg{Width: 100, Height: 10})
+	check(100, 10, 0)
 }
-func TestProviderFrameGlobalHelpQuitAcrossModes(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	for _, mode := range []string{"list", "countries", "results", "confirm", "adding", "add"} {
-		t.Run(mode, func(t *testing.T) {
-			s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-			s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-			switch mode {
-			case "countries":
-				s.mode = "countries"
-			case "results":
-				s.refreshLines = []string{"result"}
-			case "confirm":
-				s.mode = "confirm"
-				s.confirm = &tui.Confirm{Prompt: "Remove p?"}
-			case "adding":
-				s.mode = "adding"
-			case "add":
-				s.mode = "add"
-				s.form = &tui.Form{TitleText: "Add", Fields: []tui.Field{{Name: "Name", Kind: tui.TextField}}}
-			}
-			if s.CapturingInput() != (mode == "add") {
-				t.Fatalf("capture mode %q: %v", mode, s.CapturingInput())
-			}
-			frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Providers", New: func(tui.Env) tui.Screen { return s }}}})
-			key := func(k string) tea.Cmd {
-				var code rune
-				if len(k) > 0 {
-					code = rune(k[0])
-				}
-				_, cmd := frame.Update(tea.KeyPressMsg{Text: k, Code: code})
-				return cmd
-			}
-			cmd := key("?")
-			if mode == "add" {
-				if cmd != nil || strings.Contains(ansi.Strip(frame.View().Content), "Ctrl-C: quit") || s.form.Fields[0].Value != "?" {
-					t.Fatal("? not handled as form input")
-				}
-			} else {
-				if cmd != nil || !strings.Contains(ansi.Strip(frame.View().Content), "Ctrl-C: quit") {
-					t.Fatal("help did not open")
-				}
-				key("?")
-			}
-			cmd = key("q")
-			if mode == "add" {
-				if cmd != nil || s.form.Fields[0].Value != "?q" {
-					t.Fatal("q not handled as form input")
-				}
-			} else {
-				if cmd == nil {
-					t.Fatal("q command missing")
-				}
-				if _, ok := cmd().(tea.QuitMsg); !ok {
-					t.Fatal("q did not return QuitMsg")
-				}
-			}
-		})
+func TestProviderResultReturnsToastCommand(t *testing.T) {
+	h := providerSeed(t)
+	e := providerEnv(h)
+	e.Toast = func(text string) tea.Cmd { return func() tea.Msg { return tui.ToastMsg(text) } }
+	s := newProvidersScreenWith(h, e, nil, nil)
+	_, cmd := s.result(providerResultMsg{kind: "add", err: errors.New("failed")})
+	if cmd == nil {
+		t.Fatal("result did not return toast command")
 	}
-}
-func TestProviderConfirmNoKeysThroughFrame(t *testing.T) {
-	cases := []struct {
-		name     string
-		key      tea.KeyPressMsg
-		canceled bool
-	}{{"enter", tea.KeyPressMsg{Code: tea.KeyEnter}, false}, {"n", tea.KeyPressMsg{Code: 'n', Text: "n"}, false}, {"escape", tea.KeyPressMsg{Code: tea.KeyEscape}, true}}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-			s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-			s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-			_, cmd := s.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-			drainProvider(s, cmd)
-			if s.confirm == nil || s.mode != "confirm" {
-				t.Fatal("preflight did not start confirmation")
+	msg := cmd()
+	switch result := msg.(type) {
+	case tui.ToastMsg:
+		if result != tui.ToastMsg("Provider operation failed") {
+			t.Fatalf("incorrect toast text: %q", result)
+		}
+	case tea.BatchMsg:
+		for _, sub := range result {
+			if toast, ok := sub().(tui.ToastMsg); ok && toast == tui.ToastMsg("Provider operation failed") {
+				return
 			}
-			frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Providers", New: func(tui.Env) tui.Screen { return s }}}})
-			_, cmd = frame.Update(tc.key)
-			if cmd == nil {
-				t.Fatal("confirmation key was not forwarded")
-			}
-			msg := cmd()
-			result, ok := msg.(tui.ConfirmResultMsg)
-			if !ok {
-				t.Fatalf("result type %T", msg)
-			}
-			if result.Confirmed || result.Canceled != tc.canceled {
-				t.Fatalf("unexpected result %+v", result)
-			}
-			_, next := frame.Update(result)
-			if next != nil || s.confirm != nil || s.mode != "" {
-				t.Fatal("confirmation state not cleared")
-			}
-			cfg, err := loadConfig(h)
-			if err != nil || len(cfg.Subscriptions) != 1 {
-				t.Fatalf("No changed config: %v", err)
-			}
-		})
+		}
+		t.Fatal("toast command missing or contained incorrect text")
+	default:
+		t.Fatalf("expected toast or batched commands, got %T", msg)
 	}
 }
 
-func TestProviderRemoveUnusedPersists(t *testing.T) {
+func TestProviderDisabledEditsExplainMissingOperation(t *testing.T) {
+	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s.selected = "p"
+	s.updateCard()
+	if !s.card.Lines[6].Disabled || !strings.Contains(s.card.Lines[6].Value, "account references") {
+		t.Fatalf("rename reason missing: %+v", s.card.Lines[6])
+	}
+	if s.card.Lines[7].Disabled || s.card.Lines[8].Disabled {
+		t.Fatal("URL and Via edits should be enabled")
+	}
+}
+
+func TestProviderCountriesViewIsStableAndExactHeight(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	drainProvider(s, c)
-	_, c = s.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
-	drainProvider(s, c)
-	cfg, e := loadConfig(h)
-	if e != nil || len(cfg.Subscriptions) != 0 {
-		t.Fatalf("remove %v", e)
-	}
-}
-func providerCountryKey(key string) tea.KeyPressMsg {
-	switch key {
-	case "down":
-		return tea.KeyPressMsg{Code: tea.KeyDown}
-	case "up":
-		return tea.KeyPressMsg{Code: tea.KeyUp}
-	case "pgdown":
-		return tea.KeyPressMsg{Code: tea.KeyPgDown}
-	case "pgup":
-		return tea.KeyPressMsg{Code: tea.KeyPgUp}
-	case "home":
-		return tea.KeyPressMsg{Code: tea.KeyHome}
-	case "end":
-		return tea.KeyPressMsg{Code: tea.KeyEnd}
-	default:
-		return tea.KeyPressMsg{Code: rune(key[0]), Text: key}
-	}
-}
-func TestProviderCountriesPagingExactCountsAndCaptureModes(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	nodes := make([]subscription.Node, 0, 13)
-	for _, country := range []struct {
-		code  string
-		count int
-	}{{"DE", 4}, {"NL", 2}, {"US", 7}} {
-		for i := 0; i < country.count; i++ {
-			nodes = append(nodes, subscription.Node{Country: country.code})
-		}
-	}
-	if err := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes}); err != nil {
-		t.Fatal(err)
-	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	if s.CapturingInput() {
-		t.Fatal("list captures")
-	}
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	drainProvider(s, c)
-	if s.CapturingInput() {
-		t.Fatal("countries capture")
-	}
-	view := ansi.Strip(s.View(80, 6))
-	for _, part := range []string{"Countries: p", "13 nodes", "DE: 4", "NL: 2", "1-2 of 3", "Esc back"} {
-		if !strings.Contains(view, part) {
-			t.Fatalf("missing %q: %q", part, view)
-		}
-	}
-	if strings.Contains(view, "US: 7") {
-		t.Fatalf("last row initially visible %q", view)
-	}
-	for _, key := range []string{"down", "j", "pgdown", "end"} {
-		s.Update(providerCountryKey(key))
-		view = ansi.Strip(s.View(80, 6))
-		if !strings.Contains(view, "US: 7") || !strings.Contains(view, "2-3 of 3") || !strings.Contains(view, "Countries: p") {
-			t.Fatalf("%s navigation %q", key, view)
-		}
-	}
-	for _, key := range []string{"up", "k", "pgup", "home"} {
-		s.Update(providerCountryKey("end"))
-		s.Update(providerCountryKey(key))
-		view = ansi.Strip(s.View(80, 6))
-		if !strings.Contains(view, "DE: 4") || !strings.Contains(view, "Countries: p") {
-			t.Fatalf("%s navigation %q", key, view)
-		}
-	}
-	s.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
-	view = ansi.Strip(s.View(80, 8))
-	if !strings.Contains(view, "US: 7") || strings.Contains(view, "of 3") {
-		t.Fatalf("resize %q", view)
-	}
-	_, c = s.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
-	drainProvider(s, c)
-	if s.countryOffset != 0 || !strings.Contains(ansi.Strip(s.View(80, 6)), "DE: 4") || !strings.Contains(ansi.Strip(s.View(80, 6)), "1-2 of 3") {
-		t.Fatal("reload did not reset country page")
-	}
-	for _, height := range []int{0, 1, 2, 3} {
-		got := s.View(80, height)
-		if height == 0 && got != "" {
-			t.Fatalf("zero height %q", got)
-		}
-		if height > 0 && strings.Count(got, "\n")+1 > height {
-			t.Fatalf("height %d overflow %q", height, got)
-		}
-	}
-	s.mode = "adding"
-	if s.CapturingInput() {
-		t.Fatal("adding captures")
-	}
-	s.mode = "results"
-	if s.CapturingInput() {
-		t.Fatal("results captures")
-	}
-	s.mode = "confirm"
-	if s.CapturingInput() {
-		t.Fatal("confirm captures")
-	}
-	s.mode = "add"
-	s.form = &tui.Form{TitleText: "Add", Fields: []tui.Field{{Name: "Name", Kind: tui.TextField}}}
-	if !s.CapturingInput() {
-		t.Fatal("active add form does not capture")
-	}
-	s.form = nil
-	if s.CapturingInput() {
-		t.Fatal("add without form captures")
-	}
-	s.mode = ""
-}
-func TestProviderErrorRedactionURLParts(t *testing.T) {
-	got := redactProviderSecrets("u token host.example key=token", "https://u:token@host.example/path?key=token")
-	for _, x := range []string{"token", "host.example", "u"} {
-		if strings.Contains(got, x) {
-			t.Fatalf("leak %s: %s", x, got)
-		}
-	}
-}
-func TestProviderPersistedList(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://user:credential@example.invalid/path?token=abc"})
-	parsed, e := subscription.ParseDetailed([]byte(testBody))
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: parsed.Nodes, FetchedAt: testNow}); e != nil {
+	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
+	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.Init()
-	view := ansi.Strip(s.View(140, 10))
-	for _, want := range []string{"p", "stored", "DE", testNow.Format(time.RFC3339)} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("missing %q: %s", want, view)
-		}
+	s.selected = "p"
+	s.mode = "countries"
+	drainProvider(s, s.countriesCmd())
+	before := ansi.Strip(s.View(80, 20))
+	if lines := strings.Split(before, "\n"); len(lines) != 20 {
+		t.Fatalf("countries view has %d lines, want 20", len(lines))
 	}
-	if strings.Contains(view, "https://") || strings.Contains(view, "credential") {
-		t.Fatalf("URL leaked %s", view)
-	}
-	list, e := ProviderList(h)
-	if e != nil || len(list.Providers) != 1 || list.Providers[0].Nodes == nil || *list.Providers[0].Nodes != len(parsed.Nodes) {
-		t.Fatalf("nodes %+v %v", list, e)
-	}
-}
-func TestProviderDefaultsCaptured(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	oldFetch, oldNow := providersFetch, providersNow
-	called := false
-	providersFetch = func(context.Context, string, fetch.Options) (*fetch.Result, error) {
-		called = true
-		return &fetch.Result{Body: []byte(testBody)}, nil
-	}
-	providersNow = func() time.Time { return testNow }
-	t.Cleanup(func() { providersFetch, providersNow = oldFetch, oldNow })
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	providersFetch = fetch.Get
-	drainProvider(s, s.refresh("p", false))
-	if !called {
-		t.Fatal("fetcher not captured")
-	}
-	snap, e := subscription.NewStore(h + "/subscriptions").Load("p")
-	if e != nil || !snap.FetchedAt.Equal(testNow) {
-		t.Fatalf("timestamp %v %v", snap.FetchedAt, e)
-	}
-}
-func TestProviderRefreshResultsPaginate(t *testing.T) {
-	h := t.TempDir()
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	for i := 0; i < 8; i++ {
-		s.refreshLines = append(s.refreshLines, fmt.Sprintf("outcome-%d", i+1))
-	}
-	v := s.View(60, 4)
-	if !strings.Contains(v, "outcome-1") || strings.Contains(v, "outcome-8") {
-		t.Fatalf("first page %q", v)
-	}
-	for i := 0; i < 8; i++ {
-		s.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	}
-	v = s.View(60, 4)
-	if !strings.Contains(v, "outcome-8") {
-		t.Fatalf("last outcome unreachable %q", v)
-	}
-	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if len(s.refreshLines) != 0 || !strings.Contains(s.View(60, 4), "NAME") {
-		t.Fatalf("table not restored %q", s.View(60, 4))
-	}
-}
-func TestProviderRefreshViewModeSwitchAndHeight(t *testing.T) {
-	h := t.TempDir()
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.refreshLines = []string{"result"}
-	s.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
-	if !strings.Contains(ansi.Strip(s.View(60, 10)), "Add provider") {
-		t.Fatal("add hidden by results")
-	}
-	s.mode = ""
-	s.form = nil
-	s.refreshLines = []string{"result"}
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	drainProvider(s, c)
-	if !strings.Contains(ansi.Strip(s.View(60, 10)), "Countries: p") {
-		t.Fatal("detail hidden by results")
-	}
-	if n := strings.Count(s.View(60, 1), "\n") + 1; n > 1 {
-		t.Fatalf("height overflow: %q", s.View(60, 1))
-	}
-}
-func TestProviderCountriesMissingSnapshot(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "p"}}})
-	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	drainProvider(s, c)
-	if !strings.Contains(ansi.Strip(s.View(80, 10)), "No stored snapshot") {
-		t.Fatal("missing snapshot")
+	s.busy = "Loading countries"
+	s.message = "failed operation"
+	s.hint = "retry it"
+	after := ansi.Strip(s.View(80, 20))
+	if after != before {
+		t.Fatalf("busy/message changed the countries body:\nbefore %q\nafter  %q", before, after)
 	}
 }

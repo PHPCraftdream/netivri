@@ -8,9 +8,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/PHPCraftdream/netivri/internal/angel"
-	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func accountsHome(t *testing.T) string {
@@ -24,452 +24,537 @@ func accountsHome(t *testing.T) string {
 func accountsSyncBackground(label string, work func() tea.Msg) tea.Cmd {
 	return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
 }
-func countryKey(f *tui.Form) string {
-	for _, x := range f.Fields {
-		if strings.HasPrefix(x.Name, "Country") {
-			return x.Name
-		}
-	}
-	return "Country"
-}
-func accountsSubmit(s *accountsScreen, v map[string]string) tea.Cmd {
-	f := s.form.Form
-	for i := range f.Fields {
-		x := &f.Fields[i]
-		if x.Kind == tui.MultiChoiceField {
-			if z, ok := v[x.Name]; ok {
-				x.Selected = strings.Split(z, ",")
-			}
-		} else if z, ok := v[x.Name]; ok {
-			x.Value = z
-		}
-	}
-	f.Focus = len(f.Fields) - 1
-	_, c := f.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if c == nil {
-		return nil
-	}
-	m, ok := c().(tui.FormResultMsg)
-	if !ok {
-		return nil
-	}
-	_, c = s.Update(m)
-	return c
-}
-func accountsRunBackground(s *accountsScreen, c tea.Cmd) {
+func runAccountCmd(s *accountsScreen, c tea.Cmd) {
 	if c == nil {
 		return
 	}
 	m := c()
-	if bg, ok := m.(tui.BackgroundMsg); ok {
-		s.Update(bg)
+	if b, ok := m.(tui.BackgroundMsg); ok {
+		s.Update(b)
 		return
 	}
 	if batch, ok := m.(tea.BatchMsg); ok {
-		for _, task := range batch {
-			if task != nil {
-				if bg, ok := task().(tui.BackgroundMsg); ok {
-					s.Update(bg)
+		for _, x := range batch {
+			if x != nil {
+				if b, ok := x().(tui.BackgroundMsg); ok {
+					s.Update(b)
 				}
 			}
 		}
 	}
 }
-func TestAccountsDynamicProviderCountryHintModal(t *testing.T) {
+func TestAccountsPollKeepsLiveCellsCardAndSelection(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s.rows = []accountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}
+	s.syncRows("alice")
+	card := s.workspace.Card
+	s.workspace.List.Selected = 0
+	s.workspace.SetFocus(tui.PaneCard)
+	s.live["alice"] = angel.AccountActivity{Login: "alice", Connections: 7}
+	s.rates["alice"] = [2]string{"1", "2"}
+	s.updateLiveRows()
+	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	before := s.workspace.List.Selected
+	view := s.View(120, 30)
+	list := s.workspace.List.View(120*35/100, 30)
+	if !strings.Contains(view, "Accounts") {
+		t.Fatal("workspace was not rendered")
+	}
+	if s.workspace.Card != card || s.workspace.List.Selected != before || s.workspace.Focus() != tui.PaneCard {
+		t.Fatal("live update changed selection, card identity, or focus")
+	}
+	if len(s.workspace.List.Columns) != 6 {
+		t.Fatalf("columns=%d", len(s.workspace.List.Columns))
+	}
+	for i, want := range []string{"7", "1", "2"} {
+		if s.workspace.List.Rows[0].Cells[i+3] != want {
+			t.Fatalf("cell %d=%q", i+3, s.workspace.List.Rows[0].Cells[i+3])
+		}
+	}
+	for _, v := range []string{"7", "1", "2"} {
+		if !strings.Contains(list, v) {
+			t.Fatalf("list pane missing %q: %q", v, list)
+		}
+	}
+}
+
+func TestAccountsInitialLoadSchedulesSelectedDetail(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.show = func(_, login string) (AccountShowResult, error) { return AccountShowResult{Login: login}, nil }
+	_, cmd := s.Update(accountsLoaded{Rows: []accountInfo{{Login: "alice"}}, Generation: s.loadGeneration})
+	if cmd == nil {
+		t.Fatal("initial list load did not return detail command")
+	}
+	runAccountCmd(s, cmd)
+	if s.cardResult == nil || s.cardResult.Login != "alice" {
+		t.Fatal("initial selected detail result was not delivered")
+	}
+}
+
+func TestAccountsLiveCellsVisibleAtWorkspaceWidths(t *testing.T) {
+	for _, width := range []int{100, 120} {
+		s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+		s.rows = []accountInfo{{Login: "a", Provider: "p", Exit: "d"}}
+		s.syncRows("a")
+		s.live["a"] = angel.AccountActivity{Login: "a", Connections: 7}
+		s.rates["a"] = [2]string{"1", "2"}
+		s.updateLiveRows()
+		_, _ = s.Update(tea.WindowSizeMsg{Width: width, Height: 30})
+		got := s.workspace.List.Columns
+		if len(got) != 6 {
+			t.Fatalf("width %d: columns=%d", width, len(got))
+		}
+		for i, want := range []string{"7", "1", "2"} {
+			if s.workspace.List.Rows[0].Cells[i+3] != want {
+				t.Fatalf("width %d cell %d=%q", width, i+3, s.workspace.List.Rows[0].Cells[i+3])
+			}
+		}
+		list := s.workspace.List.View(width*35/100, 30)
+		lines := strings.Split(ansi.Strip(list), "\n")
+		if len(lines) <= 3 {
+			t.Fatalf("width %d: missing data row: %q", width, list)
+		}
+		row := lines[3]
+		starts := map[int][]int{100: {21, 25, 30}, 120: {26, 32, 37}}[width]
+		for i, want := range []string{"7", "1", "2"} {
+			start := starts[i]
+			if start >= ansi.StringWidth(row) || ansi.Cut(row, start, start+1) != want {
+				t.Fatalf("width %d: live cell %q not at column start %d: %q", width, want, start, row)
+			}
+		}
+		for _, line := range lines {
+			if ansi.StringWidth(line) > width*35/100 {
+				t.Fatalf("width %d: rendered line exceeds pane: %q", width, line)
+			}
+		}
+	}
+}
+
+func TestAccountsDuplicateAddRetainsWizardAndRedactsSecret(t *testing.T) {
+	h := accountsHome(t)
+	if _, err := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.beginAdd()
+	d := s.dialog
+	secret := "socks5://u:unique-secret@host:1080"
+	d.wizard.Values = map[string]string{"Login": "alice", "Provider": "any", "Country": "any", "Exit": "direct", "Clients": "everyone", "Pre-hop": "", "Post-hop": secret}
+	d.wizard.Steps[7].Prompt.Value = secret
+	_, cmd := s.Update(accountsDialogResult{Values: d.wizard.Values})
+	if cmd == nil || !d.wizard.Saving {
+		t.Fatal("add operation did not enter saving state")
+	}
+	runAccountCmd(s, cmd)
+	if s.dialog != d || d.wizard.Saving || d.wizard.Values["Login"] != "alice" || d.wizard.Values["Post-hop"] != secret {
+		t.Fatal("failed duplicate add did not retain editable answers")
+	}
+	if strings.Contains(s.View(120, 30), "unique-secret") || strings.Contains(s.message, "unique-secret") {
+		t.Fatal("failed add exposed entered secret")
+	}
+}
+
+func TestAccountsDialogValidationKeepsAnswersAndCancelsSaving(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.beginAdd()
+	d := s.dialog
+	d.wizard.Values["Login"] = "bad login"
+	d.wizard.Index = len(d.wizard.Steps) - 1
+	values := map[string]string{"Login": "bad login", "Country": "any", "Clients": "everyone"}
+	_, _ = s.Update(accountsDialogResult{Values: values})
+	if s.dialog != d || d.wizard.Saving || d.wizard.Values["Login"] != "bad login" {
+		t.Fatal("validation closed/saved wizard or discarded its answer")
+	}
+}
+func TestAccountsWorkspaceBoundsAndAddLine(t *testing.T) {
 	s := newAccountsScreen(accountsHome(t), tui.Env{}).(*accountsScreen)
-	s.providers = []string{"backup", "main"}
-	s.providerCountries["backup"] = []string{"DE", "NL"}
-	s.providerCountries["main"] = []string{"US"}
-	var modal tui.Modal
-	s.env.OpenModal = func(m tui.Modal) tea.Cmd { modal = m; return nil }
-	s.openForm("add", nil)
-	f := s.form.Form
-	p, c := -1, -1
-	for i := range f.Fields {
-		if f.Fields[i].Kind == tui.MultiChoiceField {
-			p = i
+	for _, d := range [][2]int{{60, 16}, {80, 24}, {99, 24}, {100, 30}, {120, 40}, {12, 5}} {
+		v := s.View(d[0], d[1])
+		if len(strings.Split(v, "\n")) > d[1] {
+			t.Fatalf("height at %v", d)
 		}
-		if strings.HasPrefix(f.Fields[i].Name, "Country") {
-			c = i
+		if strings.Contains(v, "password-secret") {
+			t.Fatal("secret")
 		}
 	}
-	if p < 0 || c < 0 {
-		t.Fatal("fields missing")
-	}
-	f.Focus = p
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" {
-		t.Fatalf("after Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "backup" {
-		t.Fatalf("after Down: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "backup" {
-		t.Fatalf("after provider Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "any" {
-		t.Fatalf("after Up: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "any" {
-		t.Fatalf("after any Space: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "any" || f.Fields[p].Value != "backup" {
-		t.Fatalf("after Down from any: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if got := f.Fields[p].Selected; len(got) != 1 || got[0] != "backup" || f.Fields[p].Value != "backup" {
-		t.Fatalf("after Space replacing any: selected=%v highlighted=%q", got, f.Fields[p].Value)
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if len(f.Fields[p].Selected) != 0 || f.Fields[p].Value != "backup" || !strings.Contains(f.Fields[c].Name, "DE,NL,US") {
-		t.Fatalf("after deselecting last provider: selected=%v highlighted=%q hint=%q", f.Fields[p].Selected, f.Fields[p].Value, f.Fields[c].Name)
-	}
-	f.Focus = 4
-	modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeySpace})
-	if len(f.Fields[p].Selected) != 0 || f.Fields[4].Value != " " {
-		t.Fatal("text space")
+	if !strings.Contains(s.View(80, 24), "Add account") {
+		t.Fatal("add action absent")
 	}
 }
-func TestAccountsCloneRequiresTypedLoginAndPersists(t *testing.T) {
+func TestAccountsOperationsReadback(t *testing.T) {
 	h := accountsHome(t)
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
-		t.Fatal(e)
-	}
-	var modal tui.Modal
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd { modal = m; return nil }}).(*accountsScreen)
-	s.rows, _ = AccountList(h)
-	s.openForm("clone", &s.rows[0])
-	f := s.form.Form
-	if f.Fields[0].Name != "New login" {
-		t.Fatal("clone login missing")
-	}
-	for f.Focus < len(f.Fields)-1 {
-		modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	}
-	_, submit := modal.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if submit == nil {
-		t.Fatal("blank submit")
-	}
-	r := submit().(tui.FormResultMsg)
-	_, work := s.Update(r)
-	accountsRunBackground(s, work)
-	if s.form == nil || s.form.Form != f || !strings.Contains(f.View(100, 18), "invalid account login") {
-		t.Fatal("inline error not retained")
-	}
-	if f.Focus != 0 {
-		t.Fatal("login not refocused")
-	}
-	modal, _ = modal.Update(tea.KeyPressMsg{Text: "b"})
-	modal, _ = modal.Update(tea.KeyPressMsg{Text: "o"})
-	modal, _ = modal.Update(tea.KeyPressMsg{Text: "b"})
-	for f.Focus < len(f.Fields)-1 {
-		modal, _ = modal.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	}
-	_, submit = modal.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	r = submit().(tui.FormResultMsg)
-	_, work = s.Update(r)
-	accountsRunBackground(s, work)
-	rows, e := AccountList(h)
-	if e != nil || len(rows) != 2 || rows[1].Login != "bob" {
-		t.Fatalf("clone rows %#v %v", rows, e)
-	}
-}
-func TestAccountsReloadGenerationAndSelection(t *testing.T) {
-	h := accountsHome(t)
-	for _, x := range []string{"alice", "bob"} {
-		if _, e := AccountAdd(h, AccountAddOptions{Login: x, Exit: "direct", ExitGiven: true}); e != nil {
-			t.Fatal(e)
-		}
-	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
-	a, b := s.reload(), s.reload()
-	old := a().(tui.BackgroundMsg).Value.(accountsLoaded)
-	cur := b().(tui.BackgroundMsg).Value.(accountsLoaded)
-	if old.Generation == cur.Generation {
-		t.Fatal("generations")
-	}
-	s.Update(cur)
-	s.table.Selected = 1
-	s.Update(accountsLoaded{Rows: []accountInfo{s.rows[1], s.rows[0]}, Generation: s.loadGeneration})
-	if row, ok := s.table.SelectedRow(); !ok || row.Data.(accountInfo).Login != "bob" {
-		t.Fatal("selection lost")
-	}
-	before := s.rows[0].Login
-	s.Update(old)
-	if s.rows[0].Login != before {
-		t.Fatal("stale reload")
-	}
-}
-func TestAccountsInitialReloadUsesTempHomeWithoutStatusProbe(t *testing.T) {
-	h := accountsHome(t)
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: "socks5://u:fake-token@host:1080"}); e != nil {
 		t.Fatal(e)
 	}
 	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
-	s.status = func(string) (angel.Status, error) { return angel.Status{}, errors.New("unexpected probe") }
-	accountsRunBackground(s, s.reload())
-	if len(s.rows) != 1 || s.rows[0].Login != "alice" || !strings.Contains(s.View(140, 10), "alice") || len(s.live) != 0 {
-		t.Fatal("reload render")
-	}
-}
-func TestAccountsMutationTUIReadbackAllOperations(t *testing.T) {
-	h := accountsHome(t)
-	captured := 0
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(tui.Modal) tea.Cmd { captured++; return nil }}).(*accountsScreen)
 	s.rows, _ = AccountList(h)
-	s.providers = []string{"backup", "main"}
-	s.openForm("add", nil)
-	ck := countryKey(s.form.Form)
-	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "loopback", "Pre-hop URL": "", "Post-hop URL": "socks5://u:stored-secret@host:1080"}
-	v[ck] = ""
-	accountsRunBackground(s, accountsSubmit(s, v))
-	rows, e := AccountList(h)
-	if e != nil || len(rows) != 1 || rows[0].PasswordSet {
-		errorText := ""
-		if s.form != nil && s.form.Form != nil {
-			errorText = s.form.Form.View(100, 18)
-		}
-		t.Fatalf("add: inline error %q; rows %d; readback error %v", errorText, len(rows), e)
+	s.syncRows("alice")
+	a := s.rows[0]
+	runAccountCmd(s, s.mutateEdit(a, "clients", map[string]string{"value": "loopback"}))
+	r, e := AccountList(h)
+	if e != nil || r[0].AllowedClients != "loopback" {
+		t.Fatalf("edit %#v %v", r, e)
 	}
-	if !strings.Contains(s.View(140, 10), "alice") || s.makeRows()[0].Cells[6] != "waiting for first use" {
-		t.Fatal("render")
+	runAccountCmd(s, s.mutateEdit(a, "post", map[string]string{"value": "none"}))
+	r, _ = AccountList(h)
+	if r[0].PostSOCKS5.Value != "none" {
+		t.Fatal("hop clear")
 	}
-	raw, e := config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PostSOCKS5 != v["Post-hop URL"] {
-		t.Fatal("persist hop")
+	runAccountCmd(s, s.bg("clone", func() tea.Msg {
+		_, e := AccountClone(h, AccountCloneOptions{Source: "alice", Login: "bob"})
+		return s.finishMutation(e, "cloned", "bob")
+	}))
+	r, e = AccountList(h)
+	if e != nil || len(r) != 2 || r[1].Login != "bob" || r[1].PostSOCKS5.Value != "none" || r[1].AllowedClients != "loopback" {
+		t.Fatalf("clone %#v %v", r, e)
 	}
-	s.rows = rows
-	s.table.SetRows(s.makeRows())
-	if strings.Contains(s.View(140, 10), "stored-secret") {
-		t.Fatal("secret")
-	}
-	s.openForm("edit", &rows[0])
-	ck = countryKey(s.form.Form)
-	cfg, e := config.Load(config.ConfigPath(h))
-	if e != nil {
-		t.Fatal(e)
-	}
-	cfg.Accounts[0].AllowedClients = "198.51.100.0/24"
-	if e = config.Save(config.ConfigPath(h), cfg); e != nil {
-		t.Fatal(e)
-	}
-	edit := map[string]string{"Provider": "any", "Exit": "direct", "Allowed clients": "192.0.2.0/24", "Pre-hop empty unchanged; none clears": "", "Post-hop empty unchanged; none clears": ""}
-	edit[ck] = ""
-	accountsRunBackground(s, accountsSubmit(s, edit))
-	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PostSOCKS5 != v["Post-hop URL"] || raw.Accounts[0].AllowedClients != "192.0.2.0/24" {
-		t.Fatal("blank hop")
-	}
-	rows, _ = AccountList(h)
-	s.rows = rows
-	s.table.SetRows(s.makeRows())
-	s.openForm("edit", &rows[0])
-	ck = countryKey(s.form.Form)
-	cfg, e = config.Load(config.ConfigPath(h))
-	if e != nil {
-		t.Fatal(e)
-	}
-	cfg.Accounts[0].AllowedClients = "198.51.100.0/24"
-	if e = config.Save(config.ConfigPath(h), cfg); e != nil {
-		t.Fatal(e)
-	}
-	edit[ck] = ""
-	edit["Allowed clients"] = rows[0].AllowedClients
-	edit["Post-hop empty unchanged; none clears"] = "none"
-	accountsRunBackground(s, accountsSubmit(s, edit))
-	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[0].PostSOCKS5 != "none" || raw.Accounts[0].AllowedClients != "198.51.100.0/24" {
-		t.Fatal("edit")
-	}
-	rows, _ = AccountList(h)
-	s.rows = rows
-	s.table.SetRows(s.makeRows())
-	s.openForm("clone", &rows[0])
-	ck = countryKey(s.form.Form)
-	clone := map[string]string{"New login": "bob", "Provider override": "any", "Allowed clients override": "", "Exit override": "(unchanged)"}
-	clone[ck] = ""
-	accountsRunBackground(s, accountsSubmit(s, clone))
-	rows, e = AccountList(h)
-	if e != nil || len(rows) != 2 || rows[1].Login != "bob" {
-		t.Fatal("clone")
-	}
-	raw, e = config.Load(config.ConfigPath(h))
-	if e != nil || raw.Accounts[1].PostSOCKS5 != "none" {
-		t.Fatal("clone config")
-	}
-	s.rows = rows
-	s.table.SetRows(s.makeRows())
-	s.table.Selected = 1
-	s.Update(tui.ConfirmResultMsg{})
-	_, rm := s.Update(tui.ConfirmResultMsg{Confirmed: true})
-	accountsRunBackground(s, rm)
-	rows, e = AccountList(h)
-	if e != nil || len(rows) != 1 || rows[0].Login != "alice" {
+	runAccountCmd(s, s.mutateRemove("bob"))
+	r, e = AccountList(h)
+	if e != nil || len(r) != 1 || r[0].Login != "alice" {
 		t.Fatal("remove")
 	}
-	if captured < 3 {
-		t.Fatal("modal")
+}
+func TestAccountsAddWizardCallbackPersistsEveryoneWildcard(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.beginAdd()
+	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{
+		"Login": "bob", "Provider": "any", "Country": "any", "Exit": "direct",
+		"Clients": "everyone", "Pre-hop": "", "Post-hop": "",
+	}})
+	if cmd == nil {
+		t.Fatal("wizard callback did not start account creation")
+	}
+	runAccountCmd(s, cmd)
+	cfg, err := config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].AllowedClients != "*" {
+		t.Fatalf("account config did not persist wildcard access: %#v", cfg.Accounts)
+	}
+	if s.dialog != nil || s.selectedLogin() != "bob" {
+		t.Fatal("successful wizard did not close and select the new account")
 	}
 }
-func TestAccountsDuplicateFailureRetainsWholeForm(t *testing.T) {
+
+func TestAccountsMouseCardActivationAndDialogCapture(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s.width, s.height = 120, 30
+	s.rows = []accountInfo{{Login: "alice"}}
+	s.syncRows("alice")
+	s.workspace.SetSize(s.width, s.height)
+	s.workspace.SetFocus(tui.PaneCard)
+	s.refreshSelectedCard(true)
+	calls := 0
+	s.dialog = &accountsDialog{prompt: prompt(tui.TextPrompt, "Edit", "Value", "", ""), onResult: func(map[string]string) tea.Cmd { calls++; return nil }}
+	// Input belongs to the active dialog; it must not activate the workspace card.
+	_, _ = s.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
+	if calls != 0 || s.dialog == nil {
+		t.Fatal("dialog click escaped to workspace")
+	}
+}
+
+func TestAccountsUpdatePreservesExternalUneditedField(t *testing.T) {
 	h := accountsHome(t)
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
+	_, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true})
+	if e != nil {
 		t.Fatal(e)
 	}
-	captured := 0
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(tui.Modal) tea.Cmd { captured++; return nil }}).(*accountsScreen)
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
 	s.rows, _ = AccountList(h)
-	s.openForm("add", nil)
-	f := s.form.Form
-	ck := countryKey(f)
-	v := map[string]string{"Login": "alice", "Provider": "any", "Exit": "direct", "Allowed clients": "", "Pre-hop URL": "", "Post-hop URL": "socks5://u:proxy-password@host:1080"}
-	v[ck] = ""
-	accountsRunBackground(s, accountsSubmit(s, v))
-	if s.form == nil || s.form.Form != f || len(f.Fields) != 8 || f.Fields[0].Value != "alice" || f.Fields[6].Value == "" || captured != 2 {
-		t.Fatal("form retention")
+	c, e := config.Load(config.ConfigPath(h))
+	if e != nil {
+		t.Fatal(e)
 	}
-	view := f.View(100, 18)
-	if strings.Contains(view, "proxy-password") || !strings.Contains(view, "already exists") {
-		t.Fatal("mask/error")
+	c.Accounts[0].AllowedClients = "loopback"
+	if e = config.Save(config.ConfigPath(h), c); e != nil {
+		t.Fatal(e)
 	}
-}
-func TestAccountsRealFormValidationAndCountryHint(t *testing.T) {
-	s := newAccountsScreen(accountsHome(t), tui.Env{OpenModal: func(tui.Modal) tea.Cmd { return nil }}).(*accountsScreen)
-	s.providers = []string{"backup", "main"}
-	s.providerCountries["backup"] = []string{"DE", "NL"}
-	s.providerCountries["main"] = []string{"US"}
-	s.openForm("add", nil)
-	f := s.form.Form
-	ck := countryKey(f)
-	for _, tc := range []struct{ login, provider, country, want string }{{"bad login", "backup,main", "DE", "invalid account login"}, {"bob", "backup,main", "NLD", "invalid country code"}, {"bob", "missing", "DE", "unknown provider"}} {
-		v := map[string]string{"Login": tc.login, "Provider": tc.provider, "Exit": "direct", "Allowed clients": ""}
-		v[ck] = tc.country
-		for i := range f.Fields {
-			x := &f.Fields[i]
-			if x.Kind == tui.MultiChoiceField {
-				if y, ok := v[x.Name]; ok {
-					x.Selected = strings.Split(y, ",")
-				} else {
-					x.Selected = nil
-				}
-			} else if y, ok := v[x.Name]; ok {
-				x.Value = y
-			}
-		}
-		f.Focus = len(f.Fields) - 1
-		_, cmd := f.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		if cmd != nil || !strings.Contains(f.View(100, 18), tc.want) || f.Fields[0].Value != tc.login {
-			t.Fatalf("validation %s", tc.want)
-		}
-	}
-	if accountsProviderValue(map[string]string{"Provider": "backup,main"}, "Provider") != "backup,main" {
-		t.Fatal("provider")
+	runAccountCmd(s, s.mutateEdit(s.rows[0], "exit", map[string]string{"value": "route"}))
+	c, e = config.Load(config.ConfigPath(h))
+	if e != nil || c.Accounts[0].AllowedClients != "loopback" || c.Accounts[0].Exit != "route" {
+		t.Fatal("unrelated external edit overwritten")
 	}
 }
-func TestAccountsPollingRatesAndErrorReset(t *testing.T) {
+func TestAccountsSecretDisplayAndErrorRedaction(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s.rows = []accountInfo{{Login: "alice", PostSOCKS5: accountChainInfo{Source: "account", Value: "socks5://u:fake-token@host"}}}
+	s.syncRows("alice")
+	v := s.View(120, 30)
+	if strings.Contains(v, "fake-token") || strings.Contains(v, "socks5://") {
+		t.Fatal("hop secret displayed")
+	}
+	e := accountsSafePromptError(errors.New("invalid socks5://u:fake-token@host"), "socks5://u:fake-token@host")
+	if strings.Contains(e, "fake-token") {
+		t.Fatal("hop secret in error")
+	}
+	if strings.Contains(accountsErrorText(errors.New("raw-private-error")), "raw-private-error") {
+		t.Fatal("untrusted error exposed")
+	}
+}
+func TestAccountsPollingFixedClockSerialAndStale(t *testing.T) {
 	now := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
 	calls := 0
 	s := newAccountsScreen("", tui.Env{Now: func() time.Time { return now }, Background: accountsSyncBackground}).(*accountsScreen)
 	s.status = func(string) (angel.Status, error) {
 		calls++
-		return angel.Status{Activity: []angel.AccountActivity{{Login: "alice", UploadBytes: int64(calls * 1024), DownloadBytes: int64(calls * 2048)}}}, nil
+		return angel.Status{Activity: []angel.AccountActivity{{Login: "alice", Connections: 2, UploadBytes: int64(calls * 1024), DownloadBytes: int64(calls * 2048)}}}, nil
 	}
-	_, cmd := s.Update(accountsRateTick{})
-	_, overlap := s.Update(accountsRateTick{})
-	if cmd == nil || overlap != nil {
-		t.Fatal("poll overlap")
+	_, c := s.Update(accountsRateTick{})
+	_, over := s.Update(accountsRateTick{})
+	if c == nil || over != nil {
+		t.Fatal("overlapping poll")
 	}
-	accountsRunBackground(s, cmd)
+	runAccountCmd(s, c)
 	now = now.Add(time.Second)
-	_, cmd = s.Update(accountsRateTick{})
-	accountsRunBackground(s, cmd)
+	_, c = s.Update(accountsRateTick{})
+	runAccountCmd(s, c)
 	if s.rates["alice"] != [2]string{"1.0 KiB/s", "2.0 KiB/s"} {
-		t.Fatal("rate")
+		t.Fatalf("rates %v", s.rates)
 	}
-	s.applyStatus(angel.Status{}, errors.New("offline"), now)
-	if len(s.live) != 0 || len(s.previous) != 0 {
-		t.Fatal("stale")
-	}
-}
-func TestAccountsFrameRoutesBackgroundPollAcrossModal(t *testing.T) {
-	h := accountsHome(t)
-	var screen *accountsScreen
-	scheduled, calls := 0, 0
-	frame := tui.NewFrame(tui.Options{Home: h, Tabs: []tui.Tab{{Title: "Accounts", New: func(env tui.Env) tui.Screen {
-		screen = newAccountsScreen(h, env).(*accountsScreen)
-		screen.status = func(string) (angel.Status, error) { calls++; return angel.Status{}, nil }
-		screen.pollWait = func(_ time.Duration, fn func(time.Time) tea.Msg) tea.Cmd {
-			scheduled++
-			return func() tea.Msg { return fn(time.Time{}) }
-		}
-		return screen
-	}}}})
-	frame.Update(screen.env.OpenModal((&tui.Form{TitleText: "Accounts test modal"}).AsModal())())
-	if !strings.Contains(frame.View().Content, "Accounts test modal") {
-		t.Fatal("modal")
-	}
-	execute := func(c tea.Cmd) tea.Cmd {
-		_, work := frame.Update(c())
-		batch := work().(tea.BatchMsg)
-		if len(batch) != 2 || batch[0] == nil {
-			t.Fatal("background/spinner tasks")
-		}
-		_, next := frame.Update(batch[0]())
-		if next == nil {
-			t.Fatal("result not routed")
-		}
-		return next
-	}
-	next := execute(screen.rateTick())
-	next = execute(next)
-	// The status result schedules the next timer; the first status call ran.
-	if scheduled != 2 || calls != 1 {
-		t.Fatalf("scheduled %d calls %d", scheduled, calls)
-	}
-	next = execute(next) // the second timer fires and asks for a status
-	_ = execute(next)    // the second status runs and schedules a third timer
-	if scheduled != 3 || calls != 2 {
-		t.Fatalf("polling stopped behind the modal: scheduled %d calls %d", scheduled, calls)
+	s.polling = true
+	s.Update(accountsPollResult{Generation: s.pollGeneration - 1, At: now})
+	if !s.polling {
+		t.Fatal("stale generation applied")
 	}
 }
-func TestAccountsSafeDisplayAndDetailResize(t *testing.T) {
+func TestAccountsWizardBackReviewSecret(t *testing.T) {
+	s := newAccountsScreen(accountsHome(t), tui.Env{}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.providerNodes["main"] = "12"
+	s.beginAdd()
+	w := s.dialog.wizard
+	w.View(100, 30)
+	w.Steps[0].Prompt.Value = "alice"
+	w.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if w.Index != 1 {
+		t.Fatal("did not advance")
+	}
+	w.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	w.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if w.Index != 0 || w.Steps[0].Prompt.Value != "alice" {
+		t.Fatal("back discarded answer")
+	}
+	w.Values["Login"] = "alice"
+	w.Values["Pre-hop"] = "socks5://u:fake-token@host"
+	w.Review = true
+	if strings.Contains(w.View(100, 30), "fake-token") {
+		t.Fatal("wizard review revealed secret")
+	}
+}
+func TestAccountsShowSeamNoLiveProbe(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.rows = []accountInfo{{Login: "alice"}}
+	s.syncRows("alice")
+	calls := 0
+	s.show = func(_, login string) (AccountShowResult, error) {
+		calls++
+		return AccountShowResult{Login: login, Tiers: []accountShowTier{{Tier: 1, Fallback: true, Nodes: []accountShowNode{{Name: "node"}}}}}, nil
+	}
+	c := s.loadDetail("alice")
+	runAccountCmd(s, c)
+	if calls != 1 || s.cardResult == nil || !strings.Contains(accountsTiersText(s.cardResult.Tiers), "fallback") {
+		t.Fatal("show seam")
+	}
+}
+func TestAccountsProviderPrerequisiteSwitch(t *testing.T) {
+	called := -1
+	s := newAccountsScreen("", tui.Env{SwitchTab: func(i int) tea.Cmd { called = i; return nil }}).(*accountsScreen)
+	s.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if called != 0 {
+		t.Fatal("did not switch to Providers")
+	}
+}
+
+func TestAccountsListNavigationRefreshesCardAndDetail(t *testing.T) {
+	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.show = func(_, login string) (AccountShowResult, error) { return AccountShowResult{Login: login}, nil }
+	s.rows = []accountInfo{{Login: "alice"}, {Login: "bob"}}
+	s.syncRows("alice")
+	s.workspace.SetSize(120, 30)
+	s.workspace.SetFocus(tui.PaneList)
+	if s.workspace.Card.Title != "Account alice" {
+		t.Fatalf("initial card = %q", s.workspace.Card.Title)
+	}
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.workspace.List.Selected != 1 {
+		t.Fatalf("KeyDown did not change selection: %d", s.workspace.List.Selected)
+	}
+	if cmd == nil {
+		t.Fatal("selection change did not schedule a detail load")
+	}
+	if s.workspace.Card.Title != "Account bob" {
+		t.Fatalf("card did not follow selection: %q", s.workspace.Card.Title)
+	}
+	runAccountCmd(s, cmd)
+	if s.cardResult == nil || s.cardResult.Login != "bob" {
+		t.Fatalf("detail for new selection missing: %+v", s.cardResult)
+	}
+}
+
+func TestAccountsCardThemeFollowsScreenTheme(t *testing.T) {
 	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
-	s.rows = []accountInfo{{Login: "alice", PasswordSet: true, PreSOCKS5: accountChainInfo{Value: "http://u:secret@host", Source: "account"}}}
-	s.table.SetRows(s.makeRows())
-	v := s.View(120, 10)
-	if strings.Contains(v, "secret") || strings.Contains(v, "http://") || !strings.Contains(v, "set") {
-		t.Fatal("secret")
+	s.theme = tui.NewThemeFor(false)
+	s.rows = []accountInfo{{Login: "alice"}}
+	s.syncRows("alice")
+	s.refreshSelectedCard(true)
+	if s.workspace.Card.Theme.Dark {
+		t.Fatal("account card kept a dark theme on a light screen")
 	}
-	s.detail = true
-	s.detailResult = &AccountShowResult{Login: "alice", PreSOCKS5: accountShowChainInfo{Value: "socks5://secret@host", Source: "account"}, Tiers: []accountShowTier{{Tier: 1, Country: "DE", Providers: []string{"p"}, Fallback: true, Nodes: []accountShowNode{{Name: "Node"}}}}}
-	wide := s.View(120, 30)
-	if !strings.Contains(wide, "fallback") || !strings.Contains(wide, "Node") {
-		t.Fatal("detail")
-	}
-	v = s.View(14, 5)
-	if strings.Contains(v, "secret") || len(strings.Split(v, "\n")) > 5 {
-		t.Fatal("bounds")
-	}
-	for _, line := range strings.Split(v, "\n") {
-		if len([]rune(line)) > 14 {
-			t.Fatal("width")
-		}
-	}
-	s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.detail {
-		t.Fatal("escape")
+	s.workspace.Card = tui.NewCard("Account", nil)
+	s.workspace.Card.SetTheme(tui.NewThemeFor(true))
+	_, _ = s.Update(tui.ThemeMsg{Theme: tui.NewThemeFor(false)})
+	if s.workspace.Card.Theme.Dark {
+		t.Fatal("ThemeMsg did not retheme the account card")
 	}
 }
-func TestAccountsErrorSanitization(t *testing.T) {
-	if strings.Contains(accountsErrorText(errors.New("token-secret")), "token-secret") {
-		t.Fatal("raw error")
+
+func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s.providers = []string{"main"}
+	s.beginAdd()
+	d := s.dialog
+	if d == nil || d.wizard == nil {
+		t.Fatal("beginAdd did not open the wizard")
 	}
-	if !strings.Contains(accountsErrorText(&cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid", Hint: "hint"}), "hint") {
-		t.Fatal("hint")
+	typeKey := func(r rune) {
+		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	enter := func() tea.Cmd {
+		_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		return c
+	}
+	for _, r := range "bob" {
+		typeKey(r)
+	}
+	if d.wizard.Steps[0].Prompt.Value != "bob" {
+		t.Fatalf("login input = %q", d.wizard.Steps[0].Prompt.Value)
+	}
+	// Seven Enters walk Login -> Provider -> Country -> Exit -> Clients ->
+	// CustomClients -> Pre-hop -> Post-hop -> Review; every step keeps its default.
+	for i := 0; i < 7; i++ {
+		if c := enter(); c != nil {
+			t.Fatalf("step %d advance produced a command", i)
+		}
+		if d.wizard.Index != i+1 {
+			t.Fatalf("after enter %d wizard index = %d", i, d.wizard.Index)
+		}
+	}
+	// The eighth Enter accepts the last step and opens the review.
+	if c := enter(); c != nil {
+		t.Fatal("last step advance produced a command")
+	}
+	if !d.wizard.Review {
+		t.Fatal("last step enter did not reach review")
+	}
+	// Review Enter activates the focused [Create] button; accountsDialog.Update
+	// converts the WizardResultMsg from that command into accountsDialogResult,
+	// which the screen then turns into the account-creation command.
+	cmd := enter()
+	if cmd == nil {
+		t.Fatal("review create did not return a result command")
+	}
+	msg := cmd()
+	result, ok := msg.(accountsDialogResult)
+	if !ok || result.Canceled {
+		t.Fatalf("wizard result command produced %#v", msg)
+	}
+	_, cmd = s.Update(msg)
+	if cmd == nil {
+		t.Fatal("dialog result did not start account creation")
+	}
+	runAccountCmd(s, cmd)
+	cfg, err := config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].AllowedClients != "*" {
+		t.Fatalf("account config did not persist wildcard access: %#v", cfg.Accounts)
+	}
+	if s.dialog != nil || s.selectedLogin() != "bob" {
+		t.Fatal("successful wizard did not close and select the new account")
+	}
+}
+
+func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
+	h := accountsHome(t)
+	cfg0 := config.Default()
+	cfg0.Subscriptions = []config.Subscription{{Name: "main", URL: "https://x.invalid/a"}}
+	if e := config.Save(config.ConfigPath(h), cfg0); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "bob", Exit: "direct", ExitGiven: true}); e != nil {
+		t.Fatal(e)
+	}
+	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	s.rows, _ = AccountList(h)
+	s.syncRows("bob")
+	// (a) Click the first list row. Workspace mouse translation leaves the left
+	// pane unoffset: row y = border(1) + title(1) + header(1), so alice is at y=3.
+	_, _ = s.Update(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
+	if s.selectedLogin() != "alice" || s.workspace.Card.Title != "Account alice" {
+		t.Fatalf("row click selected %q card %q", s.selectedLogin(), s.workspace.Card.Title)
+	}
+	// (b) Focus the card and click the Allowed clients field line at its label X
+	// (y=6: border(1) + title(1) + info(1) + 3 fields; screen x=45 -> card-local x=2,
+	// left of the [edit] range, so the first click only selects).
+	s.workspace.SetFocus(tui.PaneCard)
+	s.refreshSelectedCard(true)
+	s.workspace.SetSize(120, 30)
+	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.workspace.Card.Selected != 1 {
+		t.Fatalf("card selection = %d", s.workspace.Card.Selected)
+	}
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 6, Button: tea.MouseLeft})
+	if s.dialog != nil || s.workspace.Card.Selected != 3 {
+		t.Fatalf("first card click opened a dialog or ignored the selection: %v %d", s.dialog != nil, s.workspace.Card.Selected)
+	}
+	// Second click on the same line activates it and opens the clients editor.
+	_, _ = s.Update(tea.MouseClickMsg{X: 45, Y: 6, Button: tea.MouseLeft})
+	if s.dialog == nil || s.dialog.prompt == nil {
+		t.Fatalf("card activation did not open the Allowed clients prompt: %+v", s.dialog)
+	}
+	// (c) Type a CIDR, then click [ Save ] on the button row (buttonY = h-1
+	// after rendering the dialog at height 26; segment [ Save ] spans x 0..9).
+	provider := s.dialog.prompt
+	for range provider.Value {
+		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	for _, r := range "10.0.0.0/8" {
+		_, _ = s.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if provider.Value != "10.0.0.0/8" {
+		t.Fatalf("prompt value = %q", provider.Value)
+	}
+	_ = s.View(120, 26) // render so the prompt lays out its buttons at y=25
+	_, cmd := s.Update(tea.MouseClickMsg{X: 4, Y: 25, Button: tea.MouseLeft})
+	if cmd == nil {
+		t.Fatal("Save click did not produce a result command")
+	}
+	if msg := cmd(); msg != nil {
+		if _, ok := msg.(accountsDialogResult); !ok {
+			t.Fatalf("save command produced %#v", msg)
+		}
+		_, cmd = s.Update(msg)
+		runAccountCmd(s, cmd)
+	}
+	if s.dialog != nil {
+		t.Fatal("save did not close the dialog")
+	}
+	cfg, err := config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Accounts[0].Login != "alice" || cfg.Accounts[0].AllowedClients != "10.0.0.0/8" {
+		t.Fatalf("save did not persist the clients edit: %#v", cfg.Accounts[0])
 	}
 }

@@ -39,37 +39,24 @@ func (s *frameScreen) Update(m tea.Msg) (Screen, tea.Cmd) {
 func (s *frameScreen) View(w, h int) string { return strings.Repeat("x", w+10) + "\n" + s.name }
 func (s *frameScreen) KeyHints() string     { return "keys" }
 func (s *frameScreen) CapturingInput() bool { return s.capture }
-func key(s string) tea.KeyPressMsg {
-	switch s {
-	case "tab":
-		return tea.KeyPressMsg{Code: tea.KeyTab}
-	case "shift+tab":
-		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
-	case "q", "?", "1", "2", "3":
-		return tea.KeyPressMsg{Code: rune(s[0]), Text: s}
-	case "ctrl+c":
-		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
-	case "esc":
-		return tea.KeyPressMsg{Code: tea.KeyEscape}
-	}
-	return tea.KeyPressMsg{Text: s}
-}
+func frameKey(s string) tea.KeyPressMsg     { return tuiTestKey(s) }
 func TestFrameRetainsScreensCapturesKeysAndHandlesEmpty(t *testing.T) {
 	var made []*frameScreen
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(e Env) Screen { s := &frameScreen{name: "a", env: e}; made = append(made, s); return s }}, {Title: "b", New: func(e Env) Screen { s := &frameScreen{name: "b", env: e}; made = append(made, s); return s }}}})
 	f.Init()
-	f.Update(key("tab"))
-	f.Update(key("shift+tab"))
+	f.Update(frameKey("right"))
+	f.Update(frameKey("left"))
 	if len(made) != 2 || made[0].inits != 1 || made[1].inits != 1 {
 		t.Fatal("screen lifecycle wrong")
 	}
 	made[0].capture = true
-	f.Update(key("q"))
-	if len(made[0].messages) != 1 {
+	before := len(made[0].messages)
+	f.Update(frameKey("q"))
+	if len(made[0].messages) != before+1 {
 		t.Fatal("capture routing")
 	}
 	empty := NewFrame(Options{})
-	empty.Update(key("tab"))
+	empty.Update(frameKey("tab"))
 	if !strings.Contains(empty.View().Content, "No screens") {
 		t.Fatal("empty frame")
 	}
@@ -107,7 +94,7 @@ func TestHeaderStoppedStatusRendersSeparatelyFromError(t *testing.T) {
 	f := NewFrame(Options{})
 	_, _ = f.Update(headerResult{h: Header{Running: false, Listen: "127.0.0.1:9000", Version: "v1"}})
 	view := f.View().Content
-	if !strings.Contains(view, "Running: false") || !strings.Contains(view, "127.0.0.1:9000") || !strings.Contains(view, "v1") {
+	if !strings.Contains(view, "stopped") || !strings.Contains(view, "127.0.0.1:9000") || !strings.Contains(view, "v1") {
 		t.Fatalf("stopped header: %q", view)
 	}
 	_, _ = f.Update(headerResult{err: errors.New("source stopped")})
@@ -115,6 +102,16 @@ func TestHeaderStoppedStatusRendersSeparatelyFromError(t *testing.T) {
 		t.Fatal("source error not shown")
 	}
 }
+func countFrameMessages(messages []tea.Msg) int {
+	count := 0
+	for _, message := range messages {
+		if _, ok := message.(BackgroundMsg); ok {
+			count++
+		}
+	}
+	return count
+}
+
 func TestBackgroundCommandsTrackSeparateIDsAndRouteToCreator(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(e Env) Screen { return &frameScreen{name: "a", env: e} }}, {Title: "b", New: func(e Env) Screen { return &frameScreen{name: "b", env: e} }}}})
 	f.Init()
@@ -140,51 +137,127 @@ func TestBackgroundCommandsTrackSeparateIDsAndRouteToCreator(t *testing.T) {
 		return nil
 	}
 	r1, r2 := run(c1), run(c2)
-	f.Update(key("tab"))
+	f.Update(frameKey("right"))
 	f.Update(r1)
 	f.Update(r2)
-	if len(f.background) != 0 || len(a.messages) != 2 || len(f.screens[1].(*frameScreen).messages) != 0 {
+	if len(f.background) != 0 || countFrameMessages(a.messages) != 2 || countFrameMessages(f.screens[1].(*frameScreen).messages) != 0 {
 		t.Fatal("background routing")
 	}
 }
+
+type testModal struct{}
+
+func (testModal) Update(tea.Msg) (Modal, tea.Cmd) { return testModal{}, nil }
+func (testModal) View(int, int) string            { return "" }
+func (testModal) CapturingInput() bool            { return true }
+
 func TestModalResultClosesAndRoutesToOrigin(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(e Env) Screen { return &frameScreen{name: "a", env: e} }}, {Title: "b", New: func(e Env) Screen { return &frameScreen{name: "b", env: e} }}}})
-	f.Init()
+
 	a := f.screens[0].(*frameScreen)
-	f.Update(a.env.OpenModal((&Form{}).AsModal())())
-	f.Update(key("tab"))
-	f.Update(FormResultMsg{Canceled: true})
-	if f.modal != nil || len(a.messages) != 1 || f.index != 0 || f.screens[1] != nil {
+	initialMessages := len(a.messages)
+	f.Update(a.env.OpenModal(testModal{})())
+	f.Update(frameKey("tab"))
+	f.Update(ModalResultMsg{Canceled: true})
+	if f.modal != nil || len(a.messages) != initialMessages+1 || f.index != 0 || f.screens[1] != nil {
 		t.Fatal("modal routing/close")
 	}
 }
+
+type framePaneScreen struct {
+	frameScreen
+	focus int
+}
+
+func (s *framePaneScreen) SetPaneFocus(pane int) { s.focus = pane }
+func (s *framePaneScreen) FocusPane(reverse bool) bool {
+	if reverse && s.focus == PaneCard {
+		s.focus = PaneList
+		return true
+	}
+	if !reverse && s.focus == PaneList {
+		s.focus = PaneCard
+		return true
+	}
+	return false
+}
+
+func TestFrameTabAndShiftTabMovePaneFocus(t *testing.T) {
+	var screen *framePaneScreen
+	f := NewFrame(Options{Tabs: []Tab{{Title: "servers", New: func(Env) Screen {
+		screen = &framePaneScreen{}
+		return screen
+	}}}})
+	f.Init()
+	f.Update(frameKey("tab"))
+	if screen.focus != PaneCard || f.tabFocus || f.index != 0 {
+		t.Fatalf("Tab focus=%d tabFocus=%t index=%d", screen.focus, f.tabFocus, f.index)
+	}
+	f.Update(frameKey("shift+tab"))
+	if screen.focus != PaneList || f.tabFocus || f.index != 0 {
+		t.Fatalf("Shift+Tab focus=%d tabFocus=%t index=%d", screen.focus, f.tabFocus, f.index)
+	}
+}
+
+func TestFrameTabFocusNavigation(t *testing.T) {
+	f := NewFrame(Options{Start: 1, Tabs: []Tab{{Title: "a", New: func(Env) Screen { return &frameScreen{name: "a"} }}, {Title: "b", New: func(Env) Screen { return &frameScreen{name: "b"} }}}})
+	f.Update(frameKey("tab"))
+	if !f.tabFocus {
+		t.Fatal("Tab should move focus to tabs when the screen has no pane focus")
+	}
+	f.Update(frameKey("right"))
+	if f.index != 0 {
+		t.Fatal("right navigation should change tabs while tabs are focused")
+	}
+	f.Update(frameKey("enter"))
+	if f.tabFocus {
+		t.Fatal("Enter should return focus to the active screen")
+	}
+	f.Update(frameKey("tab"))
+	f.Update(frameKey("shift+tab"))
+	if f.tabFocus || f.index != 0 {
+		t.Fatal("Shift-Tab from tabs should return focus to screen")
+	}
+}
+
 func TestFrameFooterAndBounds(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(Env) Screen { return &frameScreen{name: "a"} }}}})
-	f.Update(key("?"))
-	f.Update(tea.WindowSizeMsg{Width: 80, Height: 4})
+	f.Update(frameKey("?"))
+	for _, size := range [][2]int{{80, 4}, {60, 16}} {
+		f.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+		content := f.View().Content
+		if !strings.Contains(content, "Window too small") || strings.Contains(content, "keys") || strings.Contains(content, "screen") {
+			t.Fatalf("size %dx%d should show only warning: %q", size[0], size[1], content)
+		}
+		lines := strings.Split(content, "\n")
+		if len(lines) != size[1] {
+			t.Fatalf("got %d lines, want %d", len(lines), size[1])
+		}
+		for _, line := range lines {
+			if lipgloss.Width(line) > size[0] {
+				t.Fatal("width exceeded")
+			}
+		}
+	}
+	f.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	f.Update(frameKey("esc"))
 	lines := strings.Split(f.View().Content, "\n")
-	if len(lines) != 4 || !strings.Contains(lines[3], "q quit") {
-		t.Fatalf("footer: %q", f.View().Content)
+	if len(lines) != 24 || !strings.Contains(f.View().Content, "keys") {
+		t.Fatal("normal frame should retain exact height and footer")
 	}
 	for _, line := range lines {
 		if lipgloss.Width(line) > 80 {
 			t.Fatal("width exceeded")
 		}
 	}
-	f.Update(tea.WindowSizeMsg{Width: 12, Height: 4})
-	for _, line := range strings.Split(f.View().Content, "\n") {
-		if lipgloss.Width(line) > 12 {
-			t.Fatal("narrow width exceeded")
-		}
-	}
 }
 func TestFrameQuitAndCapturingCtrlC(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "capture", New: func(Env) Screen { return &frameScreen{capture: true} }}}})
-	_, cmd := f.Update(key("q"))
+	_, cmd := f.Update(frameKey("q"))
 	if cmd != nil {
 		t.Fatal("capturing q should not quit")
 	}
-	_, cmd = f.Update(key("ctrl+c"))
+	_, cmd = f.Update(frameKey("ctrl+c"))
 	if cmd == nil {
 		t.Fatal("Ctrl-C must quit during capture")
 	}
@@ -195,30 +268,33 @@ func TestFrameQuitAndCapturingCtrlC(t *testing.T) {
 
 func TestFrameHelpOverlayKeys(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "screen", New: func(Env) Screen { return &frameScreen{} }}}})
-	f.Update(key("?"))
+	f.Update(frameKey("?"))
 	if !f.help {
 		t.Fatal("? must open help")
 	}
-	_, cmd := f.Update(key("q"))
+	_, cmd := f.Update(frameKey("q"))
 	if cmd == nil {
 		t.Fatal("q in help must quit")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("q in help did not return QuitMsg")
 	}
-	_, cmd = f.Update(key("ctrl+c"))
+	_, cmd = f.Update(frameKey("ctrl+c"))
 	if cmd == nil {
 		t.Fatal("Ctrl-C in help must quit")
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("Ctrl-C in help did not return QuitMsg")
 	}
-	f.Update(key("?"))
+	f.Update(frameKey("?"))
 	if f.help {
 		t.Fatal("? must close help")
 	}
-	f.Update(key("?"))
-	f.Update(key("esc"))
+	f.Update(frameKey("?"))
+	if !f.help || !strings.Contains(f.helpBody(10), "q") || !strings.Contains(f.helpBody(10), "quit") {
+		t.Fatal("help should show the quit binding")
+	}
+	f.Update(frameKey("esc"))
 	if f.help {
 		t.Fatal("Esc must close help")
 	}

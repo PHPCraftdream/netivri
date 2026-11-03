@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	bubbleskey "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -29,140 +31,179 @@ type accountsPollResult struct {
 }
 type accountsChoicesLoaded struct {
 	Providers []string
+	Nodes     map[string]string
 	Countries ProviderCountriesAllResult
 	Err       error
 }
 type accountsDetailLoaded struct {
-	Result AccountShowResult
-	Err    error
+	Result     AccountShowResult
+	Err        error
+	Generation uint64
 }
 type accountsMutationDone struct {
 	Rows   []accountInfo
 	Err    error
 	Notice string
-	Values map[string]string
+	Login  string
 }
 type accountsRateTick struct{}
-type accountsFormState struct {
-	Kind, Login string
-	Form        *tui.Form
-	Original    accountInfo
+type accountsDialogResult struct {
+	Values   map[string]string
+	Canceled bool
 }
-type accountsFormModal struct {
-	screen *accountsScreen
-	form   *tui.Form
+type accountsDialog struct {
+	prompt      *tui.Prompt
+	wizard      *tui.Wizard
+	onResult    func(map[string]string) tea.Cmd
+	validate    func(map[string]string) error
+	removeLogin string
 }
 
-func (m accountsFormModal) CapturingInput() bool { return true }
-func (m accountsFormModal) View(w, h int) string { return m.form.View(w, h) }
-func (m accountsFormModal) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
-	providerFocus := -1
-	for i := range m.form.Fields {
-		if m.form.Fields[i].Kind == tui.MultiChoiceField {
-			providerFocus = i
-			break
-		}
+func (d *accountsDialog) SetTheme(t tui.Theme) {
+	if d.prompt != nil {
+		d.prompt.SetTheme(t)
 	}
-	beforeFocus := m.form.Focus
-	screen, cmd := m.form.Update(msg)
-	m.form = screen.(*tui.Form)
-	if k, ok := msg.(tea.KeyPressMsg); ok && beforeFocus == providerFocus && providerFocus >= 0 && (k.String() == "space" || k.String() == " ") {
-		p := &m.form.Fields[providerFocus]
-		if p.Value == "any" {
-			p.Selected = []string{"any"}
-		} else {
-			p.Selected = removeAccount(p.Selected, "any")
-		}
+	if d.wizard != nil {
+		d.wizard.SetTheme(t)
 	}
-	for i := range m.form.Fields {
-		f := &m.form.Fields[i]
-		if f.Kind == tui.TextField && strings.HasPrefix(f.Name, "Country") {
-			providers := []string{}
-			for j := range m.form.Fields {
-				p := &m.form.Fields[j]
-				if p.Kind == tui.MultiChoiceField {
-					providers = append(providers, p.Selected...)
-				}
-			}
-			f.Name = m.screen.countryFieldHint(providers)
-			break
-		}
-	}
-	return m, cmd
 }
-func removeAccount(xs []string, x string) []string {
-	out := xs[:0]
-	for _, v := range xs {
-		if v != x {
-			out = append(out, v)
+func (d *accountsDialog) CapturingInput() bool { return true }
+func (d *accountsDialog) View(w, h int) string {
+	if d.wizard != nil {
+		return d.wizard.View(w, h)
+	}
+	return d.prompt.View(w, h)
+}
+func (d *accountsDialog) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
+	if d.wizard != nil {
+		if d.wizard.Saving {
+			return d, nil
+		}
+		m, c := d.wizard.Update(msg)
+		d.wizard = m.(*tui.Wizard)
+		if c != nil {
+			return d, func() tea.Msg {
+				v := c()
+				if r, ok := v.(tui.WizardResultMsg); ok {
+					return accountsDialogResult{Values: r.Values, Canceled: r.Canceled}
+				}
+				return v
+			}
+		}
+		return d, c
+	}
+	if d.prompt != nil && d.prompt.Saving {
+		return d, nil
+	}
+	m, c := d.prompt.Update(msg)
+	d.prompt = m.(*tui.Prompt)
+	if c != nil {
+		return d, func() tea.Msg {
+			v := c()
+			if r, ok := v.(tui.PromptResultMsg); ok {
+				return accountsDialogResult{Values: map[string]string{"value": r.Value}, Canceled: r.Canceled}
+			}
+			return v
 		}
 	}
-	return out
+	return d, c
 }
 
 type accountsScreen struct {
-	env                      tui.Env
-	status                   accountsStatusSource
-	table                    *tui.Table
-	rows                     []accountInfo
-	live                     map[string]angel.AccountActivity
-	rates                    map[string][2]string
-	previous                 map[string]angel.AccountActivity
-	previousAt               time.Time
-	providers                []string
-	providerCountries        map[string][]string
-	loading, detail, polling bool
-	detailResult             *AccountShowResult
-	message                  string
-	statusMessage            string
-	width, height            int
-	form                     *accountsFormState
-	loadGeneration           uint64
-	pollGeneration           uint64
-	pollWait                 func(time.Duration, func(time.Time) tea.Msg) tea.Cmd
+	env                                              tui.Env
+	status                                           accountsStatusSource
+	show                                             func(string, string) (AccountShowResult, error)
+	rows                                             []accountInfo
+	live                                             map[string]angel.AccountActivity
+	rates                                            map[string][2]string
+	previous                                         map[string]angel.AccountActivity
+	previousAt                                       time.Time
+	providers                                        []string
+	providerNodes                                    map[string]string
+	providerCountries                                map[string][]string
+	loading, polling                                 bool
+	width, height                                    int
+	message, statusMessage                           string
+	loadGeneration, pollGeneration, detailGeneration uint64
+	pollWait                                         func(time.Duration, func(time.Time) tea.Msg) tea.Cmd
+	workspace                                        *tui.Workspace
+	theme                                            tui.Theme
+	cardResult                                       *AccountShowResult
+	detailLogin                                      string
+	dialog                                           *accountsDialog
+	pendingLogin                                     string
 }
 
 func newAccountsScreen(home string, env tui.Env) tui.Screen {
 	env.Home = home
-	s := &accountsScreen{env: env, live: map[string]angel.AccountActivity{}, rates: map[string][2]string{}, previous: map[string]angel.AccountActivity{}, providerCountries: map[string][]string{}, status: func(h string) (angel.Status, error) {
+	s := &accountsScreen{env: env, live: map[string]angel.AccountActivity{}, rates: map[string][2]string{}, previous: map[string]angel.AccountActivity{}, providerCountries: map[string][]string{}, providerNodes: map[string]string{}}
+	s.status = func(h string) (angel.Status, error) {
 		ctx, c := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 		defer c()
 		_, st, e := angelProbeLive(ctx, h)
 		return st, e
-	}}
-	s.table = tui.NewTable([]tui.Column{{Title: "LOGIN"}, {Title: "PROVIDER"}, {Title: "COUNTRY"}, {Title: "EXIT"}, {Title: "CLIENTS"}, {Title: "HOPS"}, {Title: "PASSWORD"}, {Title: "CONN"}, {Title: "UP/s"}, {Title: "DOWN/s"}}, nil)
+	}
+	s.show = AccountShow
+	s.theme = env.Theme
+	if s.theme.Accent == nil {
+		s.theme = tui.NewTheme()
+	}
+	l := tui.NewList([]tui.ListColumn{{Title: "LOGIN", Min: 8, Flex: 2}, {Title: "PROVIDER", Min: 8, Flex: 2}, {Title: "EXIT", Min: 5, Flex: 1}}, nil)
+	l.Title = "Accounts"
+	l.EmptyText = "An account needs a Provider first. Switch to Providers to add one."
+	l.AddLabel = "+ Add account [a]"
+	s.workspace = tui.NewWorkspace(l, tui.NewCard("Account", nil))
+	s.workspace.SetTheme(s.theme)
+	s.configureColumns(0)
 	return s
 }
 func (s *accountsScreen) Title() string        { return "Accounts" }
-func (s *accountsScreen) CapturingInput() bool { return s.detail }
-func (s *accountsScreen) KeyHints() string {
-	return "Enter show  a add  e edit  c clone  d delete  r reload  q quit"
+func (s *accountsScreen) CapturingInput() bool { return s.dialog != nil }
+func (s *accountsScreen) Breadcrumb() string {
+	if s.workspace.Drilled && s.detailLogin != "" {
+		return "Accounts › " + s.detailLogin
+	}
+	return ""
 }
-func (s *accountsScreen) UpdateFormResult(m tui.FormResultMsg) (tui.Screen, tea.Cmd) {
-	if m.Canceled {
-		s.form = nil
-		return s, nil
+func (s *accountsScreen) FocusPane(reverse bool) bool {
+	if s.workspace.Width < 100 {
+		return false
 	}
-	if m.Err != nil {
-		if s.form != nil && s.form.Form != nil {
-			s.message = accountsSafeFormError(m.Err, s.form.Form)
-			for i := range s.form.Form.Fields {
-				if s.form.Form.Fields[i].Kind == tui.PasswordField {
-					s.form.Form.Fields[i].Error = s.message
-				}
-			}
-		} else {
-			s.message = accountsErrorText(m.Err)
-		}
-		if s.form != nil && s.form.Form != nil {
-			f := s.form.Form
-			f.Fields[0].Error = s.message
-			f.Focus = 0
-			return s, s.env.OpenModal(accountsFormModal{screen: s, form: f})
-		}
-		return s, nil
+	old := s.workspace.Focus()
+	if reverse {
+		s.workspace.CycleFocus(-1)
+	} else {
+		s.workspace.CycleFocus(1)
 	}
-	return s, s.mutate(m.Values)
+	return old != s.workspace.Focus()
+}
+func (s *accountsScreen) SetPaneFocus(p int) {
+	if p < 0 {
+		p = tui.PaneCard
+	}
+	s.workspace.SetFocus(p)
+}
+
+var accountsActionBindings = []bubbleskey.Binding{
+	bubbleskey.NewBinding(bubbleskey.WithKeys("a"), bubbleskey.WithHelp("a", "add")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("e"), bubbleskey.WithHelp("e", "edit provider")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("c"), bubbleskey.WithHelp("c", "clone")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("d"), bubbleskey.WithHelp("d", "remove")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("r"), bubbleskey.WithHelp("r", "reload")),
+}
+
+func (s *accountsScreen) Bindings() tui.ActionHints {
+	var bindings []bubbleskey.Binding
+	if s.workspace != nil && s.workspace.Focus() == tui.PaneCard && s.workspace.Card != nil {
+		bindings = append(bindings, s.workspace.Card.Bindings()...)
+	} else if s.workspace != nil && s.workspace.List != nil {
+		bindings = append(bindings, s.workspace.List.Bindings()...)
+	}
+	bindings = append(bindings, accountsActionBindings...)
+	return tui.ActionHints(bindings)
+}
+func (s *accountsScreen) KeyHints() string {
+	return "↑↓ select · Enter open · a add · e edit · c clone · d remove · r reload · Tab pane"
 }
 func (s *accountsScreen) Init() tea.Cmd { return tea.Batch(s.reload(), s.loadChoices(), s.rateTick()) }
 func (s *accountsScreen) now() time.Time {
@@ -180,11 +221,8 @@ func (s *accountsScreen) bg(label string, f func() tea.Msg) tea.Cmd {
 func (s *accountsScreen) reload() tea.Cmd {
 	s.loading = true
 	s.loadGeneration++
-	generation := s.loadGeneration
-	return s.bg("accounts", func() tea.Msg {
-		r, e := AccountList(s.env.Home)
-		return accountsLoaded{Rows: r, Err: e, Generation: generation}
-	})
+	g := s.loadGeneration
+	return s.bg("accounts", func() tea.Msg { r, e := AccountList(s.env.Home); return accountsLoaded{r, e, g} })
 }
 func (s *accountsScreen) loadChoices() tea.Cmd {
 	return s.bg("account choices", func() tea.Msg {
@@ -196,11 +234,16 @@ func (s *accountsScreen) loadChoices() tea.Cmd {
 		if e != nil {
 			return accountsChoicesLoaded{Err: e}
 		}
-		ps := make([]string, 0, len(pl.Providers))
+		ps := []string{}
+		nodes := map[string]string{}
 		for _, p := range pl.Providers {
 			ps = append(ps, p.Name)
+			nodes[p.Name] = "unknown"
+			if p.Nodes != nil {
+				nodes[p.Name] = strconv.Itoa(*p.Nodes)
+			}
 		}
-		return accountsChoicesLoaded{ps, co, nil}
+		return accountsChoicesLoaded{Providers: ps, Nodes: nodes, Countries: co}
 	})
 }
 func (s *accountsScreen) rateTick() tea.Cmd {
@@ -212,26 +255,82 @@ func (s *accountsScreen) rateTick() tea.Cmd {
 	return s.bg("account activity timer", func() tea.Msg { return timer() })
 }
 func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
+	if d, ok := msg.(*accountsDialog); ok {
+		s.dialog = d
+		return s, nil
+	}
+	if s.dialog != nil {
+		switch msg.(type) {
+		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
+			d, cmd := s.dialog.Update(msg)
+			s.dialog = d.(*accountsDialog)
+			return s, cmd
+		}
+	}
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		s.width = max(0, m.Width)
 		s.height = max(0, m.Height)
+		s.workspace.SetSize(s.width, s.height)
+		s.configureColumns(s.width)
+		if s.workspace.Card != nil {
+			s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
+		}
+		if s.workspace.List != nil {
+			s.workspace.List.Focused = s.workspace.Focus() == tui.PaneList
+		}
+		return s, nil
+	case tui.ThemeMsg:
+		s.theme = m.Theme
+		s.workspace.SetTheme(m.Theme)
+		if s.workspace.Card != nil {
+			s.workspace.Card.SetTheme(m.Theme)
+		}
+		if s.dialog != nil {
+			s.dialog.SetTheme(m.Theme)
+		}
 		return s, nil
 	case tui.BackgroundMsg:
 		return s, s.updateBackground(m.Value)
-	case tui.FormResultMsg:
-		return s.UpdateFormResult(m)
+	case tui.RegionFocusMsg:
+		if m.Tabs {
+			s.workspace.SetFocus(tui.PaneList)
+		}
+		return s, nil
+	case accountsDialogResult:
+		if s.dialog == nil {
+			return s, nil
+		}
+		if m.Canceled {
+			s.dialog = nil
+			return s, nil
+		}
+		d := s.dialog
+		if d.onResult == nil {
+			s.dialog = nil
+			return s, nil
+		}
+		if d.validate != nil {
+			if err := d.validate(m.Values); err != nil {
+				d.validationError(err)
+				return s, nil
+			}
+		}
+		if d.prompt != nil {
+			d.prompt.SetSaving(true)
+		}
+		if d.wizard != nil {
+			d.wizard.SetSaving(true)
+		}
+		return s, d.onResult(m.Values)
 	case accountsRateTick:
 		if s.polling {
 			return s, nil
 		}
 		s.polling = true
 		s.pollGeneration++
-		generation := s.pollGeneration
-		return s, s.bg("account activity", func() tea.Msg {
-			st, e := s.status(s.env.Home)
-			return accountsPollResult{Status: st, Err: e, At: s.now(), Generation: generation}
-		})
+		g := s.pollGeneration
+		return s, s.bg("account activity", func() tea.Msg { st, e := s.status(s.env.Home); return accountsPollResult{st, e, s.now(), g} })
 	case accountsLoaded:
 		if m.Generation != s.loadGeneration {
 			return s, nil
@@ -239,131 +338,209 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		s.loading = false
 		if m.Err != nil {
 			s.message = accountsErrorText(m.Err)
-			return s, nil
+			return s, s.notice(s.message)
 		}
-		selected := ""
-		if row, ok := s.table.SelectedRow(); ok {
-			selected = row.Data.(accountInfo).Login
-		}
+		selected := s.selectedLogin()
 		s.rows = m.Rows
-		s.table.SetRows(s.makeRows())
-		if selected != "" {
-			for i, row := range s.rows {
-				if row.Login == selected {
-					s.table.Selected = i
-					break
-				}
-			}
-		}
-		return s, nil
+		s.syncRows(selected)
+		return s, s.loadDetail(s.selectedLogin())
 	case accountsPollResult:
 		if m.Generation != s.pollGeneration {
 			return s, nil
 		}
 		s.polling = false
-		if m.Err != nil {
-			s.applyStatus(angel.Status{}, m.Err, m.At)
-		} else {
-			s.applyStatus(m.Status, nil, m.At)
-		}
-		s.table.SetRows(s.makeRows())
+		s.applyStatus(m.Status, m.Err, m.At)
+		s.updateLiveRows()
 		return s, s.rateTick()
+	case accountsDetailLoaded:
+		if m.Generation != s.detailGeneration {
+			return s, nil
+		}
+		if m.Err != nil {
+			s.message = accountsErrorText(m.Err)
+			return s, s.notice(s.message)
+		}
+		if m.Result.Login != s.selectedLogin() {
+			return s, nil
+		}
+		s.cardResult = &m.Result
+		s.updateCard()
+		return s, nil
 	case accountsChoicesLoaded:
 		if m.Err != nil {
 			s.message = accountsErrorText(m.Err)
-			return s, nil
+			return s, s.notice(s.message)
 		}
 		s.providers = m.Providers
+		s.providerNodes = m.Nodes
 		s.providerCountries = map[string][]string{}
 		for _, p := range m.Countries.Providers {
-			codes := make([]string, 0, len(p.Countries))
 			for _, c := range p.Countries {
-				codes = append(codes, c.Code)
+				s.providerCountries[p.Name] = append(s.providerCountries[p.Name], c.Code)
 			}
-			s.providerCountries[p.Name] = codes
-		}
-		return s, nil
-	case accountsDetailLoaded:
-		if m.Err != nil {
-			s.message = accountsErrorText(m.Err)
-		} else {
-			s.detailResult = &m.Result
-			s.detail = true
 		}
 		return s, nil
 	case accountsMutationDone:
 		s.loading = false
 		if m.Err != nil {
-			if s.form == nil || s.form.Form == nil {
-				s.message = accountsErrorText(m.Err)
-				return s, nil
+			s.message = accountsErrorText(m.Err)
+			if s.dialog != nil {
+				s.dialog.promptError(m.Err)
 			}
-			s.message = accountsSafeFormError(m.Err, s.form.Form)
-			f := s.form.Form
-			f.Fields[0].Error = s.message
-			f.Focus = 0
-			return s, s.env.OpenModal(accountsFormModal{screen: s, form: f})
+			return s, s.notice(s.safeNotice(s.message))
 		}
 		s.rows = m.Rows
-		s.table.SetRows(s.makeRows())
 		s.message = m.Notice
-		s.form = nil
-		return s, nil
+		s.dialog = nil
+		s.syncRows(m.Login)
+		s.refreshSelectedCard(true)
+		return s, tea.Batch(s.loadDetail(s.selectedLogin()), s.notice(s.message))
 	case tui.ConfirmResultMsg:
-		if !m.Confirmed {
+		login := s.pendingLogin
+		s.pendingLogin = ""
+		if !m.Confirmed || login == "" {
 			return s, nil
 		}
-		if r, ok := s.table.SelectedRow(); ok {
-			login := r.Data.(accountInfo).Login
-			return s, s.bg("remove account", func() tea.Msg {
-				e := AccountRemove(s.env.Home, login)
-				rows := []accountInfo(nil)
-				if e == nil {
-					rows, e = AccountList(s.env.Home)
-				}
-				return accountsMutationDone{Rows: rows, Err: e, Notice: "Account removed"}
-			})
+		if _, exists := s.accountByLogin(login); !exists || login != s.selectedLogin() {
+			return s, nil
 		}
-		return s, nil
+		return s, s.mutateRemove(login)
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		before := s.selectedLogin()
+		activated := s.workspace.Update(msg)
+		if activated && s.workspace.Focus() == tui.PaneCard {
+			return s, s.activateCard()
+		}
+		if s.selectedLogin() == before {
+			if activated && s.workspace.List.IsAdd() {
+				if len(s.providers) == 0 {
+					return s, s.switchProviders()
+				}
+				return s, s.beginAdd()
+			}
+			return s, nil
+		}
+		return s, s.selectionChanged()
 	case tea.KeyPressMsg:
-		k := m.String()
-		if s.detail {
-			if k == "esc" || k == "backspace" {
-				s.detail = false
-				s.detailResult = nil
-			}
+		return s.updateKey(m)
+	}
+	return s, nil
+}
+func keyMatchesAccounts(msg tea.KeyPressMsg, binding bubbleskey.Binding) bool {
+	return bubbleskey.Matches(msg, binding)
+}
+
+func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
+	if s.dialog != nil {
+		d, c := s.dialog.Update(m)
+		s.dialog = d.(*accountsDialog)
+		return s, c
+	}
+	k := m.String()
+	if k == "tab" && s.width >= 100 {
+		s.workspace.CycleFocus(1)
+		return s, nil
+	}
+	if k == "shift+tab" && s.width >= 100 {
+		s.workspace.CycleFocus(-1)
+		return s, nil
+	}
+	if k == "esc" {
+		if s.workspace.Drilled || s.workspace.Focus() == tui.PaneCard {
+			s.workspace.Drilled = false
+			s.workspace.SetFocus(tui.PaneList)
 			return s, nil
 		}
-		switch k {
-		case "up", "down", "pgup", "pgdown", "home", "end", "j", "k":
-			s.table.UpdateKey(k, max(1, s.height-5))
-		case "r":
-			return s, tea.Batch(s.reload(), s.loadChoices())
-		case "a":
-			return s, s.openForm("add", nil)
-		case "e", "c", "d":
-			if r, ok := s.table.SelectedRow(); ok {
-				a := r.Data.(accountInfo)
-				if k == "d" {
-					if s.env.OpenModal != nil {
-						return s, s.env.OpenModal(&tui.Confirm{Prompt: "Remove account " + a.Login + "?"})
-					}
-					return s, nil
-				}
-				kind := "edit"
-				if k == "c" {
-					kind = "clone"
-				}
-				return s, s.openForm(kind, &a)
+	}
+	if keyMatchesAccounts(m, accountsActionBindings[4]) && s.workspace.Focus() == tui.PaneList {
+		return s, tea.Batch(s.reload(), s.loadChoices())
+	}
+	if keyMatchesAccounts(m, accountsActionBindings[0]) || keyMatchesAccounts(m, accountsActionBindings[1]) || keyMatchesAccounts(m, accountsActionBindings[2]) || keyMatchesAccounts(m, accountsActionBindings[3]) {
+		if keyMatchesAccounts(m, accountsActionBindings[0]) {
+			if len(s.providers) == 0 {
+				return s, s.switchProviders()
 			}
-		case "enter":
-			if r, ok := s.table.SelectedRow(); ok {
-				login := r.Data.(accountInfo).Login
-				return s, s.bg("account detail", func() tea.Msg { x, e := AccountShow(s.env.Home, login); return accountsDetailLoaded{x, e} })
+			return s, s.beginAdd()
+		}
+		a, ok := s.selectedAccount()
+		if !ok {
+			return s, nil
+		}
+		switch {
+		case keyMatchesAccounts(m, accountsActionBindings[1]):
+			return s, s.openEdit(a, "provider")
+		case keyMatchesAccounts(m, accountsActionBindings[2]):
+			return s, s.beginClone(a)
+		case keyMatchesAccounts(m, accountsActionBindings[3]):
+			if s.env.OpenModal != nil {
+				s.pendingLogin = a.Login
+				return s, s.env.OpenModal(&tui.Confirm{Prompt: "Remove account " + a.Login + "?"})
 			}
 		}
 	}
+	if k == "enter" && s.workspace.List.IsAdd() {
+		if len(s.providers) == 0 {
+			return s, s.switchProviders()
+		}
+		return s, s.beginAdd()
+	}
+	if k == "enter" && s.width < 100 && !s.workspace.Drilled {
+		s.workspace.Drilled = true
+		s.workspace.SetFocus(tui.PaneCard)
+		return s, s.loadDetail(s.selectedLogin())
+	}
+	if k == "enter" && s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+		s.workspace.SetFocus(tui.PaneCard)
+		return s, s.loadDetail(s.selectedLogin())
+	}
+	if s.workspace.Focus() == tui.PaneCard && (s.width >= 100 || s.workspace.Drilled) {
+		if s.workspace.Card.Update(m) {
+			return s, s.activateCard()
+		}
+		return s, nil
+	}
+	before := -1
+	if s.workspace.List != nil {
+		before = s.workspace.List.Selected
+	}
+	if s.workspace.List.Update(m) {
+		if s.workspace.List.IsAdd() {
+			if len(s.providers) == 0 {
+				return s, s.switchProviders()
+			}
+			return s, s.beginAdd()
+		}
+		return s, s.selectionChanged()
+	}
+	if before >= 0 && s.workspace.List.Selected != before && !s.workspace.List.IsAdd() {
+		s.refreshSelectedCard(true)
+		return s, s.loadDetail(s.selectedLogin())
+	}
 	return s, nil
+}
+func (s *accountsScreen) selectionChanged() tea.Cmd {
+	s.refreshSelectedCard(true)
+	return s.loadDetail(s.selectedLogin())
+}
+func (d *accountsDialog) validationError(e error) {
+	if d.prompt != nil {
+		d.prompt.SetSaving(false)
+		d.prompt.SetError(e)
+	}
+	if d.wizard != nil {
+		d.wizard.SetSaving(false)
+		d.wizard.SetError(e)
+	}
+}
+func (d *accountsDialog) promptError(e error) {
+	if d.prompt != nil {
+		d.prompt.SetSaving(false)
+		d.prompt.SetError(errors.New(accountsSafePromptError(e, d.prompt.Value)))
+	}
+	if d.wizard != nil {
+		d.wizard.SetSaving(false)
+		d.wizard.SetError(errors.New(accountsErrorText(e)))
+	}
 }
 func (s *accountsScreen) updateBackground(v tea.Msg) tea.Cmd {
 	switch m := v.(type) {
@@ -380,17 +557,214 @@ func (s *accountsScreen) updateBackground(v tea.Msg) tea.Cmd {
 			_, c := s.Update(m)
 			return c
 		}
-	case accountsChoicesLoaded:
-		_, c := s.Update(m)
-		return c
-	case accountsDetailLoaded:
-		_, c := s.Update(m)
-		return c
-	case accountsMutationDone:
+	case accountsChoicesLoaded, accountsDetailLoaded, accountsMutationDone:
 		_, c := s.Update(m)
 		return c
 	}
 	return nil
+}
+func (s *accountsScreen) selectedLogin() string {
+	if r, ok := s.workspace.List.SelectedRow(); ok {
+		if a, ok := r.Data.(accountInfo); ok {
+			return a.Login
+		}
+	}
+	return ""
+}
+func (s *accountsScreen) accountByLogin(login string) (accountInfo, bool) {
+	for _, a := range s.rows {
+		if a.Login == login {
+			return a, true
+		}
+	}
+	return accountInfo{}, false
+}
+func (s *accountsScreen) selectedAccount() (accountInfo, bool) {
+	return s.accountByLogin(s.selectedLogin())
+}
+func (s *accountsScreen) updateLiveRows() {
+	for i := range s.workspace.List.Rows {
+		row := &s.workspace.List.Rows[i]
+		a, ok := row.Data.(accountInfo)
+		if !ok || len(row.Cells) < 6 {
+			continue
+		}
+		row.Cells = append([]string(nil), row.Cells...)
+		row.Cells[3], row.Cells[4], row.Cells[5] = "-", "-", "-"
+		if live, ok := s.live[a.Login]; ok {
+			row.Cells[3] = strconv.Itoa(live.Connections)
+			if rates, ok := s.rates[a.Login]; ok {
+				row.Cells[4], row.Cells[5] = rates[0], rates[1]
+			}
+		}
+	}
+	s.updateLiveCardInfo()
+}
+func (s *accountsScreen) updateLiveCardInfo() {
+	if s.workspace.Card == nil || s.workspace.Card.Title == "Account" {
+		return
+	}
+	login := strings.TrimPrefix(s.workspace.Card.Title, "Account ")
+	activity, up, down := "-", "-", "-"
+	if live, ok := s.live[login]; ok {
+		activity = strconv.Itoa(live.Connections)
+		if rates, ok := s.rates[login]; ok {
+			up, down = rates[0], rates[1]
+		}
+	}
+	line := "Live · Conn " + activity + " · Up/s " + up + " · Down/s " + down
+	info := s.workspace.Card.Info
+	if len(info) > 0 && strings.HasPrefix(info[0], "Live · Conn ") {
+		info[0] = line
+	} else {
+		s.workspace.Card.Info = append([]string{line}, info...)
+	}
+}
+func (s *accountsScreen) configureColumns(width int) {
+	s.workspace.List.Columns = []tui.ListColumn{{Title: "LOGIN", Min: 4, Flex: 2}, {Title: "PROVIDER", Min: 4, Flex: 2}, {Title: "EXIT", Min: 2, Flex: 1}, {Title: "CONN", Min: 2, Flex: 1}, {Title: "UP/s", Min: 3, Flex: 1}, {Title: "DOWN", Min: 3, Flex: 1}}
+}
+
+func (s *accountsScreen) syncRows(preferred string) {
+	if s.workspace.Card != nil {
+		s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
+	}
+	selected := s.selectedLogin()
+	rs := []tui.Row{}
+	for _, a := range s.rows {
+		provider := displayAny(a.Provider)
+		exit := displayAny(a.Exit)
+		conn, up, down := "-", "-", "-"
+		if x, ok := s.live[a.Login]; ok {
+			conn = strconv.Itoa(x.Connections)
+			r := s.rates[a.Login]
+			up, down = r[0], r[1]
+		}
+		rs = append(rs, tui.Row{Data: a, Cells: []string{a.Login, provider, exit, conn, up, down}})
+	}
+	s.workspace.List.SetRows(rs)
+	if preferred != "" {
+		for i, r := range rs {
+			if a, ok := r.Data.(accountInfo); ok && a.Login == preferred {
+				s.workspace.List.Selected = i
+				break
+			}
+		}
+	}
+	if s.selectedLogin() != selected {
+		s.refreshSelectedCard(true)
+	}
+}
+func (s *accountsScreen) updateCard() {
+	selected, scroll, focused := 0, 0, false
+	if s.workspace.Card != nil {
+		selected, scroll, focused = s.workspace.Card.Selected, s.workspace.Card.Scroll, s.workspace.Card.Focused
+	}
+	s.refreshSelectedCard(true)
+	if s.workspace.Card != nil {
+		s.workspace.Card.Selected = min(selected, max(0, len(s.workspace.Card.Lines)-1))
+		s.workspace.Card.Scroll = scroll
+		s.workspace.Card.Focused = focused
+	}
+}
+func (s *accountsScreen) refreshSelectedCard(force bool) {
+	a, ok := s.selectedAccount()
+	if !ok {
+		if force || s.workspace.Card == nil || s.workspace.Card.Title != "Account" {
+			s.workspace.Card = tui.NewCard("Account", nil)
+			s.workspace.Card.SetTheme(s.theme)
+			s.workspace.Card.Info = []string{"Select an account to see details."}
+		}
+		return
+	}
+	if !force && s.workspace.Card != nil && s.workspace.Card.Title == "Account "+a.Login {
+		return
+	}
+	pw := "waiting for the first login"
+	if a.PasswordSet {
+		pw = "set"
+	}
+	pre, post := accountsHopLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
+	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: true}, {ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: pre == "none"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: true}, {ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: post == "none"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
+	if s.workspace.Card != nil {
+		s.workspace.Card.Focused = true
+	}
+	s.workspace.Card = tui.NewCard("Account "+a.Login, lines)
+	s.workspace.Card.SetTheme(s.theme)
+	s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
+	if a, ok := s.selectedAccount(); ok {
+		activity := "-"
+		up, down := "-", "-"
+		if live, ok := s.live[a.Login]; ok {
+			activity = strconv.Itoa(live.Connections)
+			if rates, ok := s.rates[a.Login]; ok {
+				up, down = rates[0], rates[1]
+			}
+		}
+		s.workspace.Card.Info = []string{"Live · Conn " + activity + " · Up/s " + up + " · Down/s " + down}
+	}
+	if s.cardResult != nil && s.cardResult.Login == a.Login {
+		s.workspace.Card.Info = append(s.workspace.Card.Info, "Route tiers and fallback order:", accountsTiersText(s.cardResult.Tiers), fmt.Sprintf("Live %t · fallback connections %s", s.cardResult.Live, accountsFallbackText(s.cardResult.FallbackConnections)))
+	}
+	s.updateLiveCardInfo()
+}
+func displayAny(s string) string {
+	if s == "" {
+		return "any"
+	}
+	return s
+}
+func (s *accountsScreen) loadDetail(login string) tea.Cmd {
+	if login == "" {
+		return nil
+	}
+	s.detailLogin = login
+	s.detailGeneration++
+	g := s.detailGeneration
+	return s.bg("account detail", func() tea.Msg {
+		r, e := s.show(s.env.Home, login)
+		return accountsDetailLoaded{Result: r, Err: e, Generation: g}
+	})
+}
+func (s *accountsScreen) activateCard() tea.Cmd {
+	a, ok := s.selectedAccount()
+	if !ok {
+		return nil
+	}
+	l := s.workspace.Card.Lines[s.workspace.Card.Selected]
+	switch l.ID {
+	case "provider", "countries", "exit", "clients", "pre", "post":
+		return s.openEdit(a, l.ID)
+	case "clear-pre":
+		return s.mutateEdit(a, "pre", map[string]string{"value": "", "clear": "true"})
+	case "clear-post":
+		return s.mutateEdit(a, "post", map[string]string{"value": "", "clear": "true"})
+	case "clone":
+		return s.beginClone(a)
+	case "remove":
+		if s.env.OpenModal != nil {
+			s.pendingLogin = a.Login
+			return s.env.OpenModal(&tui.Confirm{Prompt: "Remove account " + a.Login + "?"})
+		}
+	}
+	return nil
+}
+func (s *accountsScreen) switchProviders() tea.Cmd {
+	if s.env.SwitchTab != nil {
+		return s.env.SwitchTab(0)
+	}
+	s.message = "Add a Provider first, then return to Accounts."
+	return nil
+}
+func (s *accountsScreen) View(w, h int) string {
+	w = max(0, w)
+	h = max(0, h)
+	if s.dialog != nil {
+		s.dialog.SetTheme(s.theme)
+		return s.dialog.View(w, h)
+	}
+	s.width, s.height = w, h
+	s.workspace.SetSize(w, h)
+	return s.workspace.View(w, h)
 }
 func (s *accountsScreen) applyStatus(st angel.Status, e error, at time.Time) {
 	s.live = map[string]angel.AccountActivity{}
@@ -422,24 +796,6 @@ func accountsActivity(as []angel.AccountActivity) map[string]angel.AccountActivi
 	}
 	return m
 }
-func (s *accountsScreen) makeRows() []tui.Row {
-	out := []tui.Row{}
-	for _, a := range s.rows {
-		conn, up, down := "", "", ""
-		if x, ok := s.live[a.Login]; ok {
-			conn = strconv.Itoa(x.Connections)
-			r := s.rates[a.Login]
-			up, down = r[0], r[1]
-		}
-		hop := func(x accountChainInfo) string { return accountsHopLabel(x.Source, x.Value) }
-		pw := "waiting for first use"
-		if a.PasswordSet {
-			pw = "set"
-		}
-		out = append(out, tui.Row{Data: a, Cells: []string{a.Login, a.Provider, a.ExitCountry, a.Exit, allowedClientsLabel(a.AllowedClients), "pre:" + hop(a.PreSOCKS5) + " post:" + hop(a.PostSOCKS5), pw, conn, up, down}})
-	}
-	return out
-}
 func accountsHopLabel(source, value string) string {
 	if value == "" || value == "none" {
 		if source == "" {
@@ -460,16 +816,16 @@ func accountsFallbackText(v *int) string {
 }
 func accountsTiersText(ts []accountShowTier) string {
 	if len(ts) == 0 {
-		return "  no route tiers"
+		return "No route tiers"
 	}
-	lines := []string{}
+	out := []string{}
 	for _, t := range ts {
-		st := "primary"
+		kind := "primary"
 		if t.Fallback {
-			st = "fallback"
+			kind = "fallback"
 		}
 		if t.Skipped {
-			st = "skipped"
+			kind = "skipped"
 		}
 		nodes := []string{}
 		for _, n := range t.Nodes {
@@ -479,64 +835,21 @@ func accountsTiersText(ts []accountShowTier) string {
 			}
 			nodes = append(nodes, x)
 		}
-		line := fmt.Sprintf("  %d %s country=%s providers=%s nodes=%s", t.Tier, st, t.Country, strings.Join(t.Providers, ","), strings.Join(nodes, ","))
+		line := fmt.Sprintf("%d %s country=%s providers=%s nodes=%s", t.Tier, kind, t.Country, strings.Join(t.Providers, ","), strings.Join(nodes, ","))
 		if t.Reason != "" {
 			line += " reason=" + t.Reason
 		}
-		lines = append(lines, line)
+		out = append(out, line)
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(out, "; ")
 }
-func (s *accountsScreen) View(w, h int) string {
-	w = max(0, w)
-	h = max(0, h)
-	text := ""
-	if s.detail && s.detailResult != nil {
-		d := s.detailResult
-		text = fmt.Sprintf("Account %s\nProvider: %s\nCountry: %s\nExit: %s\nPre-hop: %s\nPost-hop: %s\nProviders: %s\nCountries: %s\nTiers:\n%s\nLive: %t\nFallback connections: %s\n\nEsc returns", d.Login, d.Provider, d.ExitCountry, d.Exit, accountsHopLabel(d.PreSOCKS5.Source, d.PreSOCKS5.Value), accountsHopLabel(d.PostSOCKS5.Source, d.PostSOCKS5.Value), strings.Join(d.Providers, ", "), strings.Join(d.Countries, ", "), accountsTiersText(d.Tiers), d.Live, accountsFallbackText(d.FallbackConnections))
-	} else {
-		text = "Accounts"
-		if s.loading {
-			text += " (loading)"
-		}
-		text += "\n" + s.table.View(w, max(0, h-2))
-		if s.statusMessage != "" {
-			text += "\n" + s.statusMessage
-		}
-		if s.message != "" {
-			text += "\n" + s.message
-		}
+func (s *accountsScreen) countryFieldHint(ps []string) string {
+	if len(ps) == 0 || len(ps) == 1 && ps[0] == "any" {
+		ps = s.providers
 	}
-	lines := strings.Split(text, "\n")
-	if len(lines) > h {
-		lines = lines[:h]
-	}
-	for i, l := range lines {
-		r := []rune(l)
-		if len(r) > w {
-			lines[i] = string(r[:w])
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-func (s *accountsScreen) countryFieldHint(providers []string) string {
 	codes := []string{}
 	seen := map[string]bool{}
-	if len(providers) == 0 || len(providers) == 1 && providers[0] == "any" {
-		providers = s.providers
-	}
-	for _, p := range providers {
-		if p == "any" {
-			for _, configured := range s.providers {
-				for _, c := range s.providerCountries[configured] {
-					if !seen[c] {
-						seen[c] = true
-						codes = append(codes, c)
-					}
-				}
-			}
-			continue
-		}
+	for _, p := range ps {
 		for _, c := range s.providerCountries[p] {
 			if !seen[c] {
 				seen[c] = true
@@ -545,183 +858,211 @@ func (s *accountsScreen) countryFieldHint(providers []string) string {
 		}
 	}
 	if len(codes) == 0 {
-		return "Country (country codes; unavailable)"
+		return "Any or country codes; known countries unavailable"
 	}
-	return "Country (available: " + strings.Join(codes, ",") + ")"
+	return "Any or country codes: " + strings.Join(codes, ", ")
 }
-func (s *accountsScreen) openForm(kind string, src *accountInfo) tea.Cmd {
-	if s.env.OpenModal == nil {
-		return nil
+func (s *accountsScreen) beginAdd() tea.Cmd {
+	if len(s.providers) == 0 {
+		return s.switchProviders()
 	}
-	opts := append([]string{"any"}, s.providers...)
-	fields := []tui.Field{}
-	switch kind {
-	case "add":
-		fields = []tui.Field{{Name: "Login", Kind: tui.TextField}, {Name: "Provider", Kind: tui.MultiChoiceField, Options: opts, Selected: []string{"any"}, Value: "any"}, {Name: s.countryFieldHint([]string{"any"}), Kind: tui.TextField}, {Name: "Exit", Kind: tui.SingleChoiceField, Options: []string{"route", "direct"}, Value: "route"}, {Name: "Allowed clients", Kind: tui.TextField}, {Name: "Pre-hop URL", Kind: tui.PasswordField}, {Name: "Post-hop URL", Kind: tui.PasswordField}, {Name: "Password note", Kind: tui.TextField, Value: "The first proxy password sets the account password; no password setter exists."}}
-	case "edit":
-		selected := []string{"any"}
-		if src.Provider != "" {
-			selected = strings.Split(src.Provider, ",")
-		}
-		fields = []tui.Field{{Name: "Provider", Kind: tui.MultiChoiceField, Options: opts, Selected: selected}, {Name: s.countryFieldHint(selected), Kind: tui.TextField, Value: src.ExitCountry}, {Name: "Exit", Kind: tui.SingleChoiceField, Options: []string{"route", "direct"}, Value: src.Exit}, {Name: "Allowed clients", Kind: tui.TextField, Value: src.AllowedClients}, {Name: "Pre-hop empty unchanged; none clears", Kind: tui.PasswordField}, {Name: "Post-hop empty unchanged; none clears", Kind: tui.PasswordField}}
-	case "clone":
-		fields = []tui.Field{{Name: "New login", Kind: tui.TextField}, {Name: "Provider override", Kind: tui.MultiChoiceField, Options: opts, Selected: []string{"any"}, Value: "any"}, {Name: s.countryFieldHint(nil), Kind: tui.TextField}, {Name: "Allowed clients override", Kind: tui.TextField}, {Name: "Exit override", Kind: tui.SingleChoiceField, Options: []string{"(unchanged)", "route", "direct"}, Value: "(unchanged)"}}
-	}
-	f := &tui.Form{TitleText: "Account " + kind, Fields: fields}
-	f.Submit = func(v map[string]string) error {
-		if kind == "add" && !config.ValidAccountLogin(v["Login"]) {
+	steps := []tui.WizardStep{{Key: "Login", Prompt: prompt(tui.TextPrompt, "Add account · Login", "Login", "Client login name.", "")}, {Key: "Provider", Prompt: choicePrompt("Provider", "Choose a provider; all configured providers are available.", append([]tui.PromptOption{{Label: "Any provider", Value: "any", Description: "Use any configured provider."}}, s.providerOptions()...), "any")}, {Key: "Country", Prompt: prompt(tui.TextPrompt, "Add account · Country", "Countries", s.countryFieldHint(nil), "any")}, {Key: "Exit", Prompt: choicePrompt("Exit", "Route through nodes or connect directly.", []tui.PromptOption{{Label: "Route", Value: "route", Description: "Use provider nodes."}, {Label: "Direct", Value: "direct", Description: "Do not route through a proxy node."}}, "route")}, {Key: "Clients", Prompt: choicePrompt("Allowed clients", "Who can authenticate?", []tui.PromptOption{{Label: "Everyone", Value: "everyone"}, {Label: "This computer only", Value: "loopback"}, {Label: "Custom CIDRs", Value: "custom"}}, "everyone")}, {Key: "CustomClients", Prompt: prompt(tui.TextPrompt, "Add account · Custom clients", "CIDR ranges", "Used when Custom CIDRs was chosen.", "")}, {Key: "Pre-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Pre-hop", "Pre-hop URL", "Optional proxy before the VPN node.", "")}, {Key: "Post-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Post-hop", "Post-hop URL", "Optional proxy after the VPN node.", "")}}
+	s.dialog = &accountsDialog{wizard: tui.NewWizard("Add account", steps)}
+	s.dialog.validate = func(v map[string]string) error {
+		if !config.ValidAccountLogin(v["Login"]) {
 			return errors.New("invalid account login")
 		}
-		country := accountsFormValue(v, "Country")
-		if country != "" {
-			if _, e := parseCountries(country); e != nil {
+		if v["Clients"] == "custom" {
+			if _, e := config.ParseAllowedClients(v["CustomClients"]); e != nil {
+				return errors.New("invalid custom client CIDR")
+			}
+		}
+		if country := countryAny(v["Country"]); country != "" {
+			if _, ok := config.ParseCountryList(country); !ok {
 				return errors.New("invalid country code")
 			}
 		}
-		provider := accountsProviderValue(v, "Provider")
-		if kind == "clone" {
-			provider = accountsProviderValue(v, "Provider override")
+		return nil
+	}
+	s.dialog.onResult = func(v map[string]string) tea.Cmd {
+		clients := v["Clients"]
+		switch clients {
+		case "everyone":
+			clients = "*"
+		case "custom":
+			clients = v["CustomClients"]
 		}
-		if provider != "" {
-			for _, p := range strings.Split(provider, ",") {
-				found := false
-				for _, configured := range s.providers {
-					if p == configured {
-						found = true
-						break
-					}
-				}
-				if !found {
-					return errors.New("unknown provider")
-				}
-			}
+		s.pendingLogin = v["Login"]
+		return s.bg("add account", func() tea.Msg {
+			_, e := AccountAdd(s.env.Home, AccountAddOptions{Login: v["Login"], Provider: providerValue(v["Provider"]), Country: countryAny(v["Country"]), Clients: clients, Exit: v["Exit"], ExitGiven: true, PreSOCKS5: v["Pre-hop"], PostSOCKS5: v["Post-hop"]})
+			return s.finishMutation(e, "Account added · first login sets password", v["Login"])
+		})
+	}
+	return nil
+}
+func prompt(k tui.PromptKind, title, label, hint, value string) *tui.Prompt {
+	return tui.NewPrompt(k, title, label, hint, value)
+}
+func choicePrompt(label, hint string, opts []tui.PromptOption, value string) *tui.Prompt {
+	p := prompt(tui.ChoicePrompt, "Account setup · "+label, label, hint, value)
+	p.Options = opts
+	return p
+}
+func (s *accountsScreen) providerOptions() []tui.PromptOption {
+	out := []tui.PromptOption{}
+	for _, p := range s.providers {
+		out = append(out, tui.PromptOption{Label: p, Value: p, Description: s.providerNodes[p] + " nodes"})
+	}
+	return out
+}
+func (s *accountsScreen) beginClone(a accountInfo) tea.Cmd {
+	p := prompt(tui.TextPrompt, "Clone account", "New login", "Other fields, password state and hops are copied.", "")
+	p.Validate = func(v string) error {
+		if !config.ValidAccountLogin(v) {
+			return errors.New("invalid account login")
 		}
 		return nil
 	}
-	s.form = &accountsFormState{Kind: kind, Form: f}
-	if src != nil {
-		s.form.Login, s.form.Original = src.Login, *src
-	}
-	return s.env.OpenModal(accountsFormModal{screen: s, form: f})
+	s.dialog = &accountsDialog{prompt: p, onResult: func(v map[string]string) tea.Cmd {
+		s.pendingLogin = v["value"]
+		return s.bg("clone account", func() tea.Msg {
+			_, e := AccountClone(s.env.Home, AccountCloneOptions{Source: a.Login, Login: v["value"]})
+			return s.finishMutation(e, "Account cloned", v["value"])
+		})
+	}}
+	return nil
 }
-func accountsFormValue(v map[string]string, prefix string) string {
-	for k, x := range v {
-		if k == prefix || strings.HasPrefix(k, prefix+" ") || strings.HasPrefix(k, prefix+" (") {
-			return x
+func (s *accountsScreen) openEdit(a accountInfo, id string) tea.Cmd {
+	f := map[string]struct {
+		label, hint, value string
+		kind               tui.PromptKind
+	}{"provider": {"Provider", "Comma-separated providers; blank means any.", a.Provider, tui.TextPrompt}, "countries": {"Countries", s.countryFieldHint(strings.Split(a.Provider, ",")), a.ExitCountry, tui.TextPrompt}, "exit": {"Exit", "Route or direct.", a.Exit, tui.ChoicePrompt}, "clients": {"Allowed clients", "Everyone, loopback or custom CIDR ranges.", a.AllowedClients, tui.TextPrompt}, "pre": {"Pre-hop", "Proxy URL; enter none to clear. Empty cancels.", "", tui.SecretPrompt}, "post": {"Post-hop", "Proxy URL; enter none to clear. Empty cancels.", "", tui.SecretPrompt}}[id]
+	if f.label == "" {
+		return nil
+	}
+	p := prompt(f.kind, "Account "+a.Login+" · "+f.label, f.label, f.hint, f.value)
+	if id == "countries" {
+		p.Validate = func(v string) error {
+			if country := countryAny(v); country != "" {
+				if _, ok := config.ParseCountryList(country); !ok {
+					return errors.New("invalid country code")
+				}
+			}
+			return nil
 		}
 	}
-	return ""
+	if id == "clients" {
+		p.Validate = func(v string) error {
+			if strings.EqualFold(strings.TrimSpace(v), "everyone") {
+				return nil
+			}
+			if _, err := config.ParseAllowedClients(v); err != nil {
+				return errors.New("invalid custom client CIDR")
+			}
+			return nil
+		}
+	}
+	if id == "exit" {
+		p.Options = []tui.PromptOption{{Label: "Route", Value: "route"}, {Label: "Direct", Value: "direct"}}
+	}
+	s.dialog = &accountsDialog{prompt: p, onResult: func(v map[string]string) tea.Cmd { s.pendingLogin = a.Login; return s.mutateEdit(a, id, v) }}
+	return nil
 }
-func accountsProviderValue(values map[string]string, field string) string {
-	v := values[field]
+func (s *accountsScreen) mutateEdit(a accountInfo, id string, v map[string]string) tea.Cmd {
+	x := v["value"]
+	if id == "pre" || id == "post" {
+		if x == "" && v["clear"] != "true" {
+			s.dialog = nil
+			return nil
+		}
+	}
+	o := AccountUpdateOptions{Login: a.Login}
+	switch id {
+	case "provider":
+		z := providerValue(x)
+		o.Provider = &z
+	case "countries":
+		z := countryAny(x)
+		o.Country = &z
+	case "exit":
+		o.Exit = &x
+	case "clients":
+		if strings.EqualFold(strings.TrimSpace(x), "everyone") {
+			x = "*"
+		}
+		o.Clients = &x
+	case "pre":
+		o.PreSOCKS5 = &x
+	case "post":
+		o.PostSOCKS5 = &x
+	}
+	return s.bg("update account", func() tea.Msg {
+		_, e := AccountUpdate(s.env.Home, o)
+		return s.finishMutation(e, "Account updated", a.Login)
+	})
+}
+func (s *accountsScreen) mutateRemove(login string) tea.Cmd {
+	return s.bg("remove account", func() tea.Msg {
+		e := AccountRemove(s.env.Home, login)
+		return s.finishMutation(e, "Account removed", "")
+	})
+}
+func (s *accountsScreen) notice(text string) tea.Cmd {
+	if s.env.Toast == nil || text == "" {
+		return nil
+	}
+	return s.env.Toast(s.safeNotice(text))
+}
+func (s *accountsScreen) safeNotice(text string) string {
+	secrets := []string{}
+	if d := s.dialog; d != nil {
+		if d.prompt != nil {
+			secrets = append(secrets, d.prompt.Value)
+		}
+		if d.wizard != nil {
+			for _, v := range d.wizard.Values {
+				secrets = append(secrets, v)
+			}
+			for _, step := range d.wizard.Steps {
+				if step.Prompt != nil {
+					secrets = append(secrets, step.Prompt.Value)
+				}
+			}
+		}
+	}
+	return redactProviderSecrets(text, secrets...)
+}
+func (s *accountsScreen) finishMutation(e error, n, login string) tea.Msg {
+	var rows []accountInfo
+	if e == nil {
+		rows, e = AccountList(s.env.Home)
+	}
+	return accountsMutationDone{Rows: rows, Err: e, Notice: n, Login: login}
+}
+func providerValue(v string) string {
 	if v == "any" {
 		return ""
 	}
-	parts := strings.Split(v, ",")
-	out := []string{}
-	for _, p := range parts {
-		if p != "" && p != "any" {
-			out = append(out, p)
-		}
-	}
-	return strings.Join(out, ",")
+	return strings.TrimSpace(v)
 }
-func (s *accountsScreen) mutate(v map[string]string) tea.Cmd {
-	form := s.form
-	kind, login := "", ""
-	if form != nil {
-		kind, login = form.Kind, form.Login
+func countryAny(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), "any") {
+		return ""
 	}
-	snapshot := append([]accountInfo(nil), s.rows...)
-	if form != nil && kind == "edit" {
-		snapshot = []accountInfo{form.Original}
-	}
-	s.loading = true
-	if form != nil {
-		for i := range form.Form.Fields {
-			f := &form.Form.Fields[i]
-			if f.Kind == tui.MultiChoiceField {
-				f.Selected = strings.Split(v[f.Name], ",")
-				if f.Name == "Provider" && len(f.Selected) == 0 {
-					f.Selected = []string{"any"}
-				}
-			} else if f.Kind != tui.PasswordField {
-				if val, ok := v[f.Name]; ok {
-					f.Value = val
-				}
-			}
-		}
-	}
-	return s.bg("save account", func() tea.Msg {
-		var e error
-		notice := "Account saved"
-		switch kind {
-		case "add":
-			p := accountsProviderValue(v, "Provider")
-			_, e = AccountAdd(s.env.Home, AccountAddOptions{Login: v["Login"], Provider: p, Country: accountsFormValue(v, "Country"), Clients: v["Allowed clients"], PreSOCKS5: v["Pre-hop URL"], PostSOCKS5: v["Post-hop URL"], Exit: v["Exit"], ExitGiven: true})
-		case "edit":
-			o := AccountUpdateOptions{Login: login}
-			for k, d := range map[string]**string{"Country": &o.Country, "Allowed clients": &o.Clients, "Exit": &o.Exit} {
-				x := v[k]
-				if k == "Country" {
-					x = accountsFormValue(v, "Country")
-				}
-				for _, a := range snapshot {
-					old := map[string]string{"Country": a.ExitCountry, "Allowed clients": a.AllowedClients, "Exit": a.Exit}[k]
-					if a.Login == login && x != old {
-						*d = &x
-					}
-				}
-			}
-			provider := accountsProviderValue(v, "Provider")
-			oldProvider := ""
-			for _, a := range snapshot {
-				if a.Login == login {
-					oldProvider = a.Provider
-				}
-			}
-			if provider != oldProvider {
-				o.Provider = &provider
-			}
-			if x := v["Pre-hop empty unchanged; none clears"]; x != "" {
-				o.PreSOCKS5 = &x
-			}
-			if x := v["Post-hop empty unchanged; none clears"]; x != "" {
-				o.PostSOCKS5 = &x
-			}
-			_, e = AccountUpdate(s.env.Home, o)
-		case "clone":
-			p := accountsProviderValue(v, "Provider override")
-			o := AccountCloneOptions{Source: login, Login: v["New login"], Provider: p, Country: accountsFormValue(v, "Country"), Clients: v["Allowed clients override"], ClientsGiven: v["Allowed clients override"] != ""}
-			if x := v["Exit override"]; x != "(unchanged)" {
-				o.Exit = x
-				o.ExitGiven = true
-			}
-			_, e = AccountClone(s.env.Home, o)
-			notice = "Account cloned"
-		}
-		rows := []accountInfo(nil)
-		if e == nil {
-			rows, e = AccountList(s.env.Home)
-		}
-		return accountsMutationDone{Rows: rows, Err: e, Notice: notice, Values: func() map[string]string {
-			if e != nil && form != nil {
-				return v
-			}
-			return nil
-		}()}
-	})
+	return strings.TrimSpace(v)
 }
-func accountsSafeFormError(err error, form *tui.Form) string {
-	message := accountsErrorText(err)
-	if form != nil {
-		for _, field := range form.Fields {
-			if field.Kind == tui.PasswordField && field.Value != "" {
-				message = strings.ReplaceAll(message, field.Value, "[redacted]")
+func accountsSafePromptError(e error, value string) string {
+	text := accountsErrorText(e)
+	if value != "" {
+		text = strings.ReplaceAll(text, value, "[redacted]")
+		if u, err := url.Parse(value); err == nil && u.User != nil {
+			text = strings.ReplaceAll(text, u.User.String(), "[redacted]")
+			if p, ok := u.User.Password(); ok {
+				text = strings.ReplaceAll(text, p, "[redacted]")
 			}
 		}
 	}
-	return message
+	return text
 }
 func accountsErrorText(err error) string {
 	var ce *cli.Error
