@@ -60,6 +60,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
+- **Interactive terminal shell.** Browse and manage providers and accounts, and inspect servers, with masked secrets and read-only server screens. Start it with `netivri -i` (or `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
 - **Help that stands on its own.** `netivri help` covers every command, the
   configuration file (`netivri help config`), routing (`netivri help routing`)
   and the fields each command prints (`netivri help output`); `--json` gives
@@ -109,6 +110,12 @@ the supported platforms (Linux on glibc and musl, such as Alpine; macOS; Windows
 directive.
 
 ## Quick start
+
+```sh
+netivri -i
+```
+
+The shell starts on Accounts; use `netivri sub -i` for Providers and `netivri server -i` for Servers. It requires terminal stdin and stdout.
 
 Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country. With explicit-direct-only accounts, a server update restarts the listener if the core cannot reconfigure it in place; other server transaction errors leave the running configuration unchanged.
 

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/tui"
 )
 
 func dispatchOut(t *testing.T, args ...string) (string, error) {
@@ -52,6 +53,28 @@ func decodeHelp(t *testing.T, out string) map[string]any {
 		t.Fatalf("no data.help object: %v", data)
 	}
 	return help
+}
+
+func TestInteractiveTabConstructors(t *testing.T) {
+	options := interactiveOptions(nil, t.TempDir(), 0)
+	if len(options.Tabs) != 3 {
+		t.Fatalf("tab count = %d, want 3", len(options.Tabs))
+	}
+	wantTitles := []string{"Providers", "Accounts", "Servers"}
+	for i, want := range wantTitles {
+		if options.Tabs[i].Title != want {
+			t.Errorf("tab %d title = %q, want %q", i, options.Tabs[i].Title, want)
+		}
+	}
+	if _, ok := options.Tabs[0].New(tui.Env{}).(*providersScreen); !ok {
+		t.Errorf("Providers constructor returned %T", options.Tabs[0].New(tui.Env{}))
+	}
+	if _, ok := options.Tabs[1].New(tui.Env{}).(*accountsScreen); !ok {
+		t.Errorf("Accounts constructor returned %T", options.Tabs[1].New(tui.Env{}))
+	}
+	if _, ok := options.Tabs[2].New(tui.Env{}).(*serversScreen); !ok {
+		t.Errorf("Servers constructor returned %T", options.Tabs[2].New(tui.Env{}))
+	}
 }
 
 func TestHelpEntryPoints(t *testing.T) {
@@ -120,7 +143,7 @@ func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	if findHelpTopic("help") == nil {
 		t.Error("no help topic for help itself")
 	}
-	for _, want := range []string{"netivri -i", "netivri sub -i", "netivri account -i --home {DIR}", "netivri server -i", "Tab/Shift-Tab", "{TAB} not available yet", "NOT_A_TERMINAL"} {
+	for _, want := range []string{"netivri -i", "netivri sub -i", "netivri account -i --home {DIR}", "netivri server -i", "Tab/Shift-Tab", "NOT_A_TERMINAL", "Passwords are never shown or set", "Servers are read-only", "r reload"} {
 		if !strings.Contains(renderTopic(findHelpTopic("interactive")), want) {
 			t.Errorf("interactive topic lacks %q", want)
 		}

@@ -10,6 +10,9 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Interactive `-i` shell for providers, accounts, and servers.** Masked secrets, read-only server inspection, and no password display or setter.
+  Bubble Tea v2 requires a terminal (`NOT_A_TERMINAL` otherwise); dependencies are MIT-licensed.
+
 - **A node that does not reach one site no longer holds it.** A node can pass its probes and still never reach one destination (Telegram data centers through a US exit, for example), so the connections to it waited for an answer that never came while the route never left the node. Now, when 3 connections of an account to one site through a node sent data, waited at least 5 seconds and got nothing back within 10 minutes, with none answered, while the node itself still answered probes and dials, the node is blocked for that account and site: the site's next connection takes the next node of the route (a worse tier included) and other sites stay put. The block lasts 30 minutes and doubles on every repeat up to 8 hours; an answer through the node ends it. The log says it at `INFO` (`account alice via NODE: 2 sites got no answer through this node ...`, and `moved from NODE to NODE: no answer`) and names the destinations as `host:port` at `DEBUG`, including an hourly `destinations without an answer` line; `INFO` lines still name no site. Blocks are kept in memory. See `netivri help routing` and `netivri help logs`.
 - **Dial timeouts also move an unreachable site.**
   A dial through a node that times out now counts like a silent connection
