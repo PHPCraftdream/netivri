@@ -90,6 +90,12 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 		}
 		waiting = append(waiting, c)
 	}
+	// The node answers a dial after they began. The Windows clock ticks every
+	// ~15 ms, and "answered after the connection began" needs a later tick.
+	time.Sleep(50 * time.Millisecond)
+	if err := tryDialAccountSOCKS5(t, instance.Addr(), fine, backend, "alice", alicePassword); err != nil {
+		t.Fatalf("another site: %v", err)
+	}
 	time.Sleep(400 * time.Millisecond)
 	for _, c := range waiting {
 		_ = c.Close()
