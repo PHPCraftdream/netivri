@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/PHPCraftdream/netivri/internal/cli"
 )
 
 var storeProtocol = &storeTestProtocol{}
@@ -188,5 +190,214 @@ func TestStoreSeparateHandlesDoNotClobber(t *testing.T) {
 	}
 	if got := a.Names(); len(got) != 2 || got[0] != "one" || got[1] != "two" {
 		t.Fatalf("stale handle lost update: %v", got)
+	}
+}
+
+func TestStoreTrackedCleanupPreservesConcurrentChanges(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	spec := Spec{Name: "tracked", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
+	_, receipt, err := s.EnsureSecretsTracked(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := entries[spec.Name]
+	e.Material["writer"] = "added"
+	e.Users["alice"]["external"] = "added"
+	e.Users["alice"]["password"] = "rotated"
+	e.Users["bob"] = map[string]string{"password": "other-user"}
+	entries[spec.Name] = e
+	entries["other"] = storeEntry{Material: map[string]string{"key": "other"}, Users: map[string]map[string]string{}}
+	if err := s.write(entries); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(receipt); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := entries[spec.Name]
+	if got.Material["writer"] != "added" || got.Users["alice"]["external"] != "added" || got.Users["alice"]["password"] != "rotated" || got.Users["bob"]["password"] != "other-user" {
+		t.Fatalf("concurrent values lost: %#v", got)
+	}
+	if len(got.Material) != 1 || got.Material["writer"] != "added" {
+		t.Fatalf("created material was not cleaned: %#v", got.Material)
+	}
+	if _, ok := entries["other"]; !ok {
+		t.Fatal("concurrent entry was removed")
+	}
+}
+
+func TestStoreTrackedCleanupRemovesCleanNewEntry(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	spec := Spec{Name: "tracked", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
+	_, receipt, err := s.EnsureSecretsTracked(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(receipt); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.Names(); len(got) != 0 {
+		t.Fatalf("names after cleanup = %v", got)
+	}
+}
+
+func TestStoreTrackedReceiptLeavesExistingFieldsUnchanged(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("servers: {\n  tracked: {\n    material: { key: existing }\n    users: { alice: { password: existing-pass, token: existing-token } }\n  }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Name: "tracked", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
+	_, receipt, err := s.EnsureSecretsTracked(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.Material) != 0 || len(receipt.Users["alice"]) != 0 || receipt.CreatedEntry || len(receipt.CreatedUsers) != 0 {
+		t.Fatalf("receipt includes pre-existing fields: %#v", receipt)
+	}
+	before, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(receipt); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("no-op cleanup rewrote the store")
+	}
+}
+
+func TestStoreCleanupCreatedNoopReceiptDoesNotWrite(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("servers: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(EnsureSecretsReceipt{}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("no-op receipt rewrote the store")
+	}
+}
+
+func TestStoreEnsureValidatedRejectsAmbiguousSecretsWithoutWriting(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	peer := Spec{Name: "peer", Bind: "127.0.0.1", Port: 443, Protocol: "trojan", Accounts: []string{"alice"}, Params: map[string]string{"sni": "same.example"}}
+	peerEntry := storeEntry{Material: map[string]string{}, Users: map[string]map[string]string{"alice": {"password": "peer-fake"}}}
+	if err := s.write(map[string]storeEntry{peer.Name: peerEntry}); err != nil {
+		t.Fatal(err)
+	}
+	target := Spec{Name: "target", Bind: "127.0.0.1", Port: 443, Protocol: "trojan", Accounts: []string{"alice"}, Params: map[string]string{"sni": "SAME.EXAMPLE"}}
+	before, err := os.ReadFile(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, receipt, err := s.EnsureSecretsValidated(target, []Spec{peer})
+	ce, ok := err.(*cli.Error)
+	if !ok || ce.Code != "SERVER_PORT_AMBIGUOUS" || ce.Message != "shared server TLS match keys overlap" || ce.Exit != cli.ExitConflict {
+		t.Fatalf("validation error = %v, want SERVER_PORT_AMBIGUOUS cli.Error", err)
+	}
+	if receipt.CreatedEntry || len(receipt.Material) != 0 || len(receipt.Users) != 0 {
+		t.Fatalf("failed validation returned a receipt: %#v", receipt)
+	}
+	after, readErr := os.ReadFile(s.Path())
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatal("validation failure wrote generated secrets")
+	}
+}
+
+func TestStoreEnsureValidatedStorageErrorsAreNotValidationErrors(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := Spec{Name: "target", Bind: "127.0.0.1", Port: 443, Protocol: "trojan", Accounts: []string{"alice"}, Params: map[string]string{"sni": "target.example"}}
+	_, _, err := s.EnsureSecretsValidated(target, nil)
+	if err == nil {
+		t.Fatal("corrupt store was accepted")
+	}
+	if _, ok := err.(*cli.Error); ok {
+		t.Fatalf("storage error was mapped to a validation error: %v", err)
+	}
+}
+
+func TestStoreTrackedCleanupRestoresRepairedEmptyFields(t *testing.T) {
+	registerStoreTestProtocol(t)
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("servers: {\n  tracked: {\n    material: { key: '' }\n    users: { alice: { password: '' } }\n  }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Name: "tracked", Protocol: "store-test", Port: 1234, Accounts: []string{"alice"}}
+	_, receipt, err := s.EnsureSecretsTracked(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(receipt.Material) != 1 || !receipt.Material[0].HadPrevious || receipt.Material[0].Previous != "" || len(receipt.Users["alice"]) != 2 {
+		t.Fatalf("receipt did not capture empty prior values: %s", receipt)
+	}
+	entries, err := s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := entries[spec.Name]
+	e.Material["external"] = "concurrent"
+	e.Users["alice"]["password"] = "rotated"
+	e.Users["alice"]["external"] = "concurrent"
+	entries[spec.Name] = e
+	if err := s.write(entries); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(receipt); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = s.read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := entries[spec.Name]
+	if value, ok := got.Material["key"]; !ok || value != "" {
+		t.Fatalf("empty material field not restored: %#v", got.Material)
+	}
+	if got.Users["alice"]["password"] != "rotated" || got.Users["alice"]["external"] != "concurrent" || got.Material["external"] != "concurrent" {
+		t.Fatalf("concurrent updates were not preserved: %#v", got)
+	}
+	if _, ok := got.Users["alice"]["token"]; ok {
+		t.Fatal("new generated token was not removed")
+	}
+}
+
+func TestStoreCleanupCreatedReturnsReadError(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := os.WriteFile(s.Path(), []byte("invalid"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CleanupCreated(EnsureSecretsReceipt{Server: "tracked", CreatedEntry: true}); err == nil {
+		t.Fatal("cleanup accepted corrupt store")
 	}
 }

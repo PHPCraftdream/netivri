@@ -8,6 +8,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/ktav-lang/golang/pure"
 )
 
@@ -167,30 +168,93 @@ func validateGenerated(m map[string]string) error {
 	return nil
 }
 
+// CreatedSecretField records one field added by EnsureSecretsTracked.
+type CreatedSecretField struct {
+	Key         string
+	Value       string
+	Previous    string
+	HadPrevious bool
+}
+
+func (CreatedSecretField) String() string   { return "<redacted>" }
+func (CreatedSecretField) GoString() string { return "<redacted>" }
+
+// EnsureSecretsReceipt identifies fields created by one ensure operation.
+type EnsureSecretsReceipt struct {
+	Server       string
+	CreatedEntry bool
+	Material     []CreatedSecretField
+	Users        map[string][]CreatedSecretField
+	CreatedUsers []string
+}
+
+func (EnsureSecretsReceipt) String() string   { return "<redacted>" }
+func (EnsureSecretsReceipt) GoString() string { return "<redacted>" }
+
 // EnsureSecrets fills missing generated fields and persists only when changed.
 func (s *Store) EnsureSecrets(spec Spec) (Spec, error) {
+	ensured, _, err := s.EnsureSecretsTracked(spec)
+	return ensured, err
+}
+
+// EnsureSecretsTracked fills missing fields and returns a receipt for newly added fields.
+func (s *Store) EnsureSecretsTracked(spec Spec) (Spec, EnsureSecretsReceipt, error) {
+	return s.ensureSecrets(spec, nil, nil)
+}
+
+// EnsureSecretsValidated ensures secrets only after validating the target with current peers.
+func (s *Store) EnsureSecretsValidated(spec Spec, peers []Spec) (Spec, EnsureSecretsReceipt, error) {
+	return s.ensureSecrets(spec, peers, func(target Spec, validated []Spec) error {
+		if err := ValidateSharedPort(validated); err != nil {
+			return err
+		}
+		if err := ValidateTrialSecrets(validated); err != nil {
+			return &cli.Error{Code: "SERVER_PORT_AMBIGUOUS", Message: "shared endpoint credentials are ambiguous", Exit: cli.ExitConflict}
+		}
+		return nil
+	})
+}
+
+func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spec) error) (Spec, EnsureSecretsReceipt, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	receipt := EnsureSecretsReceipt{Server: spec.Name, Users: map[string][]CreatedSecretField{}}
 	if err := spec.Validate(); err != nil {
-		return spec, errors.New("invalid server specification")
+		return spec, receipt, errors.New("invalid server specification")
 	}
 	if !validSecretName(spec.Name) {
-		return spec, errors.New("invalid server name")
+		return spec, receipt, errors.New("invalid server name")
 	}
 	p, ok := Lookup(spec.Protocol)
 	if !ok {
-		return spec, errors.New("unknown server protocol")
+		return spec, receipt, errors.New("unknown server protocol")
 	}
 	for _, login := range spec.Accounts {
 		if !validSecretLogin(login) {
-			return spec, errors.New("invalid server login")
+			return spec, receipt, errors.New("invalid server login")
 		}
 	}
 	entries, err := s.read()
 	if err != nil {
-		return spec, err
+		return spec, receipt, err
+	}
+	validatedPeers := make([]Spec, 0, len(peers))
+	for _, peer := range peers {
+		entry, ok := entries[peer.Name]
+		if !ok {
+			return spec, receipt, errors.New("server secrets not found")
+		}
+		for _, login := range peer.Accounts {
+			if _, ok := entry.Users[login]; !ok {
+				return spec, receipt, errors.New("server secret not found")
+			}
+		}
+		peer.Material = SecretMap(cloneMap(entry.Material))
+		peer.Users = UserSecrets(entry.Users)
+		validatedPeers = append(validatedPeers, peer)
 	}
 	e, exists := entries[spec.Name]
+	receipt.CreatedEntry = !exists
 	if !exists {
 		e = storeEntry{Material: map[string]string{}, Users: map[string]map[string]string{}}
 	} else {
@@ -205,10 +269,16 @@ func (s *Store) EnsureSecrets(spec Spec) (Spec, error) {
 	}
 	gen, err := p.NewMaterial(spec.Params)
 	if err != nil {
-		return spec, errors.New("cannot generate server material")
+		return spec, EnsureSecretsReceipt{}, errors.New("cannot generate server material")
 	}
 	if err = validateGenerated(gen); err != nil {
-		return spec, err
+		return spec, EnsureSecretsReceipt{}, err
+	}
+	for k, v := range gen {
+		old, present := e.Material[k]
+		if !present || old == "" {
+			receipt.Material = append(receipt.Material, CreatedSecretField{Key: k, Value: v, Previous: old, HadPrevious: present})
+		}
 	}
 	if mergeMissing(e.Material, gen) {
 		changed = true
@@ -216,15 +286,22 @@ func (s *Store) EnsureSecrets(spec Spec) (Spec, error) {
 	for _, login := range spec.Accounts {
 		fields, ok := e.Users[login]
 		if !ok || fields == nil {
+			receipt.CreatedUsers = append(receipt.CreatedUsers, login)
 			fields = map[string]string{}
 			e.Users[login] = fields
 		}
 		gen, err := p.NewSecret(login, spec.Params)
 		if err != nil {
-			return spec, errors.New("cannot generate server secret")
+			return spec, EnsureSecretsReceipt{}, errors.New("cannot generate server secret")
 		}
 		if err = validateGenerated(gen); err != nil {
-			return spec, err
+			return spec, EnsureSecretsReceipt{}, err
+		}
+		for k, v := range gen {
+			old, present := fields[k]
+			if !present || old == "" {
+				receipt.Users[login] = append(receipt.Users[login], CreatedSecretField{Key: k, Value: v, Previous: old, HadPrevious: present})
+			}
 		}
 		if mergeMissing(fields, gen) {
 			changed = true
@@ -233,15 +310,85 @@ func (s *Store) EnsureSecrets(spec Spec) (Spec, error) {
 	if !exists {
 		changed = true
 	}
+	if validate != nil {
+		validatedTarget := spec
+		validatedTarget.Material = SecretMap(cloneMap(e.Material))
+		validatedTarget.Users = UserSecrets(e.Users)
+		validated := append(validatedPeers, validatedTarget)
+		if err := validate(validatedTarget, validated); err != nil {
+			return spec, EnsureSecretsReceipt{}, err
+		}
+	}
 	if changed {
 		entries[spec.Name] = e
 		if err = s.write(entries); err != nil {
-			return spec, err
+			return spec, EnsureSecretsReceipt{}, err
 		}
 	}
 	spec.Material = SecretMap(cloneMap(e.Material))
 	spec.Users = UserSecrets(e.Users)
-	return spec, nil
+	return spec, receipt, nil
+}
+
+// CleanupCreated removes unchanged fields created by a tracked ensure operation.
+func (s *Store) CleanupCreated(receipt EnsureSecretsReceipt) error {
+	storeMu.Lock()
+	defer storeMu.Unlock()
+	if !receipt.CreatedEntry && len(receipt.Material) == 0 && len(receipt.Users) == 0 && len(receipt.CreatedUsers) == 0 {
+		return nil
+	}
+	entries, err := s.read()
+	if err != nil {
+		return err
+	}
+	e, ok := entries[receipt.Server]
+	if !ok {
+		return nil
+	}
+	e = cloneEntry(e)
+	changed := false
+	for _, field := range receipt.Material {
+		if current, ok := e.Material[field.Key]; ok && current == field.Value {
+			if field.HadPrevious {
+				e.Material[field.Key] = field.Previous
+			} else {
+				delete(e.Material, field.Key)
+			}
+			changed = true
+		}
+	}
+	for login, fields := range receipt.Users {
+		values, ok := e.Users[login]
+		if !ok {
+			continue
+		}
+		for _, field := range fields {
+			if current, ok := values[field.Key]; ok && current == field.Value {
+				if field.HadPrevious {
+					values[field.Key] = field.Previous
+				} else {
+					delete(values, field.Key)
+				}
+				changed = true
+			}
+		}
+	}
+	for _, login := range receipt.CreatedUsers {
+		if values, ok := e.Users[login]; ok && len(values) == 0 {
+			delete(e.Users, login)
+			changed = true
+		}
+	}
+	if receipt.CreatedEntry && len(e.Material) == 0 && len(e.Users) == 0 {
+		delete(entries, receipt.Server)
+		changed = true
+	} else if changed {
+		entries[receipt.Server] = e
+	}
+	if !changed {
+		return nil
+	}
+	return s.write(entries)
 }
 
 // Apply returns the configured entry's stored secrets without generating any.
