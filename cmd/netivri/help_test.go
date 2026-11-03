@@ -72,7 +72,7 @@ func TestHelpOverviewListsEveryCommandAndExample(t *testing.T) {
 			t.Errorf("overview does not list %q", c.Name)
 		}
 	}
-	for _, want := range []string{"netivri sub add", "netivri account add", "netivri up", "netivri status", "NOT IMPLEMENTED YET", "node test"} {
+	for _, want := range []string{"netivri sub add", "netivri account add", "netivri up", "netivri status", "netivri -i", "NOT IMPLEMENTED YET", "node test"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("overview lacks %q", want)
 		}
@@ -81,7 +81,7 @@ func TestHelpOverviewListsEveryCommandAndExample(t *testing.T) {
 
 // conceptTopics are the help topics that are not commands: concepts about
 // configuring and operating netivri.
-var conceptTopics = []string{"config", "routing", "output"}
+var conceptTopics = []string{"config", "routing", "output", "interactive"}
 
 func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	seen := map[string]bool{}
@@ -119,6 +119,11 @@ func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 	}
 	if findHelpTopic("help") == nil {
 		t.Error("no help topic for help itself")
+	}
+	for _, want := range []string{"netivri -i", "netivri sub -i", "netivri account -i --home {DIR}", "netivri server -i", "Tab/Shift-Tab", "{TAB} not available yet", "NOT_A_TERMINAL"} {
+		if !strings.Contains(renderTopic(findHelpTopic("interactive")), want) {
+			t.Errorf("interactive topic lacks %q", want)
+		}
 	}
 }
 

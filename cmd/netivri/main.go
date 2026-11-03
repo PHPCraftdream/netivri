@@ -36,9 +36,16 @@ func runVersion(_ []string, stdout io.Writer) error {
 }
 
 // dispatch routes the arguments and returns the failure to report, if any.
-// Asking for help (no arguments, `help`, `--help`, `<command> --help`) is
-// answered before any command runs.
+// The global interactive flag scan precedes help and command lookup.
 func dispatch(args []string, stdout io.Writer) error {
+	cleaned, interactive, scanErr := scanInteractiveArgs(args)
+	if scanErr != nil {
+		return interactiveUsageHint(scanErr)
+	}
+	args = cleaned
+	if interactive {
+		return interactiveUsageHint(runInteractive(args, stdout))
+	}
 	if req, ok := parseHelpRequest(args); ok {
 		return runHelp(req, stdout)
 	}

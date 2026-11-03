@@ -14,9 +14,19 @@ scripts, AI agents). Changing anything here is a breaking change and bumps
 | `--quiet` | No human-oriented output on stderr. |
 | `--no-color` | No ANSI. Implied when not a TTY or `NO_COLOR` is set. |
 | `-h`, `--help` | Help for the command; see [`help`](#help). |
+| `-i`, `--interactive[={BOOL}]` | Open the interactive terminal shell (also `sub -i`, `account -i`, `server -i`); requires terminal stdin and stdout and cannot be combined with JSON output. `=true` enables, `=false` disables. |
 
 Commands never prompt. Anything that would need confirmation takes a flag
-instead (`--yes`).
+instead (`--yes`). The explicit exception is the interactive terminal shell,
+which handles interaction locally and does not change command behavior.
+
+## Interactive shell
+
+`-i` and `--interactive` enable the interactive terminal shell, and the flag may appear anywhere before a bare `--`; the last encountered interactive value wins. `-i=true` and `--interactive=true` enable it; `-i=false` and `--interactive=false` disable it. Invalid boolean values are `USAGE` errors. The global scan stops at `--`; flags after it are not scanned. With interactive mode disabled, ordinary command and help behavior is preserved.
+
+Supported entry points are `netivri -i` (starts at Accounts), `netivri sub -i` (starts at Providers), `netivri account -i` (starts at Accounts), and `netivri server -i` (starts at Servers). Tab order is Providers, Accounts, Servers. Use Tab/Shift-Tab or Left/Right to move, 1/2/3 to select, ? for key help, and q to quit. These are the only accepted interactive entry points; no nested subcommands or positional arguments are allowed. `--local` uses the normal state-directory resolution. The `--home` option accepts `{DIR}` after any entry point. `--quiet` and `--no-color` are not accepted by the interactive shell.
+
+Interactive mode rejects `--json` and `NETIVRI_OUTPUT=json` with `USAGE`; it also requires both stdin and the supplied stdout to be terminals. Otherwise it returns additive error `NOT_A_TERMINAL` (exit 2) with a hint listing the four entry points and recommending plain commands or `--json`. If no angel is running, the header shows it stopped and uses the CLI version fallback; a running angel supplies its listen address, uptime, and version. The current Providers, Accounts, and Servers screens are placeholders, each labeled `{TAB} not available yet`. `NO_COLOR` remains respected by the terminal renderer.
 
 ## Commands
 
@@ -1331,7 +1341,7 @@ Raw proxy mappings (credentials) are never printed.
 |---|---|
 | 0 | Success |
 | 1 | Unexpected internal error |
-| 2 | Invalid arguments or usage |
+| 2 | Invalid arguments or usage, including `NOT_A_TERMINAL` when interactive mode has no terminal |
 | 3 | Network error (subscription fetch, node test) |
 | 4 | Angel not running (for commands that need it) |
 | 5 | Not found (subscription, node, country with no nodes) |
@@ -1343,6 +1353,7 @@ Raw proxy mappings (credentials) are never printed.
 | Code | Exit | Meaning |
 |---|---|---|
 | `USAGE` | 2 | Bad flags or arguments |
+| `NOT_A_TERMINAL` | 2 | Interactive mode requested without terminal stdin and stdout; the hint recommends plain commands or `--json` |
 | `AUTH_REQUIRED` | 2 | Non-loopback `--bind` rejected because no proxy authentication is configured |
 | `FETCH_URL_INVALID` | 2 | Subscription or proxy URL is not a valid http(s)/socks5(h) URL |
 | `FETCH_PROXY_FAILED` | 3 | The configured proxy could not be reached or negotiated with |
