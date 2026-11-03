@@ -125,8 +125,8 @@ func TestAccountCloneValidationAndModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cleared.Accounts[0].AllowedClients != "loopback" || cleared.Accounts[len(cleared.Accounts)-1].AllowedClients != "" {
-		t.Fatalf("source/clone clients = %q/%q", cleared.Accounts[0].AllowedClients, cleared.Accounts[len(cleared.Accounts)-1].AllowedClients)
+	if cleared.Accounts[0].AllowedClients != "loopback" || cleared.Accounts[len(cleared.Accounts)-1].AllowedClients != config.AllowedClientsAny {
+		t.Fatalf("source/clone clients = %q/%q, want loopback/*", cleared.Accounts[0].AllowedClients, cleared.Accounts[len(cleared.Accounts)-1].AllowedClients)
 	}
 	if bytes.Equal(beforeClear, mustReadConfig(t, home)) {
 		t.Fatal("successful clone was not persisted")
