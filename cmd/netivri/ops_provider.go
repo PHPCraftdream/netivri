@@ -21,16 +21,22 @@ import (
 type ProviderInfo struct {
 	Name, Host string
 	ViaSet     bool
-	Nodes      *int
-	FetchedAt  *string
-	Quota      map[string]any
-	Countries  []subscription.CountryCount
-	Unknown    *int
-	State      string
+	// Pre and Post are the provider-level hops without credentials; "" inherits
+	// the global chain, "none" disables the hop.
+	Pre, Post string
+	Nodes     *int
+	FetchedAt *string
+	Quota     map[string]any
+	Countries []subscription.CountryCount
+	Unknown   *int
+	State     string
 }
 type ProviderListResult struct{ Providers []ProviderInfo }
-type ProviderAddOptions struct{ URL, Name, Via string }
-type ProviderUpdateOptions struct{ NewName, URL, Via *string }
+type ProviderAddOptions struct{ URL, Name, Via, Pre, Post string }
+
+// ProviderUpdateOptions: a nil field is left as it is; an empty Pre or Post
+// returns that hop to the global chain.
+type ProviderUpdateOptions struct{ NewName, URL, Via, Pre, Post *string }
 
 func validProviderURL(raw string) bool {
 	if raw == "" || raw != strings.TrimSpace(raw) {
@@ -74,6 +80,12 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 	}
 	if o.Via != nil {
 		cfg.Subscriptions[idx].Via = *o.Via
+	}
+	if o.Pre != nil {
+		cfg.Subscriptions[idx].PreSOCKS5 = *o.Pre
+	}
+	if o.Post != nil {
+		cfg.Subscriptions[idx].PostSOCKS5 = *o.Post
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -193,7 +205,7 @@ func ProviderList(home string) (ProviderListResult, error) {
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	out := ProviderListResult{Providers: make([]ProviderInfo, 0, len(cfg.Subscriptions))}
 	for _, s := range cfg.Subscriptions {
-		p := ProviderInfo{Name: s.Name, Host: urlHost(s.URL), ViaSet: s.Via != "", State: "missing"}
+		p := ProviderInfo{Name: s.Name, Host: urlHost(s.URL), ViaSet: s.Via != "", Pre: redactChain(s.PreSOCKS5), Post: redactChain(s.PostSOCKS5), State: "missing"}
 		snap, err := store.Load(s.Name)
 		if err == nil {
 			n := len(snap.Nodes)
@@ -247,7 +259,7 @@ func ProviderAdd(home string, o ProviderAddOptions, get func(context.Context, st
 		return ProviderAddResult{}, &cli.Error{Code: "INTERNAL", Message: "store subscription: " + e.Error(), Exit: cli.ExitInternal}
 	}
 	if !existing {
-		cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: name, URL: o.URL, Via: o.Via})
+		cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: name, URL: o.URL, Via: o.Via, PreSOCKS5: o.Pre, PostSOCKS5: o.Post})
 		if e = cfg.Validate(); e != nil {
 			return ProviderAddResult{}, e
 		}

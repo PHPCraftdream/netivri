@@ -8,6 +8,22 @@ import (
 
 func isNoChain(value string) bool { return strings.EqualFold(value, "none") }
 
+// nodePre is the effective pre hop of node i of route key.
+func (o Options) nodePre(key string, i int) string {
+	if s := o.NodePre[key]; i < len(s) {
+		return s[i]
+	}
+	return o.RoutePre[key]
+}
+
+// nodePost is the effective post hop of node i of route key.
+func (o Options) nodePost(key string, i int) string {
+	if s := o.NodePost[key]; i < len(s) {
+		return s[i]
+	}
+	return o.RoutePost[key]
+}
+
 // explicitNoChain reports whether m holds the value none for key.
 func explicitNoChain(m map[string]string, key string) bool {
 	v, ok := m[key]

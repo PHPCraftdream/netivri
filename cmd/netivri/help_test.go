@@ -668,6 +668,8 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 		"subscriptions.name",
 		"subscriptions.url",
 		"subscriptions.via",
+		"subscriptions.pre_socks5",
+		"subscriptions.post_socks5",
 		"accounts",
 		"accounts.login",
 		"accounts.password",

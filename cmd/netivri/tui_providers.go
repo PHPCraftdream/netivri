@@ -72,7 +72,7 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	l.Title = "Providers"
 	l.EmptyText = "A provider is a subscription of proxy nodes. Add one to start."
 	l.AddLabel = "+ Add provider"
-	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
+	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "pre", Label: "Pre-hop", Kind: tui.CardField}, {ID: "post", Label: "Post-hop", Kind: tui.CardField}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "clear-pre", Label: "Clear pre-hop", Hotkey: "P", Kind: tui.CardAction}, {ID: "clear-post", Label: "Clear post-hop", Hotkey: "O", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
 	ws := tui.NewWorkspace(l, c)
 	theme := e.Theme
 	if theme.Accent == nil {
@@ -311,11 +311,15 @@ func (s *providersScreen) startWizard() {
 }
 func (s *providersScreen) startEditPrompt(field string) {
 	s.editField = field
-	label := "Via URL"
-	if field == "url" {
+	label, hint := "Via URL", "Credential hidden while editing"
+	switch field {
+	case "url":
 		label = "Subscription URL"
+	case "pre", "post":
+		label = map[string]string{"pre": "Pre-hop", "post": "Post-hop"}[field]
+		hint = "socks5://, http:// or https:// URL, or none; empty leaves it unchanged; clearing is the Clear action"
 	}
-	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Edit provider — "+label, label, "Credential hidden while editing", "")
+	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Edit provider — "+label, label, hint, "")
 	s.prompt.SetTheme(s.workspace.Theme)
 	s.dialog = s.prompt
 	s.mode = "edit-prompt"
@@ -392,13 +396,24 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 		return s, nil
 	}
 	field := s.editField
+	if (field == "pre" || field == "post") && strings.TrimSpace(value) == "" {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
 	s.busy = "Saving provider"
 	s.prompt.SetSaving(true)
 	return s, s.bg(s.busy, func() tea.Msg {
 		var o ProviderUpdateOptions
-		if field == "url" {
+		switch field {
+		case "url":
 			o.URL = &value
-		} else {
+		case "pre":
+			o.Pre = &value
+		case "post":
+			o.Post = &value
+		default:
 			o.Via = &value
 		}
 		return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)}
@@ -689,6 +704,39 @@ func (s *providersScreen) updateCard() {
 	s.card.Lines[3].Value = nodes
 	s.card.Lines[4].Value = strings.Join(countries, ", ")
 	s.card.Lines[5].Value = updated
+	for _, h := range []struct{ id, value string }{{"pre", p.Pre}, {"post", p.Post}} {
+		for i := range s.card.Lines {
+			switch s.card.Lines[i].ID {
+			case h.id:
+				s.card.Lines[i].Value = providerHopLabel(h.value)
+			case "clear-" + h.id:
+				s.card.Lines[i].Disabled = h.value == ""
+			}
+		}
+	}
+}
+
+// providerHopLabel is the state of a provider hop; the URL is never shown.
+func providerHopLabel(value string) string {
+	switch {
+	case value == "":
+		return "inherited"
+	case strings.EqualFold(value, "none"):
+		return "none"
+	}
+	return "set"
+}
+
+func (s *providersScreen) clearHop(side string) tea.Cmd {
+	empty := ""
+	var o ProviderUpdateOptions
+	if side == "pre" {
+		o.Pre = &empty
+	} else {
+		o.Post = &empty
+	}
+	s.busy = "Saving provider"
+	return s.bg(s.busy, func() tea.Msg { return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)} })
 }
 func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	switch s.card.Lines[s.card.Selected].ID {
@@ -700,6 +748,12 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 		s.startEditPrompt("url")
 	case "via":
 		s.startEditPrompt("via")
+	case "pre", "post":
+		s.startEditPrompt(s.card.Lines[s.card.Selected].ID)
+	case "clear-pre":
+		return s, s.clearHop("pre")
+	case "clear-post":
+		return s, s.clearHop("post")
 	case "refresh":
 		return s, s.refresh(s.selected, false)
 	case "refresh-all":

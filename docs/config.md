@@ -35,7 +35,7 @@ not preserved, so keep personal notes elsewhere.
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `chain.pre_socks5` | string | *(empty)* | Default proxy netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
 | `chain.post_socks5` | string | *(empty)* | Default proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format (`socks5://`, `http://` or `https://`). An account's own `post_socks5` overrides it. |
-| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`). Names must be unique and non-empty. |
+| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`) and optional `pre_socks5` and `post_socks5` (the hops of this provider's nodes, same values as `chain.*`; see "SOCKS5 chain"). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), optional `exit` (empty/absent for default `route`, or `direct`), optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before password verification, so an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). Direct requires empty provider and exit_country; explicitly configured account pre-proxy is rejected except `none`, inherited pre-proxy is ignored, and effective post-proxy may be used directly. |
 | `servers` | array | `[]` | Inbound server endpoint objects; see [Server listeners](#server-listeners). Each has `name`, `protocol`, optional `bind`, `port`, `accounts`, optional `public_host`, and flattened protocol-specific option keys. Credentials/material are kept separately in `{HOME}/server-secrets.ktav`. |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
@@ -104,8 +104,8 @@ servers: [
 
 ## SOCKS5 chain
 
-`chain.pre_socks5` and `chain.post_socks5` (global) and `pre_socks5` and
-`post_socks5` of an account put proxies around the VPN node (the names say
+`chain.pre_socks5` and `chain.post_socks5` (global), `pre_socks5` and
+`post_socks5` of a provider (a `subscriptions` entry) and of an account put proxies around the VPN node (the names say
 SOCKS5, the value may also be an HTTP or HTTPS proxy):
 
 ```text
@@ -131,7 +131,7 @@ message names the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and
 never contains the value. Write the value with the raw marker:
 `chain.pre_socks5:: socks5://user:secret@pre.example:1080`.
 
-**Cascade.** Each side is resolved on its own, account over global:
+**Cascade.** Each side is resolved on its own: global, then provider, then account. The more specific level *replaces* the one above it; the levels are never stacked. An empty or absent value (or `inherit` in the commands) passes the decision up; a URL or `none` settles it at that level (`none` means "no hop" and also overrides a hop set above). A node takes the hop of its own provider, so one account route that lists several providers can use different hops for different nodes; an account's own value replaces the provider's and the global one for all its nodes.
 
 | Global | Account | Effective |
 | --- | --- | --- |
@@ -141,14 +141,25 @@ never contains the value. Write the value with the raw marker:
 | `socks5://g.example:1080` | `none` | no proxy (source `none`) |
 | `none` | *(absent)* | no proxy |
 
+| Provider | Account | Effective |
+| --- | --- | --- |
+| *(absent)* | *(absent)* | the global value |
+| `http://p.example:8080` | *(absent)* | `http://p.example:8080` (source `provider`) |
+| `http://p.example:8080` | `socks5://a.example:1081` | `socks5://a.example:1081` (source `account`) |
+| `http://p.example:8080` | `none` | no proxy (source `none`) |
+| `none` | *(absent)* | no proxy, even if the global value is set |
+
 `netivri account set-socks5 {ACCOUNT} --pre {URL|none|inherit}` and `--post`
-change the account values; `inherit` removes the account key so the global
-value applies again.
+change the account values, `netivri sub set-socks5 {SUBSCRIPTION} --pre
+{URL|none|inherit}` and `--post` the provider values; `inherit` removes the key
+so the level above applies again. When the providers of one account resolve
+differently, `account show` and `status` report the value `varies` with the
+source `provider`.
 
 Credentials are secrets, like subscription URLs: no output, log or error
 shows them. `account list`, `account show` and `status` print the URL as
 `socks5://host:port` with `"auth": true` when it had a user name, and the
-`source` of the value (`account`, `global` or `none`).
+`source` of the value (`account`, `provider`, `global` or `none`).
 
 Routes of accounts with different effective chains are separate, but the
 health and statistics of a node are kept per node, so two accounts that use

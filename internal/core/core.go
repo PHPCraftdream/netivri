@@ -66,6 +66,13 @@ type Options struct {
 	// RoutePre and RoutePost map opaque route keys to one effective URI string.
 	RoutePre  map[string]string
 	RoutePost map[string]string
+	// NodePre and NodePost optionally give each node of a route its own
+	// effective hop URI (route key -> one value per node, same order and
+	// length as RouteNodes[key]); a route without an entry uses RoutePre and
+	// RoutePost for all its nodes. It lets the nodes of different providers
+	// of one route take different hops.
+	NodePre  map[string][]string
+	NodePost map[string][]string
 	// GlobalPost chains the MATCH route through one effective URI string.
 	GlobalPost string
 	// AccountRoute maps an authenticated login to the route key it uses.

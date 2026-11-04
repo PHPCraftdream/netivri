@@ -434,10 +434,13 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 			continue
 		}
 		plan := routePlan{index: index, gen: gen, key: key, group: groupProxyName(gen, index)}
-		plan.hops = routeHops(nodes, o.RoutePre[key], o.RoutePost[key])
+		if err := checkedNodeHops(o, key, len(nodes)); err != nil {
+			return nil, err
+		}
+		plan.hops = routeHopsOf(o, key, nodes)
 		for node := range nodes {
 			name := memberProxyName(gen, index, node)
-			if o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) {
+			if post := o.nodePost(key, node); post != "" && !isNoChain(post) {
 				name = helperProxyNameFromMember(name, "post")
 			}
 			plan.names = append(plan.names, name)

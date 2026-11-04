@@ -32,7 +32,7 @@ Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list
 
 ### Providers
 
-The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated; Enter on the Subscription or Via field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts).
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (state only: `inherited`, `none` or `set`, never the URL; an empty answer keeps the hop, the Clear pre-hop (`P`) and Clear post-hop (`O`) actions return it to the global value); Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts).
 
 ### Accounts
 
@@ -47,8 +47,9 @@ See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation de
 ## Commands
 
 ```
-netivri sub add {URL} [--name {NAME}] [--via {PROXY}]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none}] [--post-socks5 {URL|none}]
                                           add a subscription (idempotent by URL)
+netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
 netivri sub list
 netivri sub update [{SUBSCRIPTION} | --all]   re-fetch
 netivri sub rm {SUBSCRIPTION}
@@ -690,7 +691,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   is an HTTP CONNECT proxy, `https` the same over TLS, a host, a required port 1..65535, optional percent-encoded
   credentials, no path or query), or `none` to cancel the global value of that
   side for these accounts, or `inherit` to remove the account's own value so
-  that the global `chain.pre_socks5` / `chain.post_socks5` of `config.ktav`
+  that the provider's own hop (`netivri sub set-socks5`), or else the global `chain.pre_socks5` / `chain.post_socks5` of `config.ktav`,
   applies again (see [config.md](config.md), "SOCKS5 chain", for the cascade).
   A malformed URL is `CONFIG_INVALID` (exit 2); the message names the flag and
   never contains the value, because it can carry credentials. Unknown login:
@@ -1243,11 +1244,31 @@ shape documented below.
 of the server address, i.e. the entry point) or `name` (parsed from the node
 name). Prefer `exit`.
 
+### `sub set-socks5`
+
+```
+netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
+```
+
+Sets the pre and post proxy hops of one provider: every node of the provider is reached through
+the pre hop and leaves through the post hop. At least one side is required (exit 2 otherwise); a
+side that is not given stays as it is. Values are `socks5://`, `http://` (an HTTP CONNECT proxy)
+or `https://` URLs with a required port, `none` (no hop; it also overrides a hop set globally) or
+`inherit` (use the global `chain.*` value again). The cascade is global, then provider, then
+account; the more specific level replaces the one above (see [config.md](config.md), "SOCKS5
+chain"). A malformed URL is `CONFIG_INVALID` (exit 2) and never echoes the value; an unknown
+name is `SUB_NOT_FOUND` (exit 5). Output: `{"name": "main", "pre_socks5": "http://p.example:8080",
+"post_socks5": ""}` with credentials removed. A running angel applies the change within a few seconds.
+
 ### `sub add`
 
 ```
-netivri sub add {URL} [--name {NAME}] [--via {PROXY}]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none}] [--post-socks5 {URL|none}]
 ```
+
+`--pre-socks5` and `--post-socks5` set the provider-level hops of a new subscription (`socks5://`,
+`http://` or `https://`, or `none`; see [`sub set-socks5`](#sub-set-socks5)); they are ignored for a
+URL that is already configured.
 
 Fetches the subscription through `--via` if given, otherwise through
 `fetch.proxy` from `config.ktav`; strict: with no proxy the fetch is

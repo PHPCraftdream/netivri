@@ -10,6 +10,15 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Proxy hops per provider.** A provider (`subscriptions[]`) can set `pre_socks5` and
+  `post_socks5` (`socks5://`, `http://` or `https://`, or `none`), via `netivri sub add
+  --pre-socks5/--post-socks5`, the new `netivri sub set-socks5`, and the Pre-hop/Post-hop fields of the
+  Providers screen in the shell. The hops now cascade global, then provider, then account; the more
+  specific level replaces the one above, nothing is stacked, and `none` overrides a hop set above.
+  Nodes of different providers on one account route take their own provider's hops. `account show`
+  and `status` report the source `provider` (and the value `varies` when an account's providers
+  differ). `sub list` shows the redacted provider hops when set. Existing configs behave as before.
+
 - **Interactive shell v2.** The screen of `netivri -i` is rebuilt: a fixed
   frame with a header, a tab bar and one-line toast/hint slots, list and card
   panes side by side from 100 columns (a drill-down single pane below that),

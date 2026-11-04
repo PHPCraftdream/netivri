@@ -184,6 +184,11 @@ type Subscription struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	Via  string `json:"via,omitempty"`
+	// PreSOCKS5 and PostSOCKS5 are the provider-level hops (socks5://, http://
+	// or https:// URL, or none). Empty inherits the global chain; an account
+	// value replaces them (cascade global -> provider -> account).
+	PreSOCKS5  string `json:"pre_socks5,omitempty"`
+	PostSOCKS5 string `json:"post_socks5,omitempty"`
 }
 
 // Selection is the exit-node choice applied on start and by `netivri use`.
@@ -256,6 +261,15 @@ func (c *Config) Validate() error {
 		}
 		if err := checkScalar(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
 			return err
+		}
+		for _, hop := range []struct{ field, value string }{{"pre_socks5", s.PreSOCKS5}, {"post_socks5", s.PostSOCKS5}} {
+			name := fmt.Sprintf("subscriptions[%d].%s", i, hop.field)
+			if err := checkScalar(name, hop.value); err != nil {
+				return err
+			}
+			if err := validateChainURL(name, hop.value); err != nil {
+				return err
+			}
 		}
 		if s.Via != "" {
 			if err := validateProxy(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {

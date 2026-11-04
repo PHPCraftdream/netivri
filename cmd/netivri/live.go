@@ -223,6 +223,8 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 		AccountRoute:          d.pool.accountRoutes,
 		RoutePre:              d.pool.routePre,
 		RoutePost:             d.pool.routePost,
+		NodePre:               d.pool.nodePre,
+		NodePost:              d.pool.nodePost,
 		GlobalPost:            d.cfg.Chain.PostSOCKS5,
 		Servers:               cloneServerSpecs(d.servers),
 		AccountAllowedClients: accountAllowedClients(d.cfg),
@@ -348,10 +350,12 @@ func routesFingerprint(d desiredState) string {
 		Exit       []struct{ Login, Exit string }
 		Pre        map[string]string
 		Post       map[string]string
+		NodePre    map[string][]string
+		NodePost   map[string][]string
 		GlobalPost string
 	}{
 		Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers,
-		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost,
+		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost, NodePre: d.pool.nodePre, NodePost: d.pool.nodePost,
 		Exit: normalizedExitFingerprint(d.cfg.Accounts), GlobalPost: d.cfg.Chain.PostSOCKS5,
 	}
 	data, _ := json.Marshal(v)
