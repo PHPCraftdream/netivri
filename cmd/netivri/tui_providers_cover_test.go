@@ -268,7 +268,13 @@ func TestProvidersCoverCountriesDialogKeys(t *testing.T) {
 			t.Fatal("second space did not untoggle NL")
 		}
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyEscape})
+	// Esc returns a result command; the screen closes the dialog on its message.
+	_, escCmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if escCmd != nil {
+		if m := escCmd(); m != nil {
+			_, _ = s.Update(m)
+		}
+	}
 	if s.mode != "" || s.dialog != nil || s.prompt != nil {
 		t.Fatal("esc did not leave countries dialog")
 	}

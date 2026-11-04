@@ -65,7 +65,7 @@ const goldenProviders100Empty = `Service stopped
 +---------------------------------+ +--------------------------------------------------------------+
 |Providers                        | |Provider details                                              |
 |  Name            Node  State    | |Select a provider to view details                             |
-|No providers yet. Add one to get | |  Name                                                        |
+|A provider is a subscription of p| |  Name                                                        |
 |> + Add provider                 | |  Subscription  [edit]                                        |
 |                                 | |  Via  [edit]                                                 |
 |                                 | |  Nodes                                                       |

@@ -94,12 +94,12 @@ func TestAccountsCloneRealKeysEndToEnd(t *testing.T) {
 	if !ok || result.Canceled || result.Values["value"] != "alice-2" {
 		t.Fatalf("clone result = %#v", msg)
 	}
-	if !d.prompt.Saving {
-		t.Fatal("clone prompt did not enter the saving state")
-	}
 	_, cmd = s.Update(msg)
 	if cmd == nil {
 		t.Fatal("dialog result did not start the clone")
+	}
+	if !d.prompt.Saving {
+		t.Fatal("clone prompt did not enter the saving state")
 	}
 	runAccountCmd(s, cmd)
 	if s.dialog != nil {

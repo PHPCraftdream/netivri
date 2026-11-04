@@ -349,7 +349,12 @@ func TestProviderCountriesDialogKeysAndFrame(t *testing.T) {
 	}
 	before := s.card.Lines[4].Value
 	// Esc cancels without changing anything.
-	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	_, escCmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if escCmd != nil {
+		if m := escCmd(); m != nil {
+			_, _ = s.Update(m)
+		}
+	}
 	if s.dialog != nil || s.prompt != nil || s.mode != "" {
 		t.Fatal("esc did not close the countries dialog")
 	}
