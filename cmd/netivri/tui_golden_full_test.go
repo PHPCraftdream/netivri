@@ -319,7 +319,7 @@ const goldenServers100Populated = `Service stopped
 [Servers]
 +---------------------------------+ +--------------------------------------------------------------+
 |Servers                          | |Server                                                        |
-|  Name   Protocol  Port   State  | |No servers configured. Add a server to start.                 |
+|  Name   Protocol  Port   State  | |Select a server to see details.                               |
 |> alpha  socks5    1080   angel s| |  Add a server...  [a]                                        |
 |  beta   http      8080   angel s| |  Reload  [r]                                                 |
 |  + Add a server [a]             | |                                                              |

@@ -716,6 +716,9 @@ const serversGoldenHeader80 = "  Name                Protocol        Port   Stat
 // inner 33, dropping one trailing space.
 const serversGoldenHeader35 = "  Name   Protocol  Port   State"
 
+// Two-server list at 80 columns: widths [17,14,5,14] after the cell padding.
+const serversGoldenHeader80Two = "  Name               Protocol        Port   State"
+
 func TestServersGoldenEmptyList(t *testing.T) {
 	s := newServersTestScreen(t, serversWizardHome(t))
 	serversDrain(t, s, s.Init())
@@ -741,7 +744,8 @@ func TestServersGoldenEmptyList(t *testing.T) {
 	left := goldenRows(30, map[int]string{
 		1:  "Servers",
 		2:  serversGoldenHeader35,
-		3:  "› + Add a server [a]",
+		3:  "No servers configured",
+		4:  "› + Add a server [a]",
 		28: "1/1",
 	})
 	right := goldenRows(30, map[int]string{
@@ -777,9 +781,9 @@ func TestServersGoldenTwoServerList(t *testing.T) {
 	// (cell padding + the 2-cell joiner).
 	rows := []string{
 		"Servers",
-		serversGoldenHeader80,
-		"› ss                  shadowsocks     1234   angel stopped",
-		"  vl                  vless-reality   2345   angel stopped",
+		serversGoldenHeader80Two,
+		"› ss                 shadowsocks     1234   angel stopped",
+		"  vl                 vless-reality   2345   angel stopped",
 		"  + Add a server [a]",
 	}
 	for i := 0; i < 16; i++ {

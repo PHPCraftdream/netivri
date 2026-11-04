@@ -225,6 +225,8 @@ func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("escape scheduled work")
 	}
+	// The sweep ended on the final Add line; return to the first server.
+	_, _ = s.Update(serversKey(tea.KeyHome, ""))
 	_, cmd = s.Update(serversKey(tea.KeyEnter, ""))
 	if cmd == nil {
 		t.Fatal("enter did not schedule stale detail")
