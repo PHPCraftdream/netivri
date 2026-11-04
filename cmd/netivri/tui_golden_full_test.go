@@ -71,17 +71,17 @@ const goldenProviders100Empty = `Service stopped
 |                                 | |  Nodes                                                       |
 |                                 | |  Countries                                                   |
 |                                 | |  Updated                                                     |
+|                                 | |  Pre-hop  [edit]                                             |
+|                                 | |  Post-hop  [edit]                                            |
 |                                 | |  Rename                                                      |
 |                                 | |  Edit subscription                                           |
 |                                 | |  Edit Via                                                    |
+|                                 | |  Clear pre-hop  [P]                                          |
+|                                 | |  Clear post-hop  [O]                                         |
 |                                 | |  Refresh selected  [r]                                       |
 |                                 | |  Refresh all  [R]                                            |
 |                                 | |  Countries  [c]                                              |
 |                                 | |  Remove  [d]                                                 |
-|                                 | |                                                              |
-|                                 | |                                                              |
-|                                 | |                                                              |
-|                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
@@ -102,17 +102,17 @@ const goldenProviders100Populated = `Service stopped
 |                                 | |  Nodes  2                                                    |
 |                                 | |  Countries                                                   |
 |                                 | |  Updated  Never                                              |
+|                                 | |  Pre-hop  inherited  [edit]                                  |
+|                                 | |  Post-hop  inherited  [edit]                                 |
 |                                 | |  Rename                                                      |
 |                                 | |  Edit subscription                                           |
 |                                 | |  Edit Via                                                    |
+|                                 | |  Clear pre-hop  [P]                                          |
+|                                 | |  Clear post-hop  [O]                                         |
 |                                 | |  Refresh selected  [r]                                       |
 |                                 | |  Refresh all  [R]                                            |
 |                                 | |  Countries  [c]                                              |
 |                                 | |  Remove  [d]                                                 |
-|                                 | |                                                              |
-|                                 | |                                                              |
-|                                 | |                                                              |
-|                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |

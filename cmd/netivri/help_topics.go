@@ -344,7 +344,7 @@ var helpTopics = []helpTopic{
 			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/{TOKEN}"},
 			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/{TOKEN} --name main"},
 			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
-			{"Reach this provider's nodes through an HTTP proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --pre-socks5 http://proxy.example:8080"},
+			{"Reach this provider's nodes through an HTTP proxy", "netivri sub add https://provider.example/sub/{TOKEN} --pre-socks5 http://proxy.example:8080"},
 		},
 		Errors: []helpError{
 			herr("FETCH_URL_INVALID", cli.ExitUsage, "the subscription or proxy URL is not valid"),
