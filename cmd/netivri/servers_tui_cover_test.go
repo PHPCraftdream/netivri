@@ -16,7 +16,7 @@ import (
 
 func TestServersCoverKeyHints(t *testing.T) {
 	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
-	if got := s.KeyHints(); !strings.Contains(got, "Read-only") {
+	if got := s.KeyHints(); !strings.Contains(got, "a Add") || !strings.Contains(got, "r Reload") {
 		t.Fatalf("key hints: %q", got)
 	}
 }

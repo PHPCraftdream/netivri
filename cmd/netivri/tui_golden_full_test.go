@@ -240,6 +240,7 @@ const goldenServers80Empty = `Service stopped
 |Servers                                                                       |
 |  Name                Protocol        Port   State                            |
 |No servers configured                                                         |
+|> + Add a server [a]                                                          |
 |                                                                              |
 |                                                                              |
 |                                                                              |
@@ -253,8 +254,7 @@ const goldenServers80Empty = `Service stopped
 |                                                                              |
 |                                                                              |
 |                                                                              |
-|                                                                              |
-|                                                                              |
+|1/1                                                                           |
 +------------------------------------------------------------------------------+
                                                                                 
 q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
@@ -266,6 +266,7 @@ const goldenServers80Populated = `Service stopped
 |  Name                Protocol        Port   State                            |
 |> alpha               socks5          1080   angel stopped                    |
 |  beta                http            8080   angel stopped                    |
+|  + Add a server [a]                                                          |
 |                                                                              |
 |                                                                              |
 |                                                                              |
@@ -278,8 +279,7 @@ const goldenServers80Populated = `Service stopped
 |                                                                              |
 |                                                                              |
 |                                                                              |
-|                                                                              |
-|1/2                                                                           |
+|1/3                                                                           |
 +------------------------------------------------------------------------------+
                                                                                 
 q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page .`
@@ -288,8 +288,9 @@ const goldenServers100Empty = `Service stopped
 [Servers]
 +---------------------------------+ +--------------------------------------------------------------+
 |Servers                          | |Server                                                        |
-|  Name   Protocol  Port   State  | |Changes: netivri server add · link · rotate · remove          |
-|No servers configured            | |  Reload  [r]                                                 |
+|  Name   Protocol  Port   State  | |No servers configured. Add a server to start.                 |
+|No servers configured            | |  Add a server...  [a]                                        |
+|> + Add a server [a]             | |  Reload  [r]                                                 |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
@@ -309,8 +310,7 @@ const goldenServers100Empty = `Service stopped
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
-|                                 | |                                                              |
-|                                 | |                                                              |
+|1/1                              | |                                                              |
 +---------------------------------+ +--------------------------------------------------------------+
                                                                                                     
 q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
@@ -319,9 +319,10 @@ const goldenServers100Populated = `Service stopped
 [Servers]
 +---------------------------------+ +--------------------------------------------------------------+
 |Servers                          | |Server                                                        |
-|  Name   Protocol  Port   State  | |Changes: netivri server add · link · rotate · remove          |
-|> alpha  socks5    1080   angel s| |  Reload  [r]                                                 |
-|  beta   http      8080   angel s| |                                                              |
+|  Name   Protocol  Port   State  | |Select a server to see details.                               |
+|> alpha  socks5    1080   angel s| |  Add a server...  [a]                                        |
+|  beta   http      8080   angel s| |  Reload  [r]                                                 |
+|  + Add a server [a]             | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
@@ -340,8 +341,7 @@ const goldenServers100Populated = `Service stopped
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
-|                                 | |                                                              |
-|1/2                              | |                                                              |
+|1/3                              | |                                                              |
 +---------------------------------+ +--------------------------------------------------------------+
                                                                                                     
 q quit | ? help | tab focus | </> tabs | ^/k move | v/j move | pgup page | pgdn page | home first .`
