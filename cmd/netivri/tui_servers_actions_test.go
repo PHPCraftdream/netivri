@@ -66,7 +66,9 @@ func TestServersCardActionHotkeysEnumerate(t *testing.T) {
 	if s.dialog == nil || s.dialog.wizard == nil {
 		t.Fatal("hotkey a did not open the add wizard")
 	}
-	_, _ = s.Update(serversKey(tea.KeyEscape, ""))
+	if _, c := s.Update(serversKey(tea.KeyEscape, "")); c != nil {
+		serversRun(t, s, c)
+	}
 	// l -> link warning confirm prompt.
 	if _, c := s.Update(serversKey('l', "l")); c != nil {
 		t.Fatal("hotkey l produced a command")
@@ -74,7 +76,9 @@ func TestServersCardActionHotkeysEnumerate(t *testing.T) {
 	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.ConfirmPrompt || s.dialog.prompt.ConfirmLabel != "Show" {
 		t.Fatalf("hotkey l did not open the show-link confirm")
 	}
-	_, _ = s.Update(serversKey(tea.KeyEscape, ""))
+	if _, c := s.Update(serversKey(tea.KeyEscape, "")); c != nil {
+		serversRun(t, s, c)
+	}
 	// r -> detail reload command, no dialog.
 	_, c := s.Update(serversKey('r', "r"))
 	if c == nil || s.dialog != nil {

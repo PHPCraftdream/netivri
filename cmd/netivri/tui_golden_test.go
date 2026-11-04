@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 // expectedPanel is a standalone geometry oracle for the list pane. Row indexes
 // mirror the list contract: title, header, fixture rows or empty state, then
 // the position status on the final interior row.
-func expectedPanel(width, height int, title, header, empty string, populated bool) string {
+func expectedPanel(width, height int, title, header, empty, add string, populated bool) string {
 	lines := make([]string, height)
 	lines[0] = "+" + strings.Repeat("-", width-2) + "+"
 	interior := func(s string) string {
@@ -23,12 +24,24 @@ func expectedPanel(width, height int, title, header, empty string, populated boo
 	}
 	lines[1] = interior(title)
 	lines[2] = interior(header)
+	count := 0
 	if populated {
 		lines[3] = interior("> alpha")
 		lines[4] = interior("  beta")
-		lines[height-2] = interior("1/2")
+		count = 2
 	} else {
 		lines[3] = interior(empty)
+	}
+	if add != "" {
+		if populated {
+			lines[5] = interior("  " + add)
+		} else {
+			lines[4] = interior("> " + add)
+		}
+		count++
+	}
+	if count > 0 {
+		lines[height-2] = interior(strconv.Itoa(1) + "/" + strconv.Itoa(count))
 	}
 	for i := 1; i < height-1; i++ {
 		if lines[i] == "" {
@@ -49,9 +62,10 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 		new   func(tui.Env) tui.Screen
 		list  func(tui.Screen) *tui.List
 		empty string
+		add   string
 		seed  func(tui.Screen, bool)
 	}{
-		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return s.(*providersScreen).workspace.List }, "No providers yet. Add one to get started.", func(screen tui.Screen, populated bool) {
+		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return s.(*providersScreen).workspace.List }, "No providers yet. Add one to get started.", "", func(screen tui.Screen, populated bool) {
 			s := screen.(*providersScreen)
 			if populated {
 				s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "alpha"}, {Name: "beta"}}})
@@ -63,7 +77,7 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 			s.list.Title = screen.Title()
 			s.card = s.workspace.Card
 		}},
-		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*accountsScreen).workspace.List }, "An account needs a Provider first. Switch to Providers to add one.", func(screen tui.Screen, populated bool) {
+		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*accountsScreen).workspace.List }, "An account needs a Provider first. Switch to Providers to add one.", "", func(screen tui.Screen, populated bool) {
 			s := screen.(*accountsScreen)
 			if populated {
 				s.rows = []accountInfo{{Login: "alpha"}, {Login: "beta"}}
@@ -74,7 +88,7 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 			s.workspace.List.Columns = []tui.ListColumn{{Title: "Name", Width: 8}}
 			s.workspace.List.AddLabel = ""
 		}},
-		{"servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*serversScreen).workspace.List }, "No servers configured", func(screen tui.Screen, populated bool) {
+		{"servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*serversScreen).workspace.List }, "No servers configured", "+ Add a server [a]", func(screen tui.Screen, populated bool) {
 			s := screen.(*serversScreen)
 			if populated {
 				s.rows = []serverView{{Name: "alpha", Protocol: "test", Port: 1234}, {Name: "beta", Protocol: "test", Port: 1234}}
@@ -105,7 +119,7 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 							rendered[i] = ansi.Cut(rendered[i], 0, pane)
 						}
 						got := strings.Join(rendered, "\n")
-						want := expectedPanel(pane, sizeh, screen.Title(), "  Name", tc.empty, populated)
+						want := expectedPanel(pane, sizeh, screen.Title(), "  Name", tc.empty, tc.add, populated)
 						if got != want {
 							t.Errorf("%dx%d list layout mismatch\n got: %q\nwant: %q", sizew, sizeh, got, want)
 						}

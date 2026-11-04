@@ -152,13 +152,13 @@ func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 			t.Errorf("list missing %q", w)
 		}
 	}
-	for _, secret := range []string{"fake-hash", "fake-chain-password", "aes-128-gcm", "secret-reality-sni.example"} {
+	for _, secret := range []string{"fake-hash", "fake-chain-password", "secret-reality-sni.example"} {
 		if strings.Contains(s.View(180, 30), secret) {
 			t.Errorf("list leaked %q", secret)
 		}
 	}
 	serversLoadDetail(t, s)
-	for _, w := range []string{"ss", "shadowsocks", "127.0.0.1", "1234", "alice", "pub.test", "Parameters: cipher", "State: angel stopped"} {
+	for _, w := range []string{"ss", "shadowsocks", "127.0.0.1", "1234", "alice", "pub.test", "Cipher  aes-128-gcm", "State: angel stopped"} {
 		if !strings.Contains(s.View(180, 30), w) {
 			t.Errorf("detail missing %q", w)
 		}
@@ -166,10 +166,11 @@ func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 	_, _ = s.Update(serversKey(tea.KeyEsc, ""))
 	_, _ = s.Update(serversKey(tea.KeyDown, ""))
 	serversLoadDetail(t, s)
-	if !strings.Contains(s.View(180, 30), "Parameters: sni") || strings.Contains(s.View(180, 30), "secret-reality-sni.example") {
-		t.Fatal("VLESS detail exposed parameter value")
+	v := s.View(180, 30)
+	if !strings.Contains(v, "Server name") || !strings.Contains(v, "secret-reality-sni.example") || strings.Contains(v, "fake-hash") {
+		t.Fatal("VLESS detail wrong: non-secret sni must show, secrets must not")
 	}
-	for _, secret := range []string{"fake-hash", "fake-chain-password", "aes-128-gcm", "secret-reality-sni.example"} {
+	for _, secret := range []string{"fake-hash", "fake-chain-password"} {
 		if strings.Contains(s.View(180, 30), secret) {
 			t.Errorf("detail leaked %q", secret)
 		}
@@ -209,6 +210,16 @@ func TestServersTUIListDetailsReloadReadOnly(t *testing.T) {
 		if e != nil || string(after) != string(before) {
 			t.Fatalf("key %q modified config", k.String())
 		}
+	}
+	// The sweep opens the add wizard ('a') and advances it; cancel any dialog
+	// it leaves open (Esc on an untouched wizard cancels; with a committed
+	// value it opens the discard question, second Esc resumes, third cancels).
+	for n := 0; s.dialog != nil && n < 8; n++ {
+		_, cmd = s.Update(serversKey(tea.KeyEsc, ""))
+		serversRun(t, s, cmd)
+	}
+	if s.dialog != nil {
+		t.Fatal("wizard dialog survived the cleanup Esc loop")
 	}
 	_, cmd = s.Update(serversKey(tea.KeyEsc, ""))
 	if cmd != nil {
@@ -307,7 +318,7 @@ func TestServersTUIListReloadEmptyErrorsResizeBoundsAndStale(t *testing.T) {
 	empty := newServersTestScreen(t, t.TempDir())
 	serversRun(t, empty, empty.Init())
 	v := empty.View(180, 12)
-	for _, x := range []string{"No servers configured", "Changes: netivri server add", "link", "rotate", "remove"} {
+	for _, x := range []string{"No servers configured", "No servers configured. Add a server to start.", "  Add a server...  [a]", "  Reload  [r]"} {
 		if !strings.Contains(v, x) {
 			t.Errorf("empty/footer missing %q", x)
 		}

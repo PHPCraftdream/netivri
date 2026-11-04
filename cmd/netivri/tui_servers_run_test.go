@@ -215,7 +215,7 @@ func serversMultiAccountHome(t *testing.T) string {
 		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
 		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
 	}
-	c.Servers = []config.Server{{Name: "mm", Protocol: "mieru", Bind: "127.0.0.1", Port: 3400, Accounts: "alice,bob"}}
+	c.Servers = []config.Server{{Name: "mm", Protocol: "mieru", Bind: "127.0.0.1", Port: 3400, PublicHost: "pub.test", Accounts: "alice,bob"}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("invalid fixture: %v", err)
 	}
@@ -258,16 +258,18 @@ func TestServersLinkMultiAccountChooseSecondAccount(t *testing.T) {
 	}
 	_ = s.View(120, 30)
 	serversDownKeys(s, 1) // moveChoice(1): choice=1 -> bob (prompt.go)
-	if serversEnterKey(s) != nil {
-		t.Fatal("account pick produced a command")
+	c := serversEnterKey(s)
+	if c == nil {
+		t.Fatal("account pick produced no command")
 	}
+	serversDrain(t, s, c)
 	// onResult -> confirmServerLink(mm, bob): credential warning prompt.
 	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.ConfirmPrompt || s.dialog.prompt.ConfirmLabel != "Show" {
 		t.Fatalf("credential warning did not open after account pick: %+v", s.dialog)
 	}
 	// ConfirmPrompt 'y' -> confirmButton(1) -> result(false) -> onResult.
-	_, c := s.Update(serversKey('y', "y"))
-	if c == nil {
+	c = nil
+	if _, c = s.Update(serversKey('y', "y")); c == nil {
 		t.Fatal("show confirm produced no command")
 	}
 	serversDrain(t, s, c)
@@ -712,11 +714,13 @@ const serversGoldenHeader80 = "  Name                Protocol        Port   Stat
 // Column header for the shrunk widths [5,8,5,8] (av=30 at a 35-cell pane):
 // gaps 3sp / 2sp / 3sp; the row totals 34 cells and list.go clips it to
 // inner 33, dropping one trailing space.
-const serversGoldenHeader35 = "  Name   Protocol   Port   State"
+const serversGoldenHeader35 = "  Name   Protocol  Port   State"
 
 func TestServersGoldenEmptyList(t *testing.T) {
 	s := newServersTestScreen(t, serversWizardHome(t))
 	serversDrain(t, s, s.Init())
+	s.detail = nil
+	s.syncWorkspace()
 
 	// 80x24: single list pane, no rows, only the add line selected.
 	rows := []string{
@@ -742,7 +746,7 @@ func TestServersGoldenEmptyList(t *testing.T) {
 	})
 	right := goldenRows(30, map[int]string{
 		1: "Server",
-		2: "Select a server to see details.",
+		2: "No servers configured. Add a server to start.",
 		3: "  Add a server...  [a]",
 		4: "  Reload  [r]",
 	})
@@ -766,6 +770,8 @@ func goldenRows(h int, at map[int]string) [][]string {
 func TestServersGoldenTwoServerList(t *testing.T) {
 	s := newServersTestScreen(t, serversGoldenHome(t))
 	serversDrain(t, s, s.Init())
+	s.detail = nil
+	s.syncWorkspace()
 
 	// 80x24: widths [18,14,5,14]; ss row gaps 18/5/3, vl gaps 18/3/3
 	// (cell padding + the 2-cell joiner).
@@ -827,10 +833,11 @@ func TestServersFrameDialogSizeMatrix(t *testing.T) {
 		// (at w<100 Enter drills into the card; at w>=100 Tab focuses it).
 		prep := func() {
 			t.Helper()
-			serversFrameKey(t, f, tea.KeyEscape, "")
-			serversFrameKey(t, f, tea.KeyEnter, "")
+			serversFrameKey(t, f, tea.KeyEscape, "") // cancel any open dialog
+			serversFrameKey(t, f, tea.KeyEscape, "") // undrill (<100) / screen Esc sets list focus (>=100)
+			serversFrameKey(t, f, tea.KeyEnter, "")  // load detail (drills in <100)
 			if w >= 100 {
-				serversFrameKey(t, f, tea.KeyTab, "")
+				serversFrameKey(t, f, tea.KeyTab, "") // card focus
 			}
 		}
 		check := func(stage string, content []string) {
@@ -872,6 +879,9 @@ func TestServersFrameDialogSizeMatrix(t *testing.T) {
 		serversFrameKey(t, f, 'y', "y")
 		check("reveal", []string{"Client link · ss"})
 		prep()
+		// One more Esc: back to the list ('a' is suppressed while drilled at
+		// w<100; at w>=100 Esc refocuses the list).
+		serversFrameKey(t, f, tea.KeyEscape, "")
 		// Wizard.
 		serversFrameKey(t, f, 'a', "a")
 		check("wizard", []string{"Add server", "Choose the server protocol."})
@@ -1034,7 +1044,7 @@ func TestServersYAMLOnlyProtocolRevealsMihomoYAML(t *testing.T) {
 	home := t.TempDir()
 	c := config.Default()
 	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}}
-	c.Servers = []config.Server{{Name: "ys", Protocol: "yamlsrv-test", Bind: "127.0.0.1", Port: 3500, Accounts: "alice"}}
+	c.Servers = []config.Server{{Name: "ys", Protocol: "yamlsrv-test", Bind: "127.0.0.1", Port: 3500, PublicHost: "pub.test", Accounts: "alice"}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("yaml protocol fixture invalid: %v", err)
 	}

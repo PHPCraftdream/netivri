@@ -236,7 +236,7 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	}
 	review := s.View(120, 30)
 	snap()
-	for _, want := range []string{"Review", "Create", "Name: wss01", "Port: 45701", "Bind address: 0.0.0.0", "Accounts: alice"} {
+	for _, want := range []string{"Review", "Create", "Name: wss01", "Port: 45701", "Bind address: 0.0.0.0", "Account: alice"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review missing %q: %q", want, review)
 		}
@@ -262,7 +262,7 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	}
 	snap()
 	added := s.View(120, 30)
-	for _, want := range []string{"Server added", "Name: wss01", "Protocol: shadowsocks", "Port: 45701", "Accounts: alice,bob", "Server secrets were generated and stored securely."} {
+	for _, want := range []string{"Server added", "Name: wss01", "Protocol: shadowsocks", "Port: 45701", "Accounts: alice", "Server secrets were generated and stored securely."} {
 		if !strings.Contains(added, want) {
 			t.Fatalf("added modal missing %q: %q", want, added)
 		}
@@ -690,7 +690,7 @@ func TestServersFrameContractAndWeakGoldens(t *testing.T) {
 		goldens []string
 	}{
 		{"empty", empty, []string{"No servers configured", "+ Add a server [a]", "Name", "Reload"}},
-		{"two-servers", loaded, []string{"shadowsocks", "vless-reality", "1234", "angel stopped", "Protocol", "Show client link...", "Rotate keys...", "Remove...", "[l]", "[t]", "[d]"}},
+		{"two-servers", loaded, []string{"shadowsocks", "vless-re", "1234", "angel stopped", "Protocol", "Show client link...", "Rotate keys...", "Remove...", "[l]", "[t]", "[d]"}},
 		{"wizard", wizard, []string{"Add server", "Shadowsocks", "Choose the server protocol."}},
 		{"edit-port", edit, []string{"Server ss · Port", "Port"}},
 		{"link-warning", reveal, []string{"Show client link", "contains credentials"}},

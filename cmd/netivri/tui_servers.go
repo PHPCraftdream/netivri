@@ -108,6 +108,9 @@ func (s *serversScreen) syncWorkspace() {
 		s.workspace.Card.Lines = serverCardLines(s, v)
 	} else {
 		info := []string{"Select a server to see details."}
+		if len(s.rows) == 0 {
+			info = []string{"No servers configured. Add a server to start."}
+		}
 		if s.errText != "" {
 			info = []string{s.errText}
 		}
