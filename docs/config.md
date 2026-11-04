@@ -259,6 +259,9 @@ subscriptions: [
     {
         name: main
         url:: https://provider.example/sub/SECRET
+        ## Optional: every node of this provider is reached through / leaves through these.
+        ## pre_socks5:: http://proxy.example:8080
+        ## post_socks5:: none
     }
 ]
 

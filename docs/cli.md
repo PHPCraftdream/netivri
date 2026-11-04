@@ -1002,7 +1002,7 @@ directories](#separate-state-directories)), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
 record has `{"login", "provider", "exit_country", "exit", "allowed_clients", "chain"}`,
 sorted by login; `chain` is `{"pre_socks5", "pre_socks5_source",
-"pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}`,
+"pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}` (a `_source` is `account`, `provider`, `global`, `none` or `direct`; `varies` as a value means the providers of the account resolve differently),
 the proxies of the running core (`socks5://`, `http://` or `https://`),
 redacted to `scheme://host:port` or `none`, `source` being `account`, `global` or `none` and `auth` whether the URL
 had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
@@ -1305,7 +1305,8 @@ without an inferable country are counted under `"unknown"`.
 ```
 
 The URL and the via proxy are never printed: only the host of the
-subscription URL and a `via_set` boolean. `nodes` / `fetched_at` are
+subscription URL and a `via_set` boolean. When a provider sets its own proxy hops, `pre_socks5` and / or `post_socks5`
+are added to its entry (the URL without credentials and path, or `none`); an entry without them inherits the global hops. `nodes` / `fetched_at` are
 `null` when no snapshot is stored for the subscription. `quota` carries
 what the provider reports in its `subscription-userinfo` header: `used`
 (upload plus download bytes), `total` (bytes, `null` when the provider

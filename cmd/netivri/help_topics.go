@@ -315,7 +315,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub",
 		Summary: "Manage provider subscriptions",
-		Usage:   []string{"netivri sub {add|list|update|rm|countries} [arguments]", "netivri sub -i"},
+		Usage:   []string{"netivri sub {add|list|update|rm|countries|set-socks5} [arguments]", "netivri sub -i"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
 			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
@@ -1238,7 +1238,8 @@ var helpTopics = []helpTopic{
 			"logs: entries[] (time - RFC3339 UTC -, level, message), oldest first. With --follow the output " +
 				"is a stream: log lines, or with --json one object per line (time, level, message).",
 			"sub list: subscriptions[] (name, host - of the URL; the URL itself is never printed -, via_set " +
-				"(a via proxy is set), nodes (a count, null until the first fetch), fetched_at (RFC3339 UTC, " +
+				"(a via proxy is set), pre_socks5 and post_socks5 (the provider's hops without credentials, present only " +
+				"when set: a host:port URL or none), nodes (a count, null until the first fetch), fetched_at (RFC3339 UTC, " +
 				"null until the first fetch), quota). quota is null when the provider sent no " +
 				"subscription-userinfo header; otherwise used (upload + download, bytes), total (bytes, null " +
 				"when the provider gives none) and expire (RFC3339 UTC, null when the provider gives none).",
