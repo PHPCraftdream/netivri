@@ -116,14 +116,14 @@ func TestAccountsCloneRealKeysEndToEnd(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	alice, _ := c.Account("alice")
 	bob, _ := c.Account("alice-2")
 	if bob.Password != config.InitPlaceholder {
 		t.Fatalf("clone stored a password or hash instead of the placeholder")
 	}
-	if bob.Provider != "p1" || bob.ExitCountry != "DE" || bob.Exit != "route" || bob.PreSOCKS5 != cloneHopURL || bob.PostSOCKS5 != "http://u:fake-post@post.example:8080" || bob.AllowedClients != config.AllowedClientsAny {
+	if bob.Provider != "p1" || bob.ExitCountry != "DE" || bob.Exit != "route" || bob.PreSOCKS5 != cloneHopURL || bob.PostSOCKS5 != "http://u:fake-post@post.example:8080" || bob.AllowedClients != alice.AllowedClients {
 		t.Fatalf("clone did not copy provider/countries/exit/clients/hops: %+v", bob)
 	}
-	alice, _ := c.Account("alice")
 	if !strings.Contains(alice.Password, "$argon2id$") || alice.PreSOCKS5 != cloneHopURL {
 		t.Fatal("the source account changed")
 	}
