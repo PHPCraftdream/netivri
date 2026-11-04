@@ -111,6 +111,11 @@ func (w *Workspace) Update(msg tea.Msg) bool {
 		w.SetSize(w.Width, w.Height)
 	}
 	if k, ok := msg.(tea.KeyPressMsg); ok {
+		if w.List != nil && w.List.Filtering && (k.String() == "esc" || k.String() == "enter") {
+			// While the filter is active, esc clears the filter and enter
+			// keeps it; neither may drill back or drill in.
+			return w.List.Update(msg)
+		}
 		switch k.String() {
 		case "tab":
 			if w.Width < 100 {

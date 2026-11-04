@@ -39,7 +39,6 @@ type providersScreen struct {
 	mode, busy, message, hint, selected string
 	width, height                       int
 	countries                           ProviderCountriesResult
-	countryOffset                       int
 	refreshLines                        []string
 	refreshOffset                       int
 	dialog                              tui.Modal
@@ -71,9 +70,9 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	}
 	l := tui.NewList([]tui.ListColumn{{Title: "Name", Width: 18, Flex: 1}, {Title: "Nodes", Width: 8}, {Title: "State", Width: 12}}, nil)
 	l.Title = "Providers"
-	l.EmptyText = "No providers yet. Add one to get started."
+	l.EmptyText = "A provider is a subscription of proxy nodes. Add one to start."
 	l.AddLabel = "+ Add provider"
-	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardReadOnly, Secret: true}, {ID: "via", Label: "Via", Kind: tui.CardReadOnly, Secret: true}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Edit name", Value: "renaming cannot safely update account references and stored snapshots", Kind: tui.CardAction, Disabled: true}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
+	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
 	ws := tui.NewWorkspace(l, c)
 	theme := e.Theme
 	if theme.Accent == nil {
@@ -83,7 +82,7 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}}
 }
 func (s *providersScreen) Title() string        { return "Providers" }
-func (s *providersScreen) CapturingInput() bool { return s.dialog != nil }
+func (s *providersScreen) CapturingInput() bool { return s.dialog != nil || s.list.Filtering }
 func (s *providersScreen) Breadcrumb() string {
 	if s.width < 100 && s.workspace.Drilled {
 		return "Providers / " + s.selected
@@ -124,10 +123,7 @@ func (s *providersScreen) KeyHints() string {
 		}
 		return "Dialog: confirm or cancel"
 	}
-	if s.mode == "countries" {
-		return "↑/↓ scroll  Esc back  r reload"
-	}
-	return "↑/↓ select  Enter details  a add  r refresh  R refresh all  c countries  d remove"
+	return "↑/↓ select  Enter details  a add  r refresh  R refresh all  c countries  d remove  / filter"
 }
 func (s *providersScreen) bg(label string, w func() tea.Msg) tea.Cmd {
 	if s.env.Background != nil {
@@ -224,77 +220,59 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 		}
 		return s, nil
 	}
-	if x, ok := m.(tui.PromptResultMsg); ok && s.mode == "edit-prompt" {
-		if x.Canceled {
-			s.dialog = nil
-			s.prompt = nil
-			s.mode = ""
-			return s, nil
+	if x, ok := m.(tui.PromptResultMsg); ok {
+		switch s.mode {
+		case "edit-prompt":
+			return s.applyEditPrompt(x)
+		case "rename-prompt":
+			return s.applyRenamePrompt(x)
+		case "countries-prompt":
+			return s.applyCountriesPrompt(x)
 		}
-		value := x.Value
-		if s.editField == "url" && strings.TrimSpace(value) == "" {
-			s.prompt.SetError(errors.New("Subscription URL cannot be blank"))
-			return s, nil
-		}
-		field := s.editField
-		s.busy = "Saving provider"
-		s.prompt.SetSaving(true)
-		return s, s.bg(s.busy, func() tea.Msg {
-			var o ProviderUpdateOptions
-			if field == "url" {
-				o.URL = &value
-			} else {
-				o.Via = &value
-			}
-			return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)}
-		})
 	}
 	if s.dialog != nil {
 		_, c := s.dialog.Update(m)
 		return s, c
 	}
-	if s.mode == "countries" {
-		return s.updateCountries(m)
-	}
 	if len(s.refreshLines) > 0 && s.mode == "results" {
 		return s.updateResults(m)
 	}
 	if k, ok := m.(tea.KeyPressMsg); ok {
-		switch k.String() {
-		case "a":
-			s.startWizard()
-			return s, nil
-		case "r":
-			if row, ok := s.list.SelectedRow(); ok {
-				return s, s.refresh(row.Data.(string), false)
-			}
-			return s, s.load()
-		case "R":
-			return s, s.refresh("", true)
-		case "d":
-			if row, ok := s.list.SelectedRow(); ok {
-				return s, s.preflight(row.Data.(string))
-			}
-			return s, nil
-		case "c":
-			if row, ok := s.list.SelectedRow(); ok {
-				s.selected = row.Data.(string)
-				s.mode = "countries"
-				s.countryOffset = 0
-				return s, s.countriesCmd()
-			}
-		case "esc":
-			if s.workspace.Drilled {
-				s.workspace.Update(m)
+		if !s.list.Filtering {
+			switch k.String() {
+			case "a":
+				s.startWizard()
 				return s, nil
-			}
-		case "enter":
-			if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+			case "r":
 				if row, ok := s.list.SelectedRow(); ok {
-					s.selected = row.Data.(string)
-					s.updateCard()
+					return s, s.refresh(row.Data.(string), false)
+				}
+				return s, s.load()
+			case "R":
+				return s, s.refresh("", true)
+			case "d":
+				if row, ok := s.list.SelectedRow(); ok {
+					return s, s.preflight(row.Data.(string))
 				}
 				return s, nil
+			case "c":
+				if row, ok := s.list.SelectedRow(); ok {
+					s.selected = row.Data.(string)
+					return s, s.countriesCmd()
+				}
+			case "esc":
+				if s.workspace.Drilled {
+					s.workspace.Update(m)
+					return s, nil
+				}
+			case "enter":
+				if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+					if row, ok := s.list.SelectedRow(); ok {
+						s.selected = row.Data.(string)
+						s.updateCard()
+					}
+					return s, nil
+				}
 			}
 		}
 	}
@@ -342,6 +320,28 @@ func (s *providersScreen) startEditPrompt(field string) {
 	s.dialog = s.prompt
 	s.mode = "edit-prompt"
 }
+func (s *providersScreen) startRenamePrompt() {
+	s.editField = "name"
+	s.prompt = tui.NewPrompt(tui.TextPrompt, "Rename provider — new name", "Name", "Accounts and stored nodes follow the rename", s.selected)
+	s.prompt.SetTheme(s.workspace.Theme)
+	s.dialog = s.prompt
+	s.mode = "rename-prompt"
+}
+func (s *providersScreen) startCountriesDialog(res ProviderCountriesResult) {
+	opts := make([]tui.PromptOption, 0, len(res.Countries))
+	for _, c := range res.Countries {
+		opts = append(opts, tui.PromptOption{Label: fmt.Sprintf("%s — %d nodes", c.Code, ptrInt(&c.Nodes)), Value: c.Code})
+	}
+	p := tui.NewPrompt(tui.MultiChoicePrompt, "Provider "+s.selected+": countries", "", "Space toggles · Enter applies · Esc cancels", "")
+	p.Options = opts
+	for _, c := range s.providers[s.selected].Countries {
+		p.Selected = append(p.Selected, c.Code)
+	}
+	p.SetTheme(s.workspace.Theme)
+	s.prompt = p
+	s.dialog = p
+	s.mode = "countries-prompt"
+}
 func (s *providersScreen) startPrompt() {
 	s.confirm = &tui.Confirm{Prompt: fmt.Sprintf("Remove %s? Accounts using this provider: %s", s.confirmName, strings.Join(s.confirmDeps, ", "))}
 	s.confirm.SetTheme(s.workspace.Theme)
@@ -379,6 +379,75 @@ func (s *providersScreen) refresh(n string, all bool) tea.Cmd {
 		return providerResultMsg{"refresh", r, e}
 	})
 }
+func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
+	value := x.Value
+	if s.editField == "url" && strings.TrimSpace(value) == "" {
+		s.prompt.SetError(errors.New("Subscription URL cannot be blank"))
+		return s, nil
+	}
+	field := s.editField
+	s.busy = "Saving provider"
+	s.prompt.SetSaving(true)
+	return s, s.bg(s.busy, func() tea.Msg {
+		var o ProviderUpdateOptions
+		if field == "url" {
+			o.URL = &value
+		} else {
+			o.Via = &value
+		}
+		return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)}
+	})
+}
+func (s *providersScreen) applyRenamePrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
+	newName := strings.TrimSpace(x.Value)
+	if newName == "" || newName == s.selected {
+		s.prompt.SetError(errors.New("Enter a different name"))
+		return s, nil
+	}
+	old := s.selected
+	s.busy = "Renaming provider"
+	s.prompt.SetSaving(true)
+	return s, s.bg(s.busy, func() tea.Msg {
+		return providerResultMsg{"rename", [2]string{old, newName}, ProviderRename(s.home, old, newName)}
+	})
+}
+func (s *providersScreen) applyCountriesPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
+	if len(x.Selected) == 0 {
+		s.message = "Countries cleared: all nodes qualify"
+		s.card.Lines[4].Value = "All countries"
+	} else {
+		s.message = "Countries applied: " + strings.Join(x.Selected, ", ")
+		s.card.Lines[4].Value = strings.Join(x.Selected, ", ")
+	}
+	// Country codes only: no credentials can appear in this message, and
+	// scrubbing would mangle them (the picker value is a country list).
+	var cmd tea.Cmd
+	if s.env.Toast != nil {
+		cmd = s.env.Toast(s.message)
+	}
+	s.dialog = nil
+	s.prompt = nil
+	s.mode = ""
+	return s, cmd
+}
 func (s *providersScreen) countriesCmd() tea.Cmd {
 	n := s.selected
 	s.busy = "Loading countries"
@@ -404,12 +473,7 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		} else {
 			s.setProviders(r.value.(ProviderListResult))
 			if s.pendingSelect != "" {
-				for i, x := range s.list.Rows {
-					if x.Data == s.pendingSelect {
-						s.list.Selected = i
-						break
-					}
-				}
+				s.list.SelectData(s.pendingSelect)
 				s.selected = s.pendingSelect
 				s.pendingSelect = ""
 			}
@@ -457,6 +521,25 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		s.prompt = nil
 		s.mode = ""
 		s.pendingSelect = s.selected
+		return s, s.load()
+	case "rename":
+		oldNew, _ := r.value.([2]string)
+		if r.err != nil {
+			s.setError(r.err)
+			s.toast(s.message)
+			if s.prompt != nil {
+				s.prompt.SetSaving(false)
+				s.prompt.SetError(errors.New(s.message + hintText(s.hint)))
+			}
+			return s, nil
+		}
+		s.message = "Provider renamed"
+		s.toast(s.message)
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		s.selected = oldNew[1]
+		s.pendingSelect = oldNew[1]
 		return s, s.load()
 	case "preflight":
 		if r.err != nil {
@@ -515,9 +598,9 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 			s.toast(s.message)
 		} else {
 			s.countries = r.value.(ProviderCountriesResult)
-			s.countryOffset = 0
 			s.message = ""
 			s.hint = ""
+			s.startCountriesDialog(s.countries)
 		}
 	}
 	return s, nil
@@ -526,32 +609,6 @@ func (s *providersScreen) toast(text string) {
 	if text != "" {
 		s.pendingToast = s.scrub(text)
 	}
-}
-func (s *providersScreen) updateCountries(m tea.Msg) (tui.Screen, tea.Cmd) {
-	if k, ok := m.(tea.KeyPressMsg); ok {
-		visible := max(1, s.height-4)
-		maxoff := max(0, len(s.countries.Countries)-visible)
-		switch k.String() {
-		case "esc":
-			s.mode = ""
-			s.countryOffset = 0
-		case "r":
-			return s, s.countriesCmd()
-		case "down", "j":
-			s.countryOffset = min(maxoff, s.countryOffset+1)
-		case "up", "k":
-			s.countryOffset = max(0, s.countryOffset-1)
-		case "pgdown":
-			s.countryOffset = min(maxoff, s.countryOffset+visible)
-		case "pgup":
-			s.countryOffset = max(0, s.countryOffset-visible)
-		case "home":
-			s.countryOffset = 0
-		case "end":
-			s.countryOffset = maxoff
-		}
-	}
-	return s, nil
 }
 func (s *providersScreen) updateResults(m tea.Msg) (tui.Screen, tea.Cmd) {
 	if k, ok := m.(tea.KeyPressMsg); ok {
@@ -589,8 +646,14 @@ func (s *providersScreen) setProviders(v ProviderListResult) {
 		rows = append(rows, tui.Row{Cells: []string{p.Name, nodes, p.State}, Data: p.Name})
 	}
 	s.list.SetRows(rows)
-	if len(rows) > 0 && s.list.Selected >= len(rows) {
-		s.list.Selected = len(rows) - 1
+	if s.list.Filter == "" {
+		// no filter active: behave exactly like before (clamp, then reselect)
+		if len(rows) > 0 && s.list.Selected >= len(rows) {
+			s.list.Selected = len(rows) - 1
+		}
+		if s.selected != "" {
+			s.list.SelectData(s.selected)
+		}
 	}
 }
 func (s *providersScreen) updateCard() {
@@ -621,7 +684,7 @@ func (s *providersScreen) updateCard() {
 	s.card.Title = p.Name
 	s.card.Info = []string{"State: " + p.State}
 	s.card.Lines[0].Value = p.Name
-	s.card.Lines[1].Value = map[bool]string{true: "Set", false: "Not set"}[p.Host != ""]
+	s.card.Lines[1].Value = map[bool]string{true: "•••••• (set)", false: "Not set"}[p.Host != ""]
 	s.card.Lines[2].Value = map[bool]string{true: "Configured", false: "Not set"}[p.ViaSet]
 	s.card.Lines[3].Value = nodes
 	s.card.Lines[4].Value = strings.Join(countries, ", ")
@@ -633,14 +696,18 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 		s.startEditPrompt("url")
 	case "edit-via":
 		s.startEditPrompt("via")
+	case "subscription":
+		s.startEditPrompt("url")
+	case "via":
+		s.startEditPrompt("via")
 	case "refresh":
 		return s, s.refresh(s.selected, false)
 	case "refresh-all":
 		return s, s.refresh("", true)
 	case "countries":
-		s.mode = "countries"
-		s.countryOffset = 0
 		return s, s.countriesCmd()
+	case "edit-name":
+		s.startRenamePrompt()
 	case "remove":
 		return s, s.preflight(s.selected)
 	}
@@ -689,32 +756,10 @@ func (s *providersScreen) View(w, h int) string {
 	if s.dialog != nil {
 		return s.dialog.View(w, h)
 	}
-	if s.mode == "countries" {
-		return s.viewCountries(w, h)
-	}
 	if s.mode == "results" {
 		return s.viewResults(w, h)
 	}
 	return s.workspace.View(w, h)
-}
-func (s *providersScreen) viewCountries(w, h int) string {
-	lines := []string{"Countries: " + s.selected}
-	if s.countries.Nodes == nil {
-		lines = append(lines, "No stored snapshot")
-	} else {
-		lines = append(lines, fmt.Sprintf("%d nodes  Unknown: %d", *s.countries.Nodes, ptrInt(s.countries.Unknown)))
-		vis := max(0, h-4)
-		start := min(s.countryOffset, max(0, len(s.countries.Countries)-vis))
-		end := min(len(s.countries.Countries), start+vis)
-		for _, c := range s.countries.Countries[start:end] {
-			lines = append(lines, fmt.Sprintf("%s: %d", c.Code, c.Nodes))
-		}
-		if len(s.countries.Countries) > vis && vis > 0 {
-			lines = append(lines, fmt.Sprintf("%d-%d of %d", start+1, end, len(s.countries.Countries)))
-		}
-	}
-	lines = append(lines, "Esc back  r reload")
-	return boundedProvider(lines, w, h)
 }
 func (s *providersScreen) viewResults(w, h int) string {
 	visible := max(1, h-1)

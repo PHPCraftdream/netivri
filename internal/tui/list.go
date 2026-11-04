@@ -22,6 +22,8 @@ type List struct {
 	Title, EmptyText, AddLabel       string
 	Selected                         int
 	Focused                          bool
+	Filter                           string
+	Filtering                        bool
 	width, height, offset, lastClick int
 }
 
@@ -38,12 +40,129 @@ func (l *List) SetRows(rows []Row) {
 	l.ensureVisible()
 }
 func (l *List) SelectedRow() (Row, bool) {
-	if l.Selected < 0 || l.Selected >= len(l.Rows) {
+	vr := l.visibleRows()
+	if l.Selected < 0 || l.Selected >= len(vr) {
 		return Row{}, false
 	}
-	return l.Rows[l.Selected], true
+	return l.Rows[vr[l.Selected]], true
 }
-func (l *List) IsAdd() bool      { return l.AddLabel != "" && l.Selected == len(l.Rows) }
+func (l *List) IsAdd() bool { return l.AddLabel != "" && l.Selected == l.count()-1 }
+
+// SelectKeyFunc selects the first row for which match returns true. Selected is
+// set to the row's position within the filtered view; if the row is currently
+// filtered out, the filter is cleared first so the row becomes visible. It
+// returns false (leaving the list unchanged) when no row matches.
+func (l *List) SelectKeyFunc(match func(Row) bool) bool {
+	idx := -1
+	for i, r := range l.Rows {
+		if match(r) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	for pos, vi := range l.visibleRows() {
+		if vi == idx {
+			l.Selected = pos
+			l.ensureVisible()
+			return true
+		}
+	}
+	l.Filter = ""
+	l.Filtering = false
+	l.Selected = idx
+	l.ensureVisible()
+	return true
+}
+
+// SelectData selects the first row whose Data equals key (== comparison, so the
+// dynamic type must be comparable). See SelectKeyFunc.
+func (l *List) SelectData(key any) bool {
+	return l.SelectKeyFunc(func(r Row) bool { return r.Data == key })
+}
+
+// StartFilter enters filter-edit mode: typed keys update the one-line filter.
+func (l *List) StartFilter() {
+	l.Filtering = true
+	l.refilter()
+}
+
+// EndFilter leaves filter-edit mode; when apply is false the filter text is cleared.
+func (l *List) EndFilter(apply bool) {
+	l.Filtering = false
+	if !apply {
+		l.Filter = ""
+	}
+	l.Selected = max(0, min(max(0, l.count()-1), l.Selected))
+	l.ensureVisible()
+}
+
+// visibleRows returns the indices of Rows matching the filter (case-insensitive
+// substring over any visible cell), in order. Without a filter it is all rows.
+func (l *List) visibleRows() []int {
+	if l.Filter == "" {
+		vr := make([]int, len(l.Rows))
+		for i := range vr {
+			vr[i] = i
+		}
+		return vr
+	}
+	q := strings.ToLower(l.Filter)
+	vr := []int{}
+	for i, r := range l.Rows {
+		for _, c := range r.Cells {
+			if strings.Contains(strings.ToLower(singleLine(c)), q) {
+				vr = append(vr, i)
+				break
+			}
+		}
+	}
+	return vr
+}
+func (l *List) refilter() {
+	l.Selected = 0
+	l.ensureVisible()
+}
+
+// updateFilter handles keys while the filter line is focused. It returns true
+// when the key was consumed by the filter (editing, esc or enter); false
+// lets navigation keys fall through to the normal movement handling.
+func (l *List) updateFilter(m tea.KeyPressMsg) bool {
+	switch {
+	case m.Code == tea.KeyEscape:
+		l.EndFilter(false)
+		return true
+	case m.Code == tea.KeyEnter:
+		l.EndFilter(true)
+		return true
+	case m.Code == tea.KeyBackspace || m.Code == tea.KeyDelete:
+		r := []rune(l.Filter)
+		if len(r) > 0 {
+			l.Filter = string(r[:len(r)-1])
+			l.refilter()
+		}
+		return true
+	case isFilterText(m):
+		l.Filter += m.Text
+		l.refilter()
+		return true
+	}
+	return false
+}
+
+func isFilterText(m tea.KeyPressMsg) bool {
+	if m.Text == "" {
+		return false
+	}
+	for _, r := range m.Text {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
 func (l *List) SetSize(w, h int) { l.width = max(0, w); l.height = max(0, h); l.ensureVisible() }
 func (l *List) Bindings() []key.Binding {
 	b := []key.Binding{key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "move")), key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "move")), key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page")), key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page")), key.NewBinding(key.WithKeys("home"), key.WithHelp("home", "first")), key.NewBinding(key.WithKeys("end"), key.WithHelp("end", "last"))}
@@ -54,7 +173,7 @@ func (l *List) Bindings() []key.Binding {
 	return b
 }
 func (l *List) count() int {
-	n := len(l.Rows)
+	n := len(l.visibleRows())
 	if l.AddLabel != "" {
 		n++
 	}
@@ -71,12 +190,16 @@ func (l *List) geometry() (int, int, int) {
 		header = 1
 	}
 	empty := 0
-	if len(l.Rows) == 0 {
+	if len(l.Rows) == 0 && !l.Filtering {
 		empty = 1
 	}
 	status := 1
-	visible := max(0, l.height-2-title-header-status-empty)
-	return inner, title + header + empty, visible
+	filterLine := 0
+	if l.Filtering {
+		filterLine = 1
+	}
+	visible := max(0, l.height-2-title-header-status-empty-filterLine)
+	return inner, title + header + empty + filterLine, visible
 }
 func (l *List) ensureVisible() {
 	_, _, v := l.geometry()
@@ -96,6 +219,14 @@ func (l *List) ensureVisible() {
 func (l *List) Update(msg tea.Msg) bool {
 	switch m := msg.(type) {
 	case tea.KeyPressMsg:
+		if l.Filtering {
+			if handled := l.updateFilter(m); handled {
+				return false
+			}
+		} else if l.Focused && (m.Text == "/" || m.Code == '/') {
+			l.StartFilter()
+			return false
+		}
 		b := l.Bindings()
 		switch {
 		case key.Matches(m, b[0]):
@@ -113,7 +244,7 @@ func (l *List) Update(msg tea.Msg) bool {
 		case key.Matches(m, b[5]):
 			l.Selected = l.count() - 1
 		case l.AddLabel != "" && len(b) > 7 && key.Matches(m, b[6]):
-			l.Selected = len(l.Rows)
+			l.Selected = l.count() - 1
 		case key.Matches(m, b[len(b)-1]):
 			return l.Selected >= 0 && l.Selected < l.count()
 		default:
@@ -198,10 +329,15 @@ func (l *List) View(w, h int) string {
 		put(y, "  "+l.renderCells(-1, widths))
 		y++
 	}
-	if len(l.Rows) == 0 {
+	if l.Filtering {
+		put(y, "/"+l.Filter+"█")
+		y++
+	}
+	if len(l.Rows) == 0 && !l.Filtering {
 		put(y, l.EmptyText)
 		y++
 	}
+	vr := l.visibleRows()
 	for n := 0; n < v && l.offset+n < l.count(); n++ {
 		i := l.offset + n
 		mark := " "
@@ -209,11 +345,11 @@ func (l *List) View(w, h int) string {
 			mark = t.FocusMark()
 		}
 		text := l.AddLabel
-		if i < len(l.Rows) {
-			text = l.renderCells(i, widths)
+		if i < len(vr) {
+			text = l.renderCells(vr[i], widths)
 		}
 		row := mark + " " + text
-		if i == l.Selected && l.Focused && i < len(l.Rows) {
+		if i == l.Selected && l.Focused && i < len(vr) {
 			row = t.SelectedRow.Render(row)
 		}
 		if scrolling {

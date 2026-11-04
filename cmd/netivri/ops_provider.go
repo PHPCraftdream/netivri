@@ -84,6 +84,83 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 	return nil
 }
 
+// ProviderRename renames a provider, rewriting every account's provider list
+// member and moving the stored snapshot so references keep resolving. Nothing
+// is written when validation fails. A leftover old snapshot file is harmless:
+// it is orphaned data, the config no longer references it.
+func ProviderRename(home, oldName, newName string) error {
+	if !validSubName(newName) {
+		return cli.Usage("sub rename: --name must match [A-Za-z0-9._-]{1,64}")
+	}
+	if oldName == newName {
+		return cli.Usage("sub rename: the new name must differ from the current name")
+	}
+	cfg, e := loadConfig(home)
+	if e != nil {
+		return e
+	}
+	idx := -1
+	for i := range cfg.Subscriptions {
+		if cfg.Subscriptions[i].Name == oldName {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
+	}
+	for _, s := range cfg.Subscriptions {
+		if s.Name == newName {
+			return &cli.Error{Code: codeSubExistsName, Message: "subscription name is already used", Exit: cli.ExitConflict}
+		}
+	}
+	// Move the snapshot before anything else is written: a failure here
+	// leaves the old config and the old snapshot untouched.
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	snap, err := store.Load(oldName)
+	hasSnap := false
+	switch {
+	case err == nil:
+		hasSnap = true
+		if err = store.Save(newName, *snap); err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "store subscription: " + err.Error(), Exit: cli.ExitInternal}
+		}
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		return snapshotError(oldName)
+	}
+	cleanupSnap := func() {
+		if hasSnap {
+			_ = store.Remove(newName)
+		}
+	}
+	cfg.Subscriptions[idx].Name = newName
+	for i := range cfg.Accounts {
+		p, ok := config.ParseProviderList(cfg.Accounts[i].Provider)
+		if !ok || !hasProvider(p, oldName) {
+			continue
+		}
+		for j := range p {
+			if p[j] == oldName {
+				p[j] = newName
+			}
+		}
+		cfg.Accounts[i].Provider = config.JoinList(p)
+	}
+	if e = cfg.Validate(); e != nil {
+		cleanupSnap()
+		return e
+	}
+	if e = config.Save(config.ConfigPath(home), cfg); e != nil {
+		cleanupSnap()
+		return &cli.Error{Code: "INTERNAL", Message: "save config: " + e.Error(), Exit: cli.ExitInternal}
+	}
+	if err = store.Remove(oldName); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return nil
+}
+
 type ProviderAddResult struct {
 	Name            string
 	Added, Existing bool

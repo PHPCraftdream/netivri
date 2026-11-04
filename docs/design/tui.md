@@ -1,23 +1,41 @@
 # Interactive terminal shell
 
-`internal/tui` provides a reusable Bubble Tea v2 shell. The CLI hosts implemented Providers, Accounts, and Servers screens, selecting the initial screen from `-i` entry routing. The frame owns tabs, header status, help, toast, modal state, and background activity. Screens are lazy-created, retained across tab changes, and initialized once. Background results return to their requesting screen. Header polls run serially every two seconds; stopped and unavailable states do not prevent navigation.
+**Superseded.** This file described the first version of `netivri -i`. It
+works but is hard to use; the reworked v2 shell is specified in
+[`tui-ux.md`](tui-ux.md), which is authoritative where the two disagree. What
+ships today is the v2 described there, in short:
 
-## Screen operations and asynchronous work
+- A fixed-region frame: one-line header (angel state, listen address, uptime,
+  version), a tab bar (Providers, Accounts, Servers), the body, and one-line
+  toast and hint slots that never wrap. From 100 columns the body is two panes
+  (list left, card of the selected item right); below that a single pane that
+  drills down with a breadcrumb; below 60x16 only an "enlarge the window" line.
+- A list component that always ends with a selectable `+ Add` line, shows a
+  named empty state with that line focused, and has an in-pane filter (`/`
+  opens it, typing narrows, Esc clears, Enter keeps it and selects the first
+  match). A card component with field lines (Enter opens a one-line prompt)
+  and action lines (Enter runs them, hotkeys printed on them).
+- Prompt dialogs for one field or one question (text, secret with `Ctrl+R`
+  reveal off by default, number, choice, multi-choice with Space toggles,
+  yes/no, confirm), hint above the input, error under it, Save/Cancel buttons.
+  Adding is a wizard walk of prompts with Back/Next and a review step.
+- Mouse support: clicking tabs, rows, field and action lines and buttons;
+  the wheel scrolls the focused pane.
+- Screens: Providers (add/refresh/rename/countries/remove), Accounts
+  (add/clone with a fresh placeholder password/clear hops/remove) and Servers
+  with full management (add wizard driven by the protocol parameter schema,
+  field editing, show client link with an explicit warned reveal, rotate keys,
+  remove). Secrets stay masked; the only reveal is that client link.
 
-Providers uses `ProviderList`, `ProviderAdd`, `ProviderRefresh`, `ProviderRemove`, and `ProviderCountries` application operations. The initial provider list is loaded synchronously; subsequent reloads, fetches, mutations, and other screen reads run as Bubble Tea background commands and results are routed to the requesting screen. Accounts uses `AccountList`, `AccountShow`, `AccountAdd`, `AccountUpdate`, `AccountClone`, and `AccountRemove`; account activity/rate status is polled in the background about once per second. Server inspection uses `ServerList` and `ServerShow` and is read-only. Persistence remains through existing application operations; a running angel observes saved edits automatically.
+The v1 notes below are kept only for history and no longer describe the code.
 
-## Frame and screen keys
+---
 
-`netivri -i` starts at Accounts; `sub`, `account`, and `server` start at Providers, Accounts, and Servers. Tabs are Providers, Accounts, Servers. Tab/Right and Shift-Tab/Left navigate; 1/2/3 select; `?` opens help (Esc or `?` closes); `q` and Ctrl-C quit. When a form/detail captures input, global navigation/help/quit keys do not apply; Ctrl-C always quits.
-
-All tables use Up/Down or j/k, PgUp/PgDn, Home/End. Providers: `r` reload, `a` add, `u` refresh selected, `U` refresh all, `d` remove, Enter countries. Countries reload with `r` and return with Esc; refresh-result views scroll and close with Esc. Add fields are Name, URL, Via. Accounts: Enter details, `a` add, `e` edit, `c` clone, `d` delete, `r` reload; detail returns with Esc or Backspace. Servers: Enter details, `r` reload; detail returns with Esc or `q`. Server details display parameter keys only; values, including secrets, are not rendered.
-
-Forms use Tab or Enter to advance; at the final field either submits. Shift-Tab goes back, and Esc cancels. Up/Down changes choice selection and Space toggles multi-choice selections. Confirmations use `y` for yes, `n` or Enter for no, Esc to cancel.
-
-## Forms and secrets
-
-Provider add fields are Name, URL, and Via. URL and Via are masked, and secret-containing errors are redacted. Account add fields cover login, providers, country, exit route, allowed clients, and pre/post hop URLs; edit covers providers, country, exit, allowed clients, and hop URLs. Empty edit hop fields mean unchanged; `none` clears a hop. Clone accepts a new login and optional overrides. Hop fields are masked and values are redacted from errors. Account screens show password state only; passwords are never displayed or set by the shell. The first proxy password used for an account establishes its password. Form values are short-lived and must never be logged.
-
-## Terminal and CI behavior
-
-The CLI requires terminal stdin/stdout and excludes JSON mode; otherwise it reports `NOT_A_TERMINAL` (exit 2) or `USAGE`. `--home {DIR}` and `--local` use regular state resolution. Bubble Tea, Bubbles, and Lipgloss are MIT-licensed. Unit tests exercise the frame/screens directly; `cmd/netivri/tui_e2e_test.go` verifies real-binary JSON exclusion, piped-terminal error, and unsupported status route using temporary homes and no ports. Tests/builds run only in CI (`docs/testing.md`).
+Historical v1 notes: `internal/tui` provided a Bubble Tea v2 shell whose CLI
+hosts implemented Providers, Accounts, and Servers screens, selecting the
+initial screen from `-i` entry routing. The frame owned tabs, header status,
+help, toast, modal state, and background activity; screens were lazy-created
+and retained across tab changes. Server inspection was read-only. Forms used
+Tab/Enter to advance, and confirmations used `y`/`n`. The CLI required
+terminal stdin/stdout and excluded JSON mode, otherwise reporting
+`NOT_A_TERMINAL` (exit 2) or `USAGE`; tests/builds run only in CI.

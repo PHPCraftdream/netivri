@@ -16,11 +16,11 @@ func TestProvidersCoverKeyHintsByState(t *testing.T) {
 	if got := s.KeyHints(); !strings.Contains(got, "refresh") {
 		t.Fatalf("default hints: %q", got)
 	}
-	s.mode = "countries"
-	if got := s.KeyHints(); !strings.Contains(got, "Esc") {
-		t.Fatalf("countries hints: %q", got)
+	s.startCountriesDialog(tuiProviderCountriesFixture())
+	if got := s.KeyHints(); !strings.Contains(got, "Dialog") {
+		t.Fatalf("countries dialog hints: %q", got)
 	}
-	s.mode = ""
+	s.dialog, s.prompt, s.mode = nil, nil, ""
 	s.startWizard()
 	if got := s.KeyHints(); !strings.Contains(got, "Dialog") {
 		t.Fatalf("dialog hints: %q", got)
@@ -244,50 +244,46 @@ func TestProvidersCoverPreflightResultOpensConfirm(t *testing.T) {
 	}
 }
 
-func TestProvidersCoverCountryPagingOffsets(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	codes := []string{"AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU"}
-	nodes := make([]subscription.Node, 0, len(codes))
-	for _, c := range codes {
-		nodes = append(nodes, subscription.Node{Country: c})
-	}
-	if err := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); err != nil {
-		t.Fatal(err)
-	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	s.selected, s.mode = "p", "countries"
-	s.height = 8 // visible 4, maxoff 9 with 13 countries
-	drainProvider(s, s.countriesCmd())
+func TestProvidersCoverCountriesDialogKeys(t *testing.T) {
+	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s.selected = "p"
+	s.startCountriesDialog(tuiProviderCountriesFixture())
 	key := func(m tea.KeyPressMsg) { _, _ = s.Update(m) }
 	key(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.countryOffset != 1 {
-		t.Fatalf("down offset %d", s.countryOffset)
+	selectedHas := func(v string) bool {
+		for _, x := range s.prompt.Selected {
+			if x == v {
+				return true
+			}
+		}
+		return false
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyDown})
-	key(tea.KeyPressMsg{Code: tea.KeyUp})
-	if s.countryOffset != 1 {
-		t.Fatalf("up offset %d", s.countryOffset)
+	key(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if !selectedHas("NL") {
+		t.Fatalf("space after Down did not toggle NL: %v", s.prompt.Selected)
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyPgDown})
-	if s.countryOffset != 5 {
-		t.Fatalf("pgdown offset %d", s.countryOffset)
+	key(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	for _, v := range s.prompt.Selected {
+		if v == "NL" {
+			t.Fatal("second space did not untoggle NL")
+		}
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyPgUp})
-	if s.countryOffset != 1 {
-		t.Fatalf("pgup offset %d", s.countryOffset)
+	// Esc returns a result command; the screen closes the dialog on its message.
+	_, escCmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if escCmd != nil {
+		if m := escCmd(); m != nil {
+			_, _ = s.Update(m)
+		}
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyEnd})
-	if s.countryOffset != 9 {
-		t.Fatalf("end offset %d", s.countryOffset)
+	if s.mode != "" || s.dialog != nil || s.prompt != nil {
+		t.Fatal("esc did not leave countries dialog")
 	}
-	key(tea.KeyPressMsg{Code: tea.KeyHome})
-	if s.countryOffset != 0 {
-		t.Fatalf("home offset %d", s.countryOffset)
-	}
-	key(tea.KeyPressMsg{Code: tea.KeyEscape})
-	if s.mode != "" || s.countryOffset != 0 {
-		t.Fatal("esc did not leave countries view")
-	}
+}
+
+func tuiProviderCountriesFixture() ProviderCountriesResult {
+	n := 2
+	u := 1
+	return ProviderCountriesResult{Name: "p", Nodes: &n, Countries: []subscription.CountryCount{{Code: "DE", Nodes: 2}, {Code: "NL", Nodes: 1}}, Unknown: &u}
 }
 
 func TestProvidersCoverResultsPagingKeys(t *testing.T) {
@@ -347,8 +343,8 @@ func TestProvidersCoverActivateCardBranches(t *testing.T) {
 	}
 	s.mode = ""
 	s.card.Selected = lineIdx("countries")
-	if _, c := s.activateCard(); c == nil || s.mode != "countries" {
-		t.Fatal("countries branch did not set mode and return cmd")
+	if _, c := s.activateCard(); c == nil {
+		t.Fatal("countries branch returned no cmd")
 	}
 	s.mode = ""
 	s.card.Selected = lineIdx("remove")
@@ -370,21 +366,17 @@ func TestProvidersCoverViewHeightsDialogAndScrub(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
 	s.selected = "p"
-	s.mode = "countries"
-	nodes := make([]subscription.Node, 0, 3)
-	for _, c := range []string{"DE", "DE", "NL"} {
-		nodes = append(nodes, subscription.Node{Country: c})
-	}
-	if err := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); err != nil {
-		t.Fatal(err)
-	}
-	drainProvider(s, s.countriesCmd())
+	s.providers = map[string]ProviderInfo{"p": {Name: "p"}}
+	s.startCountriesDialog(tuiProviderCountriesFixture())
 	for _, hgt := range []int{6, 12, 20} {
 		v := s.View(80, hgt)
 		if strings.Count(v, "\n")+1 != hgt {
-			t.Fatalf("countries view height %d != %d", strings.Count(v, "\n")+1, hgt)
+			t.Fatalf("countries dialog view height %d != %d", strings.Count(v, "\n")+1, hgt)
 		}
 	}
+	s.dialog = nil
+	s.prompt = nil
+	s.mode = ""
 	s.mode = "results"
 	s.refreshLines = []string{"one: refreshed (1 nodes)", "two: refreshed (2 nodes)"}
 	for _, hgt := range []int{3, 9} {

@@ -10,6 +10,21 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Interactive shell v2.** The screen of `netivri -i` is rebuilt: a fixed
+  frame with a header, a tab bar and one-line toast/hint slots, list and card
+  panes side by side from 100 columns (a drill-down single pane below that),
+  wizards with review steps, buttons, mouse support and an in-pane list filter
+  (`/`). See [`docs/cli.md`](docs/cli.md#interactive-shell).
+- **Servers screen with full management.** Servers are no longer read-only in
+  the shell: an add wizard driven by the protocol's parameter schema (with a
+  review step), field editing, `Show client link` (the one explicit, warned
+  reveal of a secret), rotate keys and remove.
+- **Provider rename in the shell.** Renaming a provider updates the accounts
+  that use it; the stored snapshot is moved first and the config is saved
+  after, so a failure leaves the old state.
+- **Account clone in the shell.** `Clone...` on the Accounts screen copies
+  provider, countries, exit and clients and gives the copy a fresh placeholder
+  password.
 - **Interactive terminal shell: `netivri -i`.** The flag `-i` / `--interactive`
   (alone, or with `sub`, `account` or `server`) opens a full-screen shell with a
   status header (angel running or stopped, listen address, uptime) and three
@@ -17,8 +32,8 @@ versions; every such change is listed here.
   refresh one or all, remove (the confirmation names the accounts that use
   it), countries with node counts. Accounts: list with live rates, route
   tiers, add, edit (only the changed fields are sent; socks5 hops are masked),
-  clone, remove; a password is never shown or set there. Servers: read-only
-  list and details without secrets. It works with the angel stopped, the
+  clone, remove; a password is never shown or set there. Servers: full
+  management as above. It works with the angel stopped, the
   running angel picks the edits up on its own, and without a terminal (or with
   `--json`) the mode fails with `NOT_A_TERMINAL` (new, exit 2) or a usage
   error. New dependency: Bubble Tea v2 (MIT). See `netivri help interactive`
@@ -47,6 +62,8 @@ versions; every such change is listed here.
 - **Explicit direct exits per account.** `accounts[].exit` opts an account into direct egress, optionally via the effective post proxy. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Server-only changes that a direct-only core cannot apply in place now restart too. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Direct requires empty provider/country; inherited pre-proxy is ignored but an explicitly configured account pre-proxy is rejected. This is never a fallback and exposes this machine's address to destinations. See [`docs/design/exit-direct.md`](docs/design/exit-direct.md).
 
 ### Changed
+
+- The interactive screens use the new frame and layout of shell v2 (see Added).
 
 - Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.
 

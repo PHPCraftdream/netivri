@@ -65,7 +65,7 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 		add   string
 		seed  func(tui.Screen, bool)
 	}{
-		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return s.(*providersScreen).workspace.List }, "No providers yet. Add one to get started.", "", func(screen tui.Screen, populated bool) {
+		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return s.(*providersScreen).workspace.List }, "A provider is a subscription of proxy nodes. Add one to start.", "", func(screen tui.Screen, populated bool) {
 			s := screen.(*providersScreen)
 			if populated {
 				s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "alpha"}, {Name: "beta"}}})
@@ -77,7 +77,7 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 			s.list.Title = screen.Title()
 			s.card = s.workspace.Card
 		}},
-		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*accountsScreen).workspace.List }, "An account needs a Provider first. Switch to Providers to add one.", "", func(screen tui.Screen, populated bool) {
+		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*accountsScreen).workspace.List }, "An account needs a provider. Add one on the Providers tab, then add the account here.", "", func(screen tui.Screen, populated bool) {
 			s := screen.(*accountsScreen)
 			if populated {
 				s.rows = []accountInfo{{Login: "alpha"}, {Login: "beta"}}

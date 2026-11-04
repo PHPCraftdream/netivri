@@ -15,7 +15,7 @@ const goldenProviders80Empty = `Service stopped
 +------------------------------------------------------------------------------+
 |Providers                                                                     |
 |  Name                                                 Nodes     State        |
-|No providers yet. Add one to get started.                                     |
+|A provider is a subscription of proxy nodes. Add one to start.                |
 |> + Add provider                                                              |
 |                                                                              |
 |                                                                              |
@@ -65,13 +65,13 @@ const goldenProviders100Empty = `Service stopped
 +---------------------------------+ +--------------------------------------------------------------+
 |Providers                        | |Provider details                                              |
 |  Name            Node  State    | |Select a provider to view details                             |
-|No providers yet. Add one to get | |  Name                                                        |
-|> + Add provider                 | |  Subscription                                                |
-|                                 | |  Via                                                         |
+|A provider is a subscription of p| |  Name                                                        |
+|> + Add provider                 | |  Subscription  [edit]                                        |
+|                                 | |  Via  [edit]                                                 |
 |                                 | |  Nodes                                                       |
 |                                 | |  Countries                                                   |
 |                                 | |  Updated                                                     |
-|                                 | |  Edit name  renaming cannot safely update account references.|
+|                                 | |  Rename                                                      |
 |                                 | |  Edit subscription                                           |
 |                                 | |  Edit Via                                                    |
 |                                 | |  Refresh selected  [r]                                       |
@@ -97,12 +97,12 @@ const goldenProviders100Populated = `Service stopped
 |Providers                        | |alpha                                                         |
 |  Name            Node  State    | |State: ready                                                  |
 |> alpha           2     ready    | |  Name  alpha                                                 |
-|  beta            3     ready    | |  Subscription  ********                                      |
-|  + Add provider                 | |  Via  ********                                               |
+|  beta            3     ready    | |  Subscription  Not set  [edit]                               |
+|  + Add provider                 | |  Via  Not set  [edit]                                        |
 |                                 | |  Nodes  2                                                    |
 |                                 | |  Countries                                                   |
 |                                 | |  Updated  Never                                              |
-|                                 | |  Edit name  renaming cannot safely update account references.|
+|                                 | |  Rename                                                      |
 |                                 | |  Edit subscription                                           |
 |                                 | |  Edit Via                                                    |
 |                                 | |  Refresh selected  [r]                                       |
@@ -127,7 +127,7 @@ const goldenAccounts80Empty = `Service stopped
 +------------------------------------------------------------------------------+
 |Accounts                                                                      |
 |  LOGIN           PROVIDER        EXIT    CONN    UP/s    DOWN                |
-|An account needs a Provider first. Switch to Providers to add one.            |
+|An account needs a provider. Add one on the Providers tab, then add the accoun|
 |> + Add account [a]                                                           |
 |                                                                              |
 |                                                                              |
@@ -177,7 +177,7 @@ const goldenAccounts100Empty = `Service stopped
 +---------------------------------+ +--------------------------------------------------------------+
 |Accounts                         | |Account                                                       |
 |  LOGI  PROVID  EX  CO  UP/  DOW | |Select an account to see details.                             |
-|An account needs a Provider first| |                                                              |
+|An account needs a provider. Add | |                                                              |
 |> + Add account [a]              | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
@@ -212,9 +212,9 @@ const goldenAccounts100Populated = `Service stopped
 |  beta  provid  de  -   -    -   | |  Countries  any  [edit]                                      |
 |  + Add account [a]              | |  Exit  us  [edit]                                            |
 |                                 | |  Allowed clients  any  [edit]                                |
-|                                 | |  Pre-hop  ********  [edit]                                   |
+|                                 | |  Pre-hop  none  [edit]                                       |
 |                                 | |  Clear pre-hop  [P]                                          |
-|                                 | |  Post-hop  ********  [edit]                                  |
+|                                 | |  Post-hop  none  [edit]                                      |
 |                                 | |  Clear post-hop  [O]                                         |
 |                                 | |  Password  waiting for the first login                       |
 |                                 | |  Clone account  [c]                                          |
