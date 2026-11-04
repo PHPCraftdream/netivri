@@ -70,8 +70,11 @@ func TestProviderRenameEndToEndFollowsAccountsAndSnapshot(t *testing.T) {
 	if s.dialog != nil || s.prompt != nil || s.mode != "" {
 		t.Fatal("rename did not close the dialog")
 	}
-	if s.selected != "renamed" || s.pendingSelect != "renamed" {
-		t.Fatalf("selection did not follow rename: %q %q", s.selected, s.pendingSelect)
+	if s.selected != "renamed" {
+		t.Fatalf("selection did not follow rename: %q", s.selected)
+	}
+	if row, ok := s.list.SelectedRow(); !ok || row.Data != "renamed" {
+		t.Fatalf("list not reselected on renamed row: %v %v", ok, row)
 	}
 	if s.message != "Provider renamed" {
 		t.Fatalf("toast message: %q", s.message)
@@ -154,13 +157,18 @@ func TestProviderRenameScreenValidationFailureWritesNothing(t *testing.T) {
 	if _, err = subscription.NewStore(h + "/subscriptions").Load("old"); err != nil {
 		t.Fatalf("old snapshot disturbed: %v", err)
 	}
-	// Esc asks to discard the typed answer; Discard (focus right, Enter) closes.
+	// Esc asks to discard the typed answer; focus Discard, Enter returns the
+	// PromptResultMsg command, and the screen closes only once it is delivered.
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	if s.prompt == nil || len(s.prompt.Buttons.Labels) != 2 || s.prompt.Buttons.Labels[0] != "Continue" {
 		t.Fatal("esc on a changed rename prompt did not ask to discard")
 	}
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if c == nil {
+		t.Fatal("discard did not return a command")
+	}
+	_, _ = s.Update(c())
 	if s.dialog != nil || s.prompt != nil || s.mode != "" {
 		t.Fatal("discard did not close the failed rename prompt")
 	}

@@ -418,3 +418,50 @@ func TestProviderCountriesDialogIsStableAndExactHeight(t *testing.T) {
 		t.Fatalf("busy/message changed the countries dialog:\nbefore %q\nafter  %q", before, after)
 	}
 }
+
+// TestProviderFieldLineEnterOpensEditPrompt checks the spec: Enter on the
+// Subscription or Via card FIELD line opens its edit prompt directly, without
+// needing the separate edit action line.
+func TestProviderFieldLineEnterOpensEditPrompt(t *testing.T) {
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	drainProvider(s, s.Init())
+	s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	// Real keys: Tab moves focus to the card pane.
+	s.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if s.workspace.Focus() != tui.PaneCard {
+		t.Fatal("Tab did not focus the card pane")
+	}
+	find := func(id string) int {
+		for i, l := range s.card.Lines {
+			if l.ID == id {
+				return i
+			}
+		}
+		return -1
+	}
+	for _, z := range []struct{ id, label string }{{"subscription", "Subscription URL"}, {"via", "Via URL"}} {
+		idx := find(z.id)
+		if idx < 0 {
+			t.Fatalf("card has no %s line", z.id)
+		}
+		line := s.card.Lines[idx]
+		if line.Kind != tui.CardField {
+			t.Fatalf("%s line is not a CardField: %v", z.id, line)
+		}
+		for s.card.Selected < idx {
+			s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		s.mode = ""
+		s.dialog = nil
+		s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		if s.mode != "edit-prompt" || s.prompt == nil {
+			t.Fatalf("Enter on %s field line: mode=%q prompt=%v", z.id, s.mode, s.prompt)
+		}
+		if s.prompt.Label != z.label {
+			t.Fatalf("Enter on %s opened prompt %q, want %q", z.id, s.prompt.Label, z.label)
+		}
+		s.dialog = nil
+		s.prompt = nil
+	}
+}

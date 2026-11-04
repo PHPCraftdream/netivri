@@ -32,11 +32,11 @@ Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list
 
 ### Providers
 
-The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated; Enter on a field line edits it. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot atomically; nothing is written when the name is not valid), Remove... (`d`; the confirmation names the dependent accounts).
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated; Enter on the Subscription or Via field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts).
 
 ### Accounts
 
-The list shows Login, Provider and Exit. `a` adds (wizard: login, provider, countries, exit, allowed clients, optional hops). The card shows Provider, Countries, Exit, Allowed clients, Pre-hop and Post-hop (shown only as set or none, never the value; Enter on them opens a prompt where empty clears) and the Password state (`set` or `waiting for the first login`). Actions: Clear pre-hop (`P`) and Clear post-hop (`O`, disabled when the account has no such hop), Clone... (`c`; the copy gets the provider, countries, exit and clients of the source and a fresh placeholder password — the first client that authenticates sets it; the password is never copied), Remove (`d`). Passwords are never displayed or set by the shell.
+The list shows Login, Provider and Exit. `a` adds (wizard: login, provider, countries, exit, allowed clients, optional hops). The card shows Provider, Countries, Exit, Allowed clients, Pre-hop and Post-hop (shown only as set or none, never the value; Enter on either opens a prompt where a new URL replaces the hop and an empty answer leaves it unchanged; clearing is the Clear pre-hop / Clear post-hop action) and the Password state (`set` or `waiting for the first login`). Actions: Clear pre-hop (`P`) and Clear post-hop (`O`, disabled when the account has no such hop), Clone... (`c`; the copy gets the provider, countries, exit and clients of the source and a fresh placeholder password — the first client that authenticates sets it; the password is never copied), Remove (`d`). Passwords are never displayed or set by the shell.
 
 ### Servers
 
@@ -599,20 +599,19 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
 - `clone {SOURCE} {ACCOUNT}` creates `{ACCOUNT}` with the provider, exit
-  country, `allowed_clients`, `pre_socks5` and `post_socks5` of `{SOURCE}` and,
-  by default, a fresh placeholder password: the first client that
-  authenticates with `{ACCOUNT}` sets it, and the password of `{SOURCE}` is
-  not copied. `--exit {route|direct}`
+  country, `allowed_clients`, `pre_socks5` and `post_socks5` of `{SOURCE}` and, by default, its password: the stored hash is copied,
+  so both logins accept the same password (a source that still has the `init`
+  placeholder gives a copy with the placeholder). `--exit {route|direct}`
   overrides the copied exit; otherwise it is inherited. `--password {PASSWORD}` gives
   the new account a password of its own (1 to 1024 bytes, hashed with argon2id
   like any other), and `--password init` leaves it to the first client that
-  connects as well. `--clients {RULES}` replaces the copied `allowed_clients` with the
+  connects. `--clients {RULES}` replaces the copied `allowed_clients` with the
   same rules as `add`. `--provider` and `--country` replace the copied route with the same
   rules as `add`; a replaced route is checked like `set-country` checks it, and
   with no stored node nothing is created (`NO_NODES_FOR_COUNTRY`). Unlike
   `add`, an existing `{ACCOUNT}` is always `ACCOUNT_EXISTS` (exit 6), and an
   unknown `{SOURCE}` is `ACCOUNT_NOT_FOUND` (exit 5). The result carries
-  `account` (as in `list`), `cloned_from` and `password` (`new` or
+  `account` (as in `list`), `cloned_from` and `password` (`copied`, `new` or
   `init`); the password and its hash are never printed. A password given with
   `--password` is visible in the shell history and the process list: prefer
   `--password init` when that matters. `{SOURCE}` is not changed.

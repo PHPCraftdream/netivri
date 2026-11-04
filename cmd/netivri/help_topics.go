@@ -124,13 +124,15 @@ var helpTopics = []helpTopic{
 				"Show client link reveal on the Servers screen.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
 				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
-				"Updated. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
+				"Updated. Enter on the Subscription or Via field line opens its prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
 				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
 				"written when the name is not valid), Remove... (d; the confirm names dependent accounts). " +
 				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, fetch with a " +
 				"cancel. Empty state: A provider is a subscription of proxy nodes. Add one to start.",
 			"Accounts: the list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
-				"Allowed clients, Pre-hop and Post-hop (set or none, never the value) and the Password state " +
+				"Allowed clients, Pre-hop and Post-hop (set or none, never the value; Enter on either opens a prompt " +
+				"where a new URL replaces the hop and an empty answer leaves it unchanged; clearing is the Clear " +
+				"pre-hop / Clear post-hop action) and the Password state " +
 				"(set or waiting for the first login). Actions: Clear pre-hop (P), Clear post-hop (O, disabled " +
 				"when there is no such hop), Clone... (c; the copy gets the route, clients and hops and a fresh " +
 				"placeholder password: the first client that authenticates sets it, the password is never copied), " +
@@ -545,17 +547,18 @@ var helpTopics = []helpTopic{
 			"netivri account clone {SOURCE} {ACCOUNT} [--password {PASSWORD}|init]",
 			"netivri account clone {SOURCE} {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
 		},
-		Description: "Creates {ACCOUNT} with the provider, exit country, exit mode and allowed_clients of {SOURCE}. By default the copy " +
-			"gets a fresh placeholder password: the first client that authenticates with {ACCOUNT} sets it, and " +
-			"the password of {SOURCE} is not copied. --password {PASSWORD} gives the new account a password of " +
-			"its own (1 to 1024 bytes, stored as an " +
+		Description: "Creates {ACCOUNT} with the provider, exit country, exit mode and allowed_clients of {SOURCE} and, unless " +
+			"--password says " +
+			"otherwise, with the same password: the stored hash is copied, so both logins accept the same password. " +
+			"If {SOURCE} still has the placeholder 'init', so does the copy.\n\n" +
+			"--password {PASSWORD} gives the new account a password of its own (1 to 1024 bytes, stored as an " +
 			"argon2id hash); --password init leaves it to the first client that connects. --provider and --country " +
 			"replace the copied route, each as in 'account add', and the new route must have stored nodes, otherwise " +
 			"nothing is created. {SOURCE} is never changed. A running angel picks the new account up within a few " +
 			"seconds.",
 		Flags: []helpFlag{
 			{"--exit {route|direct}", "Exit mode to copy over (default) or override; direct requires empty provider and country."},
-			{"--password {PASSWORD}", "A password for {ACCOUNT}. Default: a fresh placeholder, so the first client that authenticates sets it; the password of {SOURCE} is never copied."},
+			{"--password {PASSWORD}", "A new password for {ACCOUNT}. Default: copy the password of {SOURCE}."},
 			{"--password init", "Use the placeholder: the first password a client sends for {ACCOUNT} becomes its password."},
 			{"--provider {SUBSCRIPTION}[,...]", "Replace the copied provider (or list of providers, in priority order)."},
 			{"--country {COUNTRY}[,...]", "Replace the copied exit country (or list, in priority order; * stands for every country not named)."},
@@ -564,7 +567,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Clone alice but keep route mode", "netivri account clone alice bob --exit route"},
 			{"Clone an account with an explicit direct exit", "netivri account clone {SOURCE} {ACCOUNT} --exit direct"},
-			{"A second login with the same route; the first client sets the password", "netivri account clone alice bob"},
+			{"A second login with the same route and the same password", "netivri account clone alice bob"},
 			{"The same route, a password of its own", "netivri account clone alice bob --password choose-a-password"},
 			{"The same route, the first client sets the password", "netivri account clone alice bob --password init"},
 			{"The same login settings, another country", "netivri account clone alice carol --password init --country NL"},
@@ -582,7 +585,7 @@ var helpTopics = []helpTopic{
 		Notes: []string{
 			"A password given on the command line is visible in the shell history and to other local users in the " +
 				"process list. Use --password init to avoid typing it.",
-			"The password is never printed; 'password' in the result says new or init.",
+			"The password is never printed; 'password' in the result says copied, new or init.",
 		},
 		SeeAlso: []string{"account add", "account list", "account set-country"},
 	},

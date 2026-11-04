@@ -20,7 +20,8 @@ versions; every such change is listed here.
   review step), field editing, `Show client link` (the one explicit, warned
   reveal of a secret), rotate keys and remove.
 - **Provider rename in the shell.** Renaming a provider updates the accounts
-  that use it and moves the stored snapshot atomically.
+  that use it; the stored snapshot is moved first and the config is saved
+  after, so a failure leaves the old state.
 - **Account clone in the shell.** `Clone...` on the Accounts screen copies
   provider, countries, exit and clients and gives the copy a fresh placeholder
   password.
@@ -62,12 +63,6 @@ versions; every such change is listed here.
 
 ### Changed
 
-- **Breaking: `netivri account clone` gives the clone a fresh placeholder
-  password by default instead of copying the source's password.** The first
-  client that authenticates with the clone sets its password; the stored hash
-  of the source is no longer copied. `--password {PASSWORD}` and
-  `--password init` are unchanged. Scripts that relied on the clone accepting
-  the source's password must pass `--password`.
 - The interactive screens use the new frame and layout of shell v2 (see Added).
 
 - Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.

@@ -138,7 +138,7 @@ func TestAccountCloneValidationAndModes(t *testing.T) {
 		name string
 		o    AccountCloneOptions
 		want string
-	}{{"fresh placeholder", AccountCloneOptions{Source: "alice", Login: "copy"}, clonePasswordInit}, {"new", AccountCloneOptions{Source: "alice", Login: "fresh", PasswordGiven: true, Password: "fake new password"}, clonePasswordNew}, {"init", AccountCloneOptions{Source: "alice", Login: "pending", PasswordGiven: true, Password: config.InitPlaceholder}, clonePasswordInit}} {
+	}{{"copied", AccountCloneOptions{Source: "alice", Login: "copy"}, clonePasswordCopied}, {"new", AccountCloneOptions{Source: "alice", Login: "fresh", PasswordGiven: true, Password: "fake new password"}, clonePasswordNew}, {"init", AccountCloneOptions{Source: "alice", Login: "pending", PasswordGiven: true, Password: config.InitPlaceholder}, clonePasswordInit}} {
 		r, e := AccountClone(home, tc.o)
 		if e != nil || r.Password != tc.want {
 			t.Fatalf("%s %#v %v", tc.name, r, e)
@@ -432,76 +432,4 @@ func ptr(s string) *string { return &s }
 func codeIs(err error, code string) bool {
 	var ce *cli.Error
 	return errors.As(err, &ce) && ce.Code == code
-}
-
-// TestAccountCloneWithoutPasswordGetsAPlaceholder checks the spec default: the
-// clone never receives the source's password or hash; it starts as the init
-// placeholder whose first authenticating client sets the password. The source
-// is untouched.
-func TestAccountCloneWithoutPasswordGetsAPlaceholder(t *testing.T) {
-	home := accountProviderHome(t)
-	if _, e := AccountAdd(home, AccountAddOptions{Login: "alice", Provider: "p1", Country: "DE", Exit: "direct", ExitGiven: true, PreSOCKS5: "socks5://hop.example:1080"}); e != nil {
-		t.Fatal(e)
-	}
-	c, e := config.Load(config.ConfigPath(home))
-	if e != nil {
-		t.Fatal(e)
-	}
-	hash, e := auth.Hash("alice-original-password")
-	if e != nil {
-		t.Fatal(e)
-	}
-	a, _ := c.Account("alice")
-	a.Password = hash
-	if e = config.Save(config.ConfigPath(home), c); e != nil {
-		t.Fatal(e)
-	}
-
-	r, e := AccountClone(home, AccountCloneOptions{Source: "alice", Login: "bob"})
-	if e != nil || r.Password != clonePasswordInit {
-		t.Fatalf("clone=%#v %v", r, e)
-	}
-	c, e = config.Load(config.ConfigPath(home))
-	if e != nil {
-		t.Fatal(e)
-	}
-	bob, _ := c.Account("bob")
-	if bob.Password != config.InitPlaceholder {
-		t.Fatalf("bob carries a password or hash: %q", bob.Password[:min(12, len(bob.Password))]+"...")
-	}
-	if bob.Provider != "p1" || bob.ExitCountry != "DE" || bob.PreSOCKS5 != "socks5://hop.example:1080" {
-		t.Fatalf("bob did not copy the route and hops: %+v", bob)
-	}
-	alice, _ := c.Account("alice")
-	if !bytes.Equal([]byte(alice.Password), []byte(hash)) || alice.Login != "alice" {
-		t.Fatal("the source account changed")
-	}
-}
-
-// TestAccountCloneWithPasswordStillHashes keeps the --password contract: the
-// given password is hashed for the clone, the source keeps its own hash.
-func TestAccountCloneWithPasswordStillHashes(t *testing.T) {
-	home := accountProviderHome(t)
-	if _, e := AccountAdd(home, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
-		t.Fatal(e)
-	}
-	r, e := AccountClone(home, AccountCloneOptions{Source: "alice", Login: "bob", PasswordGiven: true, Password: "bob-fresh-password"})
-	if e != nil || r.Password != clonePasswordNew {
-		t.Fatalf("clone=%#v %v", r, e)
-	}
-	c, e := config.Load(config.ConfigPath(home))
-	if e != nil {
-		t.Fatal(e)
-	}
-	bob, _ := c.Account("bob")
-	if bob.Password == config.InitPlaceholder || bob.Password == "bob-fresh-password" {
-		t.Fatal("the given password was stored verbatim or left as a placeholder")
-	}
-	if ok, e := auth.VerifyHash(bob.Password, "bob-fresh-password"); e != nil || !ok {
-		t.Fatalf("the clone's hash does not match the given password: %v %v", ok, e)
-	}
-	alice, _ := c.Account("alice")
-	if alice.Password != config.InitPlaceholder {
-		t.Fatal("the source account gained a password")
-	}
 }

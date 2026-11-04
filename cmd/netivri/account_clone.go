@@ -10,20 +10,21 @@ import (
 
 // How the password of a cloned account was set, reported as `password`.
 const (
-	clonePasswordNew  = "new"  // the one given with --password
-	clonePasswordInit = "init" // the first password that connects becomes it
+	clonePasswordCopied = "copied" // the source's password, hash and all
+	clonePasswordNew    = "new"    // the one given with --password
+	clonePasswordInit   = "init"   // the first password that connects becomes it
 )
 
 // accountClone implements `account clone SOURCE NEW`: a new account with the
-// provider, exit country and allowed_clients of SOURCE and a fresh placeholder
-// password that the first client to authenticate sets. --password sets another
-// one; --provider and --country replace the copied route, --clients the copied
-// allowed_clients. Nothing is written when any check fails, and the password
-// and its hash are never printed.
+// provider, exit country and allowed_clients of SOURCE and, by default, its
+// password. --password sets another one, or `init` leaves it to the first
+// client that connects; --provider and --country replace the copied route,
+// --clients the copied allowed_clients. Nothing is written when any check
+// fails, and the password and its hash are never printed.
 func accountClone(home string, cfg *config.Config, rest []string, save func() error, stdout io.Writer) error {
 	fs := flag.NewFlagSet("account clone", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	password := fs.String("password", "", "password of the new account instead of a fresh placeholder (the first client that authenticates sets it)")
+	password := fs.String("password", "", "password of the new account, or init")
 	country := fs.String("country", "", "exit country instead of the copied one")
 	provider := fs.String("provider", "", "provider instead of the copied one")
 	clients := fs.String("clients", "", "replace the copied allowed-clients rule list")

@@ -48,6 +48,41 @@ func (l *List) SelectedRow() (Row, bool) {
 }
 func (l *List) IsAdd() bool { return l.AddLabel != "" && l.Selected == l.count()-1 }
 
+// SelectKeyFunc selects the first row for which match returns true. Selected is
+// set to the row's position within the filtered view; if the row is currently
+// filtered out, the filter is cleared first so the row becomes visible. It
+// returns false (leaving the list unchanged) when no row matches.
+func (l *List) SelectKeyFunc(match func(Row) bool) bool {
+	idx := -1
+	for i, r := range l.Rows {
+		if match(r) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	for pos, vi := range l.visibleRows() {
+		if vi == idx {
+			l.Selected = pos
+			l.ensureVisible()
+			return true
+		}
+	}
+	l.Filter = ""
+	l.Filtering = false
+	l.Selected = idx
+	l.ensureVisible()
+	return true
+}
+
+// SelectData selects the first row whose Data equals key (== comparison, so the
+// dynamic type must be comparable). See SelectKeyFunc.
+func (l *List) SelectData(key any) bool {
+	return l.SelectKeyFunc(func(r Row) bool { return r.Data == key })
+}
+
 // StartFilter enters filter-edit mode: typed keys update the one-line filter.
 func (l *List) StartFilter() {
 	l.Filtering = true
@@ -92,7 +127,7 @@ func (l *List) refilter() {
 }
 
 // updateFilter handles keys while the filter line is focused. It returns true
-// when the key was consumed by the filter (editing or the add hotkey); false
+// when the key was consumed by the filter (editing, esc or enter); false
 // lets navigation keys fall through to the normal movement handling.
 func (l *List) updateFilter(m tea.KeyPressMsg) bool {
 	switch {
@@ -108,10 +143,6 @@ func (l *List) updateFilter(m tea.KeyPressMsg) bool {
 			l.Filter = string(r[:len(r)-1])
 			l.refilter()
 		}
-		return true
-	case l.AddLabel != "" && m.String() == "a":
-		l.Selected = l.count() - 1
-		l.ensureVisible()
 		return true
 	case isFilterText(m):
 		l.Filter += m.Text

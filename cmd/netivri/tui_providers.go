@@ -72,7 +72,7 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	l.Title = "Providers"
 	l.EmptyText = "A provider is a subscription of proxy nodes. Add one to start."
 	l.AddLabel = "+ Add provider"
-	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardReadOnly}, {ID: "via", Label: "Via", Kind: tui.CardReadOnly}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
+	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
 	ws := tui.NewWorkspace(l, c)
 	theme := e.Theme
 	if theme.Accent == nil {
@@ -82,7 +82,7 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}}
 }
 func (s *providersScreen) Title() string        { return "Providers" }
-func (s *providersScreen) CapturingInput() bool { return s.dialog != nil }
+func (s *providersScreen) CapturingInput() bool { return s.dialog != nil || s.list.Filtering }
 func (s *providersScreen) Breadcrumb() string {
 	if s.width < 100 && s.workspace.Drilled {
 		return "Providers / " + s.selected
@@ -238,39 +238,41 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 		return s.updateResults(m)
 	}
 	if k, ok := m.(tea.KeyPressMsg); ok {
-		switch k.String() {
-		case "a":
-			s.startWizard()
-			return s, nil
-		case "r":
-			if row, ok := s.list.SelectedRow(); ok {
-				return s, s.refresh(row.Data.(string), false)
-			}
-			return s, s.load()
-		case "R":
-			return s, s.refresh("", true)
-		case "d":
-			if row, ok := s.list.SelectedRow(); ok {
-				return s, s.preflight(row.Data.(string))
-			}
-			return s, nil
-		case "c":
-			if row, ok := s.list.SelectedRow(); ok {
-				s.selected = row.Data.(string)
-				return s, s.countriesCmd()
-			}
-		case "esc":
-			if s.workspace.Drilled {
-				s.workspace.Update(m)
+		if !s.list.Filtering {
+			switch k.String() {
+			case "a":
+				s.startWizard()
 				return s, nil
-			}
-		case "enter":
-			if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+			case "r":
 				if row, ok := s.list.SelectedRow(); ok {
-					s.selected = row.Data.(string)
-					s.updateCard()
+					return s, s.refresh(row.Data.(string), false)
+				}
+				return s, s.load()
+			case "R":
+				return s, s.refresh("", true)
+			case "d":
+				if row, ok := s.list.SelectedRow(); ok {
+					return s, s.preflight(row.Data.(string))
 				}
 				return s, nil
+			case "c":
+				if row, ok := s.list.SelectedRow(); ok {
+					s.selected = row.Data.(string)
+					return s, s.countriesCmd()
+				}
+			case "esc":
+				if s.workspace.Drilled {
+					s.workspace.Update(m)
+					return s, nil
+				}
+			case "enter":
+				if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+					if row, ok := s.list.SelectedRow(); ok {
+						s.selected = row.Data.(string)
+						s.updateCard()
+					}
+					return s, nil
+				}
 			}
 		}
 	}
@@ -471,12 +473,7 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		} else {
 			s.setProviders(r.value.(ProviderListResult))
 			if s.pendingSelect != "" {
-				for i, x := range s.list.Rows {
-					if x.Data == s.pendingSelect {
-						s.list.Selected = i
-						break
-					}
-				}
+				s.list.SelectData(s.pendingSelect)
 				s.selected = s.pendingSelect
 				s.pendingSelect = ""
 			}
@@ -649,8 +646,14 @@ func (s *providersScreen) setProviders(v ProviderListResult) {
 		rows = append(rows, tui.Row{Cells: []string{p.Name, nodes, p.State}, Data: p.Name})
 	}
 	s.list.SetRows(rows)
-	if len(rows) > 0 && s.list.Selected >= len(rows) {
-		s.list.Selected = len(rows) - 1
+	if s.list.Filter == "" {
+		// no filter active: behave exactly like before (clamp, then reselect)
+		if len(rows) > 0 && s.list.Selected >= len(rows) {
+			s.list.Selected = len(rows) - 1
+		}
+		if s.selected != "" {
+			s.list.SelectData(s.selected)
+		}
 	}
 }
 func (s *providersScreen) updateCard() {
@@ -692,6 +695,10 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	case "edit-subscription":
 		s.startEditPrompt("url")
 	case "edit-via":
+		s.startEditPrompt("via")
+	case "subscription":
+		s.startEditPrompt("url")
+	case "via":
 		s.startEditPrompt("via")
 	case "refresh":
 		return s, s.refresh(s.selected, false)

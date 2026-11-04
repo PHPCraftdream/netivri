@@ -50,8 +50,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   addresses may connect at all (`loopback`, exact addresses, `*` masks, CIDR);
   an account can narrow it with its own rule, checked before its password.
 - **Accounts you can copy and inspect.** `netivri account clone` makes a new
-  login from an existing one (a fresh placeholder password by default — the
-  first client that authenticates sets it; a new one with `--password`), and
+  login from an existing one (same password, a new one, or `init`), and
   `netivri account show` prints its route tier by tier with live node state.
 - **See what is going on.** `netivri status` is short by default (`--full`
   for everything); `netivri status --watch` is a live view of who is active,

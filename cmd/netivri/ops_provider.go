@@ -86,10 +86,14 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 
 // ProviderRename renames a provider, rewriting every account's provider list
 // member and moving the stored snapshot so references keep resolving. Nothing
-// is written when validation fails.
+// is written when validation fails. A leftover old snapshot file is harmless:
+// it is orphaned data, the config no longer references it.
 func ProviderRename(home, oldName, newName string) error {
 	if !validSubName(newName) {
 		return cli.Usage("sub rename: --name must match [A-Za-z0-9._-]{1,64}")
+	}
+	if oldName == newName {
+		return cli.Usage("sub rename: the new name must differ from the current name")
 	}
 	cfg, e := loadConfig(home)
 	if e != nil {
@@ -105,11 +109,29 @@ func ProviderRename(home, oldName, newName string) error {
 	if idx < 0 {
 		return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
 	}
-	if oldName != newName {
-		for _, s := range cfg.Subscriptions {
-			if s.Name == newName {
-				return &cli.Error{Code: codeSubExistsName, Message: "subscription name is already used", Exit: cli.ExitConflict}
-			}
+	for _, s := range cfg.Subscriptions {
+		if s.Name == newName {
+			return &cli.Error{Code: codeSubExistsName, Message: "subscription name is already used", Exit: cli.ExitConflict}
+		}
+	}
+	// Move the snapshot before anything else is written: a failure here
+	// leaves the old config and the old snapshot untouched.
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	snap, err := store.Load(oldName)
+	hasSnap := false
+	switch {
+	case err == nil:
+		hasSnap = true
+		if err = store.Save(newName, *snap); err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "store subscription: " + err.Error(), Exit: cli.ExitInternal}
+		}
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		return snapshotError(oldName)
+	}
+	cleanupSnap := func() {
+		if hasSnap {
+			_ = store.Remove(newName)
 		}
 	}
 	cfg.Subscriptions[idx].Name = newName
@@ -126,22 +148,15 @@ func ProviderRename(home, oldName, newName string) error {
 		cfg.Accounts[i].Provider = config.JoinList(p)
 	}
 	if e = cfg.Validate(); e != nil {
+		cleanupSnap()
 		return e
 	}
 	if e = config.Save(config.ConfigPath(home), cfg); e != nil {
+		cleanupSnap()
 		return &cli.Error{Code: "INTERNAL", Message: "save config: " + e.Error(), Exit: cli.ExitInternal}
 	}
-	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
-	snap, err := store.Load(oldName)
-	if err == nil {
-		if err = store.Save(newName, *snap); err != nil {
-			return &cli.Error{Code: "INTERNAL", Message: "store subscription: " + err.Error(), Exit: cli.ExitInternal}
-		}
-		if err = store.Remove(oldName); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return &cli.Error{Code: "INTERNAL", Message: "remove stored subscription: " + err.Error(), Exit: cli.ExitInternal}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return snapshotError(oldName)
+	if err = store.Remove(oldName); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil
 	}
 	return nil
 }

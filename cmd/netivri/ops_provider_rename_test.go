@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -85,42 +86,123 @@ func TestProviderRenameInvalidNewName(t *testing.T) {
 	}
 }
 
-func TestProviderRenameValidationFailureWritesNothing(t *testing.T) {
+func TestProviderRenameSameNameRejected(t *testing.T) {
 	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	cfg, err := loadConfig(home)
-	if err != nil {
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if err := store.Save("p", subscription.Snapshot{Nodes: []subscription.Node{{ID: "n1", Country: "DE"}}, FetchedAt: testNow}); err != nil {
 		t.Fatal(err)
 	}
-	// An account provider list that no longer parses: with the old name gone
-	// from the follow pass, Validate must refuse and nothing may be written.
-	names := make([]string, 0, config.MaxAccountProviders+1)
-	for i := 0; i <= config.MaxAccountProviders; i++ {
-		names = append(names, "x"+string(rune('a'+i)))
-	}
-	names[0] = "p"
-	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: config.JoinList(names)}}
 	path := config.ConfigPath(home)
-	if err = config.Save(path, cfg); err != nil {
-		t.Fatal(err)
-	}
 	before, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := config.ParseProviderList(cfg.Accounts[0].Provider); ok {
-		t.Fatal("seeded provider list unexpectedly valid")
+	err = ProviderRename(home, "p", "p")
+	renameAssertCode(t, err, "USAGE", cli.ExitUsage)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("same-name rename wrote the config")
+	}
+	snap, serr := store.Load("p")
+	if serr != nil || !snap.FetchedAt.Equal(testNow) {
+		t.Fatalf("snapshot after same-name rename: %+v %v", snap, serr)
+	}
+}
+
+func TestProviderRenameSnapshotWriteFailureLeavesEverything(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if err := store.Save("p", subscription.Snapshot{Nodes: []subscription.Node{{ID: "n1", Country: "DE"}}, FetchedAt: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the new snapshot file would go: the atomic rename in
+	// store.Save fails on every platform.
+	blocker := filepath.Join(home, "subscriptions", "renamed.ktav")
+	if err := os.Mkdir(blocker, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(blocker) })
+	path := config.ConfigPath(home)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err = ProviderRename(home, "p", "renamed"); err == nil {
-		t.Fatal("rename with unparseable account list succeeded")
+		t.Fatal("rename with a failing snapshot write succeeded")
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(before) != string(after) {
-		t.Fatal("validation failure wrote the config")
+		t.Fatal("snapshot write failure wrote the config")
 	}
-	if _, serr := subscription.NewStore(filepath.Join(home, "subscriptions")).Load("p"); serr != nil {
-		t.Fatalf("snapshot disturbed on validation failure: %v", serr)
+	if _, serr := store.Load("p"); serr != nil {
+		t.Fatalf("old snapshot disturbed: %v", serr)
+	}
+}
+
+func TestProviderRenameConfigSaveFailureLeavesOldState(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if err := store.Save("p", subscription.Snapshot{Nodes: []subscription.Node{{ID: "n1", Country: "DE"}}, FetchedAt: testNow}); err != nil {
+		t.Fatal(err)
+	}
+	// Make the config directory unwritable after the config can still be
+	// read from it: config.Save then fails creating its temporary file. The
+	// trick does not work on Windows (chmod is ignored) or for root.
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("needs a chmod-respecting, non-root filesystem")
+	}
+	if err := os.Chmod(home, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	path := config.ConfigPath(home)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = ProviderRename(home, "p", "renamed"); err == nil {
+		t.Fatal("rename with a failing config save succeeded")
+	}
+	if err = os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("config save failure replaced the config")
+	}
+	if fi, serr := os.Stat(path); serr != nil || fi.IsDir() {
+		t.Fatalf("config path after failure: %v %v", fi, serr)
+	}
+	snap, serr := store.Load("p")
+	if serr != nil || !snap.FetchedAt.Equal(testNow) {
+		t.Fatalf("old snapshot after config save failure: %+v %v", snap, serr)
+	}
+	if _, serr = os.Stat(filepath.Join(home, "subscriptions", "renamed.ktav")); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("stray new-name snapshot left behind: %v", serr)
+	}
+}
+
+func TestProviderRenameWithoutSnapshot(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	if err := ProviderRename(home, "p", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(home)
+	if err != nil || len(cfg.Subscriptions) != 1 || cfg.Subscriptions[0].Name != "renamed" {
+		t.Fatalf("subscriptions after rename without snapshot: %+v %v", cfg.Subscriptions, err)
+	}
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	names, err := store.List()
+	if err != nil || len(names) != 0 {
+		t.Fatalf("snapshot files created for a rename without a snapshot: %v %v", names, err)
 	}
 }

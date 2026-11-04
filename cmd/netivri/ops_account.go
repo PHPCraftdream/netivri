@@ -286,8 +286,11 @@ func accountCloneWith(home string, c *config.Config, o AccountCloneOptions, save
 	if a, _ := c.Account(o.Login); a != nil || (c.Auth.Login == o.Login && c.Auth.Login != config.InitPlaceholder) {
 		return AccountCloneResult{}, &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists: " + o.Login, Exit: cli.ExitConflict}
 	}
-	n := config.Account{Login: o.Login, Password: config.InitPlaceholder, Provider: src.Provider, ExitCountry: src.ExitCountry, Exit: src.Exit, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
-	mode := clonePasswordInit
+	n := config.Account{Login: o.Login, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, Exit: src.Exit, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
+	mode := clonePasswordCopied
+	if src.Password == config.InitPlaceholder {
+		mode = clonePasswordInit
+	}
 	if o.PasswordGiven {
 		switch {
 		case o.Password == "":

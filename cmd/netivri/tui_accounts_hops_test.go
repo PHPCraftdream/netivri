@@ -8,6 +8,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // hopCardLine returns the card line with the given ID and its index.
@@ -92,13 +93,17 @@ func TestAccountsClearPreHopEndToEnd(t *testing.T) {
 // action is grey and Enter on it does nothing.
 func TestAccountsClearHopDisabledWithoutHop(t *testing.T) {
 	s, h := hopScreen(t, false)
+	prev := s.workspace.Card.Selected
 	for _, id := range []string{"clear-pre", "clear-post"} {
 		line, i := hopCardLine(s, id)
 		if line.ID == "" || !line.Disabled {
 			t.Fatalf("%s = %#v, want a disabled action", id, line)
 		}
-		for n := 0; n < i; n++ {
-			_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		// Card.Update never leaves the selection on a disabled line, so force
+		// it there: Enter must report no activation and produce no command.
+		s.workspace.Card.Selected = i
+		if s.workspace.Card.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) {
+			t.Fatalf("Enter on disabled %s reported activation", id)
 		}
 		_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		if cmd != nil {
@@ -108,6 +113,7 @@ func TestAccountsClearHopDisabledWithoutHop(t *testing.T) {
 			t.Fatalf("Enter on disabled %s opened a dialog", id)
 		}
 	}
+	s.workspace.Card.Selected = prev
 	c, e := config.Load(config.ConfigPath(h))
 	if e != nil {
 		t.Fatal(e)
@@ -133,7 +139,26 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 	if pw.Value != "waiting for the first login" {
 		t.Fatalf("password line = %q, want the waiting state", pw.Value)
 	}
-	// Give alice a password and reload: the line flips to set.
+	// The state label must be VISIBLE in the rendered card: Secret is false on
+	// hop lines, so the renderer must not mask the value with "********".
+	for _, l := range []tui.CardLine{line} {
+		if l.Secret {
+			t.Fatalf("hop line %s is Secret; the label must render as text", l.ID)
+		}
+	}
+	v := ansi.Strip(s.View(120, 30))
+	if !strings.Contains(v, "set") {
+		t.Fatal("rendered card does not show the hop set label")
+	}
+	for _, secret := range []string{"fake-hop", "socks5://", "@hop.example", "********"} {
+		if strings.Contains(v, secret) {
+			t.Fatalf("rendered card disclosed %q", secret)
+		}
+	}
+	post, _ := hopCardLine(s, "post")
+	if !strings.HasSuffix(post.Value, "none") {
+		t.Fatalf("post-hop line = %q, want none", post.Value)
+	}
 	c, e := config.Load(config.ConfigPath(h))
 	if e != nil {
 		t.Fatal(e)
@@ -166,8 +191,12 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 	if pw2.Value != "waiting for the first login" {
 		t.Fatalf("password line = %q, want the waiting state", pw2.Value)
 	}
-	v := s.View(120, 30)
-	if strings.Contains(v, "fake-hop") || strings.Contains(v, "socks5://") {
+	v2 := ansi.Strip(s2.View(120, 30))
+	if !strings.Contains(v2, "none") {
+		t.Fatal("rendered card does not show the hop none label")
+	}
+	v1 := s.View(120, 30)
+	if strings.Contains(ansi.Strip(v1), "fake-hop") || strings.Contains(ansi.Strip(v1), "socks5://") {
 		t.Fatal("card view disclosed the hop URL")
 	}
 }

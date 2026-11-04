@@ -157,8 +157,10 @@ func newAccountsScreen(home string, env tui.Env) tui.Screen {
 	s.configureColumns(0)
 	return s
 }
-func (s *accountsScreen) Title() string        { return "Accounts" }
-func (s *accountsScreen) CapturingInput() bool { return s.dialog != nil }
+func (s *accountsScreen) Title() string { return "Accounts" }
+func (s *accountsScreen) CapturingInput() bool {
+	return s.dialog != nil || (s.workspace.List != nil && s.workspace.List.Filtering)
+}
 func (s *accountsScreen) Breadcrumb() string {
 	if s.workspace.Drilled && s.detailLogin != "" {
 		return "Accounts › " + s.detailLogin
@@ -437,6 +439,14 @@ func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
 		return s, c
 	}
 	k := m.String()
+	if s.workspace.List != nil && s.workspace.List.Filtering {
+		// The filter line owns the keyboard: esc clears it, enter keeps it,
+		// letters append; no hotkeys, pane cycling or drill-back may fire.
+		if s.workspace.List.Update(m) {
+			return s, s.selectionChanged()
+		}
+		return s, nil
+	}
 	if k == "tab" && s.width >= 100 {
 		s.workspace.CycleFocus(1)
 		return s, nil
@@ -643,12 +653,10 @@ func (s *accountsScreen) syncRows(preferred string) {
 	}
 	s.workspace.List.SetRows(rs)
 	if preferred != "" {
-		for i, r := range rs {
-			if a, ok := r.Data.(accountInfo); ok && a.Login == preferred {
-				s.workspace.List.Selected = i
-				break
-			}
-		}
+		s.workspace.List.SelectKeyFunc(func(r tui.Row) bool {
+			a, ok := r.Data.(accountInfo)
+			return ok && a.Login == preferred
+		})
 	}
 	if s.selectedLogin() != selected {
 		s.refreshSelectedCard(true)
@@ -684,7 +692,9 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 		pw = "set"
 	}
 	pre, post := accountsHopLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
-	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: true}, {ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: a.PreSOCKS5.Source != "account"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: true}, {ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
+	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
+		{ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: a.PreSOCKS5.Source != "account"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
+		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
 	if s.workspace.Card != nil {
 		s.workspace.Card.Focused = true
 	}
@@ -931,7 +941,7 @@ func (s *accountsScreen) nextCloneLogin(login string) string {
 	}
 }
 func (s *accountsScreen) beginClone(a accountInfo) tea.Cmd {
-	p := prompt(tui.TextPrompt, "Clone account", "New login", "Provider, countries, exit, clients and hops are copied; the clone's password is set by its first login.", s.nextCloneLogin(a.Login))
+	p := prompt(tui.TextPrompt, "Clone account", "New login", "Provider, countries, exit, clients and hops are copied; the clone starts without a password and its first login sets it.", s.nextCloneLogin(a.Login))
 	p.Validate = func(v string) error {
 		if !config.ValidAccountLogin(v) {
 			return errors.New("invalid account login")
@@ -941,7 +951,7 @@ func (s *accountsScreen) beginClone(a accountInfo) tea.Cmd {
 	s.dialog = &accountsDialog{prompt: p, onResult: func(v map[string]string) tea.Cmd {
 		s.pendingLogin = v["value"]
 		return s.bg("clone account", func() tea.Msg {
-			_, e := AccountClone(s.env.Home, AccountCloneOptions{Source: a.Login, Login: v["value"]})
+			_, e := AccountClone(s.env.Home, AccountCloneOptions{Source: a.Login, Login: v["value"], Password: config.InitPlaceholder, PasswordGiven: true})
 			return s.finishMutation(e, "Account cloned", v["value"])
 		})
 	}}
@@ -951,7 +961,7 @@ func (s *accountsScreen) openEdit(a accountInfo, id string) tea.Cmd {
 	f := map[string]struct {
 		label, hint, value string
 		kind               tui.PromptKind
-	}{"provider": {"Provider", "Comma-separated providers; blank means any.", a.Provider, tui.TextPrompt}, "countries": {"Countries", s.countryFieldHint(strings.Split(a.Provider, ",")), a.ExitCountry, tui.TextPrompt}, "exit": {"Exit", "Route or direct.", a.Exit, tui.ChoicePrompt}, "clients": {"Allowed clients", "Everyone, loopback or custom CIDR ranges.", a.AllowedClients, tui.TextPrompt}, "pre": {"Pre-hop", "Proxy URL; enter none to clear. Empty cancels.", "", tui.SecretPrompt}, "post": {"Post-hop", "Proxy URL; enter none to clear. Empty cancels.", "", tui.SecretPrompt}}[id]
+	}{"provider": {"Provider", "Comma-separated providers; blank means any.", a.Provider, tui.TextPrompt}, "countries": {"Countries", s.countryFieldHint(strings.Split(a.Provider, ",")), a.ExitCountry, tui.TextPrompt}, "exit": {"Exit", "Route or direct.", a.Exit, tui.ChoicePrompt}, "clients": {"Allowed clients", "Everyone, loopback or custom CIDR ranges.", a.AllowedClients, tui.TextPrompt}, "pre": {"Pre-hop", "Proxy URL replaces the hop; empty leaves it unchanged; clearing is the Clear pre-hop action.", "", tui.SecretPrompt}, "post": {"Post-hop", "Proxy URL replaces the hop; empty leaves it unchanged; clearing is the Clear post-hop action.", "", tui.SecretPrompt}}[id]
 	if f.label == "" {
 		return nil
 	}

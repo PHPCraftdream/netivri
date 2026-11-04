@@ -85,7 +85,14 @@ func TestProviderCountriesPickerCancelKeepsSummary(t *testing.T) {
 	openCountries(t, s)
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
-	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	// Space toggling a multi-choice option does not set the prompt's changed
+	// flag, so Esc cancels directly by returning a PromptResultMsg command;
+	// the picker closes only once that command is delivered.
+	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if c == nil {
+		t.Fatal("esc on the picker produced no command")
+	}
+	_, _ = s.Update(c())
 	if s.dialog != nil || s.prompt != nil || s.mode != "" {
 		t.Fatal("esc did not cancel the picker")
 	}

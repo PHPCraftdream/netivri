@@ -87,19 +87,31 @@ func TestListFilterEscClearsEnterKeeps(t *testing.T) {
 
 func TestListFilterSelectionFollowsFirstMatchAndBackspace(t *testing.T) {
 	l := filterTestList()
-	l.Update(tuiTestKey("end"))
-	if l.Selected != 3 {
-		t.Fatalf("setup: selected %d", l.Selected)
-	}
 	l.Update(tuiTestKey("/"))
-	l.Update(tuiTestKey("t"))
+	l.Update(tuiTestKey("t")) // only "beta/client/stopped" contains t
+	if l.Filter != "t" {
+		t.Fatalf("filter %q, want t", l.Filter)
+	}
+	vr := l.visibleRows()
+	if len(vr) != 1 || vr[0] != 1 {
+		t.Fatalf("visible rows %v, want [1] (beta)", vr)
+	}
 	if l.Selected != 0 {
 		t.Fatalf("selection %d after filter, want 0 (first match)", l.Selected)
 	}
-	if row, ok := l.SelectedRow(); !ok || row.Cells[0] != "alpha" {
-		t.Fatalf("SelectedRow %+v, want alpha", row)
+	if row, ok := l.SelectedRow(); !ok || row.Cells[0] != "beta" {
+		t.Fatalf("SelectedRow %+v, want beta", row)
 	}
+	// "/" is a printable char: it appends while filtering...
 	l.Update(tuiTestKey("/"))
+	if l.Filter != "t/" {
+		t.Fatalf("filter %q, want t/ (slash appended while filtering)", l.Filter)
+	}
+	// ...and backspace removes it again.
+	l.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if l.Filter != "t" || len(l.visibleRows()) != 1 {
+		t.Fatalf("backspace: filter %q visible %v", l.Filter, l.visibleRows())
+	}
 	l.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	if l.Filter != "" || l.count() != 4 {
 		t.Fatalf("backspace: filter %q count %d", l.Filter, l.count())
@@ -144,9 +156,14 @@ func TestListFilterNavigationOverSubset(t *testing.T) {
 	if !l.IsAdd() {
 		t.Fatal("end should land on add line")
 	}
+	// "a" is no longer an add hotkey while filtering: it is typed into the
+	// filter, narrowing the subset further.
 	l.Update(tuiTestKey("a"))
-	if !l.IsAdd() {
-		t.Fatal("a hotkey should jump to add line while filtering")
+	if l.Filter != "ra" {
+		t.Fatalf("filter %q, want ra (a appended while filtering)", l.Filter)
+	}
+	if len(l.visibleRows()) != 0 {
+		t.Fatalf("visible %v, want none (no row matches \"ra\")", l.visibleRows())
 	}
 }
 
@@ -181,3 +198,61 @@ func TestListFilterRenderContractInsidePane(t *testing.T) {
 }
 
 func stripANSIList(s string) string { return ansi.Strip(s) }
+
+func TestListSelectDataVisibleUnderFilterKeepsFilter(t *testing.T) {
+	l := filterTestList()
+	l.Rows[0].Data, l.Rows[1].Data, l.Rows[2].Data = "alpha", "beta", "gamma"
+	l.Update(tuiTestKey("/"))
+	l.Update(tuiTestKey("g"))
+	l.Update(tuiTestKey("a"))
+	if vr := l.visibleRows(); len(vr) != 1 || vr[0] != 2 {
+		t.Fatalf("visible rows %v, want [2]", vr)
+	}
+	if !l.SelectData("gamma") {
+		t.Fatal("SelectData did not find gamma")
+	}
+	if l.Filter != "ga" || !l.Filtering {
+		t.Fatalf("visible hit must keep the filter: %q filtering=%v", l.Filter, l.Filtering)
+	}
+	if l.Selected != 0 {
+		t.Fatalf("selected %d, want filtered position 0", l.Selected)
+	}
+	if row, ok := l.SelectedRow(); !ok || row.Cells[0] != "gamma" {
+		t.Fatalf("SelectedRow %+v, want gamma", row)
+	}
+}
+
+func TestListSelectDataHiddenRowClearsFilter(t *testing.T) {
+	l := filterTestList()
+	l.Rows[0].Data, l.Rows[1].Data, l.Rows[2].Data = "alpha", "beta", "gamma"
+	l.Update(tuiTestKey("/"))
+	l.Update(tuiTestKey("g"))
+	l.Update(tuiTestKey("a"))
+	if vr := l.visibleRows(); len(vr) != 1 || vr[0] != 2 {
+		t.Fatalf("visible rows %v, want [2]", vr)
+	}
+	if !l.SelectData("alpha") {
+		t.Fatal("SelectData did not find alpha")
+	}
+	if l.Filter != "" || l.Filtering {
+		t.Fatalf("hidden hit must clear the filter: %q filtering=%v", l.Filter, l.Filtering)
+	}
+	if l.Selected != 0 {
+		t.Fatalf("selected %d, want plain index 0", l.Selected)
+	}
+	if row, ok := l.SelectedRow(); !ok || row.Cells[0] != "alpha" {
+		t.Fatalf("SelectedRow %+v, want alpha", row)
+	}
+}
+
+func TestListSelectDataMissingKeyIsNoop(t *testing.T) {
+	l := filterTestList()
+	l.Rows[0].Data = "alpha"
+	l.Selected = 2
+	if l.SelectData("nope") {
+		t.Fatal("SelectData reported success for a missing key")
+	}
+	if l.Selected != 2 || l.Filter != "" {
+		t.Fatalf("noop SelectData changed state: selected=%d filter=%q", l.Selected, l.Filter)
+	}
+}
