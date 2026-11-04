@@ -393,10 +393,14 @@ func TestProviderRenameActionEnabledAndEditsKept(t *testing.T) {
 	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
 	s.selected = "p"
 	s.updateCard()
-	if s.card.Lines[6].Disabled || s.card.Lines[6].Label != "Rename" {
-		t.Fatalf("rename action missing: %+v", s.card.Lines[6])
+	byID := map[string]tui.CardLine{}
+	for _, l := range s.card.Lines {
+		byID[l.ID] = l
 	}
-	if s.card.Lines[7].Disabled || s.card.Lines[8].Disabled {
+	if byID["edit-name"].Disabled || byID["edit-name"].Label != "Rename" {
+		t.Fatalf("rename action missing: %+v", byID["edit-name"])
+	}
+	if byID["edit-subscription"].Disabled || byID["edit-via"].Disabled {
 		t.Fatal("URL and Via edits should be enabled")
 	}
 }

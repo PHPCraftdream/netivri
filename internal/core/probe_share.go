@@ -25,7 +25,7 @@ func memberProbeKeys(plans []routePlan, o Options) map[string]string {
 			if name == "DIRECT" || i >= len(nodes) {
 				continue
 			}
-			key := probeKey(nodes[i], o.RoutePre[plan.key], o.RoutePost[plan.key])
+			key := probeKey(nodes[i], o.nodePre(plan.key, i), o.nodePost(plan.key, i))
 			if key == "" {
 				continue
 			}

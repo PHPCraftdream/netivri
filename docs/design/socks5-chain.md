@@ -48,18 +48,32 @@ path, query or fragment. Validation (`internal/config`) fails with
 `CONFIG_INVALID` naming the key (`chain.pre_socks5`, `accounts[N].post_socks5`)
 and never echoing the value.
 
-The cascade is resolved per side and independently:
+The cascade is resolved per side and independently, from the most specific
+level: account, then provider (`subscriptions[].pre_socks5` / `post_socks5`),
+then global. A level that sets a value *replaces* the ones above it; nothing is
+stacked:
 
-| Account value | Effective |
-| --- | --- |
-| absent or empty | the global value (source `global`), or no proxy |
-| a URL | that URL (source `account`) |
-| `none` | no proxy (source `none`), whatever the global value is |
+| Account value | Provider value | Effective |
+| --- | --- | --- |
+| a URL | anything | the account URL (source `account`) |
+| `none` | anything | no proxy (source `none`) |
+| absent or empty | a URL | the provider URL (source `provider`) |
+| absent or empty | `none` | no proxy (source `none`), whatever the global value is |
+| absent or empty | absent or empty | the global value (source `global`), or no proxy |
+
+A node takes the hops of its own provider, so an account route over several
+providers can have different hops per node (`core.Options.NodePre` /
+`NodePost`, one value per node of the route; a route without them uses the
+route-level `RoutePre` / `RoutePost`). `account show` and `status` report
+the value `varies` (source `provider`) when the providers of an account
+resolve differently. An account that sets a side itself is not affected by its
+providers on that side.
 
 `none` as a global value is the same as no value. `account set-socks5 ...
-inherit` deletes the account key. The shared resolver in
-`cmd/netivri/accounts_pool.go` (`resolveChain`) is used by `account list`,
-`account show` and `status`, so they agree.
+inherit` deletes the account key and `sub set-socks5 ... inherit` the provider key.
+The shared resolver in `cmd/netivri/accounts_pool.go` (`resolveAccountChain`) is used by
+`account list`, `account show` and `status`, so they agree; the pool builder
+(`buildAccountRoutePoolHops`) applies the same order per node.
 
 ## How the chain is built (Mihomo)
 

@@ -203,7 +203,8 @@ the list and a toast says what happened (and what to do next).
 
 ### Providers
 List: Name, Nodes, State. Card fields: Subscription (masked), Via proxy, Name
-(rename); info: nodes, countries summary, updated. Actions: Refresh now,
+(rename), Pre-hop and Post-hop (state only; Clear actions return them to the global
+value); info: nodes, countries summary, updated. Actions: Refresh now,
 Refresh all, Countries..., Remove... (the confirm names dependent accounts).
 
 ### Accounts

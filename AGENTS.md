@@ -55,8 +55,10 @@ To verify a change, push it and read the CI result.
   `chain.pre_socks5` / `chain.post_socks5` in `config.ktav`, per account `netivri account set-socks5 {ACCOUNT} --pre
   {URL|none|inherit} --post {URL|none|inherit}` (also `account add
   --pre-socks5/--post-socks5`); an account value overrides the global one,
-  `none` cancels it. `account show` and `status` show the redacted effective
-  values.
+  `none` cancels it. A provider can set its own hops (`subscriptions[].pre_socks5`
+  / `post_socks5`, `netivri sub set-socks5`); the cascade is global, then
+  provider, then account, each level replacing the one above. `account show`
+  and `status` show the redacted effective values and their source.
 - A separate run is a separate state directory: `--local` (`./.netivri`,
   created, git-ignored; also used on its own when it exists in the current
   directory) or `--home {DIR}`. Never point a test or an experiment at the

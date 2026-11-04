@@ -807,6 +807,9 @@ func accountsActivity(as []angel.AccountActivity) map[string]angel.AccountActivi
 	return m
 }
 func accountsHopLabel(source, value string) string {
+	if value == "varies" && source == "provider" {
+		return "provider varies"
+	}
 	if value == "" || value == "none" {
 		if source == "" {
 			return "none"

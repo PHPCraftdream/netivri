@@ -62,8 +62,8 @@ func redactChain(s string) string {
 	return u.String()
 }
 func infoForAccount(cfg *config.Config, a *config.Account) accountInfo {
-	chainInfo := func(own, global string) accountChainInfo {
-		resolved := resolveChain(own, global)
+	chainInfo := func(own string, post bool) accountChainInfo {
+		resolved := resolveAccountChain(cfg, a, post)
 		var ownValue *string
 		if own != "" {
 			v := redactChain(own)
@@ -71,10 +71,10 @@ func infoForAccount(cfg *config.Config, a *config.Account) accountInfo {
 		}
 		return accountChainInfo{Value: resolved.value, Source: resolved.source, Auth: resolved.auth, Own: ownValue}
 	}
-	preInfo := chainInfo(a.PreSOCKS5, cfg.Chain.PreSOCKS5)
+	preInfo := chainInfo(a.PreSOCKS5, false)
 	if effectiveExit(a) == "direct" {
 		preInfo = accountChainInfo{Value: "none", Source: "direct"}
 	}
-	return accountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, Exit: effectiveExit(a), AllowedClients: a.AllowedClients, PreSOCKS5: preInfo, PostSOCKS5: chainInfo(a.PostSOCKS5, cfg.Chain.PostSOCKS5), PasswordSet: accountHasPassword(a)}
+	return accountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, Exit: effectiveExit(a), AllowedClients: a.AllowedClients, PreSOCKS5: preInfo, PostSOCKS5: chainInfo(a.PostSOCKS5, true), PasswordSet: accountHasPassword(a)}
 }
 func chainHasAuth(s string) bool { u, e := url.Parse(s); return e == nil && u.User != nil }

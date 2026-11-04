@@ -40,9 +40,10 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   extra attempt against the same node.
 - **A proxy before and after the VPN.** Optional `pre_socks5` (how netivri
   reaches the VPN node) and `post_socks5` (where the traffic goes after it),
-  global and per account, each a `socks5://`, `http://` (HTTP CONNECT) or
-  `https://` proxy; an account value overrides the global one and `none`
-  cancels it.
+  each a `socks5://`, `http://` (HTTP CONNECT) or `https://` proxy, set
+  globally, per provider and per account. The levels cascade (global, then
+  provider, then account): the more specific one replaces the one above, it is
+  never stacked, and `none` cancels a hop set above.
 - **Separate runs.** `--local` makes `./.netivri` its own state directory
   (settings, tokens, subscriptions, statistics, angel), found again without a
   flag from that directory; `--home {DIR}` names any directory.
@@ -202,12 +203,23 @@ Two optional proxies wrap the VPN node (`socks5://`, `http://` for an HTTP
 CONNECT proxy such as Privoxy or Burp, or `https://` for one reached over TLS;
 the names say `socks5` for historical reasons): `pre_socks5` is what netivri
 connects through to reach the node, `post_socks5` is where the traffic goes
-after the node (client → netivri → pre → VPN node → post → destination). Set
-them for everyone in `config.ktav` and override them per account:
+after the node (client → netivri → pre → VPN node → post → destination). The
+type is whatever you write in the URL: netivri never guesses what the proxy
+speaks, while its own port detects the protocol of each client. Set them for
+everyone in `config.ktav`, override them per provider and override those per
+account:
 
 ```ktav
 chain.pre_socks5:: socks5://user:secret@pre.example:1080
 chain.post_socks5:: socks5://post.example:1080
+
+subscriptions: [
+    {
+        name: main
+        url:: https://provider.example/sub/TOKEN
+        pre_socks5:: http://proxy.example:8080   # every node of main is reached through it
+    }
+]
 
 accounts: [
     {
@@ -226,11 +238,22 @@ netivri account set-socks5 alice --post inherit     # back to the global value
 netivri account add bob --provider main --country NL --pre-socks5 socks5://pre2.example:1080
 netivri account set-socks5 bob --post http://proxy.example:8080   # an HTTP proxy as the post hop
 netivri account show alice                          # effective values, never the credentials
+
+netivri sub add https://provider.example/sub/{TOKEN} --name main --pre-socks5 http://proxy.example:8080
+netivri sub set-socks5 main --post socks5://exit.example:1080   # a provider-level post hop
+netivri sub set-socks5 main --pre none               # main skips the global pre hop
+netivri sub set-socks5 main --pre inherit            # back to the global value
 ```
 
-Each side is independent: an account value wins over the global one, an
-absent value inherits it, `none` cancels it. See
-[`docs/config.md`](docs/config.md) and `netivri help account set-socks5`.
+Each side is independent and the most specific level wins: an account value
+replaces the provider's, which replaces the global one. An absent value (or
+`inherit`) hands the decision to the level above, `none` cancels the hop. A
+node takes the hops of its own provider, so one account over several providers
+can use a different proxy per provider. `account show` and `status` print the
+effective value and its source (`account`, `provider`, `global`, `none`); in
+the shell, the Providers card has Pre-hop and Post-hop fields. See
+[`docs/config.md`](docs/config.md), `netivri help account set-socks5` and
+`netivri help sub set-socks5`.
 
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one

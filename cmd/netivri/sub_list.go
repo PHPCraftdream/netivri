@@ -16,7 +16,14 @@ func (a *subApp) list() error {
 	}
 	ss := make([]map[string]any, 0, len(r.Providers))
 	for _, p := range r.Providers {
-		ss = append(ss, map[string]any{"name": p.Name, "host": p.Host, "via_set": p.ViaSet, "nodes": p.Nodes, "fetched_at": p.FetchedAt, "quota": p.Quota})
+		item := map[string]any{"name": p.Name, "host": p.Host, "via_set": p.ViaSet, "nodes": p.Nodes, "fetched_at": p.FetchedAt, "quota": p.Quota}
+		if p.Pre != "" {
+			item["pre_socks5"] = p.Pre
+		}
+		if p.Post != "" {
+			item["post_socks5"] = p.Post
+		}
+		ss = append(ss, item)
 	}
 	cli.Success(a.stdout, map[string]any{"subscriptions": ss})
 	return nil

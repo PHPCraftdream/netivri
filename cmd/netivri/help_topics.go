@@ -124,7 +124,9 @@ var helpTopics = []helpTopic{
 				"Show client link reveal on the Servers screen.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
 				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
-				"Updated. Enter on the Subscription or Via field line opens its prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
+				"Updated, and the Pre-hop and Post-hop of the provider (inherited, none or set, never the URL; an empty answer " +
+				"leaves the hop as it is, Clear pre-hop (P) / Clear post-hop (O) return it to the global value). " +
+				"Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
 				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
 				"written when the name is not valid), Remove... (d; the confirm names dependent accounts). " +
 				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, fetch with a " +
@@ -313,7 +315,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub",
 		Summary: "Manage provider subscriptions",
-		Usage:   []string{"netivri sub {add|list|update|rm|countries} [arguments]", "netivri sub -i"},
+		Usage:   []string{"netivri sub {add|list|update|rm|countries|set-socks5} [arguments]", "netivri sub -i"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
 			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
@@ -326,7 +328,7 @@ var helpTopics = []helpTopic{
 		Name:    "sub add",
 		Group:   groupSubs,
 		Summary: "Add a subscription",
-		Usage:   []string{"netivri sub add {URL} [--name {NAME}] [--via {PROXY}]"},
+		Usage:   []string{"netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL}] [--post-socks5 {URL}]"},
 		Description: "Fetches the subscription, parses it, stores its nodes and only then adds it to the config. If " +
 			"anything fails nothing is added. The fetch goes through --via when given, otherwise through fetch.proxy " +
 			"from config.ktav, otherwise directly; environment proxies are never used.\n\n" +
@@ -335,11 +337,14 @@ var helpTopics = []helpTopic{
 		Flags: []helpFlag{
 			{"--name {NAME}", "Name of the subscription (letters, digits, . _ -; at most 64). Default: derived from the host of the URL. A name used by a different URL is SUB_EXISTS_NAME."},
 			{"--via {PROXY}", "Fetch through this proxy: an http(s):// or socks5(h):// URL."},
+			{"--pre-socks5 {URL}", "Hop before the nodes of this provider: socks5://, http:// (an HTTP CONNECT proxy) or https:// URL with a port, or none. Replaces the global pre hop for this provider's nodes; an account's own value replaces it in turn. Ignored for a URL that is already configured."},
+			{"--post-socks5 {URL}", "Hop after the nodes of this provider, same values as --pre-socks5."},
 		},
 		Examples: []helpExample{
 			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/{TOKEN}"},
 			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/{TOKEN} --name main"},
 			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
+			{"Reach this provider's nodes through an HTTP proxy", "netivri sub add https://provider.example/sub/{TOKEN} --pre-socks5 http://proxy.example:8080"},
 		},
 		Errors: []helpError{
 			herr("FETCH_URL_INVALID", cli.ExitUsage, "the subscription or proxy URL is not valid"),
@@ -349,7 +354,36 @@ var helpTopics = []helpTopic{
 			herr("SUBSCRIPTION_EMPTY", cli.ExitNetwork, "no valid nodes in the body"),
 			herr("SUB_EXISTS_NAME", cli.ExitConflict, "the name belongs to a different URL"),
 		},
-		SeeAlso: []string{"sub countries", "sub update", "account add"},
+		SeeAlso: []string{"sub countries", "sub set-socks5", "sub update", "account add"},
+	},
+	{
+		Name:    "sub set-socks5",
+		Group:   groupSubs,
+		Summary: "Set or inherit the proxy hops of a provider",
+		Usage: []string{
+			"netivri sub set-socks5 {SUBSCRIPTION} --pre {URL|none|inherit}",
+			"netivri sub set-socks5 {SUBSCRIPTION} --post {URL|none|inherit}",
+			"netivri sub set-socks5 {SUBSCRIPTION} --pre {VALUE} --post {VALUE}",
+		},
+		Description: "Sets the pre and post proxy hops of one provider: every node of the provider is reached through the pre hop " +
+			"and leaves through the post hop. A value is a socks5://, http:// (an HTTP CONNECT proxy) or https:// " +
+			"user:password@host:port URL (port required), none for no hop (it also overrides a hop set globally), or inherit to use the global chain setting again. " +
+			"The hops cascade: global, then provider, then account. The more specific level replaces the one above it; nothing is stacked. " +
+			"Unspecified sides are unchanged. URLs are credentials and are never printed. Changes are applied by a running angel within a few seconds.",
+		Flags: []helpFlag{
+			{"--pre {VALUE}", "Set the pre-hop proxy URL (socks5://, http:// or https://; port required), or none/inherit."},
+			{"--post {VALUE}", "Set the post-hop proxy URL (socks5://, http:// or https://; port required), or none/inherit."},
+		},
+		Examples: []helpExample{
+			{"All nodes of main go through an HTTP proxy first", "netivri sub set-socks5 main --pre http://user:secret@proxy.example:8080"},
+			{"Do not use the global post hop for this provider", "netivri sub set-socks5 main --post none"},
+			{"Return to the global pre hop", "netivri sub set-socks5 main --pre inherit"},
+		},
+		Errors: []helpError{
+			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
+			herr("USAGE", cli.ExitUsage, "requires a subscription name and --pre and/or --post"),
+		},
+		SeeAlso: []string{"sub add", "account set-socks5", "config", "routing"},
 	},
 	{
 		Name:    "sub list",
@@ -733,7 +767,7 @@ var helpTopics = []helpTopic{
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] --pre {VALUE} --post {VALUE}",
 		},
 		Description: "Updates one or more accounts' chain sides. Set a side to a socks5://, http:// or https:// " +
-			"user:password@host:port URL (port required; http is an HTTP CONNECT proxy, https the same over TLS), none to explicitly disable that hop, or inherit to use the global chain setting. " +
+			"user:password@host:port URL (port required; http is an HTTP CONNECT proxy, https the same over TLS), none to explicitly disable that hop, or inherit to use the provider's hop (see 'sub set-socks5'), else the global chain setting. " +
 			"Unspecified sides are unchanged. The sides are independent; URLs are credentials and are never printed. " +
 			"Changes are applied by a running angel within a few seconds.",
 		Flags: []helpFlag{
@@ -1022,8 +1056,9 @@ var helpTopics = []helpTopic{
 			"https:// URL with a host. fetch.update_interval is how often the angel re-fetches every " +
 			"subscription: a duration from 5m to 168h, or off; the default is 1h.\n\n" +
 			"subscriptions is an array of provider subscriptions, each with subscriptions.name, subscriptions.url " +
-			"(a secret, never printed) and an optional subscriptions.via, a per-subscription fetch proxy with the " +
-			"same rules as fetch.proxy. accounts is an array of proxy accounts: accounts.login (1 to 64 " +
+			"(a secret, never printed), an optional subscriptions.via, a per-subscription fetch proxy with the " +
+			"same rules as fetch.proxy, and optional subscriptions.pre_socks5 and subscriptions.post_socks5 (the hops " +
+			"of this provider's nodes, same values as chain.*). accounts is an array of proxy accounts: accounts.login (1 to 64 " +
 			"characters of A-Za-z0-9._@-, unique, not the reserved init, not a duplicate of a non-init " +
 			"auth.login), accounts.password (init or an argon2id hash), and optional accounts.provider (a " +
 			"comma-separated list of subscription names in priority order), accounts.exit_country (a " +
@@ -1033,8 +1068,9 @@ var helpTopics = []helpTopic{
 			"default manual) set the preferred exit.\n\n" +
 			"chain.pre_socks5 and chain.post_socks5 are optional global hop defaults; despite the names they take " +
 			"socks5://, http:// (an HTTP CONNECT proxy) or https:// (the same over TLS) URLs. Each account may " +
-			"set accounts.pre_socks5 and accounts.post_socks5; each side cascades independently: absent/empty or inherit uses the " +
-			"global value, while none explicitly disables that hop. Hop URLs require a port (1 to 65535) " +
+			"set accounts.pre_socks5 and accounts.post_socks5; each side cascades independently: global, then provider " +
+			"(subscriptions.pre_socks5/post_socks5), then account, and the more specific level replaces the one above. Absent/empty or inherit uses the " +
+			"level above, while none explicitly disables that hop. Hop URLs require a port (1 to 65535) " +
 			"and may include optional percent-encoded username:password userinfo; these are credentials and are " +
 			"never printed. See 'netivri help routing'.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
@@ -1097,10 +1133,10 @@ var helpTopics = []helpTopic{
 			"`direct`, value `none`, and own value null. The post proxy is the hop after netivri's exit.\n\n" +
 			"A chain has up to three hops: an optional pre_socks5 hop, the selected subscription exit, " +
 			"and an optional post_socks5 hop. The order is client -> pre-hop -> selected exit -> post-hop -> target; " +
-			"each hop URL (socks5://, http:// or https://) requires a port. Account pre/post settings cascade independently: inherit uses the " +
-			"corresponding global chain setting, while none disables it. Credentials in URLs are redacted in help " +
+			"each hop URL (socks5://, http:// or https://) requires a port. The pre/post settings cascade independently: global, then provider, then account; inherit uses the " +
+			"level above, a URL replaces it and none disables the hop. A node takes the hops of its own provider, so one account route over several providers can use different hops. Credentials in URLs are redacted in help " +
 			"output and account show. Use 'netivri help config' for configuration keys and 'netivri help account " +
-			"set-socks5' to change account hops.\n\n" +
+			"set-socks5' and 'netivri help sub set-socks5' to change account and provider hops.\n\n" +
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
@@ -1202,7 +1238,8 @@ var helpTopics = []helpTopic{
 			"logs: entries[] (time - RFC3339 UTC -, level, message), oldest first. With --follow the output " +
 				"is a stream: log lines, or with --json one object per line (time, level, message).",
 			"sub list: subscriptions[] (name, host - of the URL; the URL itself is never printed -, via_set " +
-				"(a via proxy is set), nodes (a count, null until the first fetch), fetched_at (RFC3339 UTC, " +
+				"(a via proxy is set), pre_socks5 and post_socks5 (the provider's hops without credentials, present only " +
+				"when set: a host:port URL or none), nodes (a count, null until the first fetch), fetched_at (RFC3339 UTC, " +
 				"null until the first fetch), quota). quota is null when the provider sent no " +
 				"subscription-userinfo header; otherwise used (upload + download, bytes), total (bytes, null " +
 				"when the provider gives none) and expire (RFC3339 UTC, null when the provider gives none).",

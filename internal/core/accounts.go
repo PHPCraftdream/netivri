@@ -219,13 +219,16 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 			}
 			continue
 		}
+		if err := checkedNodeHops(o, key, len(nodes)); err != nil {
+			return nil, nil, nil, err
+		}
 		for index, node := range nodes {
 			prepared, _, err := prepareNode(node)
 			if err != nil {
 				return nil, nil, nil, err
 			}
 			name := memberProxyName(gen, keyIndex[key], index)
-			if uri := o.RoutePre[key]; uri != "" && !isNoChain(uri) {
+			if uri := o.nodePre(key, index); uri != "" && !isNoChain(uri) {
 				pre, err := chainProxy(uri, helperProxyName(gen, keyIndex[key], index, "pre"))
 				if err != nil {
 					return nil, nil, nil, err
@@ -234,7 +237,7 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 				proxies = append(proxies, pre)
 			}
 			member := name
-			if uri := o.RoutePost[key]; uri != "" && !isNoChain(uri) {
+			if uri := o.nodePost(key, index); uri != "" && !isNoChain(uri) {
 				postName := helperProxyName(gen, keyIndex[key], index, "post")
 				post, err := chainProxy(uri, postName)
 				if err != nil {

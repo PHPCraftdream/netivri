@@ -34,10 +34,20 @@ func routeKey(providers, countries string) string {
 }
 
 // credentialRouteKey keeps credentials out of core route keys and Mihomo rule names.
-func credentialRouteKey(providers, countries, pre, post string) string {
+func credentialRouteKey(providers, countries, pre, post string, extra ...string) string {
 	payload := providers + "\x00" + countries + "\x00" + pre + "\x00" + post
+	for _, e := range extra {
+		payload += "\x00" + e
+	}
 	sum := sha256.Sum256([]byte(payload))
 	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
+}
+
+func tagArgs(tag string) []string {
+	if tag == "" {
+		return nil
+	}
+	return []string{tag}
 }
 
 // snapshotDemand tells which stored snapshots the account routes read: all of them
@@ -94,7 +104,7 @@ func accountRoutePoolWith(home string, cfg *config.Config, override map[string]*
 		}
 		snapshots[sub.Name] = snap
 	}
-	return buildAccountRoutePool(cfg.Accounts, snapshots, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
+	return buildAccountRoutePoolHops(cfg.Accounts, snapshots, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5, hopsOf(cfg.Subscriptions))
 }
 
 // routePool is the outcome of buildAccountRoutePool: the nodes of every
@@ -109,6 +119,46 @@ type routePool struct {
 	accountRoutes map[string]string
 	routePre      map[string]string
 	routePost     map[string]string
+	// nodePre and nodePost hold, for the routes whose nodes take provider
+	// hops, one effective hop per node (same order as nodes).
+	nodePre  map[string][]string
+	nodePost map[string][]string
+}
+
+// providerHops are the provider-level hops by provider name: the middle level
+// of the cascade global -> provider -> account.
+type providerHops struct{ pre, post map[string]string }
+
+func hopsOf(subs []config.Subscription) providerHops {
+	h := providerHops{pre: map[string]string{}, post: map[string]string{}}
+	for _, s := range subs {
+		if s.PreSOCKS5 != "" {
+			h.pre[s.Name] = s.PreSOCKS5
+		}
+		if s.PostSOCKS5 != "" {
+			h.post[s.Name] = s.PostSOCKS5
+		}
+	}
+	return h
+}
+
+// tag fingerprints the provider hops that reach the nodes of a route whose
+// account leaves a side to inherit; "" when none do.
+func (h providerHops) tag(providers []string, rawPre, rawPost string) string {
+	var parts []string
+	for _, name := range providers {
+		pre, post := "", ""
+		if rawPre == "" {
+			pre = h.pre[name]
+		}
+		if rawPost == "" {
+			post = h.post[name]
+		}
+		if pre != "" || post != "" {
+			parts = append(parts, name+"\x01"+pre+"\x01"+post)
+		}
+	}
+	return strings.Join(parts, "\x02")
 }
 
 // nodeLabel is the stable identity of a node in statistics and bindings.
@@ -159,7 +209,16 @@ func (p routePool) firstTierLabels() map[string]bool {
 }
 
 func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string) (routePool, error) {
+	return buildAccountRoutePoolHops(accounts, snapshots, globalPre, globalPost, providerHops{})
+}
+
+// buildAccountRoutePoolHops is buildAccountRoutePool with the provider hops:
+// a node takes the account hop if the account sets one (a URL or none), else
+// the hop of its provider, else the global one.
+func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string, hops providerHops) (routePool, error) {
 	pool := routePool{
+		nodePre:       map[string][]string{},
+		nodePost:      map[string][]string{},
 		nodes:         map[string][]map[string]any{},
 		labels:        map[string][]string{},
 		tiers:         map[string][]int{},
@@ -174,8 +233,16 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		key       string
 		pre       string
 		post      string
+		rawPre    string
+		rawPost   string
+		perNode   bool
 		direct    bool
 	}
+	sortedProviders := make([]string, 0, len(snapshots))
+	for name := range snapshots {
+		sortedProviders = append(sortedProviders, name)
+	}
+	sort.Strings(sortedProviders)
 	seen := make(map[string]bool)
 	var wanted []demand // in account order, so the first failure is stable
 	for _, a := range accounts {
@@ -185,7 +252,15 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		if a.Exit == "direct" {
 			pre = "none"
 		}
-		key := credentialRouteKey(config.JoinList(providers), config.JoinList(countries), pre, post)
+		relevant := providers
+		if len(relevant) == 0 {
+			relevant = sortedProviders
+		}
+		tag := ""
+		if !direct {
+			tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
+		}
+		key := credentialRouteKey(config.JoinList(providers), config.JoinList(countries), pre, post, tagArgs(tag)...)
 		if direct {
 			// Keep implicit default-direct behavior unchanged. Explicit direct
 			// accounts get distinct keys based on their effective post hop.
@@ -201,7 +276,7 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 		pool.accountRoutes[a.Login] = key
 		if !seen[key] {
 			seen[key] = true
-			wanted = append(wanted, demand{providers: providers, countries: countries, key: key, pre: pre, post: post, direct: direct})
+			wanted = append(wanted, demand{providers: providers, countries: countries, key: key, pre: pre, post: post, rawPre: a.PreSOCKS5, rawPost: a.PostSOCKS5, perNode: tag != "", direct: direct})
 		}
 	}
 	if len(wanted) == 0 {
@@ -280,6 +355,17 @@ func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subs
 					pool.nodes[key] = append(pool.nodes[key], n.raw)
 					pool.labels[key] = append(pool.labels[key], label)
 					pool.tiers[key] = append(pool.tiers[key], tier)
+					if d.perNode {
+						pre, post := d.pre, d.post
+						if d.rawPre == "" && hops.pre[n.provider] != "" {
+							pre = hops.pre[n.provider]
+						}
+						if d.rawPost == "" && hops.post[n.provider] != "" {
+							post = hops.post[n.provider]
+						}
+						pool.nodePre[key] = append(pool.nodePre[key], pre)
+						pool.nodePost[key] = append(pool.nodePost[key], post)
+					}
 					if !infoSeen[label] {
 						infoSeen[label] = true
 						pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country, Name: n.name})
@@ -414,6 +500,54 @@ func resolveChain(account, global string) resolvedChain {
 	return resolvedChain{value: u.String(), source: source, auth: auth}
 }
 
+// resolveAccountChain is the cascade global -> provider -> account for one side
+// of an account: the account's own value (a URL or none) wins; else the hops of
+// the providers of its route; else the global one. Providers of one route that
+// resolve differently report "varies" (the source is provider).
+func resolveAccountChain(cfg *config.Config, a *config.Account, post bool) resolvedChain {
+	own, global := a.PreSOCKS5, cfg.Chain.PreSOCKS5
+	if post {
+		own, global = a.PostSOCKS5, cfg.Chain.PostSOCKS5
+	}
+	if own != "" {
+		return resolveChain(own, global)
+	}
+	names, _ := config.ParseProviderList(a.Provider)
+	if len(names) == 0 {
+		for _, s := range cfg.Subscriptions {
+			names = append(names, s.Name)
+		}
+	}
+	h := hopsOf(cfg.Subscriptions)
+	set := h.pre
+	if post {
+		set = h.post
+	}
+	values := map[string]bool{}
+	anySet := false
+	for _, name := range names {
+		if v := set[name]; v != "" {
+			values[v], anySet = true, true
+		} else {
+			values[global] = true
+		}
+	}
+	if !anySet {
+		return resolveChain("", global)
+	}
+	if len(values) > 1 {
+		return resolvedChain{value: "varies", source: "provider"}
+	}
+	for v := range values {
+		r := resolveChain(v, "")
+		if r.source == "account" {
+			r.source = "provider"
+		}
+		return r
+	}
+	return resolveChain("", global)
+}
+
 func statusAccountChain(accountPre, accountPost, globalPre, globalPost string) *angel.AccountChain {
 	pre, post := resolveChain(accountPre, globalPre), resolveChain(accountPost, globalPost)
 	return &angel.AccountChain{PreSOCKS5: pre.value, PreSOCKS5Source: pre.source, PreSOCKS5Auth: pre.auth,
@@ -422,6 +556,11 @@ func statusAccountChain(accountPre, accountPost, globalPre, globalPost string) *
 
 // accountStatus lists the configured accounts for the status answer,
 // sorted by login. Exit reports the effective explicit/default mode.
+func chainOfResolved(pre, post resolvedChain) *angel.AccountChain {
+	return &angel.AccountChain{PreSOCKS5: pre.value, PreSOCKS5Source: pre.source, PreSOCKS5Auth: pre.auth,
+		PostSOCKS5: post.value, PostSOCKS5Source: post.source, PostSOCKS5Auth: post.auth}
+}
+
 func accountStatus(cfg *config.Config, routes map[string]string) []angel.AccountInfo {
 	out := make([]angel.AccountInfo, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
@@ -439,6 +578,9 @@ func accountStatus(cfg *config.Config, routes map[string]string) []angel.Account
 			pre = "none"
 		}
 		chain := statusAccountChain(pre, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
+		if a.Exit != "direct" {
+			chain = chainOfResolved(resolveAccountChain(cfg, &a, false), resolveAccountChain(cfg, &a, true))
+		}
 		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, Exit: effectiveExit(&a), AllowedClients: a.AllowedClients, Chain: chain})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Login < out[j].Login })
