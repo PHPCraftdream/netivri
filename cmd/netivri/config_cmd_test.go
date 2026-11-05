@@ -140,7 +140,7 @@ func TestConfigUsageErrors(t *testing.T) {
 	}
 	for _, args := range cases {
 		ce := wantConfigUsage(t, args)
-		if strings.Contains(args[1], "nope") {
+		if len(args) > 2 && args[2] == "nope" {
 			if ce.Hint == "" {
 				t.Errorf("dispatch(%q) hint is empty, want the key list", args)
 			}
