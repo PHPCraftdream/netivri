@@ -1,6 +1,10 @@
 package main
 
-import "github.com/PHPCraftdream/netivri/internal/tui"
+import (
+	"strings"
+
+	"github.com/PHPCraftdream/netivri/internal/tui"
+)
 
 // parityScreen is implemented by the shell screens so the parity check
 // (docs/design/parity.md) can read what a screen offers from the live widgets
@@ -17,13 +21,17 @@ func parityRefs(screen string, list *tui.List, card *tui.Card) []string {
 	if card == nil {
 		return refs
 	}
-	seen := map[string]bool{screen + "/add": true}
+	seen := map[string]bool{"add": true}
 	for _, l := range card.Lines {
-		if l.Kind == tui.CardReadOnly || seen[l.ID] {
+		id := l.ID
+		if strings.HasPrefix(id, "param:") { // one line per protocol parameter
+			id = "param"
+		}
+		if l.Kind == tui.CardReadOnly || seen[id] {
 			continue
 		}
-		seen[l.ID] = true
-		refs = append(refs, screen+"/"+l.ID)
+		seen[id] = true
+		refs = append(refs, screen+"/"+id)
 	}
 	return refs
 }
