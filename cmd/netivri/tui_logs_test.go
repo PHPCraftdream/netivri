@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -155,6 +156,9 @@ found:
 	f.tick() // a poll without a log keeps the explanation
 	if !s.missing || f.polls < 1 {
 		t.Fatalf("poll on a missing log: missing %v polls %d", s.missing, f.polls)
+	}
+	if err := os.MkdirAll(filepath.Dir(angel.LogPath(f.s.home)), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	appendLogFile(t, f.s.home, "2026-11-05T12:01:00Z INFO appended one\n2026-11-05T12:02:00Z INFO appended two\n")
 	f.tick()
