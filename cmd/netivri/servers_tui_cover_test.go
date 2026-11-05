@@ -183,7 +183,7 @@ func TestInteractiveUsageHint(t *testing.T) {
 
 func TestInteractiveOptionsBuildsTabs(t *testing.T) {
 	opts := interactiveOptions(io.Discard, t.TempDir(), 1)
-	if len(opts.Tabs) != 6 || opts.Tabs[0].Title != "Providers" || opts.Tabs[1].Title != "Accounts" || opts.Tabs[2].Title != "Servers" || opts.Tabs[3].Title != "Service" || opts.Tabs[4].Title != "Stats" || opts.Tabs[5].Title != "Settings" {
+	if len(opts.Tabs) != 7 || opts.Tabs[0].Title != "Providers" || opts.Tabs[1].Title != "Accounts" || opts.Tabs[2].Title != "Servers" || opts.Tabs[3].Title != "Service" || opts.Tabs[4].Title != "Logs" || opts.Tabs[5].Title != "Stats" || opts.Tabs[6].Title != "Settings" {
 		t.Fatalf("tabs: %+v", opts.Tabs)
 	}
 	if opts.Start != 1 || opts.Home == "" {

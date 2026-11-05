@@ -48,23 +48,12 @@ func runLogs(args []string, stdout io.Writer) error {
 		return cli.Usage("logs: --tail must not be negative")
 	}
 	// DEBUG lines (repeats of nodes no account uses) only on request.
-	q := angel.LogQuery{Tail: *tail, MinLevel: angel.LevelInfo}
-	if *levelFlag != "" {
-		level, ok := angel.NormalizeLevel(*levelFlag)
-		if !ok {
-			return cli.Usage("logs: --level must be debug, info, warn or error")
-		}
-		q.MinLevel = level
-	}
-	if *since != "" {
-		window, err := parseWindowFor("logs", *since)
-		if err != nil {
-			return err
-		}
-		q.Since = time.Now().Add(-window)
+	q, err := opsLogsQuery(*levelFlag, *since, *tail, nil)
+	if err != nil {
+		return err
 	}
 
-	entries, offset, err := angel.ReadLog(home, q)
+	entries, offset, err := opsLogsRead(home, q)
 	if errors.Is(err, os.ErrNotExist) {
 		if *follow {
 			// The angel may not have started yet: wait for its log.

@@ -62,7 +62,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
 - **Interactive terminal shell.** A full-screen shell to manage providers,
-  accounts and servers, run the service, read the node statistics, diagnose
+  accounts and servers, run the service, follow the angel log, read the node statistics, diagnose
   nodes and edit the global settings, with masked secrets. Start it with `netivri -i` (or
   `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires
   terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
