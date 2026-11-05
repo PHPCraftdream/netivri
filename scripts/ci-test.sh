@@ -5,6 +5,7 @@
 #   CI_RUN       -run regex (optional)
 #   CI_RACE      1 => add -race
 #   CI_COVER     1 => add -covermode=atomic -coverprofile=coverage.out
+#   CI_TIMEOUT   go test -timeout (default 10m, the go default)
 set -euo pipefail
 
 packages="${CI_PACKAGES:-./...}"
@@ -14,6 +15,10 @@ race="${CI_RACE:-0}"
 cover="${CI_COVER:-0}"
 
 args=(go test -count=1)
+
+if [[ -n "${CI_TIMEOUT:-}" ]]; then
+  args+=(-timeout="${CI_TIMEOUT}")
+fi
 
 if [[ -n "${tags}" ]]; then
   args+=(-tags="${tags}")

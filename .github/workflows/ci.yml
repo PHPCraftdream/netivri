@@ -277,6 +277,9 @@ jobs:
             export CI_RUN="${CI_SCOPE_RUN}"
             export CI_RACE="0"
             export CI_COVER="0"
+            # The package's whole suite plus the e2e tests no longer fits the
+            # 10 minute go default (main hit it on windows).
+            export CI_TIMEOUT="25m"
             bash scripts/ci-test.sh
           else
             echo "no e2e test files (*_test.go with '//go:build ... e2e') found; skipping"
