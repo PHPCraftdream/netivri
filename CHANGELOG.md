@@ -10,6 +10,11 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Logs tab in the shell.** The tail of the angel log with follow on by default (new
+  lines appear as the angel writes them; scrolling up reads in the past, `f` or End
+  returns to the live tail), a level filter (`l`), in-pane search (`/`), and since (`s`)
+  and tail (`n`) prompts — the shell side of `netivri logs`, through the same reader.
+
 - **Stats tab in the shell.** The recorded node health, delay and throughput of
   `netivri stats`, per node or per account (`b` toggles), with the window
   (`since`) and the subscription, country, node and account filters as one-line

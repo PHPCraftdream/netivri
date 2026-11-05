@@ -110,7 +110,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"The frame is fixed: a one-line header (angel state, listen address, uptime, version), " +
-				"a tab line (Providers, Accounts, Servers, Service), the body and one-line toast and hint lines. " +
+				"a tab line (Providers, Accounts, Servers, Service, Logs, Stats, Settings), the body and one-line toast and hint lines. " +
 				"From 100 columns the body is two panes, the list on the left and the card of the selected " +
 				"item on the right; below that it is a single pane that drills down (Enter opens the card, " +
 				"Esc goes back, a breadcrumb names the path); below 60x16 only an enlarge-the-window line. " +
@@ -128,6 +128,7 @@ var helpTopics = []helpTopic{
 				"name the open connections that will drop. Checks runs the checks of 'netivri doctor' (c) and lists " +
 				"each with its status and detail; Accounts shows the live activity of every account. It is the shell side " +
 				"of up, down, status and doctor.",
+			"Logs: the list shows the angel log, one line per entry with time, level and message, oldest first, the newest 200 lines by default. Follow is on (f): new lines appear as the angel writes them and the view stays at the bottom; scrolling up reads in the past, f or End returns to the live tail. l cycles the level filter (debug, info, warn, error: the level and above), / searches the shown lines (Esc clears), s sets a since window (30m, 2h, 7d; empty clears) and n the number of newest lines. It is the shell side of 'netivri logs', through the same reader.",
 			"Stats: the table of 'netivri stats' (per node or per account, b toggles) with the window (since) and the subscription, country, node and account filters as prompts, and r to reload; read-only. " +
 				"Settings: the global keys of config.ktav (Listen, Auth, Fetch, Chain) with the same validation as 'netivri config set'; secrets are set, never shown, and a change that needs an angel restart says so in the toast.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +

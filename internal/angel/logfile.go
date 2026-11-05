@@ -243,3 +243,33 @@ func RotateLog(home string, maxBytes int64) error {
 	_ = os.Remove(old)
 	return os.Rename(LogPath(home), old)
 }
+
+// LogFollower follows the angel log one poll at a time with the parser state
+// of FollowLog: a line that is not an entry belongs to the entry before it,
+// so a trace after an error line stays an error across polls. The interactive
+// shell polls with it so a step never blocks.
+type LogFollower struct {
+	home string
+	p    logParser
+}
+
+// NewLogFollower returns a follower of the log of home.
+func NewLogFollower(home string) *LogFollower { return &LogFollower{home: home} }
+
+// Poll returns the entries written after offset from that match q, and the
+// offset to continue from. Only complete lines are returned: a last line the
+// angel is still writing comes with a later poll. A missing log is
+// os.ErrNotExist; a log that shrank (rotation) is read again from its start.
+func (f *LogFollower) Poll(from int64, q LogQuery) ([]LogEntry, int64, error) {
+	data, end, err := readLogRange(LogPath(f.home), from)
+	if err != nil {
+		return nil, 0, err
+	}
+	var out []LogEntry
+	for _, line := range strings.Split(string(data), "\n") {
+		if e, ok := f.p.entry(line); ok && q.match(e) {
+			out = append(out, e)
+		}
+	}
+	return out, end, nil
+}
