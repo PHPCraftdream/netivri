@@ -341,6 +341,9 @@ func (s *settingsScreen) buildCard(group string) *tui.Card {
 }
 
 func (s *settingsScreen) displayValue(k ConfigKey) string {
+	if s.cfg == nil { // before the first load
+		return "-"
+	}
 	v := ConfigDisplayValue(s.cfg, k.Key)
 	if v == nil {
 		return "-"

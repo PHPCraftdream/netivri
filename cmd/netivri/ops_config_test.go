@@ -125,6 +125,7 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 		t.Fatalf("hash: %v", err)
 	}
 	cfg := config.Default()
+	cfg.Auth.Login = "proxyuser"
 	cfg.Auth.Password = hash
 	cfg.Chain.PreSOCKS5 = "socks5://alice:s3cret@relay.example:1080"
 	cfg.Fetch.Proxy = "http://u:p@proxy.example:8443"
@@ -305,7 +306,11 @@ func TestConfigSetEachKey(t *testing.T) {
 	t.Run("password init", func(t *testing.T) {
 		home := t.TempDir()
 		cfg := config.Default()
-		cfg.Auth.Login = "alice"
+		oldHash, herr := auth.Hash("old-password")
+		if herr != nil {
+			t.Fatalf("hash: %v", herr)
+		}
+		cfg.Auth.Login, cfg.Auth.Password = "alice", oldHash
 		writeTestConfig(t, home, cfg)
 		res, err := ConfigSet(home, "auth.password", "init")
 		if err != nil {
