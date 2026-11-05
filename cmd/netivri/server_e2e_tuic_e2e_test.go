@@ -275,7 +275,8 @@ func e2eTUICSubscriptionBody(name string, up *accountsUpstream) string {
 }
 func e2eTUICFreeUDPPort(t *testing.T, exclude int) int {
 	t.Helper()
-	for i := 0; i < 40; i++ {
+	var lastErr error
+	for i := 0; i < 400; i++ {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal("reserve TCP port")
@@ -291,9 +292,10 @@ func e2eTUICFreeUDPPort(t *testing.T, exclude int) int {
 			_ = l.Close()
 			return p
 		}
+		lastErr = e
 		_ = l.Close()
 	}
-	t.Fatal("no TCP+UDP port available")
+	t.Fatalf("no TCP+UDP port available: %v", lastErr)
 	return 0
 }
 func e2eTUICLinkSecrets(t *testing.T, h, n, a string) []string {

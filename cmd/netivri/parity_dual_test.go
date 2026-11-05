@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/PHPCraftdream/netivri/internal/config"
@@ -62,18 +63,63 @@ func dualCLI(t *testing.T, home string, args ...string) {
 }
 
 // dualShell drives one shell screen with real key presses. Background work
-// runs inline, a confirmation the screen opens is held until Confirm.
+// runs inline at the moment the screen asks for it, so no result depends on
+// timing; a confirmation the screen opens is held until Confirm.
 type dualShell struct {
-	t      *testing.T
-	screen tui.Screen
-	modal  tui.Modal
+	t       *testing.T
+	screen  tui.Screen
+	modal   tui.Modal
+	pending []tea.Msg
+}
+
+// dualCmdWait bounds a command that is not Background work: those return at
+// once, a timer (cursor blink, rate tick) never does and is dropped.
+const dualCmdWait = 100 * time.Millisecond
+
+// drain delivers the results of finished Background work and runs the
+// commands the screen returned until none produces a message.
+func (d *dualShell) drain(c tea.Cmd) {
+	queue := []tea.Cmd{c}
+	for i := 0; i < 500; i++ {
+		if len(d.pending) > 0 {
+			m := d.pending[0]
+			d.pending = d.pending[1:]
+			var n tea.Cmd
+			d.screen, n = d.screen.Update(m)
+			queue = append(queue, n)
+			continue
+		}
+		if len(queue) == 0 {
+			return
+		}
+		x := queue[0]
+		queue = queue[1:]
+		if x == nil {
+			continue
+		}
+		ch := make(chan tea.Msg, 1)
+		go func() { ch <- x() }()
+		select {
+		case m := <-ch:
+			if b, ok := m.(tea.BatchMsg); ok {
+				queue = append(queue, b...)
+			} else if m != nil {
+				d.pending = append(d.pending, m)
+			}
+		case <-time.After(dualCmdWait):
+		}
+	}
+	d.t.Fatal("the screen kept producing commands")
 }
 
 // newDualShell builds the tab with the given title on a home and loads it.
 func newDualShell(t *testing.T, home, tab string) *dualShell {
 	t.Helper()
 	d := &dualShell{t: t}
-	env := tui.Env{Home: home, Background: func(_ string, w func() tea.Msg) tea.Cmd { return w }}
+	env := tui.Env{Home: home, Background: func(_ string, w func() tea.Msg) tea.Cmd {
+		d.pending = append(d.pending, w())
+		return nil
+	}}
 	env.OpenModal = func(m tui.Modal) tea.Cmd {
 		d.modal = m
 		return nil
@@ -81,7 +127,7 @@ func newDualShell(t *testing.T, home, tab string) *dualShell {
 	for _, x := range interactiveOptions(nil, home, 0).Tabs {
 		if x.Title == tab {
 			d.screen = x.New(env)
-			d.screen = parityDrain(d.screen, d.screen.Init())
+			d.drain(d.screen.Init())
 			return d
 		}
 	}
@@ -122,7 +168,7 @@ func (d *dualShell) Keys(keys ...string) {
 		}
 		var c tea.Cmd
 		d.screen, c = d.screen.Update(msg)
-		d.screen = parityDrain(d.screen, c)
+		d.drain(c)
 	}
 }
 
@@ -143,7 +189,7 @@ func (d *dualShell) Confirm(yes bool) {
 	d.modal = nil
 	var c tea.Cmd
 	d.screen, c = d.screen.Update(tui.ConfirmResultMsg{Confirmed: yes, Canceled: !yes})
-	d.screen = parityDrain(d.screen, c)
+	d.drain(c)
 }
 
 // dualVolatile blanks the parts of a stored file that differ between two runs
@@ -212,19 +258,30 @@ func dualEqual(t *testing.T, cliHome, shellHome string, volatile ...dualVolatile
 		if x == y {
 			continue
 		}
-		xl, yl := strings.Split(x, "\n"), strings.Split(y, "\n")
-		for i := 0; i < len(xl) || i < len(yl); i++ {
-			var l1, l2 string
-			if i < len(xl) {
-				l1 = xl[i]
-			}
-			if i < len(yl) {
-				l2 = yl[i]
-			}
-			if l1 != l2 {
-				t.Errorf("%s line %d differs: CLI %s, shell %s", n, i+1, dualHash(l1), dualHash(l2))
-			}
+		dualReportLines(t, n, "CLI", strings.Split(x, "\n"), strings.Split(y, "\n"))
+		dualReportLines(t, n, "shell", strings.Split(y, "\n"), strings.Split(x, "\n"))
+	}
+}
+
+// dualReportLines names the lines of one side the other side lacks, by key
+// (the text before the first colon) and a fingerprint of the whole line, so an
+// inserted or missing line does not shift every later line into a diff.
+func dualReportLines(t *testing.T, file, side string, have, other []string) {
+	t.Helper()
+	count := map[string]int{}
+	for _, l := range other {
+		count[l]++
+	}
+	for _, l := range have {
+		if count[l] > 0 {
+			count[l]--
+			continue
 		}
+		key := l
+		if k := strings.Index(l, ":"); k >= 0 {
+			key = l[:k]
+		}
+		t.Errorf("%s: only the %s stored a line with key %q (fingerprint %s)", file, side, strings.TrimSpace(key), dualHash(l))
 	}
 }
 
