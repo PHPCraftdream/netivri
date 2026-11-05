@@ -224,6 +224,8 @@ func runServer(args []string, stdout io.Writer) error {
 		}
 		cli.Success(stdout, map[string]any{"server": result.serverView})
 		return nil
+	case "update":
+		return serverUpdateCommand(home, cfg, rest, stdout)
 	case "show", "remove", "rotate", "link":
 		fs := flag.NewFlagSet("server "+sub, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)

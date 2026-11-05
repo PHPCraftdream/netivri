@@ -174,6 +174,7 @@ netivri server add --protocol vmess --name {OTHER_NAME} --account alice --port {
 netivri server list
 netivri server link {NAME} --account alice --host {HOST}
 netivri server link {NAME} --account alice --host {HOST} --format mihomo
+netivri server update {NAME} --port {NEW_PORT} --public-host {HOST}
 netivri server rotate {NAME} --account alice
 netivri server remove {NAME}
 ```
@@ -243,6 +244,10 @@ netivri sub add https://provider.example/sub/{TOKEN} --name main --pre-socks5 ht
 netivri sub set-socks5 main --post socks5://exit.example:1080   # a provider-level post hop
 netivri sub set-socks5 main --pre none               # main skips the global pre hop
 netivri sub set-socks5 main --pre inherit            # back to the global value
+
+netivri sub rename main work                        # accounts and stored nodes follow
+netivri sub set work --url https://provider.example/sub/{TOKEN}   # a new link; then: netivri sub update work
+netivri sub set work --via none                     # stop fetching through a proxy
 ```
 
 Each side is independent and the most specific level wins: an account value

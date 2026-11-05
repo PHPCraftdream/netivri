@@ -7,6 +7,7 @@
 ```
 netivri server protocols
 netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--default] [--param {KEY=VALUE} ...]
+netivri server update {NAME} [--public-host {HOST}] [--bind {ADDR}] [--port {PORT}] [--account {ACCOUNT|*}] [--param {KEY=VALUE} ...]
 netivri server list
 netivri server show {NAME}
 netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr]
@@ -17,6 +18,8 @@ netivri server remove {NAME}
 `protocols` lists registered protocols and `single_user`. The protocol interface currently has no parameter metadata, so `params` is an empty list; the parent `server` help topic dynamically lists this build's registered protocol names.
 
 `add` requires a registered protocol, account selection and a port 1–65535. `*` expands to all configured accounts for multi-user protocols; single-user protocols require exactly one account. Eligible shared TCP members are TLS-family (Trojan, AnyTLS, TrustTunnel, VLESS-Reality), Shadowsocks 2022 (three ciphers), and VMess AEAD (`alterId=0`). Legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP remain exclusive. Shared Shadowsocks uses one PSK, listener and account; VMess allows at most 1024 users. Raw PSKs and VMess UUIDs must be distinct. At most 16 trial members may share. Reused raw credentials or a default on trial member returns `SERVER_PORT_AMBIGUOUS` (exit 6) with a safe hint. Existing TLS match-key and default rules are unchanged. Name defaults to `ss-{PORT}` for Shadowsocks, otherwise `{PROTOCOL}-{PORT}`. Repeat `--param key=value` for protocol parameters. Name conflicts return `SERVER_EXISTS`; exclusive same-transport listeners with overlapping binds return `PORT_IN_USE`. TCP and UDP may share a port.
+
+`update` changes the given fields of an existing server and nothing else (secrets are untouched; `rotate` replaces them). The result is validated like `add` before anything is saved: a missing server is `SERVER_NOT_FOUND`, a port that collides with the proxy listener or another listener that cannot share it is `PORT_IN_USE`, an invalid account, bind or parameter is `CONFIG_INVALID`, and no field at all is `USAGE`; a failure changes nothing. It prints `{server: ...}` like `add` (parameter values are never printed). The running angel applies the change within a few seconds. Links made earlier keep working when only accounts or the public host change; a new port or parameter needs a fresh `link`.
 
 `list`/`show` expose endpoint details and parameter keys only, never values or secrets. `link` returns `{name, account, format, link}` and is the intentional credential disclosure. `--host` overrides `public_host`; otherwise a host is required. A host must be a hostname or IP without a port or credentials. Multi-account servers require `--account`. Formats are `uri` (default) and `mihomo` when supported by the protocol. `--qr` is rejected: there is no QR encoder dependency. `rotate` replaces one account secret or, without `--account`, server material and user secrets. `remove` deletes config and secrets.
 
@@ -49,6 +52,7 @@ netivri server protocols
 netivri server add --protocol shadowsocks --account alice --port 8388 --bind 127.0.0.1 --public-host edge.example.org --param cipher=aes-128-gcm
 netivri server list --json
 netivri server link ss-8388 --host edge.example.org --format uri --json
+netivri server update ss-8388 --port 8443 --public-host edge2.example.org
 netivri server rotate ss-8388 --account alice
 netivri server remove ss-8388
 ```

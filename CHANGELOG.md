@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Added
 
+- **CLI for what only the shell could do.** `netivri sub rename {OLD} {NEW}` (accounts and stored nodes
+  follow), `netivri sub set {NAME} [--url] [--via]` (new subscription URL or fetch proxy, never echoed) and
+  `netivri server update {NAME} [--public-host] [--bind] [--port] [--account] [--param]`. First step of the
+  CLI/shell parity work ([`docs/design/parity.md`](docs/design/parity.md)); a test now fails when a command, flag,
+  screen or card line has no counterpart on the other side and no reasoned exemption.
+
 - **Proxy hops per provider.** A provider (`subscriptions[]`) can set `pre_socks5` and
   `post_socks5` (`socks5://`, `http://` or `https://`, or `none`), via `netivri sub add
   --pre-socks5/--post-socks5`, the new `netivri sub set-socks5`, and the Pre-hop/Post-hop fields of the
