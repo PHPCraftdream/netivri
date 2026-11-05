@@ -587,7 +587,7 @@ func (s *providersScreen) applyDiagSamplesPrompt(x tui.PromptResultMsg) (tui.Scr
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(x.Value))
 	if err != nil || n < 1 || n > maxDiagSamples {
-		s.prompt.SetError(errors.New("Samples must be a whole number between 1 and 20"))
+		s.prompt.SetError(errors.New("the samples count must be a whole number between 1 and 20"))
 		return s, nil
 	}
 	return s, s.runDiagnose(s.diagLabel, n)

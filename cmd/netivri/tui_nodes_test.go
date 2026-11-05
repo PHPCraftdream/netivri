@@ -407,7 +407,7 @@ func TestProvidersDiagnoseCancelShowsMessageOnly(t *testing.T) {
 		t.Fatal("a canceled diag result must not schedule work")
 	}
 	// A successful result arriving after Esc reports the cancellation.
-	run = startDiagnoseRun(t, s)
+	_ = startDiagnoseRun(t, s)
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	_, _ = s.Update(providerResultMsg{kind: "diag", value: core.NodeDiag{Label: "p/aa11bb22cc33", Samples: 5}})
 	if s.message != "Diagnosis canceled" || s.diagDlg != nil || s.mode != "" {

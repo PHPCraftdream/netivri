@@ -271,7 +271,7 @@ func TestConfigSetClearBoolAndRestartFlags(t *testing.T) {
 		t.Error("auth.allow_init_remote = false, want true")
 	}
 
-	wantConfigUsage(t, []string{"config", "set", "auth.allow_init_remote", "maybe", "--home", home})
+	_ = wantConfigUsage(t, []string{"config", "set", "auth.allow_init_remote", "maybe", "--home", home})
 
 	data := configData(t, "config", "set", "chain.post_socks5", "socks5://127.0.0.1:1080", "--home", home)
 	if data["restart_needed"] != true {

@@ -561,7 +561,7 @@ func TestConfigSetBoolVariantsAndUnknownKey(t *testing.T) {
 	if _, err := ConfigSet(home, "auth.allow_init_remote", "maybe"); err == nil {
 		t.Fatalf("\"maybe\" accepted")
 	} else {
-		wantCLIError(t, err, "USAGE")
+		_ = wantCLIError(t, err, "USAGE")
 	}
 
 	tooLong := strings.Repeat("x", auth.MaxPasswordLen+1)
@@ -593,7 +593,7 @@ func TestConfigSetWholeConfigValidation(t *testing.T) {
 	writeTestConfig(t, home, cfg)
 	before := readTestConfigBytes(t, home)
 	_, err = ConfigSet(home, "auth.login", "alice")
-	wantCLIError(t, err, config.CodeConfigInvalid)
+	_ = wantCLIError(t, err, config.CodeConfigInvalid)
 	if after := readTestConfigBytes(t, home); !bytes.Equal(before, after) {
 		t.Errorf("file bytes changed on a rejected set")
 	}
