@@ -94,6 +94,11 @@ See [`docs/testing.md`](docs/testing.md) for the full strategy. Hard rules:
 - Scopes are **package** (AREA: `go test ./internal/foo/...`) plus **level**
   (build tags: unit = no tag, `integration`, `e2e`, `bench`).
 - Tests run only in GitHub CI — never locally (see the main rule above).
+- The CLI and the interactive shell cover each other (`docs/design/parity.md`).
+  A new command, flag, screen, card line or action needs an entry in
+  `cmd/netivri/parity_catalog_test.go`, on both sides or with a reasoned
+  exemption; `parity_test.go` fails until the catalog agrees with both
+  surfaces. Do not raise `parityGapBudget`.
 - CI runs the tests of the packages the diff touches and of what imports them;
   a change outside one package runs everything. A full run is asked for with a
   line `ci: full` in the head commit message (the end of a sprint, a release,

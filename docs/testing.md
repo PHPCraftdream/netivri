@@ -30,6 +30,13 @@ Every tagged file must start with the matching `//go:build` line
 (`//go:build integration`, `//go:build e2e`, `//go:build bench`).
 Unit test files have **no** build tag.
 
+## Parity of the CLI and the shell
+
+`cmd/netivri/parity_test.go` checks the capability catalog
+(`parity_catalog_test.go`) against the help topics and flags on one side and
+the live screens (`ParityRefs`) on the other, and keeps the list of known gaps
+as a budget that only goes down. See [`design/parity.md`](design/parity.md).
+
 ## Test rules
 
 - **Deterministic.** Never sleep for synchronization. Use channels,

@@ -14,7 +14,7 @@ rows, card field and action lines, frame-level keys). Neither can be derived
 from the other, so a third thing names what the user can *do*:
 
 ```go
-// cmd/netivri/capabilities.go
+// cmd/netivri/parity_catalog_test.go (test-only data, nothing is shipped)
 type capability struct {
     ID     string   // "provider.rename", "account.set-exit", "service.up"
     CLI    []string // refs: "sub set-socks5", "sub set-socks5 --pre", ...
@@ -34,7 +34,7 @@ documented flags (`sub add --pre-socks5`). A **TUI ref** is `{screen}/{id}`:
 card line or action id (`edit-name`, `clear-pre`), `add` for the `+ Add` row,
 or `frame/{key}` for keys owned by the frame (tabs, help, quit).
 
-## Checks (all in `cmd/netivri/parity_test.go`)
+## Checks (`cmd/netivri/parity_test.go`; the shell side is read from the live screens through `ParityRefs`, `parity_refs.go`)
 
 1. **CLI listed.** Every leaf help topic and every flag documented on it is
    referenced by a capability, or is exempt with a reason.
