@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/fetch"
 	"github.com/PHPCraftdream/netivri/internal/tui"
 )
@@ -53,6 +55,13 @@ type providersScreen struct {
 	providers                           map[string]ProviderInfo
 	editField                           string
 	pendingToast                        string
+	nodesList                           func(string, string, string) ([]NodeEntry, error)
+	dialNode                            func(context.Context, string, string, int) (core.NodeDiag, error)
+	nodesDlg                            *nodesDialog
+	diagDlg                             *diagResultDialog
+	diagLabel                           string
+	diagCancel                          context.CancelFunc
+	diagCanceled                        bool
 }
 
 func newProvidersScreen(h string, e tui.Env) tui.Screen {
@@ -72,14 +81,14 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 	l.Title = "Providers"
 	l.EmptyText = "A provider is a subscription of proxy nodes. Add one to start."
 	l.AddLabel = "+ Add provider"
-	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "pre", Label: "Pre-hop", Kind: tui.CardField}, {ID: "post", Label: "Post-hop", Kind: tui.CardField}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "clear-pre", Label: "Clear pre-hop", Hotkey: "P", Kind: tui.CardAction}, {ID: "clear-post", Label: "Clear post-hop", Hotkey: "O", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
+	c := tui.NewCard("Provider", []tui.CardLine{{ID: "name", Label: "Name", Kind: tui.CardReadOnly}, {ID: "subscription", Label: "Subscription", Kind: tui.CardField}, {ID: "via", Label: "Via", Kind: tui.CardField}, {ID: "nodes", Label: "Nodes", Kind: tui.CardReadOnly}, {ID: "countries", Label: "Countries", Kind: tui.CardReadOnly}, {ID: "updated", Label: "Updated", Kind: tui.CardReadOnly}, {ID: "pre", Label: "Pre-hop", Kind: tui.CardField}, {ID: "post", Label: "Post-hop", Kind: tui.CardField}, {ID: "edit-name", Label: "Rename", Kind: tui.CardAction}, {ID: "edit-subscription", Label: "Edit subscription", Kind: tui.CardAction}, {ID: "edit-via", Label: "Edit Via", Kind: tui.CardAction}, {ID: "clear-pre", Label: "Clear pre-hop", Hotkey: "P", Kind: tui.CardAction}, {ID: "clear-post", Label: "Clear post-hop", Hotkey: "O", Kind: tui.CardAction}, {ID: "refresh", Label: "Refresh selected", Hotkey: "r", Kind: tui.CardAction}, {ID: "refresh-all", Label: "Refresh all", Hotkey: "R", Kind: tui.CardAction}, {ID: "countries", Label: "Countries", Hotkey: "c", Kind: tui.CardAction}, {ID: "nodes", Label: "Nodes...", Hotkey: "n", Kind: tui.CardAction}, {ID: "diagnose", Label: "Diagnose...", Hotkey: "g", Kind: tui.CardAction}, {ID: "remove", Label: "Remove", Hotkey: "d", Kind: tui.CardAction}})
 	ws := tui.NewWorkspace(l, c)
 	theme := e.Theme
 	if theme.Accent == nil {
 		theme = tui.NewTheme()
 	}
 	ws.SetTheme(theme)
-	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}}
+	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}, nodesList: NodeList, dialNode: DiagDialLabel}
 }
 func (s *providersScreen) Title() string        { return "Providers" }
 func (s *providersScreen) CapturingInput() bool { return s.dialog != nil || s.list.Filtering }
@@ -114,7 +123,7 @@ func (s *providersScreen) SetPaneFocus(p int) {
 func (s *providersScreen) Bindings() tui.ActionHints {
 	b := append(tui.ActionHints{}, s.list.Bindings()...)
 	b = append(b, s.card.Bindings()...)
-	return append(b, key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")), key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "refresh all")), key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "countries")), key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")))
+	return append(b, key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")), key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "refresh all")), key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "countries")), key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "remove")), key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "nodes")), key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "diagnose")))
 }
 func (s *providersScreen) KeyHints() string {
 	if s.dialog != nil {
@@ -123,7 +132,7 @@ func (s *providersScreen) KeyHints() string {
 		}
 		return "Dialog: confirm or cancel"
 	}
-	return "↑/↓ select  Enter details  a add  r refresh  R refresh all  c countries  d remove  / filter"
+	return "↑/↓ select  Enter details  a add  r refresh  R refresh all  c countries  n nodes  g diagnose  d remove  / filter"
 }
 func (s *providersScreen) bg(label string, w func() tea.Msg) tea.Cmd {
 	if s.env.Background != nil {
@@ -168,10 +177,23 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 		if s.confirm != nil {
 			s.confirm.SetTheme(x.Theme)
 		}
+		if s.nodesDlg != nil {
+			s.nodesDlg.SetTheme(x.Theme)
+		}
+		if s.diagDlg != nil {
+			s.diagDlg.SetTheme(x.Theme)
+		}
 		return s, nil
 	}
 	if x, ok := m.(tui.BackgroundMsg); ok {
 		m = x.Value
+	}
+	if _, ok := m.(nodesCloseMsg); ok {
+		s.dialog = nil
+		s.nodesDlg = nil
+		s.diagDlg = nil
+		s.mode = ""
+		return s, nil
 	}
 	if x, ok := m.(providerResultMsg); ok {
 		return s.result(x)
@@ -228,6 +250,10 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 			return s.applyRenamePrompt(x)
 		case "countries-prompt":
 			return s.applyCountriesPrompt(x)
+		case "diag-prompt-node":
+			return s.applyDiagNodePrompt(x)
+		case "diag-prompt-samples":
+			return s.applyDiagSamplesPrompt(x)
 		}
 	}
 	if s.dialog != nil {
@@ -260,7 +286,24 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 					s.selected = row.Data.(string)
 					return s, s.countriesCmd()
 				}
+			case "n":
+				if row, ok := s.list.SelectedRow(); ok && s.nodeActionsEnabled(row.Data.(string)) {
+					s.selected = row.Data.(string)
+					return s, s.loadNodes("nodes-load")
+				}
+				return s, nil
+			case "g":
+				if row, ok := s.list.SelectedRow(); ok && s.nodeActionsEnabled(row.Data.(string)) {
+					s.selected = row.Data.(string)
+					return s, s.loadNodes("diag-load")
+				}
+				return s, nil
 			case "esc":
+				if s.mode == "diag-run" && s.diagCancel != nil {
+					s.diagCancel()
+					s.diagCanceled = true
+					return s, nil
+				}
 				if s.workspace.Drilled {
 					s.workspace.Update(m)
 					return s, nil
@@ -468,6 +511,105 @@ func (s *providersScreen) countriesCmd() tea.Cmd {
 	s.busy = "Loading countries"
 	return s.bg(s.busy, func() tea.Msg { r, e := ProviderCountries(s.home, n); return providerResultMsg{"countries", r, e} })
 }
+
+// nodeActionsEnabled reports whether the selected provider has a stored
+// snapshot, which both Nodes... and Diagnose... need.
+func (s *providersScreen) nodeActionsEnabled(name string) bool {
+	p, ok := s.providers[name]
+	return ok && p.Nodes != nil
+}
+
+func (s *providersScreen) loadNodes(mode string) tea.Cmd {
+	if s.selected == "" {
+		return nil
+	}
+	name := s.selected
+	s.mode = mode
+	s.busy = "Loading nodes"
+	return s.bg(s.busy, func() tea.Msg {
+		v, e := s.nodesList(s.home, name, "")
+		return providerResultMsg{kind: "nodes", value: v, err: e}
+	})
+}
+
+func (s *providersScreen) startNodesDialog(name string, entries []NodeEntry) {
+	d := newNodesDialog(name, entries)
+	d.SetTheme(s.workspace.Theme)
+	s.nodesDlg = d
+	s.dialog = d
+	s.mode = "nodes-dialog"
+}
+
+func (s *providersScreen) startDiagnose(entries []NodeEntry) {
+	if len(entries) == 0 {
+		s.mode = ""
+		s.message = "No stored nodes for this provider"
+		s.hint = ""
+		s.toast(s.message)
+		return
+	}
+	opts := make([]tui.PromptOption, 0, len(entries))
+	for _, e := range entries {
+		opts = append(opts, tui.PromptOption{Label: e.Label(), Value: e.Label()})
+	}
+	p := tui.NewPrompt(tui.ChoicePrompt, "Diagnose provider "+s.selected+": node", "Node", "The stored nodes of this provider", opts[0].Value)
+	p.Options = opts
+	p.SetTheme(s.workspace.Theme)
+	s.prompt = p
+	s.dialog = p
+	s.mode = "diag-prompt-node"
+}
+
+func (s *providersScreen) applyDiagNodePrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
+	s.diagLabel = x.Value
+	lo, hi := 1, maxDiagSamples
+	p := tui.NewPrompt(tui.NumberPrompt, "Diagnose "+s.diagLabel+": samples", "Samples", "Requests per phase, 1..20", strconv.Itoa(defaultDiagSamples))
+	p.Min, p.Max = &lo, &hi
+	p.SetTheme(s.workspace.Theme)
+	s.prompt = p
+	s.dialog = p
+	s.mode = "diag-prompt-samples"
+	return s, nil
+}
+
+func (s *providersScreen) applyDiagSamplesPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog = nil
+		s.prompt = nil
+		s.mode = ""
+		return s, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(x.Value))
+	if err != nil || n < 1 || n > maxDiagSamples {
+		s.prompt.SetError(errors.New("the samples count must be a whole number between 1 and 20"))
+		return s, nil
+	}
+	return s, s.runDiagnose(s.diagLabel, n)
+}
+
+func (s *providersScreen) runDiagnose(label string, samples int) tea.Cmd {
+	s.dialog = nil
+	s.prompt = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	s.diagLabel = label
+	s.diagCancel = cancel
+	s.diagCanceled = false
+	s.mode = "diag-run"
+	s.busy = "Diagnosing " + label
+	s.updateCard()
+	dial := s.dialNode
+	home := s.home
+	return s.bg(s.busy, func() tea.Msg {
+		v, e := dial(ctx, home, label, samples)
+		return providerResultMsg{kind: "diag", value: v, err: e}
+	})
+}
 func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, command tea.Cmd) {
 	defer func() {
 		if s.pendingToast != "" {
@@ -617,6 +759,47 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 			s.hint = ""
 			s.startCountriesDialog(s.countries)
 		}
+	case "nodes":
+		if r.err != nil {
+			s.mode = ""
+			s.setError(r.err)
+			s.toast(s.message)
+			return s, nil
+		}
+		entries, _ := r.value.([]NodeEntry)
+		switch s.mode {
+		case "diag-load":
+			s.mode = ""
+			s.startDiagnose(entries)
+		case "nodes-load":
+			s.mode = ""
+			s.startNodesDialog(s.selected, entries)
+		}
+	case "diag":
+		if s.diagCancel != nil {
+			s.diagCancel()
+			s.diagCancel = nil
+		}
+		diag, _ := r.value.(core.NodeDiag)
+		switch {
+		case s.diagCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
+			s.diagCanceled = false
+			s.mode = ""
+			s.message = "Diagnosis canceled"
+			s.hint = ""
+			s.toast(s.message)
+		case r.err != nil:
+			s.mode = ""
+			s.setError(r.err)
+			s.toast(s.message)
+		default:
+			s.updateCard()
+			d := newDiagResultDialog(diag)
+			d.SetTheme(s.workspace.Theme)
+			s.diagDlg = d
+			s.dialog = d
+			s.mode = "diag-result"
+		}
 	}
 	return s, nil
 }
@@ -698,6 +881,9 @@ func (s *providersScreen) updateCard() {
 	}
 	s.card.Title = p.Name
 	s.card.Info = []string{"State: " + p.State}
+	if s.busy != "" {
+		s.card.Info = append(s.card.Info, s.busy+"…")
+	}
 	s.card.Lines[0].Value = p.Name
 	s.card.Lines[1].Value = map[bool]string{true: "•••••• (set)", false: "Not set"}[p.Host != ""]
 	s.card.Lines[2].Value = map[bool]string{true: "Configured", false: "Not set"}[p.ViaSet]
@@ -711,6 +897,15 @@ func (s *providersScreen) updateCard() {
 				s.card.Lines[i].Value = providerHopLabel(h.value)
 			case "clear-" + h.id:
 				s.card.Lines[i].Disabled = h.value == ""
+			}
+		}
+	}
+	noNodes := p.Nodes == nil
+	for i := range s.card.Lines {
+		switch s.card.Lines[i].ID {
+		case "nodes", "diagnose":
+			if s.card.Lines[i].Kind == tui.CardAction {
+				s.card.Lines[i].Disabled = noNodes
 			}
 		}
 	}
@@ -760,6 +955,10 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 		return s, s.refresh("", true)
 	case "countries":
 		return s, s.countriesCmd()
+	case "nodes":
+		return s, s.loadNodes("nodes-load")
+	case "diagnose":
+		return s, s.loadNodes("diag-load")
 	case "edit-name":
 		s.startRenamePrompt()
 	case "remove":

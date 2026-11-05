@@ -81,9 +81,9 @@ const goldenProviders100Empty = `Service stopped
 |                                 | |  Refresh selected  [r]                                       |
 |                                 | |  Refresh all  [R]                                            |
 |                                 | |  Countries  [c]                                              |
+|                                 | |  Nodes...  [n]                                               |
+|                                 | |  Diagnose...  [g]                                            |
 |                                 | |  Remove  [d]                                                 |
-|                                 | |                                                              |
-|                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |1/1                              | |                                                              |
@@ -112,9 +112,9 @@ const goldenProviders100Populated = `Service stopped
 |                                 | |  Refresh selected  [r]                                       |
 |                                 | |  Refresh all  [R]                                            |
 |                                 | |  Countries  [c]                                              |
+|                                 | |  Nodes...  [n]                                               |
+|                                 | |  Diagnose...  [g]                                            |
 |                                 | |  Remove  [d]                                                 |
-|                                 | |                                                              |
-|                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |1/3                              | |                                                              |

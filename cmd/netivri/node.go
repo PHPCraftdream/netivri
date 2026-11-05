@@ -1,14 +1,11 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -30,7 +27,8 @@ func runNode(args []string, stdout io.Writer) error {
 	}
 }
 
-// nodeList implements `node list [--sub N] [--country CC] [--alive]`.
+// nodeList implements `node list [--sub N] [--country CC] [--alive]`
+// through the shared NodeList operation.
 // Order is stable: subscription order, then provider order. Node.Raw is
 // never serialised. --alive is reserved: health checks do not exist yet.
 func (a *subApp) nodeList(args []string) error {
@@ -56,49 +54,21 @@ func (a *subApp) nodeList(args []string) error {
 		return cli.Usage("node list: --country must be an ISO 3166-1 alpha-2 code")
 	}
 
-	cfg, err := a.load()
+	entries, err := NodeList(a.home, *subFlag, country)
 	if err != nil {
 		return err
 	}
-	var subs []config.Subscription
-	if *subFlag != "" {
-		for _, s := range cfg.Subscriptions {
-			if s.Name == *subFlag {
-				subs = append(subs, s)
-				break
-			}
-		}
-		if subs == nil {
-			return &cli.Error{Code: codeSubNotFound, Message: "no subscription with that name", Exit: cli.ExitNotFound}
-		}
-	} else {
-		subs = cfg.Subscriptions
-	}
-
-	store := a.store()
-	nodes := make([]map[string]any, 0)
-	for _, s := range subs {
-		snap, err := store.Load(s.Name)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue // never fetched yet
-			}
-			return snapshotError(s.Name)
-		}
-		for _, n := range snap.Nodes {
-			if country != "" && n.Country != country {
-				continue
-			}
-			nodes = append(nodes, map[string]any{
-				"id":      n.ID,
-				"name":    n.Name,
-				"type":    n.Type,
-				"server":  n.Server,
-				"port":    n.Port,
-				"country": n.Country,
-				"sub":     s.Name,
-			})
-		}
+	nodes := make([]map[string]any, 0, len(entries))
+	for _, n := range entries {
+		nodes = append(nodes, map[string]any{
+			"id":      n.ID,
+			"name":    n.Name,
+			"type":    n.Type,
+			"server":  n.Server,
+			"port":    n.Port,
+			"country": n.Country,
+			"sub":     n.Sub,
+		})
 	}
 	cli.Success(a.stdout, map[string]any{"nodes": nodes, "count": len(nodes)})
 	return nil
