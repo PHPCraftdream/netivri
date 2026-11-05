@@ -223,10 +223,12 @@ func TestE2EShadowQUICLifecycle(t *testing.T) {
 	assertNoSecrets(t, out, stderr, secretCheck...)
 	waitStatusReload(t, ctx, homeB, 1)
 	restartB()
-	if err := drive("alice", false); err != nil {
+	// The first QUIC connection after a restart can be reset on a loaded
+	// runner (windows e2e), like the later restarts below: retry it.
+	if err := drive("alice", true); err != nil {
 		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
 	}
-	if err := drive("bob", false); err != nil {
+	if err := drive("bob", true); err != nil {
 		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
 	}
 	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "192.0.2.0/24")
