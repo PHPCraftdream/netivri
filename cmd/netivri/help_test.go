@@ -297,8 +297,8 @@ func TestHelpJSONTopic(t *testing.T) {
 		}
 	}
 	group := decodeHelp(t, mustDispatch(t, "help", "sub", "--json"))
-	if subs, _ := group["subcommands"].([]any); len(subs) != 6 {
-		t.Errorf("sub subcommands = %v, want 6", group["subcommands"])
+	if subs, _ := group["subcommands"].([]any); len(subs) != 8 {
+		t.Errorf("sub subcommands = %v, want 8", group["subcommands"])
 	}
 }
 

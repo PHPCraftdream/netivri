@@ -1430,6 +1430,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUBSCRIPTION_TOO_LARGE` | 3 | Subscription body exceeds 16 MiB |
 | `SUBSCRIPTION_TOO_MANY` | 3 | Subscription has more than 5000 nodes |
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
+| `SERVER_NOT_FOUND` | 5 | No server with that name (`server show`, `update`, `link`, `rotate`, `remove`) |
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
 | `CONFIG_INVALID` | 2 | Invalid configuration or account fields. When another field change conflicts with a direct account exit, the error carries a hint to run `netivri account set-exit {ACCOUNT} route` first. |
