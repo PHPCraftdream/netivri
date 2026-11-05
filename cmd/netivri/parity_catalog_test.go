@@ -30,7 +30,7 @@ func gap(side, task, reason string) exemption {
 // parityGapBudget is the number of exemptions that carry a gap id. It only
 // goes down: closing a gap lowers it in the same change, adding one is a
 // failure. The parity work is finished when it is zero.
-const parityGapBudget = 18
+const parityGapBudget = 13
 
 var parityCatalog = []capability{
 	// Providers
@@ -43,12 +43,9 @@ var parityCatalog = []capability{
 	{ID: "provider.remove", CLI: []string{"sub rm"}, TUI: []string{"providers/remove"}},
 	{ID: "provider.hops", CLI: []string{"sub add --pre-socks5", "sub add --post-socks5", "sub set-socks5", "sub set-socks5 --pre", "sub set-socks5 --post"},
 		TUI: []string{"providers/pre", "providers/post", "providers/clear-pre", "providers/clear-post"}},
-	{ID: "provider.rename", TUI: []string{"providers/edit-name"},
-		Exempt: []exemption{gap("cli", "206", "sub rename")}},
-	{ID: "provider.url", TUI: []string{"providers/subscription", "providers/edit-subscription"},
-		Exempt: []exemption{gap("cli", "206", "sub set --url")}},
-	{ID: "provider.via", TUI: []string{"providers/via", "providers/edit-via"},
-		Exempt: []exemption{gap("cli", "206", "sub set --via")}},
+	{ID: "provider.rename", CLI: []string{"sub rename"}, TUI: []string{"providers/edit-name"}},
+	{ID: "provider.url", CLI: []string{"sub set", "sub set --url"}, TUI: []string{"providers/subscription", "providers/edit-subscription"}},
+	{ID: "provider.via", CLI: []string{"sub set --via"}, TUI: []string{"providers/via", "providers/edit-via"}},
 	{ID: "nodes.list", CLI: []string{"node list", "node list --sub", "node list --country"},
 		Exempt: []exemption{gap("tui", "207", "stored nodes view")}},
 
@@ -76,11 +73,11 @@ var parityCatalog = []capability{
 		TUI: []string{"servers/add"}},
 	{ID: "server.link", CLI: []string{"server link", "server link --account", "server link --host", "server link --format"}, TUI: []string{"servers/link"}},
 	{ID: "server.link-qr", CLI: []string{"server link --qr"},
-		Exempt: []exemption{gap("tui", "207", "QR code of the client link")}},
+		Exempt: []exemption{permanent("tui", "the CLI flag is declared unsupported (no QR encoder is included), so there is nothing to mirror")}},
 	{ID: "server.rotate", CLI: []string{"server rotate", "server rotate --account"}, TUI: []string{"servers/rotate"}},
 	{ID: "server.remove", CLI: []string{"server remove"}, TUI: []string{"servers/remove"}},
-	{ID: "server.update", TUI: []string{"servers/bind", "servers/port", "servers/publichost", "servers/accounts", "servers/param"},
-		Exempt: []exemption{gap("cli", "206", "server update")}},
+	{ID: "server.update", CLI: []string{"server update", "server update --public-host", "server update --bind", "server update --port", "server update --account", "server update --param"},
+		TUI: []string{"servers/bind", "servers/port", "servers/publichost", "servers/accounts", "servers/param"}},
 	{ID: "server.reload", TUI: []string{"servers/reload"},
 		Exempt: []exemption{permanent("cli", "every CLI run reads the current state")}},
 

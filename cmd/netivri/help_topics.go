@@ -157,7 +157,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:        "server",
 		Summary:     "Manage protocol server listeners",
-		Usage:       []string{"netivri server {protocols|add|list|show|link|rotate|remove} [arguments]", "netivri server -i"},
+		Usage:       []string{"netivri server {protocols|add|update|list|show|link|rotate|remove} [arguments]", "netivri server -i"},
 		Description: "Manages protocol server endpoints. `status` and server `list`/`show` expose runtime counters when a local angel is available; zero-valued counters are omitted. `doctor` reports safe aggregate counter summaries. `status --watch` includes its existing server fields when listeners are running; its counter coverage is unchanged.",
 		Examples:    []helpExample{{"List registered server protocols", "netivri server protocols"}},
 		Notes:       []string{"Registered protocols in this build: " + strings.Join(servers.Names(), ", ")},
@@ -183,7 +183,34 @@ var helpTopics = []helpTopic{
 			{"Add another TLS protocol on the same port with a distinct SNI", "netivri server add --protocol anytls --account {ACCOUNT} --port {PORT} --param sni={SNI}"},
 		},
 		Errors:  []helpError{herr("USAGE", cli.ExitUsage, "invalid arguments"), herr("CONFIG_INVALID", cli.ExitUsage, "invalid server configuration or protocol parameters"), herr("SERVER_PORT_AMBIGUOUS", cli.ExitConflict, "shared-port classification is ambiguous: TLS match keys overlap, a trial credential is reused, or trial members are otherwise invalid (including a trial default)")},
-		SeeAlso: []string{"server protocols", "server list", "server link"},
+		SeeAlso: []string{"server protocols", "server list", "server link", "server update"},
+	},
+	{
+		Name: "server update", Group: groupServer, Summary: "Change fields of a server listener",
+		Usage: []string{"netivri server update {NAME} [--public-host {HOST}] [--bind {ADDR}] [--port {PORT}]", "netivri server update {NAME} [--account {ACCOUNT}] [--param {KEY=VALUE}]"},
+		Description: "Changes the given fields of an existing server; a field that is not given stays as it is, and secrets are not touched (use 'server rotate' for those). " +
+			"The result is validated like 'server add' before anything is saved: a port that collides with another listener or with the proxy port, an account that does not exist " +
+			"or a parameter the protocol does not accept changes nothing. The running angel applies the new configuration within a few seconds. " +
+			"Client links made earlier keep working when only the account list or public host changes; a new port or protocol parameter needs a fresh 'server link'.",
+		Flags: []helpFlag{
+			{"--public-host {HOST}", "Host embedded in client links."},
+			{"--bind {ADDR}", "Bind address."},
+			{"--port {PORT}", "Listener port, 1 to 65535."},
+			{"--account {ACCOUNT}", "Accounts that may use the server: logins separated by commas, or * for every account (multi-user protocols)."},
+			{"--param {KEY=VALUE}", "Set a protocol parameter; repeat for several."},
+		},
+		Examples: []helpExample{
+			{"Move a server to another port", "netivri server update edge --port 8443"},
+			{"Put a new host into the links", "netivri server update edge --public-host edge.example.org"},
+			{"Change a protocol parameter and the accounts", "netivri server update edge --param sni={SNI} --account alice,bob"},
+		},
+		Errors: []helpError{
+			herr("USAGE", cli.ExitUsage, "no field given, or an invalid value"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "the resulting server configuration is invalid"),
+			herr("SERVER_NOT_FOUND", cli.ExitNotFound, "no server with that name"),
+			herr("PORT_IN_USE", cli.ExitConflict, "the port is used by another listener or by the proxy port"),
+		},
+		SeeAlso: []string{"server show", "server rotate", "server link"},
 	},
 	{
 		Name: "server list", Group: groupServer, Summary: "List configured server listeners", Usage: []string{"netivri server list", "netivri server list --json"},
@@ -315,7 +342,7 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub",
 		Summary: "Manage provider subscriptions",
-		Usage:   []string{"netivri sub {add|list|update|rm|countries|set-socks5} [arguments]", "netivri sub -i"},
+		Usage:   []string{"netivri sub {add|list|update|rm|countries|set-socks5|rename|set} [arguments]", "netivri sub -i"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
 			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
@@ -384,6 +411,46 @@ var helpTopics = []helpTopic{
 			herr("USAGE", cli.ExitUsage, "requires a subscription name and --pre and/or --post"),
 		},
 		SeeAlso: []string{"sub add", "account set-socks5", "config", "routing"},
+	},
+	{
+		Name:    "sub rename",
+		Group:   groupSubs,
+		Summary: "Rename a provider",
+		Usage:   []string{"netivri sub rename {OLD} {NEW}"},
+		Description: "Renames a subscription. The accounts that list it as a provider follow the new name and the stored nodes move with it, so routes keep working. " +
+			"The new snapshot is written first, then the configuration, and the old snapshot is removed last: a failure at any step leaves the old name working. " +
+			"A new name that is already used, or the same name, changes nothing. The new name is 1 to 64 letters, digits, dots, underscores or hyphens.",
+		Examples: []helpExample{{"Rename a provider", "netivri sub rename main work"}},
+		Errors: []helpError{
+			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with the current name"),
+			herr("SUB_EXISTS_NAME", cli.ExitConflict, "the new name is already used by another subscription"),
+			herr("USAGE", cli.ExitUsage, "two names are required and the new one must differ and be valid"),
+		},
+		SeeAlso: []string{"sub list", "sub set", "account set-provider"},
+	},
+	{
+		Name:    "sub set",
+		Group:   groupSubs,
+		Summary: "Change the URL or the fetch proxy of a provider",
+		Usage:   []string{"netivri sub set {SUBSCRIPTION} --url {URL}", "netivri sub set {SUBSCRIPTION} --via {PROXY|none}", "netivri sub set {SUBSCRIPTION} --url {URL} --via {PROXY|none}"},
+		Description: "Changes the connection settings of one subscription without fetching it: --url replaces the subscription URL (a credential, never printed), " +
+			"--via sets the proxy used to fetch it, or none to fetch without one (fetch.proxy from the config still applies). A side that is not given stays as it is. " +
+			"Run 'netivri sub update' afterwards to fetch the nodes from the new URL.",
+		Flags: []helpFlag{
+			{"--url {URL}", "New subscription URL, http:// or https://."},
+			{"--via {PROXY|none}", "Fetch through this proxy (an http(s):// or socks5(h):// URL), or none to remove it."},
+		},
+		Examples: []helpExample{
+			{"The provider gave a new link", "netivri sub set main --url https://provider.example/sub/{TOKEN}\nnetivri sub update main"},
+			{"Fetch through a local proxy", "netivri sub set main --via socks5h://127.0.0.1:1080"},
+			{"Stop using the fetch proxy", "netivri sub set main --via none"},
+		},
+		Errors: []helpError{
+			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "the URL or the proxy is not valid"),
+			herr("USAGE", cli.ExitUsage, "requires a name and --url and/or --via"),
+		},
+		SeeAlso: []string{"sub update", "sub rename", "sub set-socks5"},
 	},
 	{
 		Name:    "sub list",

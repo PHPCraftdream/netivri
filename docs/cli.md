@@ -50,6 +50,8 @@ See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation de
 netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none}] [--post-socks5 {URL|none}]
                                           add a subscription (idempotent by URL)
 netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
+netivri sub rename {OLD} {NEW}
+netivri sub set {SUBSCRIPTION} [--url {URL}] [--via {PROXY|none}]
 netivri sub list
 netivri sub update [{SUBSCRIPTION} | --all]   re-fetch
 netivri sub rm {SUBSCRIPTION}
@@ -81,6 +83,7 @@ netivri diag dial --account {ACCOUNT} | --node {NODE} [--samples {N}] [--idle {L
 
 netivri server protocols [--json]
 netivri server add --protocol {PROTOCOL} --account {ACCOUNT|*} --port {PORT} [--name {NAME}] [--bind {ADDR}] [--public-host {HOST}] [--default] [--param {KEY=VALUE} ...] [--json]
+netivri server update {NAME} [--public-host {HOST}] [--bind {ADDR}] [--port {PORT}] [--account {ACCOUNT|*}] [--param {KEY=VALUE} ...] [--json]
 netivri server list [--json]
 netivri server show {NAME} [--json]
 netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr] [--json]
@@ -1244,6 +1247,32 @@ shape documented below.
 of the server address, i.e. the entry point) or `name` (parsed from the node
 name). Prefer `exit`.
 
+### `sub rename`
+
+```
+netivri sub rename {OLD} {NEW}
+```
+
+Renames a subscription. The accounts that list it as a provider follow the new name and its stored nodes move with it. The new snapshot is written first, then the configuration, and the old snapshot is removed last, so a failure at any step leaves the old name working. A name that is already used is `SUB_EXISTS_NAME` (exit 6), an unknown name `SUB_NOT_FOUND` (exit 5), the same or an invalid new name `USAGE` (exit 2). Output: `{"name": "work", "renamed_from": "main"}`.
+
+```sh
+netivri sub rename main work
+```
+
+### `sub set`
+
+```
+netivri sub set {SUBSCRIPTION} [--url {URL}] [--via {PROXY|none}]
+```
+
+Changes the connection settings of one subscription without fetching it. `--url` replaces the subscription URL (a credential, never printed), `--via` the fetch proxy (`none` removes it; `fetch.proxy` still applies). At least one is required (exit 2); a side that is not given stays as it is. An invalid URL or proxy is `CONFIG_INVALID` (exit 2) and never echoes the value; an unknown name is `SUB_NOT_FOUND` (exit 5). Output: `{"name": "main", "changed": ["url", "via"]}`. Run `netivri sub update {SUBSCRIPTION}` afterwards to fetch the nodes from the new URL.
+
+```sh
+netivri sub set main --url https://provider.example/sub/{TOKEN}
+netivri sub update main
+netivri sub set main --via none
+```
+
 ### `sub set-socks5`
 
 ```
@@ -1401,6 +1430,7 @@ Raw proxy mappings (credentials) are never printed.
 | `SUBSCRIPTION_TOO_LARGE` | 3 | Subscription body exceeds 16 MiB |
 | `SUBSCRIPTION_TOO_MANY` | 3 | Subscription has more than 5000 nodes |
 | `SUB_NOT_FOUND` | 5 | No subscription with that name |
+| `SERVER_NOT_FOUND` | 5 | No server with that name (`server show`, `update`, `link`, `rotate`, `remove`) |
 | `ACCOUNT_INVALID` | 2 | Invalid account login |
 | `COUNTRY_INVALID` | 2 | Invalid country code |
 | `CONFIG_INVALID` | 2 | Invalid configuration or account fields. When another field change conflicts with a direct account exit, the error carries a hint to run `netivri account set-exit {ACCOUNT} route` first. |
