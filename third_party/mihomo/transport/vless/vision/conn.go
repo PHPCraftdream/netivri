@@ -1,6 +1,7 @@
-// Modified by the netivri authors: readLastCommand and writeDirect are atomic,
+// Modified by the netivri authors: readLastCommand, writeDirect and readFilterUUID are atomic,
 // because Upstream() runs on the relay goroutine while ReadBuffer/WriteBuffer
-// update them on the read/write goroutine (a data race under -race).
+// update them on the read/write goroutine (a data race under -race); FrontHeadroom
+// reads readFilterUUID on the relay goroutine of the other direction.
 package vision
 
 import (
@@ -45,7 +46,7 @@ type Conn struct {
 	readRemainingContent       int
 	readRemainingPadding       int
 	readProcess                bool
-	readFilterUUID             bool
+	readFilterUUID             atomic.Bool
 	readLastCommand            atomic.Uint32
 	writeFilterApplicationData bool
 	writeDirect                atomic.Bool
@@ -111,7 +112,7 @@ func (vc *Conn) ReadBuffer(buffer *buf.Buffer) error {
 		case commandPaddingContinue:
 			//if vc.isTLS || vc.packetsToFilter > 0 {
 			need := PaddingHeaderLen
-			if !vc.readFilterUUID {
+			if !vc.readFilterUUID.Load() {
 				need = PaddingHeaderLen - uuid.Size
 			}
 			var header []byte
@@ -124,8 +125,8 @@ func (vc *Conn) ReadBuffer(buffer *buf.Buffer) error {
 			if err != nil {
 				return err
 			}
-			if vc.readFilterUUID {
-				vc.readFilterUUID = false
+			if vc.readFilterUUID.Load() {
+				vc.readFilterUUID.Store(false)
 				if !bytes.Equal(vc.userUUID.Bytes(), header[:uuid.Size]) {
 					err = fmt.Errorf("XTLS Vision server responded unknown UUID: %s", uuid.FromBytesOrNil(header[:uuid.Size]))
 					log.Errorln(err.Error())
@@ -247,7 +248,7 @@ func (vc *Conn) WriteBuffer(buffer *buf.Buffer) (err error) {
 
 func (vc *Conn) FrontHeadroom() int {
 	fontHeadroom := PaddingHeaderLen - uuid.Size
-	if vc.readFilterUUID || vc.writeOnceUserUUID != nil {
+	if vc.readFilterUUID.Load() || vc.writeOnceUserUUID != nil {
 		fontHeadroom = PaddingHeaderLen
 	}
 	if vc.writeFilterApplicationData { // The writer may be replaced, add the required value for vc.netConn
