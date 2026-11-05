@@ -54,6 +54,10 @@ or `frame/{key}` for keys owned by the frame (tabs, help, quit).
    homes and compares the resulting `config.ktav` and the stored snapshots
    (secrets compared by hash, never printed). This is what makes "cover each
    other" mean the same behavior, not just a button with the same name.
+   Implemented in `cmd/netivri/parity_dual_*_test.go`: scenarios register under
+   the capability id in `dualScenarios`; a capability with both sides that has
+   no scenario must be listed in `dualNoScenario` with a reason (read-only, or
+   a process effect), so a new mutating capability cannot skip the check.
 
 Permanent exemptions (kept short and reasoned): `version` (the shell header
 shows the version), `help` (the shell has `?`), `-i` itself, JSON/`--quiet`
@@ -134,4 +138,4 @@ Each with help topic, examples, `docs/cli.md`, CHANGELOG and tests.
 3. Service, Logs, Stats tabs and the Nodes / Diagnose / Route / Preview pieces.
 4. `config get|set` and the Settings tab.
 5. Check 6 (dual run) for every mutating capability, then the final "no gaps"
-   assertion.
+   assertion (done: the gap budget is 0 and stays 0).

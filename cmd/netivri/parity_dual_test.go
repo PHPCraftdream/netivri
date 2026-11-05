@@ -54,10 +54,11 @@ func dualHomes(t *testing.T, seed func(t *testing.T) string) (cliHome, shellHome
 	return seed(t), seed(t)
 }
 
-// dualCLI runs one CLI command on a home and fails on an error.
+// dualCLI runs one CLI command on a home and fails on an error. --home goes
+// after the command: dispatch looks the command up at args[0].
 func dualCLI(t *testing.T, home string, args ...string) {
 	t.Helper()
-	mustDispatch(t, append([]string{"--home", home}, args...)...)
+	mustDispatch(t, append(append([]string{}, args...), "--home", home)...)
 }
 
 // dualShell drives one shell screen with real key presses. Background work
