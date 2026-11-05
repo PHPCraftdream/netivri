@@ -30,7 +30,7 @@ func gap(side, task, reason string) exemption {
 // parityGapBudget is the number of exemptions that carry a gap id. It only
 // goes down: closing a gap lowers it in the same change, adding one is a
 // failure. The parity work is finished when it is zero.
-const parityGapBudget = 10
+const parityGapBudget = 4
 
 var parityCatalog = []capability{
 	// Providers
@@ -46,8 +46,7 @@ var parityCatalog = []capability{
 	{ID: "provider.rename", CLI: []string{"sub rename"}, TUI: []string{"providers/edit-name"}},
 	{ID: "provider.url", CLI: []string{"sub set", "sub set --url"}, TUI: []string{"providers/subscription", "providers/edit-subscription"}},
 	{ID: "provider.via", CLI: []string{"sub set --via"}, TUI: []string{"providers/via", "providers/edit-via"}},
-	{ID: "nodes.list", CLI: []string{"node list", "node list --sub", "node list --country"},
-		Exempt: []exemption{gap("tui", "207", "stored nodes view")}},
+	{ID: "nodes.list", CLI: []string{"node list", "node list --sub", "node list --country"}, TUI: []string{"providers/nodes"}},
 
 	// Accounts
 	{ID: "account.list", CLI: []string{"account list"}, TUI: []string{"accounts/list"}},
@@ -84,7 +83,7 @@ var parityCatalog = []capability{
 	// Service and diagnostics
 	{ID: "service.up", CLI: []string{"up"}, TUI: []string{"service/start"}},
 	{ID: "service.up-flags", CLI: []string{"up --port", "up --bind"},
-		Exempt: []exemption{gap("tui", "208", "one-run overrides of listen.port and listen.bind; the Settings tab edits the stored values")}},
+		TUI: []string{"settings/listen.port", "settings/listen.bind"}},
 	{ID: "service.restart", TUI: []string{"service/restart"},
 		Exempt: []exemption{permanent("cli", "a restart is down followed by up; the CLI keeps them separate")}},
 	{ID: "service.foreground", CLI: []string{"up --foreground"},
@@ -95,15 +94,15 @@ var parityCatalog = []capability{
 	{ID: "service.logs", CLI: []string{"logs", "logs --follow", "logs --level", "logs --since", "logs --tail"},
 		Exempt: []exemption{gap("tui", "207", "angel log view")}},
 	{ID: "service.stats", CLI: []string{"stats", "stats --sub", "stats --country", "stats --node", "stats --since", "stats --by", "stats --account"},
-		Exempt: []exemption{gap("tui", "207", "node statistics")}},
+		TUI: []string{"stats/list", "stats/by", "stats/since", "stats/sub", "stats/country", "stats/node", "stats/account", "stats/reload"}},
 	{ID: "service.diag", CLI: []string{"diag dial", "diag dial --account", "diag dial --node", "diag dial --samples", "diag dial --idle", "diag dial --max-nodes", "diag dial --url"},
-		Exempt: []exemption{gap("tui", "207", "dial diagnostics")}},
+		TUI: []string{"providers/diagnose"}},
 	{ID: "service.version", CLI: []string{"version"},
 		Exempt: []exemption{permanent("tui", "the shell header shows the version")}},
 
 	// Global settings: file only today
-	{ID: "settings.global",
-		Exempt: []exemption{gap("cli", "208", "config get|set"), gap("tui", "208", "Settings tab")}},
+	{ID: "settings.global", CLI: []string{"config get", "config set"},
+		TUI: []string{"settings/list", "settings/listen.allowed_clients", "settings/auth.login", "settings/auth.password", "settings/auth.allow_init_remote", "settings/fetch.proxy", "settings/fetch.update_interval", "settings/chain.pre_socks5", "settings/chain.post_socks5"}},
 
 	// The shell's own navigation
 	{ID: "frame.tabs", TUI: []string{"frame/tabs"}, Exempt: []exemption{permanent("cli", "navigation of the shell")}},

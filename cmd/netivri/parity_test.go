@@ -105,7 +105,7 @@ func parityTUIRefs(t *testing.T) map[string]bool {
 		}
 		got := ps.ParityRefs()
 		screen := strings.ToLower(tab.Title)
-		anchor := map[string]string{"providers": "providers/remove", "accounts": "accounts/remove", "servers": "servers/remove", "service": "service/start"}[screen]
+		anchor := map[string]string{"providers": "providers/remove", "accounts": "accounts/remove", "servers": "servers/remove", "service": "service/start", "stats": "stats/list", "settings": "settings/listen.bind"}[screen]
 		if !contains(got, anchor) {
 			t.Fatalf("tab %q: the fixture produced no item card (refs %v)", tab.Title, got)
 		}

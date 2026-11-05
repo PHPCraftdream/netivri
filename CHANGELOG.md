@@ -10,6 +10,24 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Stats tab in the shell.** The recorded node health, delay and throughput of
+  `netivri stats`, per node or per account (`b` toggles), with the window
+  (`since`) and the subscription, country, node and account filters as one-line
+  prompts (an empty answer clears a filter) and `r` to reload. The screen and
+  the command share one operation, so the figures are identical; the view is
+  read-only and shows no secrets.
+
+- **`config get` / `config set` and the Settings tab.** Read and change
+  the global settings of `config.ktav` from the command line
+  (`netivri config get [{KEY}]`, `netivri config set {KEY} {VALUE}`),
+  with full-file validation before anything is written, secrets stored
+  hashed and never echoed, and a `restart_needed` flag in the answer.
+  The shell gains a Settings tab editing the same keys with the same
+  validation; the commands and the tab are two faces of the same
+  operations.
+
+- **Nodes and dial diagnostics in the shell.** The Providers screen gains `Nodes...` (`n`), a read-only dialog of the provider's stored nodes (label, country and name; `/` filter, `c` country cycle, no addresses, ports or credentials), and `Diagnose...` (`g`), which runs the dial diagnostics of `netivri diag dial --node` for one node through the same operation: label choice, samples count (default 5, 1..20), background run with Esc cancel, and per-phase p50/p90/max in ms with failure counts (no idle test, as with `--idle off`). Both actions are disabled while the provider has no stored snapshot; CLI behavior is unchanged.
+
 - **Service tab in the shell.** Start, stop and restart the angel (stop and restart ask first and name the open
   connections that will drop), run the checks of `netivri doctor`, and see the live activity of the accounts, with
   the same operations the `up`, `down`, `status` and `doctor` commands use.

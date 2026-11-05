@@ -17,6 +17,7 @@ const (
 	groupAccount = "Accounts"
 	groupServer  = "Servers"
 	groupDiag    = "Statistics and diagnostics"
+	groupConfig  = "Configuration"
 	// groupConcepts holds the concept topics: not commands, but things an
 	// operator with only the binary needs to learn from help alone.
 	groupConcepts = "Concepts"
@@ -24,7 +25,7 @@ const (
 )
 
 // helpGroups is the order of the command list in the overview.
-var helpGroups = []string{groupService, groupSubs, groupAccount, groupServer, groupDiag, groupConcepts, groupOther}
+var helpGroups = []string{groupService, groupSubs, groupAccount, groupServer, groupDiag, groupConfig, groupConcepts, groupOther}
 
 const helpSummary = "local proxy service for provider subscriptions"
 
@@ -127,13 +128,15 @@ var helpTopics = []helpTopic{
 				"name the open connections that will drop. Checks runs the checks of 'netivri doctor' (c) and lists " +
 				"each with its status and detail; Accounts shows the live activity of every account. It is the shell side " +
 				"of up, down, status and doctor.",
+			"Stats: the table of 'netivri stats' (per node or per account, b toggles) with the window (since) and the subscription, country, node and account filters as prompts, and r to reload; read-only. " +
+				"Settings: the global keys of config.ktav (Listen, Auth, Fetch, Chain) with the same validation as 'netivri config set'; secrets are set, never shown, and a change that needs an angel restart says so in the toast.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
 				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
 				"Updated, and the Pre-hop and Post-hop of the provider (inherited, none or set, never the URL; an empty answer " +
 				"leaves the hop as it is, Clear pre-hop (P) / Clear post-hop (O) return it to the global value). " +
 				"Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
 				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
-				"written when the name is not valid), Remove... (d; the confirm names dependent accounts). " +
+				"written when the name is not valid), Remove... (d; the confirm names dependent accounts), Nodes... (n; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name; '/' filters by text, c cycles the country filter, Esc closes; no addresses, ports or credentials are shown; disabled without a stored snapshot) and Diagnose... (g; the dial diagnostics of 'netivri diag dial --node' for one node, through the same operation: a prompt picks the node and an optional one the samples count (default 5, 1..20); the run happens in the background, Esc cancels it; the result shows per phase p50/p90/max in ms and the failure counts, no idle test; errors by message and hint only). " +
 				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, fetch with a " +
 				"cancel. Empty state: A provider is a subscription of proxy nodes. Add one to start.",
 			"Accounts: the list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
@@ -285,6 +288,8 @@ var helpTopics = []helpTopic{
 			herr("NO_NODES_FOR_COUNTRY", cli.ExitNotFound, "an account's provider or country has no stored nodes; run 'netivri sub update'"),
 			herr("ANGEL_START_FAILED", cli.ExitInternal, "the angel failed to start; see run/netivri.log in the state directory"),
 		},
+		Notes: []string{"--port and --bind override the stored listen.port and listen.bind for this run " +
+			"only; the stored values are changed with netivri config set (or in the shell's Settings tab)."},
 		SeeAlso: []string{"down", "status", "account add"},
 	},
 	{
@@ -1075,6 +1080,62 @@ var helpTopics = []helpTopic{
 	},
 
 	{
+		Name:    "config get",
+		Group:   groupConfig,
+		Summary: "Show the effective global settings",
+		Usage:   []string{"netivri config get [{KEY}]"},
+		Description: "Prints the effective values of the global settings from config.ktav in the state " +
+			"directory, or the safe defaults when the file is missing, grouped as listen, auth, fetch and " +
+			"chain. Secrets are never printed: auth.password shows set or not set, never the stored hash, " +
+			"and fetch.proxy and the chain hops show scheme://host:port without credentials plus an auth " +
+			"boolean that says whether credentials are set. With {KEY} only that key's group is printed.",
+		Examples: []helpExample{
+			{"Every key, as JSON", "netivri config get --json"},
+			{"Only the listen group", "netivri config get listen.port"},
+			{"An empty state directory shows the defaults", "netivri config get --home {DIR}"},
+		},
+		Errors: []helpError{
+			herr("USAGE", cli.ExitUsage, "unknown key or bad arguments"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "the configuration file does not load"),
+		},
+		SeeAlso: []string{"config set", "config", "output"},
+	},
+	{
+		Name:    "config set",
+		Group:   groupConfig,
+		Summary: "Change one global setting",
+		Usage:   []string{"netivri config set {KEY} {VALUE}"},
+		Description: "Changes one global setting and writes config.ktav, creating it from the defaults when " +
+			"missing. The whole resulting configuration is validated exactly like the file before anything " +
+			"is written, and nothing is written on failure. The error names the key, never the value. " +
+			"auth.password takes a plain password and stores its argon2id hash the way the first login " +
+			"does; the plain value is never echoed or logged (the literal value init stores the init " +
+			"placeholder). none or an empty value clears the key where clearing is allowed: auth.login, " +
+			"auth.password, fetch.proxy, fetch.update_interval, chain.pre_socks5 and chain.post_socks5.\n\n" +
+			"The result carries restart_needed: true when a running angel must restart its listener to " +
+			"apply the change (listen.bind, listen.port, listen.allowed_clients, auth.login, auth.password, " +
+			"chain.post_socks5) and false when it applies the change without one (auth.allow_init_remote, " +
+			"fetch.proxy, fetch.update_interval, chain.pre_socks5). A running angel notices the file within " +
+			"a few seconds; the command never restarts anything itself.\n\n" +
+			"The keys and accepted values: listen.bind is an IP address or localhost; listen.port a number " +
+			"from 1 to 65535; listen.allowed_clients a comma-separated client-rule list (see 'netivri help " +
+			"config'); auth.login a login name; auth.password a plain password, stored hashed; " +
+			"auth.allow_init_remote true or false; fetch.proxy a socks5://, socks5h://, http:// or https:// " +
+			"URL; fetch.update_interval off or a duration from 5m to 168h; chain.pre_socks5 and " +
+			"chain.post_socks5 a socks5://, http:// or https:// URL with host and port.",
+		Examples: []helpExample{
+			{"Move the proxy port", "netivri config set listen.port 8080"},
+			{"The plain password is hashed and never echoed", "netivri config set auth.password {PASSWORD}"},
+			{"Clear the fetch proxy", "netivri config set fetch.proxy none"},
+		},
+		Errors: []helpError{
+			herr("USAGE", cli.ExitUsage, "unknown key, wrong argument count or a malformed number or boolean"),
+			herr("CONFIG_INVALID", cli.ExitUsage, "the value fails validation"),
+		},
+		SeeAlso: []string{"config get", "config", "routing"},
+	},
+
+	{
 		Name:        "version",
 		Group:       groupOther,
 		Summary:     "Print the version",
@@ -1157,7 +1218,10 @@ var helpTopics = []helpTopic{
 			"The init placeholder means the first client that authenticates with that login sets the password: " +
 			"the angel stores its argon2id hash in the file. init is accepted only when listen.bind is a " +
 			"loopback address, unless auth.allow_init_remote is true, and a client from an address the " +
-			"allowed_clients rules refuse can never claim it.",
+			"allowed_clients rules refuse can never claim it.\n\n" +
+			"The global keys can also be read and changed from the command line: netivri config get [{KEY}] " +
+			"prints the effective values and netivri config set {KEY} {VALUE} changes one of them with the " +
+			"same validation (netivri help config get, netivri help config set).",
 		Examples: []helpExample{
 			{"A complete config.ktav; the :: marker keeps a value from being read as a number or boolean", "" +
 				"listen.bind: 127.0.0.1\n" +
@@ -1185,7 +1249,7 @@ var helpTopics = []helpTopic{
 			{"Limit the proxy to your local network", "listen.allowed_clients: loopback,192.168.1.*"},
 			{"Full reference for every key", "https://github.com/PHPCraftdream/netivri/blob/main/docs/config.md"},
 		},
-		SeeAlso: []string{"routing", "up", "account add"},
+		SeeAlso: []string{"config get", "config set", "routing", "up", "account add"},
 	},
 	{
 		Name:    "routing",
@@ -1315,6 +1379,10 @@ var helpTopics = []helpTopic{
 				"null until the first fetch), quota). quota is null when the provider sent no " +
 				"subscription-userinfo header; otherwise used (upload + download, bytes), total (bytes, null " +
 				"when the provider gives none) and expire (RFC3339 UTC, null when the provider gives none).",
+			"config get: data.groups, the display values grouped as listen, auth, fetch and chain; " +
+				"auth.password is set or not set, never the stored hash, and proxies are scheme://host:port " +
+				"plus auth (whether credentials are set).",
+			"config set: key, changed and restart_needed.",
 			"node list: nodes[] (id, name - the node name as the provider gave it -, type, server, port, country (read " +
 				"from the node name, a hint), sub) and count.",
 		},

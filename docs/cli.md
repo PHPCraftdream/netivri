@@ -26,13 +26,13 @@ which handles interaction locally and does not change command behavior.
 
 Supported entry points are `netivri -i` (starts at Accounts), `netivri sub -i` (starts at Providers), `netivri account -i` (starts at Accounts), and `netivri server -i` (starts at Servers). `--home {DIR}` and `--local` use normal state-directory resolution. The shell requires terminal stdin and stdout; otherwise it returns `NOT_A_TERMINAL` (exit 2), with a hint listing all entry points. Interactive mode rejects `--json` and `NETIVRI_OUTPUT=json` with `USAGE` (exit 2). `--quiet` and `--no-color` are not accepted. Unsupported entry commands such as `status -i`, nested subcommands such as `sub add -i`, positional arguments, and arguments after a bare `--` are `USAGE` errors. Invalid `--home`/`--local` combinations or missing home values are also `USAGE` errors; all interactive usage errors carry the entry-point hint. `NO_COLOR` requests Bubble Tea's ASCII color profile.
 
-The frame tab order is Providers, Accounts, Servers, Service. The layout is fixed: a one-line header (a running angel supplies its listen address, uptime, and version; when stopped, the header shows stopped status and the CLI version fallback), a one-line tab bar, the body, and one-line toast and hint lines that never wrap. From 100 columns the body is two panes: the list on the left and the card of the selected item on the right; below 100 columns it is a single pane that drills down (Enter opens the card as its own screen, Esc goes back, a breadcrumb names the path); below 60x16 only a centred "enlarge the window" line is drawn.
+The frame tab order is Providers, Accounts, Servers, Service, Stats, Settings. The layout is fixed: a one-line header (a running angel supplies its listen address, uptime, and version; when stopped, the header shows stopped status and the CLI version fallback), a one-line tab bar, the body, and one-line toast and hint lines that never wrap. From 100 columns the body is two panes: the list on the left and the card of the selected item on the right; below 100 columns it is a single pane that drills down (Enter opens the card as its own screen, Esc goes back, a breadcrumb names the path); below 60x16 only a centred "enlarge the window" line is drawn.
 
 Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list and the card, Left/Right switch tabs, Enter opens or activates, Esc goes back one level, `?` opens the key help, `q` quits. Every list ends with a selectable `+ Add` line (`a` jumps to it), an empty list shows what it is with that line focused, and `/` opens an in-pane filter: typing narrows the rows, Esc clears it, Enter keeps it and selects the first match. The mouse clicks tabs, rows, field and action lines and buttons and scrolls with the wheel. Editing a field and every wizard step is one prompt dialog with a hint above the input and an error under it, with Save/Cancel buttons; adding is a walk of such steps with Back/Next and a final review step. Secrets are masked everywhere: the shell never prints a secret except the explicit, warned `Show client link` reveal on the Servers screen.
 
 ### Providers
 
-The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (state only: `inherited`, `none` or `set`, never the URL; an empty answer keeps the hop, the Clear pre-hop (`P`) and Clear post-hop (`O`) actions return it to the global value); Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts).
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (state only: `inherited`, `none` or `set`, never the URL; an empty answer keeps the hop, the Clear pre-hop (`P`) and Clear post-hop (`O`) actions return it to the global value); Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts), Nodes... (`n`; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name — `/` filters by text, `c` cycles the country filter over all and the countries present, Esc closes; no addresses, ports or credentials are shown; disabled while the provider has no stored snapshot) and Diagnose... (`g`; the dial diagnostics of `netivri diag dial --node` for one node of the provider, through the same operation: a prompt picks the node from the provider's stored labels and an optional one asks for the samples count (default 5, 1..20), the run happens in the background with a busy state Esc cancels, and the result dialog shows per phase (dns, tcp, tls, first_byte) p50/p90/max in ms with the sample count plus the failure counts — the idle survival test is not run, as with `--idle off`; errors are shown by message and hint only, Esc closes the result).
 
 ### Accounts
 
@@ -45,6 +45,23 @@ Full management in the shell. The list shows Name, Protocol, Port and State. `a`
 ### Service
 
 The angel and its checks, the shell side of `up`, `down`, `status` and `doctor` (the same operations, not copies). The list has three rows: Angel, Checks and Accounts. The Angel card shows the state, listen address, process id, uptime and version of the running angel (re-read every 3 seconds) and the actions Start (`s`), Stop... (`x`) and Restart... (`t`); Stop and Restart ask first and the confirmation names the open connections that will drop, Cancel is the default. Start of a running angel and Stop of a stopped one only say so; Restart of a stopped angel just starts it. The Checks card runs the checks of `netivri doctor` on demand (`c`) and lists each with its status and, for warnings and failures, the detail. The Accounts card shows the live activity of every account (connections and bytes, as in `status`). Errors are shown by message and hint only.
+
+### Stats
+
+The recorded statistics of `netivri stats` (the same shared operation, not a copy), read-only. The list shows the rows of the command — per node: Node, Name, Probes, Uptime %, Delay (p50/95) and Bytes; per account: Login, Dials, Dial OK %, Nodes, Down and Up — and the card of the selected row shows every figure, formatted like the command. The card also carries the controls: Since (`since`; a one-line prompt for a duration such as 1h, 24h or 7d, pre-filled with the current window; an empty answer resets it to 24h and an invalid one is shown under the input), Subscription, Country (two letters), Node and Account (each a one-line prompt, pre-filled; an empty answer clears the filter), Group by (`by`, `b`; toggles node/account) and Reload (`r`). Without a database yet the empty state explains that statistics appear after the angel has run for a while and names the store, `{DIR}/stats.db`. Nothing is editable here and no secret is ever shown.
+
+### Settings
+
+The four groups of `config.ktav` (Listen, Auth, Fetch, Chain) in one
+list; the card shows the group's keys as field lines. Enter opens a
+one-line prompt: a text prompt for most keys, a number prompt for the
+port, a yes/no choice for the boolean, and a masked prompt for
+`auth.password` and the proxy URLs. Values with credentials are only
+ever shown as `set`/`not set` or `scheme://host:port`, never in full. An
+invalid answer stays in the prompt with the error by message and hint. A
+saved change that needs an angel restart says so in the toast; the shell
+never restarts the angel itself. The same operations as `config get` /
+`config set` run underneath.
 
 See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation details.
 
@@ -93,6 +110,9 @@ netivri server show {NAME} [--json]
 netivri server link {NAME} [--account {ACCOUNT}] [--host {HOST}] [--format {uri|mihomo}] [--qr] [--json]
 netivri server rotate {NAME} [--account {ACCOUNT}] [--json]
 netivri server remove {NAME} [--json]
+
+netivri config get [{KEY}]                show the global settings (config.ktav values)
+netivri config set {KEY} {VALUE}          change one global setting
 
 netivri use {NODE}                        (planned)
 netivri use --country {COUNTRY} [--fastest | --auto]
@@ -835,12 +855,83 @@ global-post changes retain their usual restart behavior.
 See [design/live-reload.md](design/live-reload.md)
 and [design/socks5-chain.md](design/socks5-chain.md).
 
+### `config get`
+
+```
+netivri config get [{KEY}]
+```
+
+Prints the effective global settings: the values of `config.ktav`, or the
+defaults when the file is missing. Without {KEY} all four groups
+(`listen`, `auth`, `fetch`, `chain`) are printed; with a {KEY} only the
+group that holds it. The password of the legacy credential is shown only
+as `set` or `not set` — never the hash, and the `init` placeholder counts
+as `not set`. Proxy settings (`fetch.proxy`, `chain.pre_socks5`,
+`chain.post_socks5`) are shown as `scheme://host:port` without
+credentials, plus an `auth` boolean that says whether the URL had them.
+An empty `fetch.update_interval` means the default of one hour applies.
+
+```json
+{"schema_version": 1, "ok": true,
+ "data": {"groups": {
+   "listen": {"bind": "127.0.0.1", "port": 7890, "allowed_clients": "*"},
+   "auth": {"login": "", "password": "not set", "allow_init_remote": false},
+   "fetch": {"proxy": {"value": "", "auth": false}, "update_interval": ""},
+   "chain": {"pre_socks5": {"value": "", "auth": false},
+             "post_socks5": {"value": "socks5://post.example:1080", "auth": false}}}}}
+```
+
+Errors: `USAGE` (exit 2) for an unknown {KEY} or more than one argument,
+`CONFIG_INVALID` (exit 2) when the configuration file does not load.
+
+### `config set`
+
+```
+netivri config set {KEY} {VALUE}
+```
+
+Changes one global setting of `config.ktav`. The whole resulting
+configuration is validated exactly as the file is, and nothing is written
+when the validation fails. The valid keys and their values are listed by
+`netivri help config set`; briefly: `listen.bind` (IP address or
+`localhost`), `listen.port` (1–65535), `listen.allowed_clients`
+(comma-separated client rules), `auth.login`, `auth.password`
+(`auth.allow_init_remote` true/false), `fetch.proxy` (a `socks5://`,
+`socks5h://`, `http://` or `https://` URL), `fetch.update_interval`
+(`off` or `5m`–`168h`) and `chain.pre_socks5` / `chain.post_socks5`
+(`socks5://`, `http://` or `https://` with a host and a port). `none` or
+an empty value clears the keys that allow it (`auth.login`,
+`auth.password`, `fetch.proxy`, `fetch.update_interval`,
+`chain.pre_socks5`, `chain.post_socks5`). A plain `auth.password` is
+stored as an argon2id hash and is never echoed; the literal value `init`
+stores the placeholder that waits for the first client.
+
+The answer reports `restart_needed`: `true` when the running angel has to
+restart its listener for the change to apply (`listen.bind`,
+`listen.port`, `listen.allowed_clients`, `auth.login`, `auth.password`,
+`chain.post_socks5`), `false` when it applies without one
+(`auth.allow_init_remote`, `fetch.*`, `chain.pre_socks5`); see
+[design/live-reload.md](design/live-reload.md). The command itself never
+restarts anything: a running angel notices the written file within a few
+seconds and applies it.
+
+```json
+{"schema_version": 1, "ok": true,
+ "data": {"key": "listen.port", "changed": true, "restart_needed": true}}
+```
+
+Errors: `USAGE` (exit 2) for an unknown {KEY}, a bad {VALUE} or missing
+arguments, `CONFIG_INVALID` (exit 2) when the resulting configuration
+does not validate (nothing is written then).
+
 ### `up`
 
 Without `--foreground`, `up` starts the angel: it validates the flags and
 the configuration, checks for an already running angel, and otherwise
 spawns a detached background process and returns immediately. `up` is safe
-to repeat.
+to repeat. `--port` and `--bind` override the stored `listen.port` and
+`listen.bind` for that run only; the stored values are changed with
+`config set` (or in the shell's Settings tab).
 
 ```json
 {"schema_version": 1, "ok": true,

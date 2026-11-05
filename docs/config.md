@@ -21,6 +21,35 @@ not preserved, so keep personal notes elsewhere.
 - A missing file is not an error: safe defaults apply
   (`netivri config get` shows the effective values).
 
+## Editing from the command line
+
+`netivri config get [{KEY}]` prints the effective values: those of the
+file, or the defaults when the file is missing. Without {KEY} all four
+groups (`listen`, `auth`, `fetch`, `chain`) are printed; with a {KEY} only
+the group that holds it. `auth.password` appears only as `set` or
+`not set` — the hash and the `init` placeholder are never shown. Proxy
+settings (`fetch.proxy`, `chain.pre_socks5`, `chain.post_socks5`) appear
+as `scheme://host:port` plus an `auth` boolean that says whether the URL
+carried credentials. An empty `fetch.update_interval` means the default
+of one hour applies.
+
+`netivri config set {KEY} {VALUE}` changes one global setting. The whole
+candidate configuration is validated exactly like this file, and it is
+written only when valid. `none` or an empty value clears where the key
+allows it (`auth.login`, `auth.password`, `fetch.proxy`,
+`fetch.update_interval`, `chain.pre_socks5`, `chain.post_socks5`). A
+plain `auth.password` is stored as an argon2id hash and never echoed; the
+literal value `init` stores the placeholder that waits for the first
+client.
+
+The answer reports `restart_needed` per the live-reload rules
+([design/live-reload.md](design/live-reload.md)): `listen.*`,
+`auth.login`/`auth.password` and `chain.post_socks5` restart the
+listener; `auth.allow_init_remote`, `fetch.proxy`,
+`fetch.update_interval` and `chain.pre_socks5` apply without one. A
+running angel notices the written file within a few seconds and applies
+it; the command itself never restarts anything.
+
 ## Fields
 
 | Field | Type | Default | Meaning |

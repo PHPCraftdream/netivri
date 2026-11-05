@@ -2,13 +2,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"io"
 	"math"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +13,6 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 const (
@@ -102,19 +98,9 @@ func runDiag(args []string, stdout io.Writer) error {
 
 	// No total deadline: every request carries its own sample timeout
 	// inside DiagDial.
-	results, err := diagDial(context.Background(), core.DiagOptions{
-		Nodes:   nodes,
-		URL:     target,
-		Samples: *samples,
-		Idle:    idles,
-	})
+	results, err := diagDialNodes(context.Background(), nodes, target, *samples, idles)
 	if err != nil {
-		var ce *cli.Error
-		if errors.As(err, &ce) {
-			return ce
-		}
-		// DiagDial's messages are fixed texts (no mapping contents), safe to show.
-		return &cli.Error{Code: "DIAG_FAILED", Message: err.Error(), Exit: cli.ExitNetwork}
+		return err
 	}
 
 	host := ""
@@ -173,37 +159,6 @@ func parseDiagIdles(s string) ([]time.Duration, error) {
 	}
 	sort.Slice(idles, func(i, j int) bool { return idles[i] < idles[j] })
 	return idles, nil
-}
-
-// findDiagNode resolves a node label (<provider>/<node id>) against every
-// configured subscription's stored snapshot. The error message carries the
-// label only, never a server address.
-func findDiagNode(home, label string) (core.DiagNode, error) {
-	notFound := &cli.Error{Code: "NODE_NOT_FOUND", Message: "node not found: " + label, Exit: cli.ExitNotFound}
-	provider, id, ok := strings.Cut(label, "/")
-	if !ok || provider == "" || id == "" {
-		return core.DiagNode{}, notFound
-	}
-	cfg, err := loadConfig(home)
-	if err != nil {
-		return core.DiagNode{}, err
-	}
-	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
-	for _, sub := range cfg.Subscriptions {
-		snap, err := store.Load(sub.Name)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return core.DiagNode{}, snapshotError(sub.Name)
-		}
-		for _, n := range snap.Nodes {
-			if nodeLabel(sub.Name, n.ID) == label {
-				return core.DiagNode{Label: label, Mapping: n.Raw}, nil
-			}
-		}
-	}
-	return core.DiagNode{}, notFound
 }
 
 // accountDiagNodes resolves an account's route and takes the first

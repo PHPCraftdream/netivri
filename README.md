@@ -62,7 +62,8 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection
   spends its time: DNS, TCP, TLS and first byte.
 - **Interactive terminal shell.** A full-screen shell to manage providers,
-  accounts and servers, with masked secrets. Start it with `netivri -i` (or
+  accounts and servers, run the service, read the node statistics, diagnose
+  nodes and edit the global settings, with masked secrets. Start it with `netivri -i` (or
   `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires
   terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
   The screen has a fixed layout: a header (angel state, listen address,
@@ -77,6 +78,8 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   that line focused. Secrets are masked everywhere: the shell never prints a
   secret except the explicit, warned `Show client link` reveal on the Servers
   screen.
+- **Browse and diagnose nodes from the shell.** On the Providers screen, `Nodes...` (`n`) lists the stored nodes of a provider (label, country and name — never addresses or credentials) and `Diagnose...` (`g`) runs the dial diagnostics of `netivri diag dial --node` on one node, with per-phase p50/p90/max figures; the same operations the `node list` and `diag dial` commands use.
+- **Settings from the command line and the shell.** `netivri config get|set` reads and changes the global settings (for example `netivri config set listen.port 8080`); the shell's Settings tab edits the same keys with the same validation.
 - **Help that stands on its own.** `netivri help` covers every command, the
   configuration file (`netivri help config`), routing (`netivri help routing`)
   and the fields each command prints (`netivri help output`); `--json` gives
