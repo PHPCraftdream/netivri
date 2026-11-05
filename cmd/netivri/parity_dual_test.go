@@ -74,7 +74,7 @@ type dualShell struct {
 
 // dualCmdWait bounds a command that is not Background work: those return at
 // once, a timer (cursor blink, rate tick) never does and is dropped.
-const dualCmdWait = 100 * time.Millisecond
+const dualCmdWait = 40 * time.Millisecond
 
 // drain delivers the results of finished Background work and runs the
 // commands the screen returned until none produces a message.
