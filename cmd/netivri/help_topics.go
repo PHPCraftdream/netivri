@@ -138,13 +138,21 @@ var helpTopics = []helpTopic{
 				"Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
 				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
 				"written when the name is not valid), Remove... (d; the confirm names dependent accounts), Nodes... (n; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name; '/' filters by text, c cycles the country filter, Esc closes; no addresses, ports or credentials are shown; disabled without a stored snapshot) and Diagnose... (g; the dial diagnostics of 'netivri diag dial --node' for one node, through the same operation: a prompt picks the node and an optional one the samples count (default 5, 1..20); the run happens in the background, Esc cancels it; the result shows per phase p50/p90/max in ms and the failure counts, no idle test; errors by message and hint only). " +
-				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, fetch with a " +
+				"Adding (a) is a wizard: name, subscription URL (a secret), optional via proxy, a preview of the countries the subscription offers " +
+				"(the same fetch as 'sub countries --url': the nodes, each country with its node count and the nodes with no country; a busy state while it runs, " +
+				"Esc cancels the fetch; a failed or canceled preview does not block the add), fetch with a " +
 				"cancel. Empty state: A provider is a subscription of proxy nodes. Add one to start.",
-			"Accounts: the list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
+			"Accounts: the list has a mark column: Space or m marks or unmarks the selected account, A marks all, M clears the marks; marks survive reloads and vanish with their account. " +
+				"The list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
 				"Allowed clients, Pre-hop and Post-hop (set or none, never the value; Enter on either opens a prompt " +
 				"where a new URL replaces the hop and an empty answer leaves it unchanged; clearing is the Clear " +
 				"pre-hop / Clear post-hop action) and the Password state " +
-				"(set or waiting for the first login). Actions: Clear pre-hop (P), Clear post-hop (O, disabled " +
+				"(set or waiting for the first login). Actions: Route... (v; a read-only dialog of 'account show': the tiers with the providers of each country and every node with label and country, " +
+				"while the angel runs also the live state up/down/not probed, the connection count of every node and the total fallback connections; with the angel stopped it says so in one line; Esc closes), " +
+				"Apply to marked... (b; disabled while nothing is marked: pick provider, countries, exit, allowed clients, pre-hop or post-hop, answer the same prompt as the single edit " +
+				"- any or none clears providers and countries, none clears clients, none cancels an inherited hop and inherit clears the account's own, an empty answer leaves hops unchanged -, " +
+				"confirm how many marked accounts change, and the same shared operation as the comma lists and --all of account set-* runs; one invalid account or value changes nothing, reported by message and hint), " +
+				"Clear pre-hop (P), Clear post-hop (O, disabled " +
 				"when there is no such hop), Clone... (c; the copy gets the route, clients and hops and a fresh " +
 				"placeholder password: the first client that authenticates sets it, the password is never copied), " +
 				"Remove (d). Passwords are never shown or set in the shell. Adding (a) is a wizard: login, provider, countries, exit, allowed clients, optional " +

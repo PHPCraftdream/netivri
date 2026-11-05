@@ -39,7 +39,15 @@ func parityRefs(screen string, list *tui.List, card *tui.Card) []string {
 	return refs
 }
 
-func (s *providersScreen) ParityRefs() []string { return parityRefs("providers", s.list, s.card) }
+func (s *providersScreen) ParityRefs() []string {
+	refs := parityRefs("providers", s.list, s.card)
+	for _, st := range s.addWizardSteps() {
+		if st.Prompt == nil { // a wizard step without a prompt (the preview) is a capability of its own
+			refs = append(refs, "providers/"+st.Key)
+		}
+	}
+	return refs
+}
 func (s *accountsScreen) ParityRefs() []string {
 	return parityRefs("accounts", s.workspace.List, s.workspace.Card)
 }

@@ -251,7 +251,7 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	calls := 0
 	get := func(_ context.Context, _ string, _ fetch.Options) (*fetch.Result, error) {
 		calls++
-		if calls == 1 {
+		if calls <= 2 {
 			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed wizard-secret", Hint: "retry wizard-secret"}
 		}
 		return &fetch.Result{Body: []byte(testBody)}, nil
@@ -269,16 +269,23 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	if c != nil {
 		drainProvider(s, c)
 	}
+	// Third Enter leaves the optional via step and lands on the preview step,
+	// which fetches the subscription; this first fetch fails.
+	_, c = s.Update(key(tea.KeyEnter, ""))
+	drainProvider(s, c)
+	if s.wizard == nil || s.previewState != "failed" || s.wizard.Busy || s.previewIndex() != s.wizard.Index {
+		t.Fatalf("third Enter did not run the preview: state=%q busy=%v index=%d", s.previewState, s.wizard.Busy, s.wizard.Index)
+	}
+	// Fourth Enter leaves the preview step and reaches the review step.
 	_, c = s.Update(key(tea.KeyEnter, ""))
 	if c != nil {
 		drainProvider(s, c)
 	}
-	// Third Enter leaves the optional via step and reaches the review step.
-	if s.wizard == nil || !s.wizard.Review || s.wizard.Saving {
-		t.Fatal("third Enter did not reach the review step")
+	if s.wizard == nil || !s.wizard.Review {
+		t.Fatal("fourth Enter did not reach the review step")
 	}
-	// Fourth Enter activates Create: the first fetch fails, so the wizard is
-	// retained with the entered values and no credential on screen.
+	// Fifth Enter activates Create: the add fetch (second call) fails, so the
+	// wizard is retained with the entered values and no credential on screen.
 	_, c = s.Update(key(tea.KeyEnter, ""))
 	drainProvider(s, c)
 	if s.wizard == nil || s.wizard.Saving || s.mode != "add-wizard" || s.wizard.Values["name"] != "wizard" || s.wizard.Values["url"] != "https://user:wizard-secret@provider.invalid/?token=wizard-secret" || s.wizard.Values["via"] != "" {
@@ -288,12 +295,12 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	if strings.Contains(visible, "wizard-secret") {
 		t.Fatal("wizard failure exposed a credential")
 	}
-	// Fifth Enter retries Create from review and succeeds on the second fetch.
+	// Sixth Enter retries Create from review (third fetch) and succeeds.
 	_, c = s.Update(key(tea.KeyEnter, ""))
 	drainProvider(s, c)
 	r, err := ProviderList(h)
-	if err != nil || len(r.Providers) != 1 || r.Providers[0].Name != "wizard" || calls != 2 {
-		t.Fatal("wizard retry did not add provider")
+	if err != nil || len(r.Providers) != 1 || r.Providers[0].Name != "wizard" || calls != 3 {
+		t.Fatalf("wizard retry did not add provider: calls=%d err=%v", calls, err)
 	}
 }
 func TestProviderRefreshAllRetainsRedactedResults(t *testing.T) {

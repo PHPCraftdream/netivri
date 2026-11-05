@@ -71,9 +71,9 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   list pane on the left with the selected item's card on the right; below
   that, a single pane that drills down. Arrows and Tab/Shift-Tab move, Enter
   opens, Esc goes back, `a` adds, `d` removes, `r` refreshes, `R` refreshes
-  all, `c` shows a provider's countries, `/` filters a list in place, `?`
+  all, `c` shows a provider's countries, `/` filters a list in place, `m` marks accounts (`A` all, `M` clears), `v` shows an account's route, `b` applies a field to the marked ones, `?`
   opens help and `q` quits; the mouse clicks rows, tabs, lines and buttons
-  and scrolls. Adding and editing are short wizard walks with a review step;
+  and scrolls. Adding and editing are short wizard walks with a review step (adding a provider previews the countries its subscription offers, like `sub countries --url`; bulk edits on the Accounts screen use the same operations as the CLI's comma lists and `--all`);
   every list ends with a `+ Add` line, and an empty list says what it is with
   that line focused. Secrets are masked everywhere: the shell never prints a
   secret except the explicit, warned `Show client link` reveal on the Servers

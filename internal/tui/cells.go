@@ -21,6 +21,9 @@ const (
 type Row struct {
 	Cells []string
 	Data  any
+	// Mark renders a "*" gutter in lists (accounts bulk marking); false
+	// changes nothing.
+	Mark bool
 }
 
 func boolInt(value bool) int {

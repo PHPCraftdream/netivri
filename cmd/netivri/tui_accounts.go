@@ -132,11 +132,16 @@ type accountsScreen struct {
 	detailLogin                                      string
 	dialog                                           *accountsDialog
 	pendingLogin                                     string
+	marked                                           map[string]bool
+	viewer                                           tui.Modal
+	routeLogin                                       string
+	routeGeneration                                  uint64
+	pendingBulk                                      *bulkRequest
 }
 
 func newAccountsScreen(home string, env tui.Env) tui.Screen {
 	env.Home = home
-	s := &accountsScreen{env: env, live: map[string]angel.AccountActivity{}, rates: map[string][2]string{}, previous: map[string]angel.AccountActivity{}, providerCountries: map[string][]string{}, providerNodes: map[string]string{}}
+	s := &accountsScreen{marked: map[string]bool{}, env: env, live: map[string]angel.AccountActivity{}, rates: map[string][2]string{}, previous: map[string]angel.AccountActivity{}, providerCountries: map[string][]string{}, providerNodes: map[string]string{}}
 	s.status = func(h string) (angel.Status, error) {
 		ctx, c := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 		defer c()
@@ -159,7 +164,7 @@ func newAccountsScreen(home string, env tui.Env) tui.Screen {
 }
 func (s *accountsScreen) Title() string { return "Accounts" }
 func (s *accountsScreen) CapturingInput() bool {
-	return s.dialog != nil || (s.workspace.List != nil && s.workspace.List.Filtering)
+	return s.dialog != nil || s.viewer != nil || (s.workspace.List != nil && s.workspace.List.Filtering)
 }
 func (s *accountsScreen) Breadcrumb() string {
 	if s.workspace.Drilled && s.detailLogin != "" {
@@ -192,6 +197,11 @@ var accountsActionBindings = []bubbleskey.Binding{
 	bubbleskey.NewBinding(bubbleskey.WithKeys("c"), bubbleskey.WithHelp("c", "clone")),
 	bubbleskey.NewBinding(bubbleskey.WithKeys("d"), bubbleskey.WithHelp("d", "remove")),
 	bubbleskey.NewBinding(bubbleskey.WithKeys("r"), bubbleskey.WithHelp("r", "reload")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("v"), bubbleskey.WithHelp("v", "route")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("m"), bubbleskey.WithHelp("m", "mark")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("A"), bubbleskey.WithHelp("A", "mark all")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("M"), bubbleskey.WithHelp("M", "clear marks")),
+	bubbleskey.NewBinding(bubbleskey.WithKeys("b"), bubbleskey.WithHelp("b", "bulk")),
 }
 
 func (s *accountsScreen) Bindings() tui.ActionHints {
@@ -205,7 +215,7 @@ func (s *accountsScreen) Bindings() tui.ActionHints {
 	return tui.ActionHints(bindings)
 }
 func (s *accountsScreen) KeyHints() string {
-	return "↑↓ select · Enter open · a add · e edit · c clone · d remove · r reload · / filter · Tab pane"
+	return "↑↓ select · Enter open · a add · e edit · c clone · d remove · r reload · v route · m mark · A all · M clear · b bulk · / filter · Tab pane"
 }
 func (s *accountsScreen) Init() tea.Cmd { return tea.Batch(s.reload(), s.loadChoices(), s.rateTick()) }
 func (s *accountsScreen) now() time.Time {
@@ -260,6 +270,9 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 	if d, ok := msg.(*accountsDialog); ok {
 		s.dialog = d
 		return s, nil
+	}
+	if c, handled := s.routeViewerInput(msg); handled {
+		return s, c
 	}
 	if s.dialog != nil {
 		switch msg.(type) {
@@ -344,6 +357,7 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		}
 		selected := s.selectedLogin()
 		s.rows = m.Rows
+		s.pruneMarks()
 		s.syncRows(selected)
 		return s, s.loadDetail(s.selectedLogin())
 	case accountsPollResult:
@@ -368,6 +382,10 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		s.cardResult = &m.Result
 		s.updateCard()
 		return s, nil
+	case accountsRouteLoaded:
+		return s, s.applyRouteLoaded(m)
+	case accountsBulkDone:
+		return s, s.applyBulkDone(m)
 	case accountsChoicesLoaded:
 		if m.Err != nil {
 			s.message = accountsErrorText(m.Err)
@@ -393,11 +411,15 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		}
 		s.rows = m.Rows
 		s.message = m.Notice
+		s.pruneMarks()
 		s.dialog = nil
 		s.syncRows(m.Login)
 		s.refreshSelectedCard(true)
 		return s, tea.Batch(s.loadDetail(s.selectedLogin()), s.notice(s.message))
 	case tui.ConfirmResultMsg:
+		if c, handled := s.bulkConfirmResult(m); handled {
+			return s, c
+		}
 		login := s.pendingLogin
 		s.pendingLogin = ""
 		if !m.Confirmed || login == "" {
@@ -503,6 +525,21 @@ func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
 		s.workspace.SetFocus(tui.PaneCard)
 		return s, s.loadDetail(s.selectedLogin())
 	}
+	if k == "space" || k == "m" {
+		return s, s.toggleMark()
+	}
+	if k == "M" {
+		return s, s.clearMarks()
+	}
+	if k == "A" {
+		return s, s.markAll()
+	}
+	if k == "v" {
+		return s, s.openRoute()
+	}
+	if k == "b" {
+		return s, s.beginBulk()
+	}
 	if s.workspace.Focus() == tui.PaneCard && (s.width >= 100 || s.workspace.Drilled) {
 		if s.workspace.Card.Update(m) {
 			return s, s.activateCard()
@@ -567,7 +604,7 @@ func (s *accountsScreen) updateBackground(v tea.Msg) tea.Cmd {
 			_, c := s.Update(m)
 			return c
 		}
-	case accountsChoicesLoaded, accountsDetailLoaded, accountsMutationDone:
+	case accountsChoicesLoaded, accountsDetailLoaded, accountsMutationDone, accountsRouteLoaded, accountsBulkDone:
 		_, c := s.Update(m)
 		return c
 	}
@@ -649,7 +686,7 @@ func (s *accountsScreen) syncRows(preferred string) {
 			r := s.rates[a.Login]
 			up, down = r[0], r[1]
 		}
-		rs = append(rs, tui.Row{Data: a, Cells: []string{a.Login, provider, exit, conn, up, down}})
+		rs = append(rs, tui.Row{Data: a, Cells: []string{a.Login, provider, exit, conn, up, down}, Mark: s.marked[a.Login]})
 	}
 	s.workspace.List.SetRows(rs)
 	if preferred != "" {
@@ -678,7 +715,7 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 	a, ok := s.selectedAccount()
 	if !ok {
 		if force || s.workspace.Card == nil || s.workspace.Card.Title != "Account" {
-			s.workspace.Card = tui.NewCard("Account", nil)
+			s.workspace.Card = tui.NewCard("Account", []tui.CardLine{{ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: true}})
 			s.workspace.Card.SetTheme(s.theme)
 			s.workspace.Card.Info = []string{"Select an account to see details."}
 		}
@@ -694,7 +731,7 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 	pre, post := accountsHopLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
 	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
 		{ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: a.PreSOCKS5.Source != "account"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
-		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}}
+		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}, {ID: "route", Label: "Route...", Kind: tui.CardAction, Action: true, Hotkey: "v"}, {ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: len(s.marked) == 0}}
 	if s.workspace.Card != nil {
 		s.workspace.Card.Focused = true
 	}
@@ -750,6 +787,10 @@ func (s *accountsScreen) activateCard() tea.Cmd {
 		return s.mutateEdit(a, "post", map[string]string{"value": "", "clear": "true"})
 	case "clone":
 		return s.beginClone(a)
+	case "route":
+		return s.openRoute()
+	case "bulk":
+		return s.beginBulk()
 	case "remove":
 		if s.env.OpenModal != nil {
 			s.pendingLogin = a.Login
@@ -771,6 +812,12 @@ func (s *accountsScreen) View(w, h int) string {
 	if s.dialog != nil {
 		s.dialog.SetTheme(s.theme)
 		return s.dialog.View(w, h)
+	}
+	if s.viewer != nil {
+		if v, ok := s.viewer.(interface{ SetTheme(tui.Theme) }); ok {
+			v.SetTheme(s.theme)
+		}
+		return s.viewer.View(w, h)
 	}
 	s.width, s.height = w, h
 	s.workspace.SetSize(w, h)

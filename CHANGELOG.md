@@ -10,6 +10,19 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Preview a subscription before adding it, in the shell.** The provider add wizard gains a
+  `Preview countries` step after the Via step: it fetches the URL through the same strict
+  path as `netivri sub countries --url` (same figures: nodes, each country with its node
+  count, nodes with no country) without storing anything, shows a busy state while it runs
+  and Esc cancels the fetch. Back returns to the Via step to change the URL; a failed or
+  canceled preview does not block adding. The URL and the via proxy are never shown.
+- **Route and bulk edit on the Accounts screen.** `Route...` (`v`) shows the route tiers of
+  `netivri account show` with the live node state and connection counts while the angel
+  runs. Space or `m` marks accounts, `A` marks all, `M` clears the marks, and
+  `Apply to marked...` (`b`) applies provider, countries, exit, allowed clients or hops to
+  every marked account through the same operations as the CLI's comma lists and `--all`
+  (one invalid account changes nothing). With these the shell covers every CLI command
+  except the reasoned exemptions listed in docs/design/parity.md.
 - **Logs tab in the shell.** The tail of the angel log with follow on by default (new
   lines appear as the angel writes them; scrolling up reads in the past, `f` or End
   returns to the live tail), a level filter (`l`), in-pane search (`/`), and since (`s`)
