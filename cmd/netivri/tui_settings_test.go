@@ -79,6 +79,7 @@ func (f *settingsFixture) clearPrompt() {
 // activate focuses the card pane, selects the line with the given id and
 // presses Enter, like a user opening the field for editing.
 func (f *settingsFixture) activate(t *testing.T, id string) {
+	f.selectGroup(strings.SplitN(id, ".", 2)[0])
 	f.s.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	f.s.workspace.SetFocus(tui.PaneCard)
 	f.s.refresh()
@@ -165,7 +166,7 @@ func TestSettingsMasksSecrets(t *testing.T) {
 	if l, _ := cardLine(f.s.workspace.Card, "chain.pre_socks5"); l.Value != "socks5://relay.example:1080" {
 		t.Fatalf("chain.pre_socks5 = %q", l.Value)
 	}
-	v := ansi.Strip(f.s.View(80, 24))
+	v := ansi.Strip(f.s.View(100, 30)) // two panes from 100 columns
 	if !strings.Contains(v, "socks5://relay.example:1080") {
 		t.Fatalf("the chain card must show the redacted proxy:\n%s", v)
 	}
@@ -338,7 +339,7 @@ func TestSettingsLoadErrorStillRenders(t *testing.T) {
 	if len(c.Info) != 1 || c.Info[0] != "The configuration file could not be read." {
 		t.Fatalf("info = %v", c.Info)
 	}
-	v := ansi.Strip(f.s.View(80, 24))
+	v := ansi.Strip(f.s.View(100, 30)) // two panes from 100 columns
 	if !strings.Contains(v, "The configuration file could not be read.") {
 		t.Fatalf("the load error must be shown:\n%s", v)
 	}

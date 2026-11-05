@@ -464,7 +464,7 @@ func (s *statsScreen) figureLines(item map[string]any) []tui.CardLine {
 		add("name", "Name", v)
 	}
 	add("provider", "Provider", statsString(item, "provider"))
-	add("country", "Country", statsString(item, "country"))
+	add("node-country", "Country", statsString(item, "country"))
 	add("probes", "Probes", statsCount(item, "probes"))
 	add("uptime-pct", "Uptime %", statsPct(item["uptime_pct"]))
 	if d, ok := item["delay_ms"].(map[string]any); ok {
@@ -573,7 +573,7 @@ func statsCells(item map[string]any, by string) []string {
 // statsDurationInput renders the window the way `stats --since` reads it.
 func statsDurationInput(d time.Duration) string {
 	switch {
-	case d >= 24*time.Hour && d%(24*time.Hour) == 0:
+	case d >= 48*time.Hour && d%(24*time.Hour) == 0:
 		return fmt.Sprintf("%dd", int64(d/(24*time.Hour)))
 	case d >= time.Hour && d%time.Hour == 0:
 		return fmt.Sprintf("%dh", int64(d/time.Hour))

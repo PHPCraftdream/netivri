@@ -50,7 +50,7 @@ func parityRun(c tea.Cmd) tea.Msg {
 	select {
 	case m := <-ch:
 		return m
-	case <-time.After(time.Second):
+	case <-time.After(150 * time.Millisecond):
 		return nil // a timer (tick) command: nothing to deliver
 	}
 }

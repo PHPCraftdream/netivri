@@ -91,6 +91,10 @@ func (d *nodesDialog) Update(m tea.Msg) (tui.Modal, tea.Cmd) {
 			d.cycleCountry()
 			return d, nil
 		case "esc":
+			if d.list.Filter != "" { // a kept filter is cleared first, the next Esc closes
+				d.list.EndFilter(false)
+				return d, nil
+			}
 			return d, func() tea.Msg { return nodesCloseMsg{} }
 		}
 	}
