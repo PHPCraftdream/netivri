@@ -222,6 +222,15 @@ protocol's own parameters (secrets masked). Actions: Show client link...
 (running / not applied / angel stopped; with the angel stopped edits are saved
 and the state line says so).
 
+### Service
+List: Angel, Checks, Accounts (state per row). Angel card: State, Listen, Process,
+Uptime, Version (read-only), actions Start, Stop..., Restart... (Stop and Restart
+confirm and name the open connections; Cancel is the default). Checks card:
+action Run checks and the results of `netivri doctor` with details for warnings
+and failures. Accounts card: live activity per account. The state is re-read
+every 3 seconds. Same operations as `up`, `down`, `status`, `doctor`
+(`ops_service.go`). See [`parity.md`](parity.md).
+
 ## Empty states and first run
 
 Every list shows, in its own words, what it is and the focused `+ Add` line.

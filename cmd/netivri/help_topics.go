@@ -109,7 +109,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"The frame is fixed: a one-line header (angel state, listen address, uptime, version), " +
-				"a tab line (Providers, Accounts, Servers), the body and one-line toast and hint lines. " +
+				"a tab line (Providers, Accounts, Servers, Service), the body and one-line toast and hint lines. " +
 				"From 100 columns the body is two panes, the list on the left and the card of the selected " +
 				"item on the right; below that it is a single pane that drills down (Enter opens the card, " +
 				"Esc goes back, a breadcrumb names the path); below 60x16 only an enlarge-the-window line. " +
@@ -122,6 +122,11 @@ var helpTopics = []helpTopic{
 				"it and Save/Cancel buttons; adding is a walk of such steps with Back/Next and a final review step. " +
 				"Secrets are masked everywhere; the shell never prints a secret except the explicit, warned " +
 				"Show client link reveal on the Servers screen.",
+			"Service: the list has Angel, Checks and Accounts. The Angel card shows the state, listen address, process, " +
+				"uptime and version and has Start (s), Stop... (x) and Restart... (t); Stop and Restart ask first and " +
+				"name the open connections that will drop. Checks runs the checks of 'netivri doctor' (c) and lists " +
+				"each with its status and detail; Accounts shows the live activity of every account. It is the shell side " +
+				"of up, down, status and doctor.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
 				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
 				"Updated, and the Pre-hop and Post-hop of the provider (inherited, none or set, never the URL; an empty answer " +

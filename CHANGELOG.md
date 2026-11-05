@@ -10,6 +10,10 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Service tab in the shell.** Start, stop and restart the angel (stop and restart ask first and name the open
+  connections that will drop), run the checks of `netivri doctor`, and see the live activity of the accounts, with
+  the same operations the `up`, `down`, `status` and `doctor` commands use.
+
 - **CLI for what only the shell could do.** `netivri sub rename {OLD} {NEW}` (accounts and stored nodes
   follow), `netivri sub set {NAME} [--url] [--via]` (new subscription URL or fetch proxy, never echoed) and
   `netivri server update {NAME} [--public-host] [--bind] [--port] [--account] [--param]`. First step of the

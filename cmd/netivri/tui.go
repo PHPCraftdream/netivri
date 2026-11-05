@@ -59,6 +59,7 @@ func interactiveOptions(w io.Writer, home string, start int) tui.Options {
 		{Title: "Providers", New: func(env tui.Env) tui.Screen { return newProvidersScreen(home, env) }},
 		{Title: "Accounts", New: func(env tui.Env) tui.Screen { return newAccountsScreen(home, env) }},
 		{Title: "Servers", New: func(env tui.Env) tui.Screen { return newServersScreen(home, env) }},
+		{Title: "Service", New: func(env tui.Env) tui.Screen { return newServiceScreen(home, env) }},
 	}
 	return tui.Options{Tabs: tabs, Start: start, Home: home, Input: os.Stdin, Output: w, Header: tuiHeader{home: home, now: time.Now}, Now: time.Now}
 }

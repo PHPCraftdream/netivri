@@ -90,7 +90,7 @@ In neither (global settings live in `config.ktav` only: `listen.*`, `auth.*`,
 
 ## Design of the missing shell screens
 
-* **Service** tab (first): state, listen address, uptime, version; actions
+* **Service** tab (after Servers, so the entry points keep their indexes): state, listen address, uptime, version; actions
   `Start`, `Stop`, `Restart` (confirm names the open connections that will
   drop), `Doctor` (runs the checks and lists them with the hint of every
   failure). Same operations as `up` / `down` / `doctor` (functions shared with
