@@ -11,9 +11,11 @@ type ConfirmResultMsg struct {
 
 // Confirm asks for a decision. Cancel is initially focused; Enter cancels.
 type Confirm struct {
-	Prompt   string
-	Theme    Theme
-	selected int
+	Prompt string
+	// ConfirmLabel is the text of the confirming button; empty reads Remove.
+	ConfirmLabel string
+	Theme        Theme
+	selected     int
 }
 
 func (c *Confirm) SetTheme(t Theme) { c.Theme = t }
@@ -45,7 +47,11 @@ func confirmResult(confirmed, canceled bool) tea.Cmd {
 	return func() tea.Msg { return ConfirmResultMsg{Confirmed: confirmed, Canceled: canceled} }
 }
 func (c *Confirm) buttons() Buttons {
-	return Buttons{Labels: []string{"Cancel", "Remove"}, Focus: c.selected, Danger: map[int]bool{1: true}}
+	label := c.ConfirmLabel
+	if label == "" {
+		label = "Remove"
+	}
+	return Buttons{Labels: []string{"Cancel", label}, Focus: c.selected, Danger: map[int]bool{1: true}}
 }
 func (c *Confirm) View(w, h int) string {
 	t := c.Theme

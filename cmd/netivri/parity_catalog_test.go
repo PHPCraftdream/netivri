@@ -30,7 +30,7 @@ func gap(side, task, reason string) exemption {
 // parityGapBudget is the number of exemptions that carry a gap id. It only
 // goes down: closing a gap lowers it in the same change, adding one is a
 // failure. The parity work is finished when it is zero.
-const parityGapBudget = 13
+const parityGapBudget = 10
 
 var parityCatalog = []capability{
 	// Providers
@@ -82,16 +82,16 @@ var parityCatalog = []capability{
 		Exempt: []exemption{permanent("cli", "every CLI run reads the current state")}},
 
 	// Service and diagnostics
-	{ID: "service.up", CLI: []string{"up", "up --port", "up --bind"},
-		Exempt: []exemption{gap("tui", "207", "start the angel")}},
+	{ID: "service.up", CLI: []string{"up"}, TUI: []string{"service/start"}},
+	{ID: "service.up-flags", CLI: []string{"up --port", "up --bind"},
+		Exempt: []exemption{gap("tui", "208", "one-run overrides of listen.port and listen.bind; the Settings tab edits the stored values")}},
+	{ID: "service.restart", TUI: []string{"service/restart"},
+		Exempt: []exemption{permanent("cli", "a restart is down followed by up; the CLI keeps them separate")}},
 	{ID: "service.foreground", CLI: []string{"up --foreground"},
 		Exempt: []exemption{permanent("tui", "running in the foreground ties the angel to a terminal; the shell is itself a foreground program")}},
-	{ID: "service.down", CLI: []string{"down"},
-		Exempt: []exemption{gap("tui", "207", "stop the angel")}},
-	{ID: "service.status", CLI: []string{"status", "status --full", "status --watch", "status --interval"},
-		Exempt: []exemption{gap("tui", "207", "full status and live view")}},
-	{ID: "service.doctor", CLI: []string{"doctor"},
-		Exempt: []exemption{gap("tui", "207", "health checks")}},
+	{ID: "service.down", CLI: []string{"down"}, TUI: []string{"service/stop"}},
+	{ID: "service.status", CLI: []string{"status", "status --full", "status --watch", "status --interval"}, TUI: []string{"service/list"}},
+	{ID: "service.doctor", CLI: []string{"doctor"}, TUI: []string{"service/checks"}},
 	{ID: "service.logs", CLI: []string{"logs", "logs --follow", "logs --level", "logs --since", "logs --tail"},
 		Exempt: []exemption{gap("tui", "207", "angel log view")}},
 	{ID: "service.stats", CLI: []string{"stats", "stats --sub", "stats --country", "stats --node", "stats --since", "stats --by", "stats --account"},

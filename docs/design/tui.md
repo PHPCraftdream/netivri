@@ -6,7 +6,7 @@ works but is hard to use; the reworked v2 shell is specified in
 ships today is the v2 described there, in short:
 
 - A fixed-region frame: one-line header (angel state, listen address, uptime,
-  version), a tab bar (Providers, Accounts, Servers), the body, and one-line
+  version), a tab bar (Providers, Accounts, Servers, Service), the body, and one-line
   toast and hint slots that never wrap. From 100 columns the body is two panes
   (list left, card of the selected item right); below that a single pane that
   drills down with a breadcrumb; below 60x16 only an "enlarge the window" line.

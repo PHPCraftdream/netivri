@@ -66,7 +66,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires
   terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
   The screen has a fixed layout: a header (angel state, listen address,
-  uptime), a tab line (Providers, Accounts, Servers), and from 100 columns a
+  uptime), a tab line (Providers, Accounts, Servers, Service), and from 100 columns a
   list pane on the left with the selected item's card on the right; below
   that, a single pane that drills down. Arrows and Tab/Shift-Tab move, Enter
   opens, Esc goes back, `a` adds, `d` removes, `r` refreshes, `R` refreshes

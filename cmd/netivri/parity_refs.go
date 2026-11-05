@@ -14,9 +14,12 @@ type parityScreen interface{ ParityRefs() []string }
 // parityRefs lists what a screen offers: the list, its `+ Add` row and every
 // card line the user can act on (fields and actions), as "screen/id".
 func parityRefs(screen string, list *tui.List, card *tui.Card) []string {
-	refs := []string{screen + "/list"}
-	if list != nil && list.AddLabel != "" {
-		refs = append(refs, screen+"/add")
+	var refs []string
+	if list != nil {
+		refs = append(refs, screen+"/list")
+		if list.AddLabel != "" {
+			refs = append(refs, screen+"/add")
+		}
 	}
 	if card == nil {
 		return refs

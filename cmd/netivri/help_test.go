@@ -57,10 +57,10 @@ func decodeHelp(t *testing.T, out string) map[string]any {
 
 func TestInteractiveTabConstructors(t *testing.T) {
 	options := interactiveOptions(nil, t.TempDir(), 0)
-	if len(options.Tabs) != 3 {
-		t.Fatalf("tab count = %d, want 3", len(options.Tabs))
+	if len(options.Tabs) != 4 {
+		t.Fatalf("tab count = %d, want 4", len(options.Tabs))
 	}
-	wantTitles := []string{"Providers", "Accounts", "Servers"}
+	wantTitles := []string{"Providers", "Accounts", "Servers", "Service"}
 	for i, want := range wantTitles {
 		if options.Tabs[i].Title != want {
 			t.Errorf("tab %d title = %q, want %q", i, options.Tabs[i].Title, want)
