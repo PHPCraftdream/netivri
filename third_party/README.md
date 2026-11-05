@@ -79,3 +79,10 @@
    has no synchronization there. The race detector found it on macOS in
    `TestVlessRealityServerRoutesAndRejectsInvalidCredentials`. Behaviour is
    otherwise unchanged.
+7. **Atomic Vision read flag** (`transport/vless/vision/conn.go`,
+   `transport/vless/vision/vision.go`): `readFilterUUID` is an `atomic.Bool`.
+   `FrontHeadroom()` is called by the relay copy of the opposite direction
+   (`CalculateFrontHeadroom`) while `ReadBuffer` clears the flag on the read
+   goroutine. The race detector found it on linux in
+   `TestMultiportVlessRealityAndTrustTunnelClients`. Behaviour is otherwise
+   unchanged.
