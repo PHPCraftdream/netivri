@@ -116,7 +116,10 @@ func (d *dualShell) drain(c tea.Cmd) {
 func newDualShell(t *testing.T, home, tab string) *dualShell {
 	t.Helper()
 	d := &dualShell{t: t}
-	env := tui.Env{Home: home, Background: func(_ string, w func() tea.Msg) tea.Cmd {
+	env := tui.Env{Home: home, Background: func(label string, w func() tea.Msg) tea.Cmd {
+		if strings.Contains(strings.ToLower(label), "timer") {
+			return nil // a timer would block for its whole interval and rearm itself
+		}
 		d.pending = append(d.pending, w())
 		return nil
 	}}
