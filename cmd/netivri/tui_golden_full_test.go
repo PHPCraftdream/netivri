@@ -177,8 +177,8 @@ const goldenAccounts100Empty = `Service stopped
 +---------------------------------+ +--------------------------------------------------------------+
 |Accounts                         | |Account                                                       |
 |  LOGI  PROVID  EX  CO  UP/  DOW | |Select an account to see details.                             |
-|An account needs a provider. Add | |                                                              |
-|> + Add account [a]              | |  Apply to marked...  [b]                                     |
+|An account needs a provider. Add | |  Apply to marked...  [b]                                     |
+|> + Add account [a]              | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |
 |                                 | |                                                              |

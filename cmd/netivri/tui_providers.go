@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1141,5 +1142,9 @@ func redactProviderSecrets(text string, raws ...string) string {
 	if len(pairs) > 0 {
 		text = strings.NewReplacer(pairs...).Replace(text)
 	}
-	return text
+	return providerURLScheme.ReplaceAllString(text, "[redacted]")
 }
+
+// providerURLScheme matches a URL that still carries a replaced secret, so a
+// shortened or reordered copy of the URL in an error never shows its scheme.
+var providerURLScheme = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://\S*\[redacted\]\S*`)

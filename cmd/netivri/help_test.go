@@ -144,7 +144,7 @@ func TestHelpTopicsAgreeWithTheCommandTable(t *testing.T) {
 		t.Error("no help topic for help itself")
 	}
 	for _, want := range []string{"netivri -i", "netivri sub -i", "netivri account -i --home {DIR}", "netivri server -i", "Tab/Shift-Tab", "NOT_A_TERMINAL", "Passwords are never shown or set", "Servers are read-only", "r reload"} {
-		if !strings.Contains(renderTopic(findHelpTopic("interactive")), want) {
+		if !strings.Contains(strings.Join(strings.Fields(renderTopic(findHelpTopic("interactive"))), " "), want) {
 			t.Errorf("interactive topic lacks %q", want)
 		}
 	}

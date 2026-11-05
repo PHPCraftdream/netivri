@@ -251,7 +251,7 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	calls := 0
 	get := func(_ context.Context, _ string, _ fetch.Options) (*fetch.Result, error) {
 		calls++
-		if calls == 1 {
+		if calls <= 2 {
 			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed wizard-secret", Hint: "retry wizard-secret"}
 		}
 		return &fetch.Result{Body: []byte(testBody)}, nil
