@@ -347,6 +347,9 @@ func (l *List) View(w, h int) string {
 		text := l.AddLabel
 		if i < len(vr) {
 			text = l.renderCells(vr[i], widths)
+			if l.Rows[vr[i]].Mark {
+				text = "* " + text
+			}
 		}
 		row := mark + " " + text
 		if i == l.Selected && l.Focused && i < len(vr) {

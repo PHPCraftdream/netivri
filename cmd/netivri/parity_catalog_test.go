@@ -30,14 +30,13 @@ func gap(side, task, reason string) exemption {
 // parityGapBudget is the number of exemptions that carry a gap id. It only
 // goes down: closing a gap lowers it in the same change, adding one is a
 // failure. The parity work is finished when it is zero.
-const parityGapBudget = 3
+const parityGapBudget = 0
 
 var parityCatalog = []capability{
 	// Providers
 	{ID: "provider.list", CLI: []string{"sub list"}, TUI: []string{"providers/list"}},
 	{ID: "provider.add", CLI: []string{"sub add", "sub add --name", "sub add --via"}, TUI: []string{"providers/add"}},
-	{ID: "provider.preview", CLI: []string{"sub countries --url", "sub countries --via"},
-		Exempt: []exemption{gap("tui", "207", "preview a subscription's countries before adding it")}},
+	{ID: "provider.preview", CLI: []string{"sub countries --url", "sub countries --via"}, TUI: []string{"providers/preview"}},
 	{ID: "provider.countries", CLI: []string{"sub countries"}, TUI: []string{"providers/countries"}},
 	{ID: "provider.refresh", CLI: []string{"sub update", "sub update --all"}, TUI: []string{"providers/refresh", "providers/refresh-all"}},
 	{ID: "provider.remove", CLI: []string{"sub rm"}, TUI: []string{"providers/remove"}},
@@ -50,8 +49,7 @@ var parityCatalog = []capability{
 
 	// Accounts
 	{ID: "account.list", CLI: []string{"account list"}, TUI: []string{"accounts/list"}},
-	{ID: "account.show", CLI: []string{"account show"},
-		Exempt: []exemption{gap("tui", "207", "route tiers with live node state")}},
+	{ID: "account.show", CLI: []string{"account show"}, TUI: []string{"accounts/route"}},
 	{ID: "account.add", CLI: []string{"account add", "account add --exit", "account add --provider", "account add --country", "account add --clients", "account add --pre-socks5", "account add --post-socks5"},
 		TUI: []string{"accounts/add"}},
 	{ID: "account.clone", CLI: []string{"account clone", "account clone --exit", "account clone --password", "account clone --provider", "account clone --country", "account clone --clients"},
@@ -62,8 +60,7 @@ var parityCatalog = []capability{
 	{ID: "account.clients", CLI: []string{"account set-clients", "account set-clients --none"}, TUI: []string{"accounts/clients"}},
 	{ID: "account.hops", CLI: []string{"account set-socks5", "account set-socks5 --pre", "account set-socks5 --post"},
 		TUI: []string{"accounts/pre", "accounts/post", "accounts/clear-pre", "accounts/clear-post"}},
-	{ID: "account.bulk", CLI: []string{"account set-country --all", "account set-provider --all", "account set-clients --all", "account set-exit --all"},
-		Exempt: []exemption{gap("tui", "210", "apply a field to several or all accounts")}},
+	{ID: "account.bulk", CLI: []string{"account set-country --all", "account set-provider --all", "account set-clients --all", "account set-exit --all"}, TUI: []string{"accounts/bulk"}},
 	{ID: "account.remove", CLI: []string{"account rm"}, TUI: []string{"accounts/remove"}},
 
 	// Servers

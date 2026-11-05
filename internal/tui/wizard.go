@@ -12,6 +12,11 @@ type WizardStep struct {
 	Key      string
 	Prompt   *Prompt
 	Optional bool
+	// Body renders a promptless step: it returns the content rows shown
+	// below the hint row. A step with a Body and no Prompt takes no input;
+	// Back and Next treat it like any other step and the review list skips
+	// it.
+	Body func(width, height int) []string
 }
 type WizardResultMsg struct {
 	Values   map[string]string
@@ -24,6 +29,8 @@ type Wizard struct {
 	Values                  map[string]string
 	Index                   int
 	Review, Saving          bool
+	Busy                    bool
+	BusyText                string
 	Error                   error
 	Buttons                 Buttons
 	width, height           int
@@ -56,6 +63,12 @@ func (w *Wizard) SetError(e error) {
 func (w *Wizard) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	if s, ok := msg.(tea.WindowSizeMsg); ok {
 		w.width, w.height = s.Width, s.Height
+		return w, nil
+	}
+	if w.Busy {
+		if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
+			return w, func() tea.Msg { return WizardResultMsg{Canceled: true} }
+		}
 		return w, nil
 	}
 	if w.Saving {
@@ -351,6 +364,9 @@ func (w *Wizard) View(width, height int) string {
 		w.reviewOffset = max(0, min(w.reviewOffset, max(0, len(w.Steps)-slots)))
 		for i := 0; i < slots && w.reviewOffset+i < len(w.Steps); i++ {
 			s := w.Steps[w.reviewOffset+i]
+			if s.Prompt == nil { // a promptless step has no answer line
+				continue
+			}
 			v := w.Values[s.Key]
 			if s.Prompt != nil {
 				v = redactWizardValue(s.Prompt, v)
@@ -376,12 +392,21 @@ func (w *Wizard) View(width, height int) string {
 		if p.Error != nil {
 			put(height-3, "Error: "+w.sanitizeError(p.Error.Error()))
 		}
+	} else if w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Body != nil {
+		for i, line := range w.Steps[w.Index].Body(width, height) {
+			put(2+i, line)
+		}
+		if w.Error != nil {
+			put(height-3, "Error: "+w.sanitizeError(w.Error.Error()))
+		}
 	}
 	if !w.discard {
 		put(height-1, w.Buttons.View(w.theme()))
 	}
 	if w.Saving {
 		put(height-2, "Saving...")
+	} else if w.Busy {
+		put(height-2, w.BusyText)
 	}
 	return boundLines(rows, width, height)
 }

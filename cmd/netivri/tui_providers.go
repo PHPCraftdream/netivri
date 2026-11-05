@@ -62,6 +62,11 @@ type providersScreen struct {
 	diagLabel                           string
 	diagCancel                          context.CancelFunc
 	diagCanceled                        bool
+	preview                             previewData
+	previewState                        string // "", "loading", "done", "failed" or "canceled"
+	previewKeySeen                      string
+	previewCancel                       context.CancelFunc
+	previewCanceled                     bool
 }
 
 func newProvidersScreen(h string, e tui.Env) tui.Screen {
@@ -212,6 +217,14 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 	}
 	if x, ok := m.(tui.WizardResultMsg); ok {
 		if x.Canceled {
+			if s.previewCancel != nil {
+				s.previewCancel()
+				s.previewCanceled = true
+				if s.wizard != nil {
+					s.wizard.BusyText = "Canceling..."
+				}
+				return s, nil
+			}
 			if s.addCancel != nil {
 				s.addCancel()
 				s.addCancelRequested = true
@@ -220,6 +233,7 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 				}
 				return s, nil
 			}
+			s.clearPreview()
 			s.dialog = nil
 			s.wizard = nil
 			s.prompt = nil
@@ -258,6 +272,9 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 	}
 	if s.dialog != nil {
 		_, c := s.dialog.Update(m)
+		if p := s.syncPreview(); p != nil {
+			return s, tea.Batch(c, p)
+		}
 		return s, c
 	}
 	if len(s.refreshLines) > 0 && s.mode == "results" {
@@ -344,10 +361,8 @@ func (s *providersScreen) selectedName() string {
 	return ""
 }
 func (s *providersScreen) startWizard() {
-	n := tui.NewPrompt(tui.TextPrompt, "Add provider — name", "Name", "Optional; inferred from URL if blank", "")
-	u := tui.NewPrompt(tui.SecretPrompt, "Add provider — URL", "Subscription URL", "The URL is a credential and is hidden", "")
-	v := tui.NewPrompt(tui.SecretPrompt, "Add provider — Via", "Via URL", "Optional proxy URL; hidden", "")
-	s.wizard = tui.NewWizard("Add provider", []tui.WizardStep{{Key: "name", Prompt: n, Optional: true}, {Key: "url", Prompt: u}, {Key: "via", Prompt: v, Optional: true}})
+	s.clearPreview()
+	s.wizard = tui.NewWizard("Add provider", s.addWizardSteps())
 	s.wizard.SetTheme(s.workspace.Theme)
 	s.dialog = s.wizard
 	s.mode = "add-wizard"
@@ -658,6 +673,7 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		s.message = fmt.Sprintf("Added %s: %d nodes", x.Name, x.Nodes)
 		s.toast(s.message)
 		s.pendingSelect = x.Name
+		s.clearPreview()
 		s.dialog = nil
 		s.wizard = nil
 		s.mode = ""
@@ -758,6 +774,34 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 			s.message = ""
 			s.hint = ""
 			s.startCountriesDialog(s.countries)
+		}
+	case "preview":
+		if s.previewCancel != nil {
+			s.previewCancel()
+			s.previewCancel = nil
+		}
+		if s.wizard != nil {
+			s.wizard.Busy = false
+			s.wizard.BusyText = ""
+		}
+		switch {
+		case s.previewCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
+			s.previewCanceled = false
+			s.previewState = "canceled"
+			s.message = ""
+			s.hint = ""
+		case r.err != nil:
+			s.previewState = "failed"
+			s.setError(r.err)
+			s.toast(s.message)
+			if s.wizard != nil {
+				s.wizard.SetError(errors.New(s.message + hintText(s.hint)))
+			}
+		default:
+			s.previewState = "done"
+			s.preview = r.value.(previewData)
+			s.message = ""
+			s.hint = ""
 		}
 	case "nodes":
 		if r.err != nil {
