@@ -21,8 +21,11 @@ import (
 type scriptConn struct {
 	fakeConn
 	readErr, writeErr error
-	deadlines         []time.Time
-	closes            int
+	// panicRead and panicWrite, when set, run inside ReadBuffer and WriteBuffer
+	// (they panic), like a protocol layer with a bug.
+	panicRead, panicWrite func()
+	deadlines             []time.Time
+	closes                int
 }
 
 func (c *scriptConn) Read(b []byte) (int, error) {
@@ -38,13 +41,21 @@ func (c *scriptConn) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 func (c *scriptConn) ReadBuffer(b *buf.Buffer) error {
+	if c.panicRead != nil {
+		c.panicRead()
+	}
 	if c.readErr != nil {
 		return c.readErr
 	}
 	_, _ = b.Write([]byte("0123456789"))
 	return nil
 }
-func (c *scriptConn) WriteBuffer(b *buf.Buffer) error { return c.writeErr }
+func (c *scriptConn) WriteBuffer(b *buf.Buffer) error {
+	if c.panicWrite != nil {
+		c.panicWrite()
+	}
+	return c.writeErr
+}
 func (c *scriptConn) SetReadDeadline(t time.Time) error {
 	c.deadlines = append(c.deadlines, t)
 	return nil

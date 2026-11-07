@@ -16,6 +16,9 @@ const (
 	// connections are expected (the network is not back at once) and are not
 	// warnings.
 	wakeGrace = 2 * time.Minute
+	// sleepSpansKept is how many sleeps are remembered, for the lines that
+	// tell how long something lasted (see asleep).
+	sleepSpansKept = 32
 )
 
 // sleepWatch notices that the computer slept (or its clock jumped forward): a
@@ -30,7 +33,11 @@ type sleepWatch struct {
 
 	mu    sync.Mutex
 	until time.Time // failures are expected until then
+	spans []sleepSpan
 }
+
+// sleepSpan is one noticed sleep: the two readings of the wall clock around it.
+type sleepSpan struct{ from, to time.Time }
 
 func newSleepWatch() *sleepWatch {
 	return &sleepWatch{now: time.Now, every: sleepCheckEvery, gap: sleepGap, grace: wakeGrace}
@@ -66,8 +73,36 @@ func (w *sleepWatch) note(last, cur time.Time) (time.Duration, bool) {
 	}
 	w.mu.Lock()
 	w.until = cur.Add(w.grace)
+	w.spans = append(w.spans, sleepSpan{last, cur})
+	if len(w.spans) > sleepSpansKept {
+		w.spans = w.spans[len(w.spans)-sleepSpansKept:]
+	}
 	w.mu.Unlock()
 	return gone.Round(time.Second), true
+}
+
+// asleep is how much of the time from..to the computer spent asleep, by the
+// sleeps the watch noticed. A nil watch noticed none.
+func (w *sleepWatch) asleep(from, to time.Time) time.Duration {
+	if w == nil {
+		return 0
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var total time.Duration
+	for _, s := range w.spans {
+		start, end := s.from, s.to
+		if from.After(start) {
+			start = from
+		}
+		if to.Before(end) {
+			end = to
+		}
+		if end.After(start) {
+			total += end.Sub(start)
+		}
+	}
+	return total
 }
 
 // quiet reports whether the angel woke up a moment ago and failures are

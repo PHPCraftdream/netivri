@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Crash dump of the angel.** A panic or a fatal runtime error now also writes the
+  traceback of all goroutines to `run/crash/` (with the start time, pid and version of
+  that angel). A clean stop removes the file; the next start keeps the dump as
+  `crash-{TIME}-{PID}.txt` (the 10 newest), logs one `ERROR` line with its name, and says
+  in one `INFO` line when the previous angel was killed or lost power without a dump.
+
 - **Preview a subscription before adding it, in the shell.** The provider add wizard gains a
   `Preview countries` step after the Via step: it fetches the URL through the same strict
   path as `netivri sub countries --url` (same figures: nodes, each country with its node
@@ -201,6 +207,16 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A node that came back after the computer slept no longer "was down" for the whole sleep.**
+  `is back after 31h57m37s down` counted 25 hours of sleep, during which the angel is frozen;
+  the line now gives the time awake and names the sleep (`after 6h10m45s down, not counting
+  25h46m52s asleep`), as do the end of a node burst and of a node outage.
+- **A panic on one connection no longer takes the angel down.** The angel crashed once
+  (`buffer overflow: capacity 32768,start 0, need 2` in the VLESS Vision padding): a buffer
+  that came without room for the padding header panicked in the goroutine of a single
+  connection. Vision now copies such a buffer into one that has the room (patch 8 of the
+  vendored Mihomo), and a panic below a connection closes only that connection and writes a
+  `WARN` line with the panic and its two top frames.
 - **Installing the `.rpm` on a current Fedora.** The `.rpm` is unsigned and recent rpm
   refuses such a package (`does not verify: no signature`), which also failed the Fedora
   install check of the release workflow. The check and `docs/install.md` now use

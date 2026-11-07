@@ -2,6 +2,8 @@
 // because Upstream() runs on the relay goroutine while ReadBuffer/WriteBuffer
 // update them on the read/write goroutine (a data race under -race); FrontHeadroom
 // reads readFilterUUID on the relay goroutine of the other direction.
+// WriteBuffer also gives a buffer without the room for the padding a copy that
+// has it (EnsureHeadroom) instead of panicking in ApplyPadding.
 package vision
 
 import (
@@ -201,6 +203,7 @@ func (vc *Conn) Write(p []byte) (int, error) {
 func (vc *Conn) WriteBuffer(buffer *buf.Buffer) (err error) {
 	if vc.writeFilterApplicationData {
 		if buffer.IsEmpty() {
+			buffer = EnsureHeadroom(buffer)
 			ApplyPadding(buffer, commandPaddingContinue, &vc.writeOnceUserUUID, true) // we do a long padding to hide vless header
 			return vc.ExtendedWriter.WriteBuffer(buffer)
 		}
@@ -224,6 +227,8 @@ func (vc *Conn) WriteBuffer(buffer *buf.Buffer) (err error) {
 					vc.writeFilterApplicationData = false
 					applyPadding = false
 				}
+				buffer = EnsureHeadroom(buffer)
+				buffers[i] = buffer // an unwritten buffer is released below
 				ApplyPadding(buffer, command, &vc.writeOnceUserUUID, vc.isTLS)
 			}
 

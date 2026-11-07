@@ -58,6 +58,26 @@ var (
 	angelError = angelLogf(angel.LevelError)
 )
 
+// armCrashDump reports what the earlier angels left in run/crash (a crash with
+// its dump, or a stop without a clean end) and arms the dump of this angel.
+// The returned func disarms it on a clean stop. A dump that cannot be armed
+// is a warning, not a startup failure.
+func armCrashDump(home string, infof, errorf, warnf func(string, ...any)) func() {
+	rep := angel.ReportCrashes(home)
+	for _, c := range rep.Dumps {
+		errorf("previous angel (pid %d, version %s) crashed at %s; the dump is run/crash/%s", c.PID, c.Version, c.At.Format(time.RFC3339), c.File)
+	}
+	for _, c := range rep.Unclean {
+		infof("previous angel (pid %d, version %s) did not stop cleanly: it was killed or the machine lost power, so there is no crash dump", c.PID, c.Version)
+	}
+	dump, err := angel.StartCrashDump(home, version, time.Now())
+	if err != nil {
+		warnf("the crash dump is off: %v", err)
+		return func() {}
+	}
+	return dump.Close
+}
+
 // logStderrEnv, set to anything but "" or "0", makes `up --foreground` write
 // the angel log to stderr like the background angel writes its log file.
 const logStderrEnv = "NETIVRI_LOG_STDERR"

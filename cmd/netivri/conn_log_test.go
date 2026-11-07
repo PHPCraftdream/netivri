@@ -690,3 +690,35 @@ func TestConnLogSilentDestinationsListIsShortAndBounded(t *testing.T) {
 		t.Error("an empty tally names destinations")
 	}
 }
+
+func TestConnLogWritesOneWarnPerNodeAndPanic(t *testing.T) {
+	f := newConnLogFixture()
+	f.log.quiet = func() bool { return true } // a panic is never demoted after a wake-up
+	why := "buffer overflow: capacity 32768,start 0, need 2 at buf.(*Buffer).ExtendHeader buffer.go:114 <- vision.ApplyPadding padding.go:35"
+	for i := 0; i < 3; i++ {
+		f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "alice", Label: "main/us", Why: why})
+	}
+	f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "bob", Label: "main/us", Why: why})
+	f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "alice", Label: "own/nl", Why: "boom at x.F f.go:1"})
+	f.log.flush()
+	want := []string{
+		"WARN node main/us (United States, country US): 4 connections closed by a panic in the connection layer (" + why + "); the angel keeps running",
+		"WARN node own/nl (country NL): 1 connection closed by a panic in the connection layer (boom at x.F f.go:1); the angel keeps running",
+	}
+	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines:\n%s\nwant:\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
+	}
+	f.lines = nil
+	f.log.flush()
+	if len(f.lines) != 0 {
+		t.Fatalf("the next period repeats the panic lines: %v", f.lines)
+	}
+}
+
+func TestConnLogPanicIsNotCountedAsAnAccountConnection(t *testing.T) {
+	f := newConnLogFixture()
+	f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "alice", Label: "main/us", Why: "x"})
+	if tally := f.log.hour["alice"]; tally != nil {
+		t.Fatalf("a panic created an hourly tally: %+v", tally)
+	}
+}

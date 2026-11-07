@@ -56,7 +56,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **See what is going on.** `netivri status` is short by default (`--full`
   for everything); `netivri status --watch` is a live view of who is active,
   through which nodes and countries; `netivri logs` reads or follows the
-  angel log; `netivri doctor` checks the whole setup in one pass and exits 7
+  angel log (a crash of the angel leaves a dump in `run/crash/`); `netivri doctor` checks the whole setup in one pass and exits 7
   when something failed.
 - **Numbers, not guesses.** Node statistics are stored in a local SQLite
   database (`netivri stats`, per node or per account), and `netivri diag dial` shows where a connection

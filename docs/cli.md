@@ -388,7 +388,9 @@ configuration changes, subscription refreshes, storage problems, and route nodes
 down (`WARN`) or coming back (`INFO`), with the node label, its display name when one is known, the
 provider and the country, the reason and how long it was silent, as in
 `node own/a970e0d9fef1 (Finland 1, provider own, country FI) is down: 2 probe failures (timeout), last ok 3m12s ago`,
-and the downtime when it is back (`... is back after 41s down`). The reason is `2 probe
+and the downtime when it is back (`... is back after 41s down`; time the computer spent
+asleep is not counted and is named: `... is back after 6h10m45s down, not counting
+25h46m52s asleep`, the same for the length of a burst or an outage). The reason is `2 probe
 failures` with the kind of the last probe error (`timeout`, `connection refused`,
 `connection reset`, `dns failure`, `network unreachable`, `connection closed`,
 `handshake failed`, `proxy auth failed` when a proxy hop or the node did not take the credentials,
@@ -485,6 +487,22 @@ level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
 before it. The file is moved to `netivri.log.1` at the next start when it is
 bigger than 8 MiB; `logs` reads the current file only.
+
+When the angel crashes (a panic or a fatal runtime error in any goroutine), the
+traceback of all goroutines is also written to `{HOME}/run/crash/`, in a file
+that starts with the angel's start time, pid and version. A clean stop removes
+that file. The next start keeps the dump as `crash-{TIME}-{PID}.txt`, writes one
+`ERROR` line (`previous angel (pid …, version …) crashed at …; the dump is
+run/crash/…`) and keeps the 10 newest dumps. An angel that was killed or lost
+power leaves no traceback: the next start says so in one `INFO` line. The dump
+is on only for the background angel; it holds code locations and numbers, no
+configuration, passwords or tokens.
+
+A panic inside the protocol layer of one connection (as the VLESS Vision padding
+once did) no longer takes the angel down: that connection is closed, the angel
+keeps running, and one `WARN` line per node and period says what and where:
+`node {NODE}: N connections closed by a panic in the connection layer ({PANIC
+TEXT} at {FUNCTION FILE:LINE}); the angel keeps running`.
 
 | Flag | Meaning |
 |---|---|

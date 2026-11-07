@@ -471,6 +471,9 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	}
 	// The store may be opened later by a reload, so ask the angel for it.
 	defer func() { closeStats(live.currentStore()) }()
+	if opts.Handshake != "" {
+		defer armCrashDump(opts.Home, logf, errorf, warnf)()
+	}
 
 	token, err := angel.NewToken()
 	if err != nil {

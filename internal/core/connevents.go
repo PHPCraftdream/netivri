@@ -2,10 +2,13 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"hash/fnv"
 	"io"
 	"net"
 	"net/netip"
+	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +35,11 @@ const (
 	// connections that got no answer or its dial timed out (see siteBlocks);
 	// Label is the node, Block how long it is blocked, Target the destination.
 	ConnSiteBlocked = "site_blocked"
+	// ConnPanicked: code below the connection (a protocol layer of the node)
+	// panicked while moving data; the connection was closed and the angel kept
+	// running. Label is the node; Why is the panic value, cut to panicTextMax
+	// runes, and the two frames it came from (function and file:line).
+	ConnPanicked = "panicked"
 )
 
 // Why of a ConnSiteMoved.
@@ -209,22 +217,71 @@ func (w *watchConn) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (w *watchConn) ReadBuffer(b *buf.Buffer) error {
+func (w *watchConn) ReadBuffer(b *buf.Buffer) (err error) {
+	defer w.guard(&err)
 	before := b.Len()
-	err := w.Conn.ReadBuffer(b)
+	err = w.Conn.ReadBuffer(b)
 	w.noteDown(b.Len() - before)
 	w.fail(err)
 	return err
 }
 
-func (w *watchConn) WriteBuffer(b *buf.Buffer) error {
+func (w *watchConn) WriteBuffer(b *buf.Buffer) (err error) {
+	defer w.guard(&err)
 	size := b.Len()
-	err := w.Conn.WriteBuffer(b)
+	err = w.Conn.WriteBuffer(b)
 	if err == nil {
 		w.noteUp(size)
 	}
 	w.fail(err)
 	return err
+}
+
+// errConnPanicked is what a read or write returns when a layer below panicked.
+var errConnPanicked = errors.New("connection layer panicked")
+
+// panicTextMax cuts the panic value in a ConnPanicked event.
+const panicTextMax = 160
+
+// guard turns a panic in the layers below the connection (a protocol layer of
+// the node, such as VLESS vision) into an error: the relay ends this one
+// connection, and the panic does not take the whole process down. The event
+// says what panicked and where, so that the cause can be found.
+func (w *watchConn) guard(err *error) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	w.g.emit(ConnEvent{Kind: ConnPanicked, Login: w.login, Label: w.label, Why: panicSummary(r)})
+	*err = errConnPanicked
+	w.fail(*err)
+}
+
+// panicSummary is the panic value (cut, on one line) and the first two frames
+// outside the runtime that it came from, as function and file:line without the
+// directory.
+func panicSummary(r any) string {
+	text := strings.Join(strings.Fields(fmt.Sprint(r)), " ")
+	if runes := []rune(text); len(runes) > panicTextMax {
+		text = string(runes[:panicTextMax]) + "..."
+	}
+	pcs := make([]uintptr, 24)
+	n := runtime.Callers(2, pcs)
+	frames := runtime.CallersFrames(pcs[:n])
+	var where []string
+	for len(where) < 2 {
+		f, more := frames.Next()
+		if f.Function != "" && !strings.HasPrefix(f.Function, "runtime.") && !strings.Contains(f.Function, ".(*watchConn).guard") {
+			where = append(where, fmt.Sprintf("%s %s:%d", f.Function[strings.LastIndex(f.Function, "/")+1:], path.Base(f.File), f.Line))
+		}
+		if !more {
+			break
+		}
+	}
+	if len(where) == 0 {
+		return text
+	}
+	return text + " at " + strings.Join(where, " <- ")
 }
 
 // SetReadDeadline and SetDeadline notice a deadline that is already due: the

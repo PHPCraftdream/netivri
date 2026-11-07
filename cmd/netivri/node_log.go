@@ -102,6 +102,9 @@ type nodeLog struct {
 	started    time.Time
 	first      map[string]bool // first-tier labels; nil: every node warns
 	quiet      func() bool     // true right after the computer woke up; may be nil
+	// asleep tells how much of a time span the computer slept, so that the
+	// lines that say how long a node was down do not count the sleep; may be nil.
+	asleep func(from, to time.Time) time.Duration
 
 	mu          sync.Mutex
 	drops       map[string][]drop // recent downs per server, within flapWindow
@@ -388,7 +391,9 @@ func (l *nodeLog) nodeWarn(label, format string, args ...any) {
 func (l *nodeLog) back(ev core.NodeEvent) {
 	line := l.describe(ev.Label) + " is back"
 	if ev.Downtime > 0 {
-		line += " after " + ev.Downtime.Round(time.Second).String() + " down"
+		now := l.now()
+		awake, slept := l.lasted(now.Add(-ev.Downtime), now)
+		line += " after " + awake + " down" + slept
 	}
 	id := serverID(ev.Label)
 	delete(l.never, id)
@@ -408,9 +413,24 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	}
 	delete(l.burst, ev.Label)
 	if len(l.burst) == 0 {
-		l.info("node burst over: %d nodes were down, all back after %s", l.burstSize, l.now().Sub(l.burstStart).Round(time.Second))
+		awake, slept := l.lasted(l.burstStart, l.now())
+		l.info("node burst over: %d nodes were down, all back after %s%s", l.burstSize, awake, slept)
 		l.burst, l.burstSize = nil, 0
 	}
+}
+
+// lasted says how long it was from..to: the time awake, and a suffix (", not
+// counting 25h46m52s asleep"; empty without a sleep) for the sleep inside it,
+// because the angel is frozen while the computer sleeps and the sleep is not a
+// fault of the node.
+func (l *nodeLog) lasted(from, to time.Time) (awake, slept string) {
+	total := to.Sub(from)
+	if l.asleep != nil {
+		if s := l.asleep(from, to).Round(time.Second); s > 0 {
+			return max(total-s, 0).Round(time.Second).String(), ", not counting " + s.String() + " asleep"
+		}
+	}
+	return total.Round(time.Second).String(), ""
 }
 
 // live is the number of servers that have answered at least once.
@@ -427,8 +447,9 @@ func (l *nodeLog) outageEnds() {
 	if !l.outage || 4*len(l.downNow) >= l.live() {
 		return
 	}
-	l.info("node outage over: up to %d of %d servers were down, %d still down, after %s",
-		l.outagePeak, l.live(), len(l.downNow), l.now().Sub(l.outageStart).Round(time.Second))
+	awake, slept := l.lasted(l.outageStart, l.now())
+	l.info("node outage over: up to %d of %d servers were down, %d still down, after %s%s",
+		l.outagePeak, l.live(), len(l.downNow), awake, slept)
 	l.outage, l.outagePeak = false, 0
 }
 
