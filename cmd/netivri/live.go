@@ -211,6 +211,7 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 	nodesLog := makeNodeHealthLogger(d.pool.infos, d.pool.firstTierLabels(), l.sleep().quiet, l.debugf, l.logf, l.warnf, time.Now)
 	var nodeHook func(core.NodeEvent)
 	if nodesLog != nil {
+		nodesLog.asleep = l.sleep().asleep
 		nodeHook = nodesLog.event
 	}
 	return core.Options{

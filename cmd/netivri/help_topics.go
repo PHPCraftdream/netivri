@@ -963,7 +963,7 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri logs [--follow] [--level {debug|info|warn|error}] [--since {DURATION}] [--tail {N}] [--home {DIR}]"},
 		Description: "Shows what the angel wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
 			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
-			"reason) or coming back (with the downtime), each with a time and a level. Three or more nodes " +
+			"reason) or coming back (with the downtime, not counting the time the computer slept), each with a time and a level. Three or more nodes " +
 			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
 			"hour is one 'flapping' warning, not a warning per drop; when 6 or more servers (at least half of those " +
 			"that have answered) are down at once, as when the network fails slowly, one 'node outage' warning " +
@@ -1007,7 +1007,11 @@ var helpTopics = []helpTopic{
 			herr("LOG_NOT_FOUND", cli.ExitNotFound, "the angel has not written a log yet"),
 			herr("USAGE", cli.ExitUsage, "invalid --level, --since or --tail"),
 		},
-		Notes:   []string{"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only."},
+		Notes: []string{
+			"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only.",
+			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start.",
+			"A panic inside the protocol layer of one connection does not stop the angel: that connection is closed and a WARN line says which node, what panicked and where.",
+		},
 		SeeAlso: []string{"status", "stats"},
 	},
 	{

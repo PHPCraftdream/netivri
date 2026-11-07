@@ -86,3 +86,12 @@
    goroutine. The race detector found it on linux in
    `TestMultiportVlessRealityAndTrustTunnelClients`. Behaviour is otherwise
    unchanged.
+8. **Vision padding headroom** (`transport/vless/vision/conn.go`,
+   `transport/vless/vision/netivri_headroom.go`): `WriteBuffer` passes each
+   buffer through `EnsureHeadroom` before `ApplyPadding`. `ApplyPadding`
+   writes a 21 byte header in front of the data and up to 1400 bytes of
+   padding behind it, and panics (`buffer overflow: capacity 32768,start 0,
+   need 2`) on a buffer that came without that room; the panic is in the
+   goroutine of one connection and took the whole angel down once. A buffer
+   without the room is now copied into one that has it. Behaviour is
+   unchanged for a buffer that has the room.

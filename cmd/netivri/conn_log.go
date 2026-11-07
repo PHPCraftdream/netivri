@@ -51,6 +51,8 @@ type connLog struct {
 	dials map[loginNode]map[string]int // failed dials by kind
 	ended map[loginNode]*endedTally
 	moves map[siteMove]int
+	// panics are the connections closed by a panic below them in this period.
+	panics map[panicKey]int
 	// blocked are the nodes blocked for a site in this period (at most
 	// blockedCap), written by flush.
 	blocked []core.ConnEvent
@@ -278,6 +280,10 @@ func waitText(d time.Duration) string {
 
 type siteMove struct{ login, from, to, why string }
 
+// panicKey is what the panic lines of a period are kept by: the node and the
+// panic summary.
+type panicKey struct{ label, why string }
+
 // endedTally counts the connections that ended through one node.
 type endedTally struct {
 	total, empty, silent int
@@ -288,7 +294,7 @@ type endedTally struct {
 func newConnLog(info, warn logFunc) *connLog {
 	return &connLog{info: info, warn: warn, debug: func(string, ...any) {}, nodes: map[string]stats.NodeInfo{},
 		dials: map[loginNode]map[string]int{}, ended: map[loginNode]*endedTally{},
-		moves: map[siteMove]int{}, loginFails: map[string]int{}, hour: map[string]*hourTally{}}
+		moves: map[siteMove]int{}, panics: map[panicKey]int{}, loginFails: map[string]int{}, hour: map[string]*hourTally{}}
 }
 
 // setNodes tells which nodes exist (for their names in the lines); a reload
@@ -308,7 +314,7 @@ func (c *connLog) event(ev core.ConnEvent) {
 	defer c.mu.Unlock()
 	key := loginNode{login: ev.Login, label: ev.Label}
 	tally := c.hour[ev.Login]
-	if tally == nil && ev.Kind != core.ConnSiteMoved && ev.Kind != core.ConnSiteBlocked {
+	if tally == nil && ev.Kind != core.ConnSiteMoved && ev.Kind != core.ConnSiteBlocked && ev.Kind != core.ConnPanicked {
 		tally = &hourTally{}
 		c.hour[ev.Login] = tally
 	}
@@ -347,6 +353,8 @@ func (c *connLog) event(ev core.ConnEvent) {
 			ended.silent++
 			tally.noteSilent(ev)
 		}
+	case core.ConnPanicked:
+		c.panics[panicKey{ev.Label, ev.Why}]++
 	case core.ConnSiteMoved:
 		c.moves[siteMove{ev.Login, ev.From, ev.Label, ev.Why}]++
 	case core.ConnSiteBlocked:
@@ -499,10 +507,11 @@ func describeConnNode(nodes map[string]stats.NodeInfo, label string) string {
 // flush writes the lines of the period and starts a new one.
 func (c *connLog) flush() {
 	c.mu.Lock()
-	dials, ended, moves, blocked := c.dials, c.ended, c.moves, c.blocked
+	dials, ended, moves, blocked, panics := c.dials, c.ended, c.moves, c.blocked, c.panics
 	fails, unknown := c.loginFails, c.unknownLogins
 	nodes := c.nodes
 	c.dials, c.ended, c.moves, c.blocked = map[loginNode]map[string]int{}, map[loginNode]*endedTally{}, map[siteMove]int{}, nil
+	c.panics = map[panicKey]int{}
 	c.loginFails, c.unknownLogins = map[string]int{}, 0
 	c.mu.Unlock()
 
@@ -534,6 +543,7 @@ func (c *connLog) flush() {
 		}
 		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
 	}
+	c.writePanics(panics, describe)
 	c.writeBlocked(blocked, describe)
 	c.writeMoves(moves, describe)
 	if failed := sumCounts(fails) + unknown; failed > 0 {
@@ -545,6 +555,25 @@ func (c *connLog) flush() {
 			parts = append(parts, fmt.Sprintf("unknown logins x%d", unknown))
 		}
 		c.warn("%s failed (%s)", count(failed, "proxy login", "proxy logins"), strings.Join(parts, ", "))
+	}
+}
+
+// writePanics writes one WARN line per node and panic: a layer below the
+// connection panicked, the connection was closed and the angel went on. It is
+// never demoted to INFO after a wake-up: a panic is a bug, not a lost network.
+func (c *connLog) writePanics(panics map[panicKey]int, describe func(string) string) {
+	keys := make([]panicKey, 0, len(panics))
+	for k := range panics {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].label != keys[j].label {
+			return keys[i].label < keys[j].label
+		}
+		return keys[i].why < keys[j].why
+	})
+	for _, k := range keys {
+		c.warn("node %s: %s closed by a panic in the connection layer (%s); the angel keeps running", describe(k.label), count(panics[k], "connection", "connections"), k.why)
 	}
 }
 
