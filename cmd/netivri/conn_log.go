@@ -64,6 +64,14 @@ type connLog struct {
 	unknownLogins int
 }
 
+// hourWarnMin and hourWarnPercent: the hourly summary of an account is a WARN
+// when at least hourWarnMin connections ended and at least hourWarnPercent of
+// them were broken or got no answer.
+const (
+	hourWarnMin     = 20
+	hourWarnPercent = 50
+)
+
 // loginNode is what the lines of a period are kept by: the account and the
 // node, and for failed dials the stage of the route the failure came from.
 type loginNode struct{ login, label, hop string }
@@ -464,7 +472,9 @@ func (c *connLog) heartbeat() {
 	sort.Strings(logins)
 	for _, login := range logins {
 		t := hour[login]
-		c.info("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
+		// A summary in which most connections failed is a warning, not a note.
+		serious := t.ended >= hourWarnMin && 100*(t.silent+t.broken) >= hourWarnPercent*t.ended
+		c.level(serious)("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
 			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
 		if targets := t.targetsDetail(); targets != "" {
@@ -581,10 +591,14 @@ func (c *connLog) writePanics(panics map[panicKey]int, describe func(string) str
 // per account and node, with the sites counted and never named, and a DEBUG
 // line per site naming the destination.
 func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) string) {
+	// plain sites were blocked because none of their connections was answered;
+	// ratio sites because most were not (see core.siteBlocks), with the
+	// connections the rule counted.
 	type group struct {
-		login, label string
-		sites        int
-		longest      time.Duration
+		login, label               string
+		plain, ratio               int
+		plainLongest, ratioLongest time.Duration
+		silent, answered           int
 	}
 	var order []*group
 	byKey := map[[2]string]*group{}
@@ -595,12 +609,20 @@ func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) s
 			byKey[[2]string{ev.Login, ev.Label}] = g
 			order = append(order, g)
 		}
-		g.sites++
-		g.longest = max(g.longest, ev.Block)
 		target := ev.Target
 		if target == "" {
 			target = "an unknown destination"
 		}
+		if ev.Silent > 0 {
+			g.ratio++
+			g.ratioLongest = max(g.ratioLongest, ev.Block)
+			g.silent += ev.Silent
+			g.answered += ev.Answered
+			c.debug("account %s: no answer from %s via %s in %d of %d connections, the node is blocked for it for %s", ev.Login, target, describe(ev.Label), ev.Silent, ev.Silent+ev.Answered, ageText(ev.Block))
+			continue
+		}
+		g.plain++
+		g.plainLongest = max(g.plainLongest, ev.Block)
 		c.debug("account %s: no answer from %s via %s, the node is blocked for it for %s", ev.Login, target, describe(ev.Label), ageText(ev.Block))
 	}
 	sort.Slice(order, func(i, j int) bool {
@@ -610,8 +632,14 @@ func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) s
 		return order[i].label < order[j].label
 	})
 	for _, g := range order {
-		c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
-			g.login, describe(g.label), count(g.sites, "site", "sites"), pronoun(g.sites), ageText(g.longest))
+		if g.plain > 0 {
+			c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
+				g.login, describe(g.label), count(g.plain, "site", "sites"), pronoun(g.plain), ageText(g.plainLongest))
+		}
+		if g.ratio > 0 {
+			c.info("account %s via %s: %s got mostly no answer through this node (%d of %d connections sent data and heard nothing back, the rest were answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
+				g.login, describe(g.label), count(g.ratio, "site", "sites"), g.silent, g.silent+g.answered, pronoun(g.ratio), ageText(g.ratioLongest))
+		}
 	}
 }
 

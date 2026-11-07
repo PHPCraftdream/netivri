@@ -16,11 +16,23 @@ import (
 // answered, block that node for that site for a while, and the site's next
 // connection takes the next node of the route, a worse tier included. The
 // block grows on every repeat and ends at once when a connection is answered.
+//
+// A path can also be lossy and not dead: a few connections get an answer, most
+// get none. Each answer would clear the count above and the node would stay in
+// use for the site for hours. So within one silentWindow, silentRatioMin silent
+// connections that are at least silentRatioPercent of all the connections that
+// were silent or answered at first bytes also block the node. Such a block is
+// not lifted by an answer (a connection that began before it, or one that
+// goes on being answered): it ends with its time, and the strikes stay while
+// the node is still mostly silent for the site.
 const (
 	// silentNeeded silent connections within silentWindow, none of them
 	// answered, block a node for a site.
 	silentNeeded = 3
 	silentWindow = 10 * time.Minute
+	// silentRatioMin and silentRatioPercent: see above.
+	silentRatioMin     = 20
+	silentRatioPercent = 90
 	// answerRefresh is how often a connection that goes on being answered tells
 	// the group so (the memory of an answer lasts silentWindow).
 	answerRefresh = 30 * time.Second
@@ -52,6 +64,47 @@ type blockState struct {
 	until   time.Time // blocked until; zero or past when not blocked
 	strikes int       // blocks so far, without an answer in between
 	touched time.Time
+
+	// The ratio rule: connections of the current window (it starts at
+	// windowStart and lasts silentWindow) that were silent, and the ones that
+	// were answered at their first bytes.
+	windowStart      time.Time
+	winSilent, winOK int
+	ratio            bool // the block in force came from the ratio rule
+	// How the last block came about, for the log: the ratio rule and the
+	// connections it counted (zero for the plain rule).
+	lastRatio                bool
+	lastSilent, lastAnswered int
+}
+
+// count records one connection in the current window, starting a new window
+// when the last one is over.
+func (st *blockState) count(now time.Time, silent bool) {
+	if st.windowStart.IsZero() || now.Sub(st.windowStart) > silentWindow {
+		st.windowStart, st.winSilent, st.winOK = now, 0, 0
+	}
+	if silent {
+		st.winSilent++
+	} else {
+		st.winOK++
+	}
+}
+
+// mostlySilent reports whether the window holds enough silent connections and
+// they are the large majority.
+func (st *blockState) mostlySilent() bool {
+	return st.winSilent >= silentRatioMin && st.winSilent*100 >= silentRatioPercent*(st.winSilent+st.winOK)
+}
+
+// block starts a block of the next length and returns it.
+func (st *blockState) block(now time.Time) time.Duration {
+	st.strikes++
+	ttl := siteBlockFirst << min(st.strikes-1, 4)
+	if ttl > siteBlockMax {
+		ttl = siteBlockMax
+	}
+	st.until, st.silent = now.Add(ttl), 0
+	return ttl
 }
 
 type siteBlocks struct {
@@ -92,23 +145,39 @@ func (g *stickyGroup) clock() time.Time {
 }
 
 // answered records a connection of the site that got data back: the node
-// reaches it, so a block ends and the count starts over.
-func (b *siteBlocks) answered(login, site string, member int) {
+// reaches it, so a block ends and the count starts over. first is true for the
+// first bytes of a connection, false for the later reports of one that goes on
+// being answered; only the first count in the window of the ratio rule. A block
+// of the ratio rule stays (see the comment on the constants).
+func (b *siteBlocks) answered(login, site string, member int, first bool) {
 	if !b.any() {
 		return
 	}
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if st := b.m[blockKey{login, site, member}]; st != nil {
-		st.silent, st.strikes, st.until, st.touched = 0, 0, time.Time{}, now
+	st := b.m[blockKey{login, site, member}]
+	if st == nil {
+		return
 	}
+	if first {
+		st.count(now, false)
+	}
+	st.touched = now
+	if st.ratio {
+		if now.Before(st.until) || st.winSilent > st.winOK {
+			return
+		}
+		st.ratio = false
+	}
+	st.silent, st.strikes, st.until = 0, 0, time.Time{}
 }
 
 // silentEnd records a connection or dial timeout that waited without an answer.
-// It needs no recent site answer and a node answer after the run began.
+// The plain rule needs no recent site answer; both rules need a node answer
+// after the run (or the window) began.
 func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Duration, answeredRecently bool, okAt time.Time) (time.Duration, bool) {
-	if waited < b.minLife || answeredRecently {
+	if waited < b.minLife {
 		return 0, false
 	}
 	now := b.now()
@@ -128,8 +197,18 @@ func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Durat
 		b.n.Store(int64(len(b.m)))
 	}
 	st.touched = now
+	st.count(now, true)
 	if now.Before(st.until) {
 		return 0, false // a connection that began before the block
+	}
+	if st.mostlySilent() && okAt.After(st.windowStart) {
+		st.lastRatio, st.lastSilent, st.lastAnswered = true, st.winSilent, st.winOK
+		st.ratio = true
+		st.winSilent, st.winOK = 0, 0
+		return st.block(now), true
+	}
+	if answeredRecently {
+		return 0, false
 	}
 	if st.silent == 0 || now.Sub(st.since) > silentWindow {
 		st.silent, st.since = 1, now
@@ -139,13 +218,20 @@ func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Durat
 	if st.silent < silentNeeded || !okAt.After(st.since) {
 		return 0, false
 	}
-	st.strikes++
-	ttl := siteBlockFirst << min(st.strikes-1, 4)
-	if ttl > siteBlockMax {
-		ttl = siteBlockMax
+	st.lastRatio, st.lastSilent, st.lastAnswered = false, 0, 0
+	st.ratio = false
+	return st.block(now), true
+}
+
+// blockInfo says how the last block of the node for the site came about: by the
+// ratio rule (with the connections it counted) or by the plain one.
+func (b *siteBlocks) blockInfo(login, site string, member int) (ratio bool, silent, answered int) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if st := b.m[blockKey{login, site, member}]; st != nil {
+		return st.lastRatio, st.lastSilent, st.lastAnswered
 	}
-	st.until, st.silent = now.Add(ttl), 0
-	return ttl, true
+	return false, 0, 0
 }
 
 // pruneLocked forgets the records that block nothing and have not been
@@ -183,12 +269,12 @@ func (b *siteBlocks) blockedCount() int {
 
 // answered is called once per connection, when the first bytes come back
 // through the member: the site works through it.
-func (g *stickyGroup) answered(w *watchConn) {
+func (g *stickyGroup) answered(w *watchConn, first bool) {
 	if g.blocks == nil || g.table == nil || w.siteStr == "" {
 		return
 	}
 	g.table.noteAnswer(affinityKey{login: w.login, site: w.siteStr}, w.member, g.table.now())
-	g.blocks.answered(w.login, w.siteStr, w.member)
+	g.blocks.answered(w.login, w.siteStr, w.member, first)
 }
 
 // recordNoAnswer records a sufficiently long silent attempt for an up node.
@@ -205,7 +291,12 @@ func (g *stickyGroup) recordNoAnswer(login, site string, member int, label strin
 	recent := g.table.answeredWithin(affinityKey{login: login, site: site}, member, silentWindow, now)
 	ttl, blocked := g.blocks.silentEnd(login, site, member, waited, recent, okAt)
 	if blocked {
-		g.emit(ConnEvent{Kind: ConnSiteBlocked, Login: login, Label: label, Why: MoveNoAnswer, Port: port, Site: siteHash, Target: target, Block: ttl})
+		ratio, silent, answered := g.blocks.blockInfo(login, site, member)
+		ev := ConnEvent{Kind: ConnSiteBlocked, Login: login, Label: label, Why: MoveNoAnswer, Port: port, Site: siteHash, Target: target, Block: ttl}
+		if ratio {
+			ev.Silent, ev.Answered = silent, answered
+		}
+		g.emit(ev)
 	}
 }
 

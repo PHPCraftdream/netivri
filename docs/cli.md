@@ -441,7 +441,10 @@ and the pairs are `DEBUG` lines;
 `account alice via {NODE}: 2 sites got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for them, up to 30m, and its connections take the next node of the route`
 (`INFO`: a node that passes its probes but never reaches a destination is blocked for that site after connections sent data and got nothing back, or a dial to that site timed out; the site goes on to the next node of the route. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. See `netivri help routing`; a `DEBUG` line per site names the destination, `account alice: no answer from
 149.154.167.51:443 via {NODE}, the node is blocked for it for 30m`; the sites then move with
-`account alice: 2 sites moved from {NODE} to {NODE}: no answer`, `INFO`);
+`account alice: 2 sites moved from {NODE} to {NODE}: no answer`, `INFO`).
+A node that answers some connections of a site but not most of them is blocked as well, and its line says
+so: `account alice via {NODE}: 1 site got mostly no answer through this node (22 of 24 connections sent data and heard nothing back, the rest were answered); the node is blocked for it, up to 30m, and its connections take the next node of the route`
+(`INFO`; the `DEBUG` line gives `in 22 of 24 connections`);
 `4 proxy logins failed (alice x2, unknown logins x2)` (`WARN`; only configured accounts are named).
 The reason of a down caused by dials is `3 dial failures (timeout)`, with the kind of the last error
 (`timeout`, `connection refused`, `connection reset`, `dns failure`, `network unreachable`,
@@ -482,6 +485,9 @@ failures in the next 2 minutes are expected`, says so, every node is probed at o
 2 minutes the failures are `INFO` lines: a node that is down ends with `, right after the computer woke
 up`, counts toward neither a burst nor flapping, and the per-minute connection lines are not `WARN`.
 It reads the file, so it works while the angel runs and after it stopped or failed to start.
+The hourly summary of an account (`account alice: last hour: 978 connections ended, ...`) is a `WARN` when at
+least 20 connections ended and half or more of them were broken or got no answer, an `INFO` otherwise (and
+right after the computer woke up).
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry

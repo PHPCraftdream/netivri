@@ -82,6 +82,11 @@ type ConnEvent struct {
 	Target string
 	// ConnSiteBlocked only: how long the node is blocked for the site.
 	Block time.Duration
+	// ConnSiteBlocked only, and only for a block of the ratio rule (some
+	// connections of the site were answered): how many connections of the window
+	// were silent and how many were answered at first bytes. Both zero for the
+	// plain rule, where none was answered.
+	Silent, Answered int
 }
 
 // dialErrKind names the kind of a dial or stream error from a fixed list (the
@@ -186,11 +191,11 @@ func (w *watchConn) noteDown(n int) {
 	w.down.Add(int64(n))
 	if !w.gotData.Load() && w.gotData.CompareAndSwap(false, true) {
 		w.refreshedAt.Store(w.g.clock().UnixNano())
-		w.g.answered(w)
+		w.g.answered(w, true)
 	} else if w.siteStr != "" {
 		if now := w.g.clock().UnixNano(); now-w.refreshedAt.Load() >= int64(answerRefresh) {
 			w.refreshedAt.Store(now)
-			w.g.answered(w)
+			w.g.answered(w, false)
 		}
 	}
 	if w.answer.Load() != 0 {

@@ -478,7 +478,7 @@ func TestSiteBlocksNilIsInert(t *testing.T) {
 	if b.any() || b.blocked("a", "s", 0, time.Now()) || b.blockedCount() != 0 {
 		t.Fatal("a nil table blocks something")
 	}
-	b.answered("a", "s", 0)
+	b.answered("a", "s", 0, true)
 }
 
 func TestBindingRemembersWhichNodeAnsweredTheSite(t *testing.T) {

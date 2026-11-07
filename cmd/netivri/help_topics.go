@@ -976,7 +976,7 @@ var helpTopics = []helpTopic{
 			"refresh is one warning an hour, and the refresh that ends the failures says how many there were. Once a minute it also sums up what went wrong for the " +
 			"connections of an account (failed dials, connections broken by their node, sites moved to another node, " +
 			"nodes blocked for a site after silent connections or timeout dials, failed proxy logins, and a minute of slow answers), without sites, addresses, error texts or " +
-			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account: connections ended, broken, closed before any data " +
+			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account (a WARN when at least 20 connections ended and half or more of them were broken or got no answer, INFO otherwise): connections ended, broken, closed before any data " +
 			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
 			"went through), failed dials, " +
 			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
@@ -1302,8 +1302,10 @@ var helpTopics = []helpTopic{
 			"after the first of them ended, the node is blocked for that " +
 			"account and site: the site's next connection takes the next node of the route, a worse tier included, and " +
 			"other sites stay where they are. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
-			"answer through the node ends it at once, and a site that was answered through the node is never blocked by " +
-			"a stray dead connection. Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
+			"answer through the node ends it at once, and a site that was answered through the node is not blocked by " +
+			"a few stray dead connections. A lossy path is blocked too: when 20 or more connections to the site in 10 minutes " +
+			"got no answer and they are at least 90 percent of those that got none or an answer at their first bytes, the " +
+			"node is blocked for the site for the same time, and an answer does not lift that block (it ends with its time). Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
 			"one ('netivri logs', the destination itself at DEBUG). A site whose server never answers on purpose (a " +
 			"long poll that is always closed first) can be moved too; it keeps working through the next node.\n\n" +
 			"The angel probes the route nodes in the background. A node is marked down after 2 consecutive " +
