@@ -78,6 +78,10 @@ expect "$(printf '%s\n' "${all//|/$'\n'}" | sort | tr '\n' ' ')" "TestA1 TestA2 
 # More shards than tests: the extra ones are empty.
 expect "$(bash scripts/ci-e2e-shard.sh 6 6 "${dir}")" "" "an empty shard"
 
+# The same script deals out the integration tests: the files that name that tag.
+expect "$(CI_TEST_TAG=integration bash scripts/ci-e2e-shard.sh 1 1 "${dir}")" '^(TestB1|TestB2|TestB3|TestIntegrationOnly)$' "integration tag"
+expect "$(CI_TEST_TAG=integration bash scripts/ci-e2e-shard.sh 2 2 "${dir}")" '^(TestB2|TestIntegrationOnly)$' "integration shard 2 of 2"
+
 # Several directories are dealt out together, in the order given.
 expect "$(bash scripts/ci-e2e-shard.sh 1 1 "${dir}" "${other}")" '^(TestA1|TestA2|TestB1|TestB2|TestB3|TestC1)$' "two directories"
 
