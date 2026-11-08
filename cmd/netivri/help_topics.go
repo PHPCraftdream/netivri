@@ -1153,7 +1153,7 @@ var helpTopics = []helpTopic{
 		Group:       groupOther,
 		Summary:     "Print the version",
 		Usage:       []string{"netivri version"},
-		Description: "Prints the version of this binary. A build that is not a release reports a dev version.",
+		Description: "Prints the version of this binary, and the commit it was built from when the binary knows it (a build in a git checkout; '-dirty' follows it when the tree had uncommitted changes). A build that is not a release reports a dev version. The angel writes the same version and commit in the 'start' line of its log.",
 		Examples:    []helpExample{{"Show the version", "netivri version"}},
 	},
 	{

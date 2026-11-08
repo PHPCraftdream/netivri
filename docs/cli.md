@@ -521,7 +521,7 @@ Without `--follow` the result is one document, oldest entry first:
 
 ```json
 {"entries": [
-  {"time": "2026-10-24T12:00:00Z", "level": "INFO", "message": "start pid=4242 listen=127.0.0.1:7890 route=direct"},
+  {"time": "2026-10-24T12:00:00Z", "level": "INFO", "message": "start pid=4242 listen=127.0.0.1:7890 route=direct version=0.1.0+05f31ce"},
   {"time": "2026-10-24T12:05:10Z", "level": "WARN", "message": "subscription main: refresh failed: FETCH_HTTP_STATUS: unexpected HTTP status 403"}]}
 ```
 

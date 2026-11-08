@@ -507,7 +507,7 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			shutdown()
 			return err
 		}
-		logf("start pid=%d listen=%s route=%s", st.PID, st.Listen, st.Route)
+		logf("%s", startMessage(st.PID, st.Listen, st.Route))
 	} else {
 		cli.Success(stdout, map[string]any{
 			"angel":      "running",

@@ -70,7 +70,7 @@ func armCrashDump(home string, infof, errorf, warnf func(string, ...any)) func()
 	for _, c := range rep.Unclean {
 		infof("previous angel (pid %d, version %s) did not stop cleanly: it was killed or the machine lost power, so there is no crash dump", c.PID, c.Version)
 	}
-	dump, err := angel.StartCrashDump(home, version, time.Now())
+	dump, err := angel.StartCrashDump(home, versionWithCommit(), time.Now())
 	if err != nil {
 		warnf("the crash dump is off: %v", err)
 		return func() {}
