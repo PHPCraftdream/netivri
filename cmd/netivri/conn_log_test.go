@@ -606,6 +606,68 @@ func TestConnLogNamesABlockedSiteOnlyInDebug(t *testing.T) {
 	}
 }
 
+func (f *connLogFixture) blockedByRatio(login, label, target string, block time.Duration, silent, answered int) {
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: login, Label: label, Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block, Silent: silent, Answered: answered})
+}
+
+func TestConnLogRatioBlockSaysMostWereSilent(t *testing.T) {
+	f := newConnLogFixture()
+	f.debugged()
+	f.blockedByRatio("alice", "own/nl", "149.154.167.223:443", 30*time.Minute, 22, 2)
+	f.log.flush()
+	wantInfo := "INFO account alice via own/nl (country NL): 1 site got mostly no answer through this node (22 of 24 connections sent data and heard nothing back, the rest were answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
+	wantDebug := "DEBUG account alice: no answer from 149.154.167.223:443 via own/nl (country NL) in 22 of 24 connections, the node is blocked for it for 30m"
+	if len(f.lines) != 2 || f.lines[0] != wantDebug || f.lines[1] != wantInfo {
+		t.Fatalf("lines = %q, want %q and %q", f.lines, wantDebug, wantInfo)
+	}
+}
+
+func TestConnLogPlainAndRatioBlocksOfOneNodeAreTwoLines(t *testing.T) {
+	f := newConnLogFixture()
+	f.blocked("alice", "own/nl", "10.0.0.1:443", time.Hour)
+	f.blockedByRatio("alice", "own/nl", "10.0.0.2:443", 30*time.Minute, 20, 1)
+	f.blockedByRatio("alice", "own/nl", "10.0.0.3:443", 2*time.Hour, 30, 2)
+	f.log.flush()
+	want := []string{
+		"INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for it, up to 1h00m, and its connections take the next node of the route",
+		"INFO account alice via own/nl (country NL): 2 sites got mostly no answer through this node (50 of 53 connections sent data and heard nothing back, the rest were answered); the node is blocked for them, up to 2h00m, and its connections take the next node of the route",
+	}
+	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines:\n%s\nwant:\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestConnLogHourlySummaryIsWarnWhenMostConnectionsFailed(t *testing.T) {
+	cases := []struct {
+		name                     string
+		silent, broken, answered int
+		quiet                    bool
+		want                     string
+	}{
+		{"all silent", 25, 0, 0, false, "WARN"},
+		{"silent and broken together", 8, 8, 4, false, "WARN"},
+		{"exactly half", 10, 0, 10, false, "WARN"},
+		{"under half", 9, 0, 11, false, "INFO"},
+		{"too few connections", 19, 0, 0, false, "INFO"},
+		{"quiet after waking up", 25, 0, 0, true, "INFO"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newConnLogFixture()
+			if c.quiet {
+				f.log.quiet = func() bool { return true }
+			}
+			f.silentTo("alice", "main/us", "10.0.0.1:443", c.silent)
+			f.ended("alice", "main/us", "timeout", 0, c.broken)
+			f.endedUp("alice", "main/us", 300, 900, c.answered)
+			f.log.heartbeat()
+			if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], c.want+" account alice: last hour: ") {
+				t.Fatalf("lines = %q, want one %s line", f.lines, c.want)
+			}
+		})
+	}
+}
+
 func TestConnLogOneBlockedSiteSaysIt(t *testing.T) {
 	f := newConnLogFixture()
 	f.blocked("alice", "own/nl", "", 30*time.Minute)
@@ -655,7 +717,7 @@ func TestConnLogHourlyDebugLineNamesTheSilentDestinations(t *testing.T) {
 	f.silentTo("alice", "main/us", "149.154.175.53:443", 7)
 	f.silentTo("alice", "main/us", "a.example:80", 7)
 	f.log.heartbeat()
-	if len(f.lines) != 2 || !strings.HasPrefix(f.lines[0], "INFO account alice: last hour: 54 connections ended") {
+	if len(f.lines) != 2 || !strings.HasPrefix(f.lines[0], "WARN account alice: last hour: 54 connections ended") {
 		t.Fatalf("lines = %q", f.lines)
 	}
 	if strings.Contains(f.lines[0], "149.154") || strings.Contains(f.lines[0], "a.example") {

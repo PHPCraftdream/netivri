@@ -88,6 +88,16 @@ Rules:
   doubles on every repeat up to 8 hours; an answer through the node (a connection
   opened before the block included) ends it and clears the count. When every
   node is blocked for the site the choice is the one for "every node is down".
+  A lossy path is blocked too, though it answers now and then: within 10 minutes,
+  20 or more connections of the account to the site that were silent (or timed out
+  at dial), at least 90 percent of the connections that were silent or answered at
+  their first bytes since the first silent one, block the node for the site
+  whatever answered recently, with the same two probe conditions. An answer does
+  not lift such a block (it ends with its time), neither one of a connection that
+  began before it nor one that goes on being answered; the repeat still doubles it
+  while the node is mostly silent for the site, and the first length returns once
+  the node answers more than it stays silent. Only the first bytes of a connection
+  count as an answer there, not the reports of one that keeps being answered.
   The blocks live in memory in the sticky group (`siteBlocks`), per account and
   site, bounded to 4096 records, and are lost on a restart or a reload. The unit
   is the site (the registrable domain, or the IP), the same as a binding's; a site

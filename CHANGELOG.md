@@ -207,6 +207,16 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A lossy path no longer keeps a site on a node for hours.** A node was blocked for a site only
+  when none of the site's connections was answered, so a destination that answered a few connections
+  (slowly) and left most silent was never blocked: one hour of the log had 1632 of 1760
+  connections to one Telegram address without an answer. Within 10 minutes, 20 or more silent
+  connections that are at least 90 percent of those that were silent or answered at first bytes now
+  block the node for that site, and an answer does not lift such a block.
+- **The hourly account summary is a `WARN` when most connections failed** (at least 20 ended and half
+  or more broken or without an answer); it was an `INFO` line in the hour above. The log line of a
+  block by the new rule says `got mostly no answer (22 of 24 connections ...)`.
+
 - **A node that came back after the computer slept no longer "was down" for the whole sleep.**
   `is back after 31h57m37s down` counted 25 hours of sleep, during which the angel is frozen;
   the line now gives the time awake and names the sleep (`after 6h10m45s down, not counting
