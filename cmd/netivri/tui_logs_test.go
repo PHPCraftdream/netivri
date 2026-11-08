@@ -35,7 +35,7 @@ func newLogsFixture(t *testing.T, seed string) *logsFixture {
 	env := tui.Env{
 		Home:       home,
 		Now:        func() time.Time { return logsNow },
-		Background: func(_ string, w func() tea.Msg) tea.Cmd { return w },
+		Background: inlineBackground,
 		Toast:      func(string) tea.Cmd { return nil },
 	}
 	f := &logsFixture{}

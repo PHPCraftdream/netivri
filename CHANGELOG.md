@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Added
 
+- **The build is named in the log and in `netivri version`.** The angel's `start` line ends with
+  `version=0.1.0+05f31ce` (version, and after a `+` the commit when the binary knows it; `-dirty` follows
+  a commit built from a modified tree), the crash dump header has the same, and `netivri version`
+  prints a `commit` field when there is one. Every dry-run build has the same version, so until now
+  a running angel could only be told apart by its start time.
+
 - **Crash dump of the angel.** A panic or a fatal runtime error now also writes the
   traceback of all goroutines to `run/crash/` (with the start time, pid and version of
   that angel). A clean stop removes the file; the next start keeps the dump as

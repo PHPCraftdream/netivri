@@ -32,7 +32,11 @@ var commands = map[string]func(args []string, stdout io.Writer) error{
 }
 
 func runVersion(_ []string, stdout io.Writer) error {
-	cli.Success(stdout, map[string]string{"version": version})
+	data := map[string]string{"version": version}
+	if commit := buildCommit(); commit != "" {
+		data["commit"] = commit
+	}
+	cli.Success(stdout, data)
 	return nil
 }
 
