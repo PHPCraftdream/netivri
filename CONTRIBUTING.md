@@ -56,7 +56,7 @@ file). `gofmt` is not run on that directory.
 
 netivri is `GPL-3.0-only` because it links GPL code, see
 [`docs/licenses.md`](docs/licenses.md). A new dependency must carry one of the
-allowed licenses; `scripts/check-licenses.sh` (the `licenses` CI job) fails
+allowed licenses; `scripts/check-licenses.sh` (a step of the `lint` CI job) fails
 otherwise. Do not widen the allow-list to make a build pass: a failure needs a
 decision recorded in `docs/licenses.md`.
 

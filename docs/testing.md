@@ -103,14 +103,18 @@ packages from the diff (`setup` job, its choice is in the job summary):
 A manual run of the `CI` workflow (Actions, *Run workflow*) uses the inputs
 above and defaults to everything. The coverage floors, the npm checks and the
 static Linux builds run only when everything runs (they need the whole
-suite); `lint` and `licenses` always run. `scripts/test-ci-scope.sh` (in
+suite); `lint` (which also checks the licenses) always runs. `scripts/test-ci-scope.sh` (in
 `lint`) tests the selection.
 
 Each CI job selects its own tags:
 
 - **unit** — always runs untagged; the user `tags` input is ignored
   there, keeping the test hermetic and the coverage floors unit-only.
-- **integration** — always adds the `integration` tag plus the user tags.
+- **integration** — always adds the `integration` tag plus the user tags. It runs
+  only the integration tests (the Test functions of the `integration`-tagged
+  files, by name, in the packages that have such files; the unit tests of those
+  packages run in the unit job). A manual run with its own `run` regex or
+  `tags` runs the whole packages as before.
 - **e2e** — adds the `e2e` tag plus the user tags. The e2e tests run one after
   the other and are the longest job, so they are dealt out to three runners per
   OS (`scripts/ci-e2e-shard.sh`: the Test functions of the `e2e`-tagged files,

@@ -30,7 +30,7 @@ below and the whole dependency list must be audited again first.
 
 ## CI check
 
-`scripts/check-licenses.sh` holds the whole policy. The `licenses` job of
+`scripts/check-licenses.sh` holds the whole policy. The `lint` job of
 `ci.yml` runs it on every push and pull request, and `release.yml` runs it
 before anything is published.
 
@@ -80,4 +80,4 @@ every third-party Go module linked into `./cmd/netivri` (per target
 GOOS/GOARCH) into `THIRD_PARTY_LICENSES/{MODULE_PATH}/`; a module without a
 root license file contributes the license files found in its subdirectories. The release workflow
 puts that directory into every archive. The script fails when a module has no
-license file, and the `licenses` CI job runs it on linux/amd64 on every push.
+license file, and the license step of the `lint` CI job runs it on linux/amd64 on every push.

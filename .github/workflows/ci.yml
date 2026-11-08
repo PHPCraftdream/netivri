@@ -173,6 +173,17 @@ jobs:
         shell: bash
         run: bash scripts/test-ci-e2e-shard.sh
 
+      # The allow-list, the audited ignores and the declared-license checks
+      # live in the script (see docs/licenses.md). Any new failure needs human
+      # review: never auto-allow a license.
+      - name: Check licenses
+        shell: bash
+        run: bash scripts/check-licenses.sh
+
+      - name: Collect third-party notices
+        shell: bash
+        run: bash scripts/collect-licenses.sh "${RUNNER_TEMP}/third-party"
+
   unit:
     needs: setup
     if: needs.setup.outputs.packages != ''
@@ -227,6 +238,8 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # Only the integration tests: the unit tests of the same packages run in
+      # the unit job (a manual run with its own -run or tags stays whole).
       - name: Integration tests
         shell: bash
         env:
@@ -235,7 +248,33 @@ jobs:
           CI_RACE: ${{ matrix.os != 'windows-latest' && env.RACE || '0' }}
           CI_COVER: "0"
           CI_TAGS: integration${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}
-        run: bash scripts/ci-test.sh
+          USER_TAGS: ${{ env.TAGS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CI_RUN}" ] && [ -z "${USER_TAGS}" ]; then
+            targets="${CI_PACKAGES:-./...}"
+            pkgs=""
+            dirs=""
+            while read -r dir ipath; do
+              for f in "${dir}"/*_test.go; do
+                [ -e "${f}" ] || continue
+                if grep -qE '^//go:build .*\bintegration\b' "${f}"; then
+                  pkgs="${pkgs} ${ipath}"
+                  dirs="${dirs} ${dir}"
+                  break
+                fi
+              done
+            done < <(go list -tags integration -f '{{.Dir}} {{.ImportPath}}' ${targets})
+            if [ -z "${pkgs}" ]; then
+              echo "no integration test files in the selected packages; skipping"
+              exit 0
+            fi
+            # shellcheck disable=SC2086
+            run="$(CI_TEST_TAG=integration bash scripts/ci-e2e-shard.sh 1 1 ${dirs})"
+            export CI_PACKAGES="${pkgs# }"
+            export CI_RUN="${run}"
+          fi
+          bash scripts/ci-test.sh
 
   # The e2e tests are dealt out to three runners per OS (see
   # scripts/ci-e2e-shard.sh): they run one after the other and were the longest
@@ -397,10 +436,6 @@ jobs:
   linux-static:
     needs: setup
     if: needs.setup.outputs.full == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [amd64, arm64]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -409,22 +444,24 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build and check that the binary is statically linked
+      # Both architectures in one job: one runner instead of two.
+      - name: Build and check that the binaries are statically linked
         shell: bash
         env:
           GOOS: linux
-          GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
           mkdir -p build
-          go build -trimpath -o build/netivri ./cmd/netivri
-          file build/netivri
-          file build/netivri | grep -q 'statically linked'
+          GOARCH=amd64 go build -trimpath -o build/netivri ./cmd/netivri
+          GOARCH=arm64 go build -trimpath -o build/netivri-arm64 ./cmd/netivri
+          for bin in build/netivri build/netivri-arm64; do
+            file "${bin}"
+            file "${bin}" | grep -q 'statically linked'
+          done
 
       # The amd64 binary runs in Alpine (musl): start the angel, ask it, stop it.
       - name: Run the binary in Alpine
-        if: matrix.arch == 'amd64'
         shell: bash
         run: |
           set -euo pipefail
@@ -441,29 +478,9 @@ jobs:
           SCRIPT
           docker run --rm -v "${GITHUB_WORKSPACE}:/w" alpine:3 sh /w/alpine-smoke.sh
 
-  licenses:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      # The allow-list, the audited ignores and the declared-license checks
-      # live in the script (see docs/licenses.md). Any new failure needs human
-      # review: never auto-allow a license.
-      - name: Check licenses
-        shell: bash
-        run: bash scripts/check-licenses.sh
-
-      - name: Collect third-party notices
-        shell: bash
-        run: bash scripts/collect-licenses.sh "${RUNNER_TEMP}/third-party"
-
   ci-ok:
     if: always()
-    needs: [setup, lint, unit, integration, e2e, bench, npm, linux-static, licenses]
+    needs: [setup, lint, unit, integration, e2e, bench, npm, linux-static]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate result
