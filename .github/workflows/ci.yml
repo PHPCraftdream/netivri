@@ -168,6 +168,11 @@ jobs:
         shell: bash
         run: bash scripts/test-ci-scope.sh
 
+      # How the e2e tests are dealt out to the e2e runners.
+      - name: CI e2e shard script
+        shell: bash
+        run: bash scripts/test-ci-e2e-shard.sh
+
   unit:
     needs: setup
     if: needs.setup.outputs.packages != ''
@@ -232,6 +237,9 @@ jobs:
           CI_TAGS: integration${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}
         run: bash scripts/ci-test.sh
 
+  # The e2e tests are dealt out to three runners per OS (see
+  # scripts/ci-e2e-shard.sh): they run one after the other and were the longest
+  # job by far.
   e2e:
     needs: setup
     if: needs.setup.outputs.packages != '' && needs.setup.outputs.matrix_os_e2e != '[]'
@@ -239,6 +247,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.setup.outputs.matrix_os_e2e) }}
+        shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -252,6 +261,8 @@ jobs:
         env:
           CI_SCOPE_PACKAGES: ${{ needs.setup.outputs.packages }}
           CI_SCOPE_RUN: ${{ needs.setup.outputs.run }}
+          E2E_SHARD: ${{ matrix.shard }}
+          E2E_SHARDS: "3"
         run: |
           set -euo pipefail
           targets="${CI_SCOPE_PACKAGES}"
@@ -262,28 +273,47 @@ jobs:
           # step) and keep only the packages that have e2e-tagged test files
           # directly in their directory: the e2e job runs just those.
           pkgs=""
+          dirs=""
           while read -r dir ipath; do
             for f in "${dir}"/*_test.go; do
               [ -e "${f}" ] || continue
               if grep -qE '^//go:build .*\be2e\b' "${f}"; then
                 pkgs="${pkgs} ${ipath}"
+                dirs="${dirs} ${dir}"
                 break
               fi
             done
           done < <(go list -tags e2e -f '{{.Dir}} {{.ImportPath}}' ${targets})
-          if [ -n "${pkgs}" ]; then
-            export CI_PACKAGES="${pkgs# }"
-            export CI_TAGS="e2e${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}"
-            export CI_RUN="${CI_SCOPE_RUN}"
-            export CI_RACE="0"
-            export CI_COVER="0"
-            # The package's whole suite plus the e2e tests no longer fits the
-            # 10 minute go default (main hit it on windows).
-            export CI_TIMEOUT="25m"
-            bash scripts/ci-test.sh
-          else
+          if [ -z "${pkgs}" ]; then
             echo "no e2e test files (*_test.go with '//go:build ... e2e') found; skipping"
+            exit 0
           fi
+          # A manual run with its own -run regex stays whole, in shard 1.
+          # Otherwise the shard runs its share of the e2e tests only: the
+          # unit tests of the package run in the unit job.
+          run="${CI_SCOPE_RUN}"
+          if [ -n "${run}" ]; then
+            if [ "${E2E_SHARD}" != "1" ]; then
+              echo "a run with -run is not sharded; shard 1 runs it"
+              exit 0
+            fi
+          else
+            # shellcheck disable=SC2086
+            run="$(bash scripts/ci-e2e-shard.sh "${E2E_SHARD}" "${E2E_SHARDS}" ${dirs})"
+            if [ -z "${run}" ]; then
+              echo "no e2e test for shard ${E2E_SHARD}/${E2E_SHARDS}; skipping"
+              exit 0
+            fi
+          fi
+          export CI_PACKAGES="${pkgs# }"
+          export CI_TAGS="e2e${{ env.TAGS != '' && format(',{0}', env.TAGS) || '' }}"
+          export CI_RUN="${run}"
+          export CI_RACE="0"
+          export CI_COVER="0"
+          export CI_TIMEOUT="25m"
+          export CI_VERBOSE="1"
+          export CI_SUMMARY_TITLE="Slowest e2e tests: ${RUNNER_OS} shard ${E2E_SHARD}/${E2E_SHARDS}"
+          bash scripts/ci-test.sh
 
   bench:
     if: github.event_name == 'workflow_dispatch' && contains(inputs.tags, 'bench')

@@ -111,7 +111,13 @@ Each CI job selects its own tags:
 - **unit** — always runs untagged; the user `tags` input is ignored
   there, keeping the test hermetic and the coverage floors unit-only.
 - **integration** — always adds the `integration` tag plus the user tags.
-- **e2e** — adds the `e2e` tag plus the user tags.
+- **e2e** — adds the `e2e` tag plus the user tags. The e2e tests run one after
+  the other and are the longest job, so they are dealt out to three runners per
+  OS (`scripts/ci-e2e-shard.sh`: the Test functions of the `e2e`-tagged files,
+  one by one in file order; the unit tests of the package are not repeated, the
+  unit job runs them). A manual run with its own `run` regex is not sharded.
+  The job runs `go test -v` and lists its 20 slowest tests in the job summary,
+  which is where to look before moving tests between shards.
 - **bench** — runs with the user tags (the job only triggers when `tags`
   contains `bench`). The job runs `go test -bench . -benchmem -benchtime
   {BENCHTIME} -run '^$'` and appends every `Benchmark...` line as a fenced
@@ -147,7 +153,8 @@ Each CI job selects its own tags:
   - `BenchmarkFlushBatch` — 256 samples recorded and flushed per iteration.
 
 Locally equivalent selection is done through env vars understood by
-`scripts/ci-test.sh` (not executed locally, only in CI):
+`scripts/ci-test.sh` (not executed locally, only in CI; `CI_VERBOSE=1` adds `-v`
+and the list of the slowest tests):
 
 ```
 CI_PACKAGES=./internal/config/... CI_TAGS=integration CI_RUN=TestParse CI_RACE=1 CI_COVER=1 bash scripts/ci-test.sh
