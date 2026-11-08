@@ -18,6 +18,10 @@ cover="${CI_COVER:-0}"
 
 args=(go test -count=1)
 
+if [[ "${CI_VERBOSE:-0}" == "1" ]]; then
+  args+=(-v)
+fi
+
 if [[ -n "${CI_TIMEOUT:-}" ]]; then
   args+=(-timeout="${CI_TIMEOUT}")
 fi
@@ -46,7 +50,6 @@ if [[ "${CI_VERBOSE:-0}" != "1" ]]; then
   exec "${args[@]}"
 fi
 
-args=("${args[0]}" -v "${args[@]:1}")
 echo "+ ${args[*]}" >&2
 log="$(mktemp)"
 set +e
