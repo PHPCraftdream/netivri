@@ -39,7 +39,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 	f := &settingsFixture{cfg: cfg}
 	env := tui.Env{
 		Home:       home,
-		Background: func(_ string, w func() tea.Msg) tea.Cmd { return w },
+		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
 	f.s = newSettingsScreen(env.Home, env).(*settingsScreen)

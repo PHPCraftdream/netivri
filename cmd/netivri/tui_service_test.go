@@ -32,7 +32,7 @@ func newServiceFixture(t *testing.T, running bool) *serviceFixture {
 	env := tui.Env{
 		Home:       t.TempDir(),
 		Now:        func() time.Time { return serviceNow },
-		Background: func(_ string, w func() tea.Msg) tea.Cmd { return w },
+		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
 	f.s = newServiceScreen(env.Home, env).(*serviceScreen)

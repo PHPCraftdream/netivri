@@ -28,7 +28,7 @@ func newStatsFixture(t *testing.T, seed bool) *statsFixture {
 	}
 	env := tui.Env{
 		Home:       f.home,
-		Background: func(_ string, w func() tea.Msg) tea.Cmd { return w },
+		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
 	f.s = newStatsScreen(f.home, env).(*statsScreen)
