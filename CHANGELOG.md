@@ -213,6 +213,15 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A node whose connections mostly got no answer is a `WARN` in the one-minute line too, not only
+  in the hourly summary.** `138 connections ended, 1 broken, 127 without an answer` was an `INFO` line,
+  and a minute with no broken connection at all produced no line for the node. Now at least 20
+  connections that ended with half or more broken or without an answer make a `WARN` line for the
+  node (still `INFO` right after the computer woke up).
+- **The log line of a block by the share rule no longer says "the rest were answered" when none was.**
+  Without any answer in the window it says that connections heard nothing back within 10 minutes
+  though a connection of the site was still being answered.
+
 - **A lossy path no longer keeps a site on a node for hours.** A node was blocked for a site only
   when none of the site's connections was answered, so a destination that answered a few connections
   (slowly) and left most silent was never blocked: one hour of the log had 1632 of 1760

@@ -64,13 +64,20 @@ type connLog struct {
 	unknownLogins int
 }
 
-// hourWarnMin and hourWarnPercent: the hourly summary of an account is a WARN
-// when at least hourWarnMin connections ended and at least hourWarnPercent of
-// them were broken or got no answer.
+// hourWarnMin and hourWarnPercent: the hourly summary of an account, and the
+// line of a period for one node, are a WARN when at least hourWarnMin
+// connections ended and at least hourWarnPercent of them were broken or got no
+// answer.
 const (
 	hourWarnMin     = 20
 	hourWarnPercent = 50
 )
+
+// failedMost reports whether, of total connections that ended, the failed ones
+// (broken or without an answer) are enough for a warning.
+func failedMost(total, failed int) bool {
+	return total >= hourWarnMin && 100*failed >= hourWarnPercent*total
+}
 
 // loginNode is what the lines of a period are kept by: the account and the
 // node, and for failed dials the stage of the route the failure came from.
@@ -473,7 +480,7 @@ func (c *connLog) heartbeat() {
 	for _, login := range logins {
 		t := hour[login]
 		// A summary in which most connections failed is a warning, not a note.
-		serious := t.ended >= hourWarnMin && 100*(t.silent+t.broken) >= hourWarnPercent*t.ended
+		serious := failedMost(t.ended, t.silent+t.broken)
 		c.level(serious)("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
 			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
@@ -540,18 +547,24 @@ func (c *connLog) flush() {
 				waitText(tally.answers.median()), waitText(tally.answers.p95()), count(n, "connection", "connections"))
 		}
 		broken := sumCounts(tally.broken)
-		if broken == 0 {
+		// Most connections of the period without an answer is as serious as
+		// broken ones, and gets its line even when none was broken.
+		most := failedMost(tally.total, broken+tally.silent)
+		if broken == 0 && !most {
 			continue
 		}
-		line := fmt.Sprintf("account %s via %s: %s ended, %d broken (%s)", key.login, describe(key.label),
-			count(tally.total, "connection", "connections"), broken, joinKinds(tally.broken))
+		line := fmt.Sprintf("account %s via %s: %s ended, %d broken", key.login, describe(key.label),
+			count(tally.total, "connection", "connections"), broken)
+		if broken > 0 {
+			line += fmt.Sprintf(" (%s)", joinKinds(tally.broken))
+		}
 		if tally.empty > 0 {
 			line += fmt.Sprintf(", %d closed before any data", tally.empty)
 		}
 		if tally.silent > 0 {
 			line += fmt.Sprintf(", %d without an answer", tally.silent)
 		}
-		c.level(broken >= connWarnFailures && broken*20 >= tally.total)("%s", line)
+		c.level(most || (broken >= connWarnFailures && broken*20 >= tally.total))("%s", line)
 	}
 	c.writePanics(panics, describe)
 	c.writeBlocked(blocked, describe)
@@ -636,9 +649,15 @@ func (c *connLog) writeBlocked(blocked []core.ConnEvent, describe func(string) s
 			c.info("account %s via %s: %s got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
 				g.login, describe(g.label), count(g.plain, "site", "sites"), pronoun(g.plain), ageText(g.plainLongest))
 		}
-		if g.ratio > 0 {
+		switch {
+		case g.ratio > 0 && g.answered > 0:
 			c.info("account %s via %s: %s got mostly no answer through this node (%d of %d connections sent data and heard nothing back, the rest were answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
 				g.login, describe(g.label), count(g.ratio, "site", "sites"), g.silent, g.silent+g.answered, pronoun(g.ratio), ageText(g.ratioLongest))
+		case g.ratio > 0:
+			// None was answered in the window: what kept the plain rule from
+			// blocking was a connection of the site that went on being answered.
+			c.info("account %s via %s: %s got no answer through this node (%d connections sent data and heard nothing back within 10 minutes, though a connection of the site was still being answered); the node is blocked for %s, up to %s, and its connections take the next node of the route",
+				g.login, describe(g.label), count(g.ratio, "site", "sites"), g.silent, pronoun(g.ratio), ageText(g.ratioLongest))
 		}
 	}
 }
