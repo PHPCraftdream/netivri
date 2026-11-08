@@ -622,6 +622,19 @@ func TestConnLogRatioBlockSaysMostWereSilent(t *testing.T) {
 	}
 }
 
+func TestConnLogRatioBlockWithNoAnswerInTheWindowDoesNotSayTheRestWereAnswered(t *testing.T) {
+	f := newConnLogFixture()
+	f.blockedByRatio("alice", "own/nl", "149.154.167.41:443", 30*time.Minute, 20, 0)
+	f.log.flush()
+	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (20 connections sent data and heard nothing back within 10 minutes, though a connection of the site was still being answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
+	if len(f.lines) != 1 || f.lines[0] != want {
+		t.Fatalf("lines = %q, want %q", f.lines, want)
+	}
+	if strings.Contains(f.lines[0], "the rest were answered") {
+		t.Fatalf("the line claims answers that did not happen: %q", f.lines[0])
+	}
+}
+
 func TestConnLogPlainAndRatioBlocksOfOneNodeAreTwoLines(t *testing.T) {
 	f := newConnLogFixture()
 	f.blocked("alice", "own/nl", "10.0.0.1:443", time.Hour)
@@ -634,6 +647,53 @@ func TestConnLogPlainAndRatioBlocksOfOneNodeAreTwoLines(t *testing.T) {
 	}
 	if strings.Join(f.lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("lines:\n%s\nwant:\n%s", strings.Join(f.lines, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestConnLogPeriodLineOfANodeIsWarnWhenMostConnectionsFailed(t *testing.T) {
+	cases := []struct {
+		name                     string
+		silent, broken, answered int
+		quiet                    bool
+		want                     string // "" for no line
+	}{
+		{"most without an answer, one broken", 127, 1, 10, false, "WARN"},
+		{"most without an answer, none broken", 25, 0, 5, false, "WARN"},
+		{"exactly half", 10, 0, 10, false, "WARN"},
+		{"under half, none broken", 9, 0, 11, false, ""},
+		{"too few connections", 19, 0, 0, false, ""},
+		{"quiet after waking up", 25, 0, 5, true, "INFO"},
+		{"quiet but broken ones", 25, 1, 5, true, "INFO"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newConnLogFixture()
+			if c.quiet {
+				f.log.quiet = func() bool { return true }
+			}
+			f.silentTo("alice", "main/us", "10.0.0.1:443", c.silent)
+			f.ended("alice", "main/us", "connection reset", 0, c.broken)
+			f.endedUp("alice", "main/us", 300, 900, c.answered)
+			f.log.flush()
+			if c.want == "" {
+				if len(f.lines) != 0 {
+					t.Fatalf("lines = %q, want none", f.lines)
+				}
+				return
+			}
+			if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], c.want+" account alice via main/us (United States, country US): ") {
+				t.Fatalf("lines = %q, want one %s line", f.lines, c.want)
+			}
+			if c.broken == 0 && !strings.Contains(f.lines[0], " ended, 0 broken, ") {
+				t.Fatalf("a line without broken connections has the wrong shape: %q", f.lines[0])
+			}
+			if c.broken > 0 && !strings.Contains(f.lines[0], "broken (connection reset x") {
+				t.Fatalf("a line with broken connections lost their kinds: %q", f.lines[0])
+			}
+			if !strings.Contains(f.lines[0], " without an answer") {
+				t.Fatalf("the silent ones are not counted: %q", f.lines[0])
+			}
+		})
 	}
 }
 

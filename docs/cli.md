@@ -430,7 +430,9 @@ failures, `INFO` below; for a route that has a `pre_socks5` or `post_socks5` hop
 failure came from, `account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`, one line per
 stage: `pre hop`, `node`, `post hop`, or `unknown hop` when the error does not tell); `account alice via {NODE}: 98 connections ended, 5 broken (connection reset
 x4, timeout x1), 3 closed before any data, 2 without an answer` (a connection is broken when the node's side of it
-returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones);
+returned an error; `WARN` from 3 broken and at least a twentieth of the ended ones, or when at least 20
+connections ended and half or more were broken or got no answer, and then the line is written even with no
+broken one: `account alice via {NODE}: 138 connections ended, 0 broken, 127 without an answer`);
 `account alice via {NODE}: slow answers: started after 3.0s median, 8.0s 95th, over 40 connections` (`INFO`;
 only when at least 10 connections of the minute got an answer and the median is 2 seconds or more);
 `account alice: 3 sites moved from {NODE} to {NODE}: node down` (`WARN`; `better tier` is `INFO`);
