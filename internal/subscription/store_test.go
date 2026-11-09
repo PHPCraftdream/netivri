@@ -139,7 +139,7 @@ func TestStoreJSONFallbackReturnsErrorWhenKtavRemovalFails(t *testing.T) {
 		FetchedAt: time.Now().UTC().Truncate(time.Second),
 		Nodes: []Node{{
 			ID: "cccccccccccc", Name: "new", Type: "ss", Server: "example.invalid", Port: 1,
-			Raw: map[string]any{"type": "ss", "private-key": "-----BEGIN KEY-----\n" + secret + "\n-----END KEY-----\n"},
+			Raw: map[string]any{"type": "ss", "private-key": "-----BEGIN KEY-----\n" + secret + "\n-----END KEY-----\n", "note": "  padded  "},
 		}},
 	}
 	removeErr := errors.New("injected remove failure")
