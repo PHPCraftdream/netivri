@@ -213,6 +213,16 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A hot reload no longer loses what the angel knew, and a busy port no longer blocks a config change
+  for good.** When the new listener port was busy for a while and the previous core had to be restored,
+  the watcher still marked the new file as applied and never tried again; it now retries a few times
+  without another edit. The first login on an `init` password, claimed between two reloads, was seen as
+  an outside change and restarted the listener (dropping connections); the claim is now kept in the
+  applied configuration. Each routed reload wrapped the login logger once more, so one rejected login
+  could be counted several times. And an in-place route reload started the node log from nothing: an
+  active outage lost its suppression and its closing summary, and events of a node added by the reload
+  were dropped. The node log now carries its state, closes an outage whose nodes were removed, and
+  keeps the events that arrive while the new routes are being installed.
 - **Two accounts that reach the same node through different proxy hops no longer share one health
   record.** A node used directly by one account and through a dead pre-hop by another had one record
   keyed by its label, so the first account's successful dials cleared the second one's failures and

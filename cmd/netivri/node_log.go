@@ -113,9 +113,11 @@ type nodeLog struct {
 	lastNever   map[string]drop   // the same for never-answered reports
 	lastBack    map[string]drop   // the same for backs
 	windowStart time.Time
-	window      []string       // labels down in the current window
-	kinds       map[string]int // reasons in the current window
-	burst       map[string]struct{}
+	window      []string            // labels down in the current window
+	windowKinds []string            // reason kind for each window label
+	kinds       map[string]int      // reasons in the current window
+	burst       map[string]struct{} // server ids down in the current burst
+	burstPeak   map[string]struct{} // server ids at the largest burst size
 	burstSize   int
 	burstStart  time.Time
 	// The outage state: servers (not labels) that are down now, servers that
@@ -125,6 +127,7 @@ type nodeLog struct {
 	never          map[string]struct{}
 	neverStart     time.Time
 	neverLabels    map[string]struct{}
+	neverMeta      map[string]neverReport
 	neverKinds     map[string]int
 	neverCountries map[string]int
 	neverDebug     map[string]bool
@@ -139,6 +142,10 @@ type drop struct {
 	at    time.Time
 	kind  string
 	label string
+}
+
+type neverReport struct {
+	kind, country, label string
 }
 
 // serverID is the part of a label after the provider: the same id under two
@@ -165,6 +172,142 @@ func newNodeLog(infos []stats.NodeInfo, info, warn logFunc, now func() time.Time
 	}
 	l.servers = len(ids)
 	return l
+}
+
+// refresh updates route metadata and prunes state for removed servers.
+func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
+	byLabel := make(map[string]stats.NodeInfo, len(infos))
+	labelsByID := make(map[string][]string, len(infos))
+	ids := make(map[string]struct{}, len(infos))
+	for _, n := range infos {
+		byLabel[n.Label] = n
+		id := serverID(n.Label)
+		ids[id] = struct{}{}
+		labelsByID[id] = append(labelsByID[id], n.Label)
+	}
+	for id := range labelsByID {
+		sort.Strings(labelsByID[id])
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	defer l.outageEnds()
+	l.byLabel, l.servers = byLabel, len(ids)
+	l.first = nil
+	if first != nil {
+		l.first = make(map[string]bool, len(first))
+		for label, isFirst := range first {
+			l.first[label] = isFirst
+		}
+	}
+	preferred := func(id string) string {
+		if labels := labelsByID[id]; len(labels) > 0 {
+			return labels[0]
+		}
+		return ""
+	}
+	for id, downs := range l.drops {
+		if _, ok := ids[id]; !ok {
+			delete(l.drops, id)
+			continue
+		}
+		for i := range downs {
+			if _, ok := byLabel[downs[i].label]; !ok {
+				downs[i].label = preferred(id)
+			}
+		}
+		l.drops[id] = downs
+	}
+	for _, latest := range []map[string]drop{l.lastDown, l.lastNever, l.lastBack} {
+		for id, d := range latest {
+			if _, ok := ids[id]; !ok {
+				delete(latest, id)
+			} else if _, ok := byLabel[d.label]; !ok {
+				d.label = preferred(id)
+				latest[id] = d
+			}
+		}
+	}
+	for _, state := range []map[string]struct{}{l.downNow, l.never} {
+		for id := range state {
+			if _, ok := ids[id]; !ok {
+				delete(state, id)
+			}
+		}
+	}
+	for id := range l.flapping {
+		if _, ok := ids[id]; !ok {
+			delete(l.flapping, id)
+		}
+	}
+	for id := range l.burst {
+		if _, ok := ids[id]; !ok {
+			delete(l.burst, id)
+		}
+	}
+	for id := range l.burstPeak {
+		if _, ok := ids[id]; !ok {
+			delete(l.burstPeak, id)
+		}
+	}
+	if l.burst != nil {
+		l.burstSize = max(len(l.burst), len(l.burstPeak))
+	}
+	if l.burst != nil && len(l.burst) == 0 {
+		l.burst, l.burstPeak, l.burstSize = nil, nil, 0
+	}
+
+	window, windowKinds := l.window[:0], l.windowKinds[:0]
+	l.kinds = map[string]int{}
+	for i, label := range l.window {
+		id := serverID(label)
+		if _, ok := ids[id]; !ok {
+			continue
+		}
+		if _, ok := byLabel[label]; !ok {
+			label = preferred(id)
+		}
+		kind := l.windowKinds[i]
+		window = append(window, label)
+		windowKinds = append(windowKinds, kind)
+		l.kinds[kind]++
+	}
+	l.window, l.windowKinds = window, windowKinds
+
+	if l.neverLabels == nil {
+		return
+	}
+	for id := range l.neverLabels {
+		if _, ok := ids[id]; !ok {
+			delete(l.neverLabels, id)
+			delete(l.neverMeta, id)
+			delete(l.neverDebug, id)
+			continue
+		}
+		report := l.neverMeta[id]
+		if _, ok := byLabel[report.label]; !ok {
+			report.label = preferred(id)
+		}
+		report.country = byLabel[report.label].Country
+		if report.country == "" {
+			report.country = unknownCountry
+		}
+		l.neverMeta[id] = report
+	}
+	if len(l.neverLabels) == 0 {
+		l.neverLabels, l.neverMeta, l.neverKinds, l.neverCountries, l.neverDebug = nil, nil, nil, nil, nil
+		l.neverSummary = 0
+		return
+	}
+	l.neverKinds, l.neverCountries = map[string]int{}, map[string]int{}
+	for id := range l.neverLabels {
+		report := l.neverMeta[id]
+		l.neverKinds[report.kind]++
+		l.neverCountries[report.country]++
+	}
+	if l.neverSummary > len(l.neverLabels) {
+		l.neverSummary = len(l.neverLabels)
+	}
 }
 
 // flush writes a changed never-answered summary once its collection window expires.
@@ -194,7 +337,7 @@ func (l *nodeLog) flushNeverLocked(now time.Time, force bool) {
 	if l.neverSummary > 0 && len(l.neverLabels) > l.neverSummary {
 		l.info("%s", l.neverSummaryLine())
 	}
-	l.neverLabels, l.neverKinds, l.neverCountries, l.neverDebug, l.neverSummary = nil, nil, nil, nil, 0
+	l.neverLabels, l.neverMeta, l.neverKinds, l.neverCountries, l.neverDebug, l.neverSummary = nil, nil, nil, nil, nil, 0
 }
 
 // neverSummaryLine formats the current collection's total, reason kinds and sorted country counts.
@@ -216,6 +359,9 @@ func (l *nodeLog) neverSummaryLine() string {
 func (l *nodeLog) event(ev core.NodeEvent) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if _, ok := l.byLabel[ev.Label]; !ok {
+		return
+	}
 	if ev.Down {
 		l.down(ev)
 		return
@@ -231,7 +377,7 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		line := l.describe(ev.Label) + " has never answered: " + ev.Reason
 		l.flushNeverLocked(now, false)
 		if l.neverLabels == nil {
-			l.neverStart, l.neverLabels, l.neverKinds, l.neverCountries, l.neverDebug = now, map[string]struct{}{}, map[string]int{}, map[string]int{}, map[string]bool{}
+			l.neverStart, l.neverLabels, l.neverMeta, l.neverKinds, l.neverCountries, l.neverDebug = now, map[string]struct{}{}, map[string]neverReport{}, map[string]int{}, map[string]int{}, map[string]bool{}
 		}
 		if twin, ok := l.twinOf(l.lastNever, ev, now); ok {
 			line += ", same server as " + twin
@@ -252,12 +398,14 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		}
 		l.neverLabels[id] = struct{}{}
 		l.neverDebug[id] = len(l.neverLabels) > neverSolo
-		l.neverKinds[reasonKind(ev.Reason)]++
+		kind := reasonKind(ev.Reason)
+		l.neverKinds[kind]++
 		country := l.byLabel[ev.Label].Country
 		if country == "" {
 			country = unknownCountry
 		}
 		l.neverCountries[country]++
+		l.neverMeta[id] = neverReport{kind: kind, country: country, label: ev.Label}
 		if len(l.neverLabels) < neverSolo+1 {
 			l.info("%s", line)
 		} else if len(l.neverLabels) == neverSolo+1 {
@@ -300,10 +448,12 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		return
 	}
 	if len(l.window) == 0 || now.Sub(l.windowStart) > burstWindow {
-		l.windowStart, l.window, l.kinds = now, nil, map[string]int{}
+		l.windowStart, l.window, l.windowKinds, l.kinds = now, nil, nil, map[string]int{}
 	}
 	l.window = append(l.window, ev.Label)
-	l.kinds[reasonKind(ev.Reason)]++
+	kind := reasonKind(ev.Reason)
+	l.windowKinds = append(l.windowKinds, kind)
+	l.kinds[kind]++
 	switch {
 	case len(l.window) < burstNodes:
 		l.nodeWarn(ev.Label, "%s", line)
@@ -312,19 +462,31 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		l.info("%s", line)
 		if l.burst == nil {
 			l.burst = make(map[string]struct{}, len(l.window))
+			l.burstPeak = make(map[string]struct{}, len(l.window))
 			l.burstStart = l.windowStart
 		}
 		for _, label := range l.window {
-			l.burst[label] = struct{}{}
+			l.burst[serverID(label)] = struct{}{}
 		}
-		l.burstSize = max(l.burstSize, len(l.burst))
+		l.updateBurstPeak()
 	default:
 		l.info("%s", line)
 		if l.burst != nil {
-			l.burst[ev.Label] = struct{}{}
-			l.burstSize = max(l.burstSize, len(l.burst))
+			l.burst[serverID(ev.Label)] = struct{}{}
+			l.updateBurstPeak()
 		}
 	}
+}
+
+func (l *nodeLog) updateBurstPeak() {
+	if len(l.burst) <= l.burstSize {
+		return
+	}
+	l.burstPeak = make(map[string]struct{}, len(l.burst))
+	for id := range l.burst {
+		l.burstPeak[id] = struct{}{}
+	}
+	l.burstSize = len(l.burstPeak)
 }
 
 // twinOf reports whether the same server was reported under another label
@@ -408,14 +570,17 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 		l.info("%s", line)
 	}
 	l.outageEnds()
-	if _, in := l.burst[ev.Label]; !in {
+	wasInBurst := false
+	if _, wasInBurst = l.burst[id]; wasInBurst {
+		delete(l.burst, id)
+	}
+	if !wasInBurst {
 		return
 	}
-	delete(l.burst, ev.Label)
 	if len(l.burst) == 0 {
 		awake, slept := l.lasted(l.burstStart, l.now())
 		l.info("node burst over: %d nodes were down, all back after %s%s", l.burstSize, awake, slept)
-		l.burst, l.burstSize = nil, 0
+		l.burst, l.burstPeak, l.burstSize = nil, nil, 0
 	}
 }
 

@@ -185,6 +185,10 @@ var errClaimStale = errors.New("the configuration changed on disk; try again")
 // in the in-memory config and rewrites the config file. It never
 // returns or logs the credential.
 func newPersist(path string, cfg *config.Config) func(login, passwordHash string) error {
+	return newPersistWithTarget(path, cfg, nil)
+}
+
+func newPersistWithTarget(path string, cfg *config.Config, target *persistConfig) func(login, passwordHash string) error {
 	claimedLogin, claimedPassword := cfg.Auth.Login, cfg.Auth.Password
 	return func(login, passwordHash string) error {
 		persistMu.Lock()
@@ -202,11 +206,18 @@ func newPersist(path string, cfg *config.Config) func(login, passwordHash string
 			return err
 		}
 		cfg.Auth.Login, cfg.Auth.Password = login, passwordHash
+		if target != nil {
+			target.recordLegacy(cfg, claimedLogin, claimedPassword, login, passwordHash)
+		}
 		return nil
 	}
 }
 
 func newPersistAccount(path string, cfg *config.Config) func(login, passwordHash string) error {
+	return newPersistAccountWithTarget(path, cfg, nil)
+}
+
+func newPersistAccountWithTarget(path string, cfg *config.Config, target *persistConfig) func(login, passwordHash string) error {
 	return func(login, passwordHash string) error {
 		persistMu.Lock()
 		defer persistMu.Unlock()
@@ -230,7 +241,130 @@ func newPersistAccount(path string, cfg *config.Config) func(login, passwordHash
 			return err
 		}
 		a.Password = passwordHash
+		if target != nil {
+			target.recordAccount(cfg, login, passwordHash)
+		}
 		return nil
+	}
+}
+
+// persistConfig tracks the config currently applied to the core and successful
+// init claims. All fields and credential writes are protected by persistMu.
+type persistConfig struct {
+	cfg        *config.Config
+	generation uint64
+	legacy     *legacyCredentialClaim
+	accounts   map[string]accountCredentialClaim
+}
+
+type legacyCredentialClaim struct {
+	claimedLogin, claimedPassword string
+	login, password               string
+	generation                    uint64
+}
+
+type accountCredentialClaim struct {
+	password   string
+	generation uint64
+}
+
+func newPersistConfig(cfg *config.Config) *persistConfig {
+	return &persistConfig{cfg: cfg, accounts: make(map[string]accountCredentialClaim)}
+}
+
+func (p *persistConfig) recordLegacy(source *config.Config, claimedLogin, claimedPassword, login, password string) {
+	p.generation++
+	p.legacy = &legacyCredentialClaim{claimedLogin: claimedLogin, claimedPassword: claimedPassword, login: login, password: password, generation: p.generation}
+	if p.cfg != nil && p.cfg != source && p.cfg.Auth.Login == claimedLogin && p.cfg.Auth.Password == claimedPassword {
+		p.cfg.Auth.Login, p.cfg.Auth.Password = login, password
+	}
+}
+
+func (p *persistConfig) recordAccount(source *config.Config, login, password string) {
+	p.generation++
+	p.accounts[login] = accountCredentialClaim{password: password, generation: p.generation}
+	if p.cfg != nil && p.cfg != source {
+		if account, _ := p.cfg.Account(login); account != nil && account.Password == config.InitPlaceholder {
+			account.Password = password
+		}
+	}
+}
+
+// rebind applies claims completed since cfg was loaded, then targets future
+// successful persistence callbacks at the newly applied cfg.
+func (p *persistConfig) mergeClaims(cfg *config.Config, since uint64) {
+	if p == nil || cfg == nil {
+		return
+	}
+	if claim := p.legacy; claim != nil && claim.generation > since && cfg.Auth.Login == claim.claimedLogin && cfg.Auth.Password == claim.claimedPassword {
+		cfg.Auth.Login, cfg.Auth.Password = claim.login, claim.password
+	}
+	for login, claim := range p.accounts {
+		if claim.generation <= since {
+			continue
+		}
+		if account, _ := cfg.Account(login); account != nil && account.Password == config.InitPlaceholder {
+			account.Password = claim.password
+		}
+	}
+}
+
+func (p *persistConfig) rebind(cfg *config.Config, since uint64) {
+	if p == nil || cfg == nil {
+		return
+	}
+	p.mergeClaims(cfg, since)
+	p.cfg = cfg
+}
+
+func persistClaimGeneration(a mihauth.Authenticator) uint64 {
+	var generation uint64
+	withPersistConfig(a, func(p *persistConfig) { generation = p.generation })
+	return generation
+}
+
+func rebindPersistConfigSince(a mihauth.Authenticator, cfg *config.Config, since uint64) {
+	withPersistConfig(a, func(p *persistConfig) { p.rebind(cfg, since) })
+}
+
+func snapshotReloadCredentials(a mihauth.Authenticator, applied, candidate *config.Config, since uint64) (*config.Config, *config.Config) {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+
+	clone := func(cfg *config.Config) *config.Config {
+		if cfg == nil {
+			return nil
+		}
+		copy := *cfg
+		copy.Accounts = append([]config.Account(nil), cfg.Accounts...)
+		return &copy
+	}
+	appliedSnapshot, candidateSnapshot := clone(applied), clone(candidate)
+	for a != nil {
+		logged, ok := a.(*loggedAuth)
+		if !ok {
+			break
+		}
+		a = logged.inner
+	}
+	if policy, ok := a.(*accountPolicyAuthenticator); ok && policy.persist != nil {
+		policy.persist.mergeClaims(candidateSnapshot, since)
+	}
+	return appliedSnapshot, candidateSnapshot
+}
+
+func withPersistConfig(a mihauth.Authenticator, update func(*persistConfig)) {
+	persistMu.Lock()
+	defer persistMu.Unlock()
+	for a != nil {
+		logged, ok := a.(*loggedAuth)
+		if !ok {
+			break
+		}
+		a = logged.inner
+	}
+	if policy, ok := a.(*accountPolicyAuthenticator); ok && policy.persist != nil {
+		update(policy.persist)
 	}
 }
 
@@ -258,16 +392,17 @@ func loadConfig(home string) (*config.Config, error) {
 }
 
 type accountPolicyAuthenticator struct {
-	inner  mihauth.Authenticator
-	mu     sync.RWMutex
-	byUser map[string]config.AllowedClients
+	inner   mihauth.Authenticator
+	persist *persistConfig
+	mu      sync.RWMutex
+	byUser  map[string]config.AllowedClients
 }
 
 func newAccountPolicyAuthenticator(inner mihauth.Authenticator, cfg *config.Config) *accountPolicyAuthenticator {
 	if inner == nil {
 		return nil
 	}
-	a := &accountPolicyAuthenticator{inner: inner}
+	a := &accountPolicyAuthenticator{inner: inner, persist: newPersistConfig(cfg)}
 	a.UpdateConfig(cfg)
 	return a
 }
@@ -307,10 +442,11 @@ func (a *accountPolicyAuthenticator) Users() []string { return a.inner.Users() }
 func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, error) {
 	persistMu.Lock()
 	defer persistMu.Unlock()
+	persist := newPersistConfig(cfg)
 	legacy := auth.Options{
 		Login:    cfg.Auth.Login,
 		Password: cfg.Auth.Password,
-		Persist:  newPersist(config.ConfigPath(home), cfg),
+		Persist:  newPersistWithTarget(config.ConfigPath(home), cfg, persist),
 	}
 	accounts := make([]auth.AccountSpec, 0, len(cfg.Accounts))
 	for _, a := range cfg.Accounts {
@@ -322,7 +458,7 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 	a, err := auth.NewMulti(auth.MultiOptions{
 		Legacy:         legacy,
 		Accounts:       accounts,
-		PersistAccount: newPersistAccount(config.ConfigPath(home), cfg),
+		PersistAccount: newPersistAccountWithTarget(config.ConfigPath(home), cfg, persist),
 	})
 	if err != nil {
 		var ce *cli.Error
@@ -339,7 +475,9 @@ func newAuthenticator(cfg *config.Config, home string) (mihauth.Authenticator, e
 	if a == nil {
 		return nil, nil
 	}
-	return newAccountPolicyAuthenticator(a, cfg), nil
+	policy := newAccountPolicyAuthenticator(a, cfg)
+	policy.persist = persist
+	return policy, nil
 }
 
 func runUp(args []string, stdout io.Writer) error {
