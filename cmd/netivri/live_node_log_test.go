@@ -273,7 +273,7 @@ func TestLiveNodeLoggerInstallAndFlushUseActiveLogger(t *testing.T) {
 	now := time.Unix(10000, 0)
 	var lines []string
 	mk := func() *nodeLog {
-		return makeNodeHealthLogger([]stats.NodeInfo{{Label: "p/a", Country: "FI"}, {Label: "p/b", Country: "DE"}, {Label: "p/c", Country: "DE"}, {Label: "p/d", Country: "DE"}, {Label: "p/e", Country: "SE"}}, nil, nil,
+		return makeNodeHealthLogger([]stats.NodeInfo{{Label: "p/a", Country: "FI"}, {Label: "p/b", Country: "US"}, {Label: "p/c", Country: "DE"}, {Label: "p/d", Country: "NL"}, {Label: "p/e", Country: "SE"}}, nil, nil,
 			func(f string, a ...any) { lines = append(lines, "DEBUG "+fmt.Sprintf(f, a...)) },
 			func(f string, a ...any) { lines = append(lines, "INFO "+fmt.Sprintf(f, a...)) }, nil, func() time.Time { return now })
 	}
