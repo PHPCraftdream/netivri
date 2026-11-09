@@ -10,8 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -420,37 +418,7 @@ statusLoop:
 		}
 	}
 	t.Logf("angel log (%s): %s", home, e2eHysteria2Sanitize(serverE2ELogTail(t, home), secrets))
-	t.Logf("angel crash dumps (%s): %s", home, e2eHysteria2Sanitize(e2eHysteria2CrashDumps(home), secrets))
-}
-
-// e2eHysteria2CrashDumps names the crash dumps of the angel and shows the head
-// of the newest one, so a vanished angel leaves its reason in the test log.
-func e2eHysteria2CrashDumps(home string) string {
-	dir := filepath.Join(home, "run", "crash")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "none (" + err.Error() + ")"
-	}
-	var names []string
-	newest := ""
-	for _, entry := range entries {
-		names = append(names, entry.Name())
-		if strings.HasSuffix(entry.Name(), ".txt") && entry.Name() > newest {
-			newest = entry.Name()
-		}
-	}
-	out := strings.Join(names, ", ")
-	if newest == "" {
-		return out
-	}
-	data, err := os.ReadFile(filepath.Join(dir, newest))
-	if err != nil {
-		return out
-	}
-	if len(data) > 3000 {
-		data = data[:3000]
-	}
-	return out + "\n" + string(data)
+	t.Logf("angel crash dumps (%s): %s", home, e2eHysteria2Sanitize(e2eCrashDumps(home), secrets))
 }
 
 func e2eHysteria2Status(raw string, full bool, secrets []string) string {
