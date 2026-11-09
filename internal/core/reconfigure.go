@@ -154,11 +154,9 @@ func (i *Instance) Reconfigure(o Options) error {
 	old.warm.Close()
 	nameToLabel := memberNameLabels(plans)
 	nameToHealthKey := memberNameHealthKeys(plans)
-	oldHealthKeys := old.memberHealthKeys
-	if len(oldHealthKeys) == 0 {
-		oldHealthKeys = old.memberLabels
-	}
-	backoff := carryBackoff(old.warm.backoffByName(), oldHealthKeys, nameToHealthKey)
+	// The probe schedule follows the node label, not its hop chain: a changed
+	// hop must not make every node of the route probe at once.
+	backoff := carryBackoff(old.warm.backoffByName(), old.memberLabels, nameToLabel)
 
 	// The poller also feeds the nodes that only open connections still use;
 	// their records are made now, before the new groups read the table
