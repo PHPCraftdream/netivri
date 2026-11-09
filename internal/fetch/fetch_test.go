@@ -6,6 +6,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"testing"
@@ -309,5 +310,47 @@ func TestClassifyErrNamesTheKindOfFailure(t *testing.T) {
 				t.Errorf("message leaks %q: %q", secret, e.Message)
 			}
 		}
+	}
+}
+
+func TestProgressNamesPathAndPhase(t *testing.T) {
+	tu, err := parseTarget("https://example.com/secret/token123?tok=abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		proxied bool
+		move    func(p *progress)
+		want    string
+	}{
+		{false, func(*progress) {}, "request failed: timeout (direct, connecting)"},
+		{false, func(p *progress) { p.trace().DNSStart(httptrace.DNSStartInfo{}) }, "(direct, resolving the name)"},
+		{false, func(p *progress) { p.trace().TLSHandshakeStart() }, "(direct, TLS handshake)"},
+		{true, func(p *progress) { p.trace().WroteRequest(httptrace.WroteRequestInfo{}) }, "(via proxy, waiting for the answer)"},
+		{true, func(p *progress) { p.trace().GotFirstResponseByte() }, "(via proxy, reading the answer)"},
+		{false, func(p *progress) { p.set(phaseBody) }, "(direct, reading the body)"},
+	} {
+		p := newProgress(c.proxied)
+		c.move(p)
+		e := p.annotate(classifyErr(errors.New("dial tcp 10.0.0.1:443: i/o timeout"), tu))
+		if e.Code != "FETCH_FAILED" || !strings.HasSuffix(e.Message, c.want) {
+			t.Errorf("annotate = %s %q, want suffix %q", e.Code, e.Message, c.want)
+		}
+		if !strings.Contains(e.Message, "request failed: timeout") {
+			t.Errorf("the kind of the failure was lost: %q", e.Message)
+		}
+		for _, secret := range []string{"10.0.0.1", "token123", "abc"} {
+			if strings.Contains(e.Message, secret) {
+				t.Errorf("message leaks %q: %q", secret, e.Message)
+			}
+		}
+	}
+
+	proxyErr := &cli.Error{Code: "FETCH_PROXY_FAILED", Message: "could not reach the proxy"}
+	if got := newProgress(true).annotate(proxyErr); got.Message != proxyErr.Message {
+		t.Errorf("a proxy failure must keep its message, got %q", got.Message)
+	}
+	if newProgress(false).annotate(nil) != nil {
+		t.Error("annotate(nil) must stay nil")
 	}
 }

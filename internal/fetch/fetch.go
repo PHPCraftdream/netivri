@@ -12,6 +12,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"time"
@@ -89,7 +90,8 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 		CheckRedirect: redirectPolicy,
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.url(), nil)
+	progress := newProgress(proxyURL != nil)
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, progress.trace()), http.MethodGet, target.url(), nil)
 	if err != nil {
 		return nil, urlInvalid("request could not be built")
 	}
@@ -97,8 +99,9 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, classifyErr(err, target)
+		return nil, progress.annotate(classifyErr(err, target))
 	}
+	progress.set(phaseBody)
 	defer resp.Body.Close()
 
 	// Status first: a non-2xx answer is FETCH_HTTP_STATUS regardless of
@@ -118,7 +121,7 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, classifyErr(err, target)
+		return nil, progress.annotate(classifyErr(err, target))
 	}
 	if int64(len(body)) > maxBytes {
 		return nil, fetchFailed(target, "response exceeds the size limit")

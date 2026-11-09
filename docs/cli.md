@@ -1208,7 +1208,10 @@ A fetch that fails on the way (a timeout, a reset) is tried once more after 5
 seconds; a failed refresh is tried again after 10 minutes (sooner than the
 interval). While the stored list is younger than twice the interval, the failure
 is an `INFO` line (`subscription main: refresh failed after 30.1s (two tries):
-FETCH_FAILED: ...; the list of 41m ago stays, next try in 10m`); it is a `WARN`
+FETCH_FAILED: request to sub.example failed: request failed: timeout (direct, waiting for the answer); the list of 41m ago stays, next try in 10m`);
+the parenthesis says the path (`direct` or `via proxy`) and the phase the fetch stood in (`resolving the name`,
+`connecting`, `TLS handshake`, `sending the request`, `waiting for the answer`, `reading the answer`,
+`reading the body`), so a timeout of the host can be told from one on the way to it; it is a `WARN`
 with the third failure in a row, with a list older than twice the interval, or
 without any list, so `doctor` warns only for a failure that lasts. While the failures go on, a subscription writes one `WARN`
 at the first and then one an hour (the line says so: `the next failures are DEBUG, a WARN again in 1h00m`); the
