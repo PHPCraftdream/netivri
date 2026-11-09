@@ -31,6 +31,21 @@ func (c Client) newRequest(ctx context.Context, method, path string) (*http.Requ
 	return req, nil
 }
 
+var errControlResponseTooLarge = errors.New("control response exceeds size limit")
+
+const maxControlResponseSize = 4 << 20
+
+func readControlResponse(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxControlResponseSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxControlResponseSize {
+		return nil, fmt.Errorf("%w: more than %d bytes", errControlResponseTooLarge, maxControlResponseSize)
+	}
+	return data, nil
+}
+
 func (c Client) do(ctx context.Context, req *http.Request) ([]byte, int, error) {
 	transport := &http.Transport{
 		Proxy:                 nil,
@@ -49,7 +64,7 @@ func (c Client) do(ctx context.Context, req *http.Request) ([]byte, int, error) 
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxStateSize))
+	data, err := readControlResponse(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
@@ -137,11 +152,11 @@ func isTimeout(err error) bool {
 }
 
 // ProbeLive checks whether an angel runs for this home: the state file AND
-// a live control answer from the same pid are required, anything else is
-// ErrNotRunning and a stale state file is removed best-effort. A control
-// request that merely times out is the exception: the angel may be busy, so
-// the state file stays and the error wraps ErrControlTimeout. It returns the
-// state file content and the live status.
+// a live control answer from the same pid are required. A refused connection
+// or pid mismatch is ErrNotRunning and a stale state file is removed
+// best-effort. Control errors without positive evidence that the angel is gone
+// leave the state file in place. A control request that merely times out wraps
+// ErrControlTimeout. It returns the state file content and the live status.
 func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 	st, err := ReadState(home)
 	if err != nil {
@@ -154,10 +169,17 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 		return State{}, Status{}, ErrNotRunning
 	}
 	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
-	if err != nil && isTimeout(err) {
-		return st, Status{}, fmt.Errorf("%w: %v", ErrControlTimeout, err)
+	if err != nil {
+		if isConnRefused(err) {
+			RemoveStateIf(home, st.PID, st.Token)
+			return State{}, Status{}, ErrNotRunning
+		}
+		if isTimeout(err) {
+			return st, Status{}, fmt.Errorf("%w: %v", ErrControlTimeout, err)
+		}
+		return st, Status{}, err
 	}
-	if err != nil || status.PID != st.PID {
+	if status.PID != st.PID {
 		RemoveStateIf(home, st.PID, st.Token)
 		return State{}, Status{}, ErrNotRunning
 	}

@@ -167,9 +167,38 @@ func (d *doctorContext) checkConfig() doctorCheck {
 	return doctorCheck{"config", doctorOK, "config.ktav loaded and valid"}
 }
 
+func (d *doctorContext) reloadErrorDetail() string {
+	if d.status.Reload == nil || d.status.Reload.LastError == "" {
+		return ""
+	}
+	var secrets []string
+	if d.cfg != nil {
+		secrets = append(secrets, d.cfg.Auth.Password, d.cfg.Chain.PreSOCKS5, d.cfg.Chain.PostSOCKS5)
+		for _, account := range d.cfg.Accounts {
+			secrets = append(secrets, account.Password, account.PreSOCKS5, account.PostSOCKS5)
+		}
+		for _, sub := range d.cfg.Subscriptions {
+			secrets = append(secrets, sub.URL, sub.Via, sub.PreSOCKS5, sub.PostSOCKS5)
+		}
+		for _, server := range d.cfg.Servers {
+			for _, value := range server.Params {
+				secrets = append(secrets, value)
+			}
+		}
+	}
+	return redactProviderSecrets(d.status.Reload.LastError, secrets...)
+}
+
 // checkAngel reports the running angel, or a plain warn.
 func (d *doctorContext) checkAngel() doctorCheck {
 	if d.angelUp {
+		if d.status.Core == "down" {
+			message := "angel is running but its core is down"
+			if detail := d.reloadErrorDetail(); detail != "" {
+				message += ": " + detail
+			}
+			return doctorCheck{"angel", doctorFail, message}
+		}
 		return doctorCheck{"angel", doctorOK, fmt.Sprintf("running, pid %d, uptime %ds", d.status.PID, uptimeSeconds(d.status.StartedAt))}
 	}
 	return doctorCheck{"angel", doctorWarn, "angel is not running"}
@@ -179,6 +208,9 @@ func (d *doctorContext) checkAngel() doctorCheck {
 // runs, whether the configured port is free (a local probe only).
 func (d *doctorContext) checkListen() doctorCheck {
 	if d.angelUp {
+		if d.status.Core == "down" {
+			return doctorCheck{"listen", doctorFail, "angel core is down"}
+		}
 		return doctorCheck{"listen", doctorOK, "listen " + d.status.Listen + ", allowed_clients " + allowedClientsLabel(d.status.AllowedClients)}
 	}
 	if d.cfgIssue != "" {

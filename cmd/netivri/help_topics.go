@@ -1068,8 +1068,8 @@ var helpTopics = []helpTopic{
 			"failed, the error envelope goes to stderr and the exit code is 7, so a script can run " +
 			"'netivri doctor' and branch on the exit code alone.\n\n" +
 			"The checks: config (config.ktav loads and is valid), angel (an angel runs for this " +
-			"state directory), listen (the address the running angel reports, or, when nothing " +
-			"runs, whether the configured port is free), subscriptions (every configured " +
+			"state directory; fail when status reports core down; its check includes reload.last_error when present), listen (the address the running angel reports, or, when nothing " +
+			"runs, whether the configured port is free; fail when its core is down), subscriptions (every configured " +
 			"subscription has a stored snapshot no older than twice fetch.update_interval, skipped " +
 			"when the interval is off, and every account names configured subscriptions only), one " +
 			"check per account (its route has stored nodes and, with a running angel, a live node " +

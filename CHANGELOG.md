@@ -223,6 +223,22 @@ versions; every such change is listed here.
   seven days; it now combines both. The node figures are read in one transaction, so a probe written
   in between can no longer give a delay with no probes, and `--node` filters in the query instead of
   loading every node's samples.
+- **`netivri up --foreground` no longer starts a second angel while the first one is busy.** A control
+  answer later than two seconds counted as "no angel", so a second proxy started in the same home and
+  overwrote the state file, and `down` could no longer reach the first one. Both start paths now stop
+  with "angel not responding" and refuse any probe error that does not prove the angel is gone.
+- **A control response over 64 KiB no longer makes `down` say "stopped" for a running angel.** The
+  response limit was the state-file limit, a large status was cut, and the state file was deleted.
+  Responses now have their own 4 MiB limit, and a malformed or oversize answer keeps the state file.
+- **`netivri doctor` fails when the angel runs with its core down.** After a failed reload and a failed
+  rollback the angel stays up with no listener, and `angel` and `listen` still reported `ok`; both now
+  fail and the angel line carries the (redacted) reload error.
+- **An `allowed_clients` rule written as an IPv4-mapped IPv6 CIDR now matches.** `::ffff:192.168.1.0/120`
+  was accepted but denied every peer; it is now read as `192.168.1.0/24`, and a mapped prefix shorter than
+  `/96` is rejected.
+- **A first login on the legacy single `auth` can no longer overwrite a password set in the meantime.**
+  The claim was refused only when neither field was `init`; it is now refused when either field differs
+  from what the angel loaded.
 - **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
   Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
   filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read

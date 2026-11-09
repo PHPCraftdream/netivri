@@ -136,6 +136,62 @@ func TestWatchSignature(t *testing.T) {
 	}
 }
 
+func TestPersistRefusesLegacyClaimWhenEitherCredentialChangedOnDisk(t *testing.T) {
+	hash := func(password string) string {
+		t.Helper()
+		got, err := auth.Hash(password)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	h1 := hash("original-password")
+	h2 := hash("changed-password")
+
+	for _, tc := range []struct {
+		name        string
+		diskLogin   string
+		diskPass    string
+		loadedLogin string
+		loadedPass  string
+	}{
+		{
+			name: "password changed while login remains init", diskLogin: config.InitPlaceholder, diskPass: h2,
+			loadedLogin: config.InitPlaceholder, loadedPass: h1,
+		},
+		{
+			name: "login changed while password remains init", diskLogin: "someone-else", diskPass: config.InitPlaceholder,
+			loadedLogin: config.InitPlaceholder, loadedPass: config.InitPlaceholder,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			path := config.ConfigPath(home)
+			loaded := config.Default()
+			loaded.Auth = config.Auth{Login: tc.loadedLogin, Password: tc.loadedPass}
+			onDisk := config.Default()
+			onDisk.Auth = config.Auth{Login: tc.diskLogin, Password: tc.diskPass}
+			if err := config.Save(path, onDisk); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := newPersist(path, loaded)("alice", h1); !errors.Is(err, errClaimStale) {
+				t.Fatalf("legacy claim error = %v, want errClaimStale", err)
+			}
+			if loaded.Auth.Login != tc.loadedLogin || loaded.Auth.Password != tc.loadedPass {
+				t.Error("a refused claim changed the in-memory credentials")
+			}
+			got, err := config.Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Auth.Login != tc.diskLogin || got.Auth.Password != tc.diskPass {
+				t.Error("a refused claim rewrote the credentials on disk")
+			}
+		})
+	}
+}
+
 func TestPersistAccountKeepsEditsMadeOnDisk(t *testing.T) {
 	home := t.TempDir()
 	path := config.ConfigPath(home)

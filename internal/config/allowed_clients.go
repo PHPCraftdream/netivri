@@ -85,6 +85,12 @@ func ParseAllowedClients(s string) (AllowedClients, error) {
 				rules = append(rules, netip.PrefixFrom(un, un.BitLen()))
 				continue
 			}
+			if p.Addr().Is4In6() {
+				if p.Bits() < 96 {
+					return nil, fmt.Errorf("IPv4-mapped IPv6 prefix %q must be /96 or narrower", item)
+				}
+				p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+			}
 			rules = append(rules, p.Masked())
 			continue
 		}

@@ -20,8 +20,8 @@ import (
 const maxStateSize = 64 << 10
 
 // ErrNotRunning reports that no usable angel state exists: the state
-// file is missing, the angel did not answer, or the answered pid did
-// not match the state file.
+// file is missing, the control connection was refused, or the answered pid
+// did not match the state file.
 var ErrNotRunning = errors.New("angel not running")
 
 // State is the content of run/netivri.json. Token is a local secret and

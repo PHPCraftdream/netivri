@@ -613,6 +613,11 @@ subscription URLs, passwords and hashes are never printed.
  "home": "/home/me/.config/netivri", "home_source": "user config directory"}
 ```
 
+The check uses the running status when the control channel answers. If the angel
+reports `core: "down"` (the failed replacement and rollback case), both `angel`
+and `listen` are `fail` rather than claiming the empty listen address is okay;
+the `angel` check includes `reload.last_error` when present.
+
 `home` is the state directory the checks looked at and `home_source` how it was
 chosen (see [Separate state directories](#separate-state-directories)).
 
@@ -621,8 +626,8 @@ The checks:
 | Name | What it covers |
 |---|---|
 | `config` | `config.ktav` loads and is valid (the message names the bad key, never a secret). |
-| `angel` | An angel runs for this state directory (pid, uptime). |
-| `listen` | The address the running angel reports and its `allowed_clients` rule; when nothing runs, whether the configured port is free (a local probe). |
+| `angel` | An angel runs for this state directory (pid, uptime); `fail` when status reports `core: "down"`; the `angel` check includes `reload.last_error` when present. |
+| `listen` | The address the running angel reports and its `allowed_clients` rule; `fail` when its core is down; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An explicit direct exit reports `exit: direct`; doctor warns if served by a non-loopback server. An account with neither provider nor exit country uses the default route. |
 | `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
@@ -727,8 +732,11 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   subscription URLs are never shown.
 - `set-clients` takes one comma-separated allowed-clients rule list (same
   grammar as `listen.allowed_clients`: `*`, `loopback`, exact addresses,
-  IPv4 whole-octet masks like `192.168.1.*`, CIDR prefixes; see
-  [config.md](config.md), "Allowed clients"), or `--none` to clear the
+  IPv4 whole-octet masks like `192.168.1.*`, CIDR prefixes; IPv4-mapped IPv6
+  CIDRs from `/96` through `/128` normalize to the corresponding IPv4 prefix
+  (`::ffff:192.0.2.0/120` becomes `192.0.2.0/24`), while broader mapped
+  prefixes are rejected; see [config.md](config.md), "Allowed clients"), or
+  `--none` to clear the
   account's rule. A malformed list is `CONFIG_INVALID` (exit 2; the message
   names the bad item). Like `set-country` and `set-provider`, it changes
   several accounts at once: `{ACCOUNT}` may be several logins separated by
@@ -970,7 +978,18 @@ to repeat. `--port` and `--bind` override the stored `listen.port` and
           "foreground": false, "already_running": false}}
 ```
 
-`foreground` is `true` for `up --foreground`, `false` for the angel.
+`ANGEL_NOT_RESPONDING` (exit 1) means `up` found a state file but the angel's
+control endpoint did not answer in time; no angel is spawned or listener started.
+Other control-probe failures that do not positively identify an absent angel
+(for example a malformed or oversized response) also stop `up` with `INTERNAL`
+rather than replacing retained state. Startup is allowed only when the probe
+positively confirms that no angel is running. State files are retained for
+inconclusive control errors; the control response is capped at 4 MiB.
+
+`foreground` is `true` for `up --foreground`, `false` for the angel. The
+foreground mode applies the same control-probe rules: a control timeout returns
+`ANGEL_NOT_RESPONDING` before the core or proxy listener starts, and an
+inconclusive non-timeout failure returns `INTERNAL`.
 `already_running` is `true` when the command found and reused a running
 angel (idempotent success, exit 0); these keys are additive and do not
 bump `schema_version`. When an angel is already running and the caller
@@ -1012,6 +1031,10 @@ Windows; never print it. `auth` is one of:
   `init` placeholder").
 
 Credentials, hashes and the config file content are never printed or logged.
+A legacy `init` credential claim writes only if both stored fields still match
+what the claiming angel loaded; if another command changed either field first,
+the claim is refused and the client can retry after the updated configuration
+is applied.
 
 ### Separate state directories
 
