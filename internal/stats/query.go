@@ -3,6 +3,7 @@ package stats
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -36,8 +37,8 @@ type nodeMeta struct {
 
 // Nodes aggregates the samples of the window per node, sorted by label.
 // A window inside the raw retention reads the exact raw samples (including
-// percentiles); a longer window reads the hourly table and reports no
-// percentiles. Nodes without data in the window are omitted.
+// percentiles); a longer window combines raw and hourly aggregates and reports
+// no percentiles. Nodes without data in the window are omitted.
 func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 	since := q.Since
 	if since <= 0 {
@@ -45,21 +46,32 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 	}
 	from := s.now().UTC().Add(-since)
 
-	metas, err := s.filteredNodes(q)
+	// Keep the node metadata and aggregates on one database snapshot, so a
+	// concurrent retention fold cannot make the same samples disappear from
+	// both reads or appear in both.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("stats: begin node read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	metas, err := s.filteredNodes(tx, q)
 	if err != nil {
 		return nil, err
 	}
+	return s.aggregateNodes(tx, q, since, from, metas)
+}
+
+func (s *Store) aggregateNodes(qr querier, filters Query, since time.Duration, from time.Time, metas []*nodeMeta) ([]NodeStats, error) {
 	byID := make(map[int64]*nodeMeta, len(metas))
 	for _, m := range metas {
 		byID[m.id] = m
 	}
-	// The aggregation queries read all nodes; only nodes that pass the
-	// filters and have data in the window end up in acc.
 	acc := map[int64]*NodeStats{}
 	get := func(id int64) *NodeStats {
 		m, ok := byID[id]
 		if !ok {
-			return nil // the node does not pass the filters
+			return nil
 		}
 		st, ok := acc[id]
 		if !ok {
@@ -69,13 +81,29 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 		return st
 	}
 
-	if since <= s.opts.Retention {
-		err = s.queryRaw(from.UnixMilli(), get)
-	} else {
-		err = s.queryHourly(from.Unix()/3600, byID, acc)
-	}
-	if err != nil {
+	means := map[int64]*nodeMeans{}
+	long := since > s.opts.Retention
+	if err := s.queryRaw(qr, from.UnixMilli(), filters, !long, get, means); err != nil {
 		return nil, err
+	}
+	if long {
+		if err := s.queryHourly(qr, from.Unix()/3600, filters, byID, acc, means); err != nil {
+			return nil, err
+		}
+	}
+	for id, st := range acc {
+		if mean := means[id]; mean != nil {
+			if mean.probeOK > 0 {
+				st.DelayAvgMS = mean.probeSum / mean.probeOK
+			}
+			if mean.dialOK > 0 {
+				st.DialAvgMS = mean.dialSum / mean.dialOK
+			}
+		}
+		if long {
+			st.DelayP50MS, st.DelayP95MS = 0, 0
+			st.ThroughputP50KBps, st.ThroughputMaxKBps = 0, 0
+		}
 	}
 
 	out := make([]NodeStats, 0, len(acc))
@@ -86,8 +114,13 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 	return out, nil
 }
 
+type nodeMeans struct {
+	probeSum, probeOK int64
+	dialSum, dialOK   int64
+}
+
 // filteredNodes loads the node rows passing the query filters.
-func (s *Store) filteredNodes(q Query) ([]*nodeMeta, error) {
+func (s *Store) filteredNodes(q querier, filters Query) ([]*nodeMeta, error) {
 	// A v1 or v2 database opened read-only has no name column.
 	nameCol := s.hasName
 	query := "SELECT id, label, provider, country, last_seen"
@@ -96,19 +129,19 @@ func (s *Store) filteredNodes(q Query) ([]*nodeMeta, error) {
 	}
 	query += " FROM node WHERE 1=1"
 	var args []any
-	if q.Provider != "" {
+	if filters.Provider != "" {
 		query += " AND provider = ?"
-		args = append(args, q.Provider)
+		args = append(args, filters.Provider)
 	}
-	if q.Country != "" {
+	if filters.Country != "" {
 		query += " AND country = ?"
-		args = append(args, q.Country)
+		args = append(args, filters.Country)
 	}
-	if q.Label != "" {
+	if filters.Label != "" {
 		query += " AND label = ?"
-		args = append(args, q.Label)
+		args = append(args, filters.Label)
 	}
-	rows, err := s.db.Query(query, args...)
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("stats: query nodes: %w", err)
 	}
@@ -133,28 +166,36 @@ func (s *Store) filteredNodes(q Query) ([]*nodeMeta, error) {
 }
 
 // queryRaw fills the aggregates from the exact raw samples of the window.
-func (s *Store) queryRaw(fromMS int64, get func(int64) *NodeStats) error {
-	// Counts per kind.
-	rows, err := s.db.Query(`
-SELECT node, kind, COUNT(*), SUM(ok) FROM sample
-WHERE ts >= ? AND kind IN (?, ?) GROUP BY node, kind`, fromMS, int(KindProbe), int(KindDial))
+func (s *Store) queryRaw(q querier, fromMS int64, filters Query, includeSamples bool, get func(int64) *NodeStats, means map[int64]*nodeMeans) error {
+	join, where, args := nodeWhere("sample", "ts", fromMS, filters, "sample.kind IN (?, ?)", int(KindProbe), int(KindDial))
+	rows, err := q.Query(`
+SELECT sample.node, sample.kind, COUNT(*), SUM(sample.ok),
+       SUM(CASE WHEN sample.ok = 1 THEN sample.ms ELSE 0 END)
+FROM sample `+join+where+` GROUP BY sample.node, sample.kind`, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query counts: %w", err)
 	}
 	for rows.Next() {
-		var id, kind, n, ok int64
-		if err := rows.Scan(&id, &kind, &n, &ok); err != nil {
+		var id, kind, n, ok, msSum int64
+		if err := rows.Scan(&id, &kind, &n, &ok, &msSum); err != nil {
 			rows.Close()
 			return fmt.Errorf("stats: scan counts: %w", err)
 		}
 		st := get(id)
 		if st == nil {
-			continue // filtered out
+			continue
+		}
+		mean := means[id]
+		if mean == nil {
+			mean = &nodeMeans{}
+			means[id] = mean
 		}
 		if kind == int64(KindProbe) {
 			st.Probes, st.ProbesOK = int(n), int(ok)
+			mean.probeSum, mean.probeOK = msSum, ok
 		} else {
 			st.Dials, st.DialsOK = int(n), int(ok)
+			mean.dialSum, mean.dialOK = msSum, ok
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -163,51 +204,34 @@ WHERE ts >= ? AND kind IN (?, ?) GROUP BY node, kind`, fromMS, int(KindProbe), i
 	}
 	rows.Close()
 
-	// Delay of each OK probe; percentiles are computed in Go.
-	delays := map[int64][]int64{}
-	if err := s.collectInts(delays, `
-SELECT node, ms FROM sample WHERE ts >= ? AND kind = ? AND ok = 1`,
-		fromMS, int(KindProbe)); err != nil {
-		return err
-	}
-	for id, ms := range delays {
-		if st := get(id); st != nil {
-			st.DelayAvgMS = avgMS(ms)
-			st.DelayP50MS = percentile(ms, 50)
-			st.DelayP95MS = percentile(ms, 95)
+	if includeSamples {
+		join, where, args = nodeWhere("sample", "ts", fromMS, filters, "sample.kind = ? AND sample.ok = 1", int(KindProbe))
+		delays := map[int64][]int64{}
+		if err := collectInts(q, delays, `SELECT sample.node, sample.ms FROM sample `+join+where, args...); err != nil {
+			return err
+		}
+		for id, ms := range delays {
+			if st := get(id); st != nil {
+				st.DelayP50MS = percentile(ms, 50)
+				st.DelayP95MS = percentile(ms, 95)
+			}
+		}
+
+		join, where, args = nodeWhere("sample", "ts", fromMS, filters, "sample.kind = ? AND sample.ok = 1 AND sample.ms > 0", int(KindThroughput))
+		rates := map[int64][]int64{}
+		if err := collectInts(q, rates, `SELECT sample.node, sample.bytes * 1000 / sample.ms / 1024 FROM sample `+join+where, args...); err != nil {
+			return err
+		}
+		for id, values := range rates {
+			if st := get(id); st != nil {
+				st.ThroughputP50KBps = percentile(values, 50)
+				st.ThroughputMaxKBps = percentile(values, 100)
+			}
 		}
 	}
 
-	// Dial time of each OK dial.
-	dials := map[int64][]int64{}
-	if err := s.collectInts(dials, `
-SELECT node, ms FROM sample WHERE ts >= ? AND kind = ? AND ok = 1`,
-		fromMS, int(KindDial)); err != nil {
-		return err
-	}
-	for id, ms := range dials {
-		if st := get(id); st != nil {
-			st.DialAvgMS = avgMS(ms)
-		}
-	}
-
-	// Throughput rate of each window, KiB/s.
-	rates := map[int64][]int64{}
-	if err := s.collectInts(rates, `
-SELECT node, bytes * 1000 / ms / 1024 FROM sample
-WHERE ts >= ? AND kind = ? AND ok = 1 AND ms > 0`,
-		fromMS, int(KindThroughput)); err != nil {
-		return err
-	}
-	for id, r := range rates {
-		if st := get(id); st != nil {
-			st.ThroughputP50KBps = percentile(r, 50)
-			st.ThroughputMaxKBps = percentile(r, 100)
-		}
-	}
-
-	// Total bytes, latest sample and latest OK probe or dial of the window.
-	if err := s.scanSum(fromMS, "SELECT node, SUM(bytes) FROM sample WHERE ts >= ? GROUP BY node",
+	join, where, args = nodeWhere("sample", "ts", fromMS, filters, "")
+	if err := scanSum(q, args, `SELECT sample.node, SUM(sample.bytes) FROM sample `+join+where+` GROUP BY sample.node`,
 		func(id, v int64) {
 			if st := get(id); st != nil {
 				st.Bytes = v
@@ -215,7 +239,7 @@ WHERE ts >= ? AND kind = ? AND ok = 1 AND ms > 0`,
 		}); err != nil {
 		return err
 	}
-	if err := s.scanSum(fromMS, "SELECT node, MAX(ts) FROM sample WHERE ts >= ? GROUP BY node",
+	if err := scanSum(q, args, `SELECT sample.node, MAX(sample.ts) FROM sample `+join+where+` GROUP BY sample.node`,
 		func(id, v int64) {
 			if st := get(id); st != nil {
 				st.LastSeen = time.UnixMilli(v).UTC()
@@ -223,24 +247,21 @@ WHERE ts >= ? AND kind = ? AND ok = 1 AND ms > 0`,
 		}); err != nil {
 		return err
 	}
-	return s.scanSum(fromMS, `
-SELECT node, MAX(ts) FROM sample WHERE ts >= ? AND ok = 1 AND kind IN (?, ?) GROUP BY node`,
+	join, where, args = nodeWhere("sample", "ts", fromMS, filters, "sample.ok = 1 AND sample.kind IN (?, ?)", int(KindProbe), int(KindDial))
+	return scanSum(q, args, `SELECT sample.node, MAX(sample.ts) FROM sample `+join+where+` GROUP BY sample.node`,
 		func(id, v int64) {
 			if st := get(id); st != nil {
 				st.LastOK = time.UnixMilli(v).UTC()
 			}
-		},
-		int(KindProbe), int(KindDial))
+		})
 }
 
-// queryHourly fills the aggregates from the hourly table of the window;
-// percentiles and throughput are not available there.
-func (s *Store) queryHourly(fromHour int64, byID map[int64]*nodeMeta, acc map[int64]*NodeStats) error {
-	// accFor creates the accumulator for a known node on first use, so a
-	// node with only throughput rows is reported too.
+// queryHourly adds the aggregates from folded hourly rows; means are combined
+// with any exact raw means and percentiles remain unavailable for the window.
+func (s *Store) queryHourly(q querier, fromHour int64, filters Query, byID map[int64]*nodeMeta, acc map[int64]*NodeStats, means map[int64]*nodeMeans) error {
 	accFor := func(id int64) *NodeStats {
 		if _, ok := byID[id]; !ok {
-			return nil // filtered out
+			return nil
 		}
 		st, ok := acc[id]
 		if !ok {
@@ -251,9 +272,10 @@ func (s *Store) queryHourly(fromHour int64, byID map[int64]*nodeMeta, acc map[in
 		return st
 	}
 
-	rows, err := s.db.Query(`
-SELECT node, kind, SUM(n), SUM(ok), SUM(ms_sum) FROM hourly
-WHERE hour >= ? AND kind IN (?, ?) GROUP BY node, kind`, fromHour, int(KindProbe), int(KindDial))
+	join, where, args := nodeWhere("hourly", "hour", fromHour, filters, "hourly.kind IN (?, ?)", int(KindProbe), int(KindDial))
+	rows, err := q.Query(`
+SELECT hourly.node, hourly.kind, SUM(hourly.n), SUM(hourly.ok), SUM(hourly.ms_sum)
+FROM hourly `+join+where+` GROUP BY hourly.node, hourly.kind`, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query hourly: %w", err)
 	}
@@ -265,16 +287,23 @@ WHERE hour >= ? AND kind IN (?, ?) GROUP BY node, kind`, fromHour, int(KindProbe
 		}
 		st := accFor(id)
 		if st == nil {
-			continue // filtered out
+			continue
 		}
-		avg := int64(0)
-		if ok > 0 {
-			avg = msSum / ok
+		mean := means[id]
+		if mean == nil {
+			mean = &nodeMeans{}
+			means[id] = mean
 		}
 		if kind == int64(KindProbe) {
-			st.Probes, st.ProbesOK, st.DelayAvgMS = int(n), int(ok), avg
+			st.Probes += int(n)
+			st.ProbesOK += int(ok)
+			mean.probeSum += msSum
+			mean.probeOK += ok
 		} else {
-			st.Dials, st.DialsOK, st.DialAvgMS = int(n), int(ok), avg
+			st.Dials += int(n)
+			st.DialsOK += int(ok)
+			mean.dialSum += msSum
+			mean.dialOK += ok
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -283,32 +312,49 @@ WHERE hour >= ? AND kind IN (?, ?) GROUP BY node, kind`, fromHour, int(KindProbe
 	}
 	rows.Close()
 
-	if err := s.scanSum(fromHour, "SELECT node, SUM(bytes) FROM hourly WHERE hour >= ? GROUP BY node",
+	join, where, args = nodeWhere("hourly", "hour", fromHour, filters, "")
+	if err := scanSum(q, args, `SELECT hourly.node, SUM(hourly.bytes) FROM hourly `+join+where+` GROUP BY hourly.node`,
 		func(id, v int64) {
 			if st := accFor(id); st != nil {
-				st.Bytes = v
+				st.Bytes += v
 			}
 		}); err != nil {
 		return err
 	}
-	// LastOK is the latest hourly row; LastSeen comes from node.last_seen.
-	if err := s.scanSum(fromHour, "SELECT node, MAX(hour) FROM hourly WHERE hour >= ? GROUP BY node",
+	if err := scanSum(q, args, `SELECT hourly.node, MAX(hourly.hour) FROM hourly `+join+where+` GROUP BY hourly.node`,
 		func(id, v int64) {
 			if st := accFor(id); st != nil {
-				st.LastOK = time.Unix(v*3600, 0).UTC()
+				at := time.Unix(v*3600, 0).UTC()
+				if at.After(st.LastOK) {
+					st.LastOK = at
+				}
 			}
 		}); err != nil {
 		return err
 	}
 	for id, st := range acc {
-		st.LastSeen = byID[id].lastSeen
+		if seen := byID[id].lastSeen; seen.After(st.LastSeen) {
+			st.LastSeen = seen
+		}
 	}
 	return nil
 }
 
+// nodeWhere builds the time and node-filter predicates for measurement SQL.
+func nodeWhere(table, timeColumn string, from int64, filters Query, extra string, extraArgs ...any) (string, string, []any) {
+	join, predicates, args := nodeFilter(table, filters)
+	predicates = append(predicates, fmt.Sprintf("%s.%s >= ?", table, timeColumn))
+	args = append(args, from)
+	if extra != "" {
+		predicates = append(predicates, extra)
+		args = append(args, extraArgs...)
+	}
+	return join, " WHERE " + strings.Join(predicates, " AND "), args
+}
+
 // collectInts runs query with args and appends the second column per node id.
-func (s *Store) collectInts(out map[int64][]int64, query string, args ...any) error {
-	rows, err := s.db.Query(query, args...)
+func collectInts(q querier, out map[int64][]int64, query string, args ...any) error {
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query samples: %w", err)
 	}
@@ -323,11 +369,9 @@ func (s *Store) collectInts(out map[int64][]int64, query string, args ...any) er
 	return rows.Err()
 }
 
-// scanSum runs a (node, value) query whose first parameter is the window
-// start and applies fn per row.
-func (s *Store) scanSum(from int64, query string, fn func(id, v int64), args ...any) error {
-	all := append([]any{from}, args...)
-	rows, err := s.db.Query(query, all...)
+// scanSum runs a (node, value) query and applies fn per row.
+func scanSum(q querier, args []any, query string, fn func(id, v int64)) error {
+	rows, err := q.Query(query, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query aggregate: %w", err)
 	}
@@ -340,18 +384,6 @@ func (s *Store) scanSum(from int64, query string, fn func(id, v int64), args ...
 		fn(id, v)
 	}
 	return rows.Err()
-}
-
-// avgMS is the truncating integer mean.
-func avgMS(v []int64) int64 {
-	if len(v) == 0 {
-		return 0
-	}
-	var sum int64
-	for _, x := range v {
-		sum += x
-	}
-	return sum / int64(len(v))
 }
 
 // percentile is the nearest rank on the sorted slice: index
