@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/tui"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -121,6 +122,100 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	}
 	if providerCardValue(s, "pre") != "inherited" || providerCardValue(s, "post") != "inherited" {
 		t.Fatalf("card after clear: pre=%q post=%q", providerCardValue(s, "pre"), providerCardValue(s, "post"))
+	}
+}
+
+func TestProviderClearHopTargetsSelectionAtCreation(t *testing.T) {
+	for _, side := range []string{"pre", "post"} {
+		t.Run(side, func(t *testing.T) {
+			alphaPre, alphaPost := "http://alpha-pre.invalid:8080", "http://alpha-post.invalid:8081"
+			betaPre, betaPost := "http://beta-pre.invalid:8082", "http://beta-post.invalid:8083"
+			h := providerSeed(t,
+				config.Subscription{Name: "alpha", URL: "https://alpha.invalid", PreSOCKS5: alphaPre, PostSOCKS5: alphaPost},
+				config.Subscription{Name: "beta", URL: "https://beta.invalid", PreSOCKS5: betaPre, PostSOCKS5: betaPost},
+			)
+			s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+			drainProvider(s, s.Init())
+			if s.selected != "alpha" {
+				t.Fatalf("initial selection = %q, want alpha", s.selected)
+			}
+
+			var heldWorker func() tea.Msg
+			s.env.Background = func(label string, work func() tea.Msg) tea.Cmd {
+				heldWorker = work
+				return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
+			}
+			var calledHome, calledName string
+			var calledOptions ProviderUpdateOptions
+			update := s.updateProvider
+			s.updateProvider = func(home, name string, options ProviderUpdateOptions) error {
+				calledHome, calledName, calledOptions = home, name, options
+				return update(home, name, options)
+			}
+
+			cmd := s.clearHop(side)
+			if heldWorker == nil || cmd == nil {
+				t.Fatal("clear did not schedule a held background worker")
+			}
+			_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+			if s.selected != "beta" || s.selectedName() != "beta" {
+				t.Fatalf("selection after Down = screen %q, list %q; want beta", s.selected, s.selectedName())
+			}
+
+			background := cmd()
+			wrapped, ok := background.(tui.BackgroundMsg)
+			if !ok {
+				t.Fatalf("background result = %T, want tui.BackgroundMsg", background)
+			}
+			result, ok := wrapped.Value.(providerResultMsg)
+			if !ok {
+				t.Fatalf("worker result = %T, want providerResultMsg", wrapped.Value)
+			}
+			if result.kind != "edit" || result.value != "alpha" || result.err != nil {
+				t.Fatal("clear worker did not return a successful result for its captured target")
+			}
+			if calledHome != h || calledName != "alpha" {
+				t.Fatalf("ProviderUpdate target home=%q name=%q, want %q alpha", calledHome, calledName, h)
+			}
+			if side == "pre" {
+				if calledOptions.Pre == nil || *calledOptions.Pre != "" || calledOptions.Post != nil {
+					t.Fatalf("clear-pre options = %+v, want only empty Pre", calledOptions)
+				}
+			} else if calledOptions.Post == nil || *calledOptions.Post != "" || calledOptions.Pre != nil {
+				t.Fatalf("clear-post options = %+v, want only empty Post", calledOptions)
+			}
+
+			_, load := s.Update(background)
+			if load == nil || s.pendingSelect != "alpha" {
+				t.Fatalf("successful edit pending selection = %q, load command = %v; want alpha and load", s.pendingSelect, load != nil)
+			}
+			_, loadResult := s.Update(load())
+			if loadResult != nil {
+				t.Fatalf("provider list result unexpectedly scheduled another command: %v", loadResult)
+			}
+			if s.selected != "alpha" {
+				t.Fatalf("selection after edit result = %q, want edited provider alpha", s.selected)
+			}
+
+			cfg, err := loadConfig(h)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make(map[string]config.Subscription, len(cfg.Subscriptions))
+			for _, sub := range cfg.Subscriptions {
+				got[sub.Name] = sub
+			}
+			if side == "pre" {
+				if got["alpha"].PreSOCKS5 != "" || got["alpha"].PostSOCKS5 != alphaPost {
+					t.Fatal("clear-pre changed the wrong alpha hop")
+				}
+			} else if got["alpha"].PostSOCKS5 != "" || got["alpha"].PreSOCKS5 != alphaPre {
+				t.Fatal("clear-post changed the wrong alpha hop")
+			}
+			if got["beta"].PreSOCKS5 != betaPre || got["beta"].PostSOCKS5 != betaPost {
+				t.Fatal("clear changed beta's hops")
+			}
+		})
 	}
 }
 

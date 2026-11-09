@@ -213,6 +213,11 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
+  Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
+  filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read
+  could overwrite a newer grouping or filter; and "Clear pre-hop" or "Clear post-hop" applied to the
+  provider selected when the save ran instead of the one you chose. Each now keeps its own target.
 - **A node whose connections mostly got no answer is a `WARN` in the one-minute line too, not only
   in the hourly summary.** `138 connections ended, 1 broken, 127 without an answer` was an `INFO` line,
   and a minute with no broken connection at all produced no line for the node. Now at least 20

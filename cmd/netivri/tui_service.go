@@ -134,7 +134,11 @@ func (s *serviceScreen) tickCmd() tea.Cmd {
 	if wait == nil {
 		wait = tea.Tick
 	}
-	return wait(3*time.Second, func(time.Time) tea.Msg { return serviceTick{} })
+	timer := wait(3*time.Second, func(time.Time) tea.Msg { return serviceTick{} })
+	if timer == nil {
+		return nil
+	}
+	return s.bg("Service refresh timer", func() tea.Msg { return timer() })
 }
 func (s *serviceScreen) Init() tea.Cmd { return tea.Batch(s.probeCmd(), s.tickCmd()) }
 

@@ -87,7 +87,7 @@ func newLogsScreen(home string, env tui.Env) tui.Screen {
 }
 
 func (s *logsScreen) Title() string        { return "Logs" }
-func (s *logsScreen) CapturingInput() bool { return s.dialog != nil }
+func (s *logsScreen) CapturingInput() bool { return s.dialog != nil || s.list.Filtering }
 func (s *logsScreen) Breadcrumb() string {
 	if s.width < 100 && s.workspace.Drilled {
 		return "Logs / " + s.workspace.Card.Title
@@ -145,7 +145,11 @@ func (s *logsScreen) tickCmd() tea.Cmd {
 	if wait == nil {
 		wait = tea.Tick
 	}
-	return wait(angel.FollowEvery, func(time.Time) tea.Msg { return logsTick{} })
+	timer := wait(angel.FollowEvery, func(time.Time) tea.Msg { return logsTick{} })
+	if timer == nil {
+		return nil
+	}
+	return s.bg("Log follow timer", func() tea.Msg { return timer() })
 }
 
 func (s *logsScreen) query() (angel.LogQuery, error) {
