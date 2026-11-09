@@ -63,6 +63,16 @@ as a budget that only goes down. See [`design/parity.md`](design/parity.md).
   on the rendered text with ANSI stripped and on the config read back from a
   temporary home. Send keys as real key messages (`tea.KeyPressMsg{Code:
   tea.KeySpace}`; a message with only `Text: " "` is not a space press).
+- **Failure-only diagnostics.** Where a test can fail for a reason its
+  assertion does not show (a process that vanished, a flaky end-to-end flow),
+  register the detail with `testutil.LogOnFail(t, title, report)`: it is
+  logged only if the test failed and costs nothing on a green run. Register
+  it after the cleanup that stops what the report reads (cleanups run last
+  in, first out). Every end-to-end `startUp` already does this: a failed test
+  prints how the angel process ended, the tail of its log, the crash dumps
+  of its home and its `status --full`, redacted like all test output. A
+  failure helper must name the primary error before any check that can stop
+  the test early (such as the secret scan).
 - **Table-driven** tests where the cases are natural.
 - **No real internet.** Anything network-facing is tested against a local
   fake HTTP/SOCKS server on loopback.

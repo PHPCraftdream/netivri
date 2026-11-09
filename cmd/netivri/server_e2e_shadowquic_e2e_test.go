@@ -559,6 +559,9 @@ func e2eShadowQUICWaitStatus(t *testing.T, ctx context.Context, home string, wan
 
 func e2eShadowQUICFailure(t *testing.T, homeA, homeB string, err error, secrets ...string) {
 	t.Helper()
+	// The checks below stop the test on a possible secret in the output (a short
+	// secret can match by chance), so name the real failure first.
+	t.Logf("ShadowQUIC echo failed (primary error, redacted): %s", e2eRedactDiagnostic(err.Error()))
 	codeA, statusA, stderrA := accountsRun(t, homeA, "status", "--full")
 	codeB, statusB, stderrB := accountsRun(t, homeB, "status", "--full")
 	assertNoSecrets(t, statusA, stderrA, append(e2eShadowQUICAccountSecrets(t, homeA), secrets...)...)

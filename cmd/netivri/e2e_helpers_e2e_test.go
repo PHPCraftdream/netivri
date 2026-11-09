@@ -27,6 +27,7 @@ import (
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 const (
@@ -157,6 +158,64 @@ func upProcReport(home string) string {
 	return state + "\n" + e2eTail("stderr", p.Stderr(), 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
 }
 
+// e2eAngelFailureReport is the detail shown only when a test that started the
+// angel failed: how the process ended, the tail of its log (a foreground angel
+// logs to stderr), the crash dumps of the home and its live status, all
+// redacted. It must not fail the test and must not wait long.
+func e2eAngelFailureReport(home string, p *upProc) string {
+	p.exitMu.Lock()
+	state := "running"
+	if p.exited {
+		state = fmt.Sprintf("exited (%v)", p.exitErr)
+	}
+	p.exitMu.Unlock()
+	var b strings.Builder
+	fmt.Fprintf(&b, "angel process: %s\n", state)
+	b.WriteString(e2eTail("angel log (stderr)", p.Stderr(), 200))
+	b.WriteString("\n" + e2eTail("stdout", p.Stdout(), 10))
+	b.WriteString("\ncrash dumps: " + e2eRedactDiagnostic(e2eCrashDumps(home)))
+	code, out, errOut, err := angelExec(home, "status", "--full")
+	switch {
+	case err != nil:
+		fmt.Fprintf(&b, "\nstatus --full: %v", err)
+	case code != 0:
+		fmt.Fprintf(&b, "\nstatus --full exit %d:\n%s", code, e2eTail("status", out+errOut, 20))
+	default:
+		b.WriteString("\n" + e2eTail("status --full", out, 80))
+	}
+	return b.String()
+}
+
+// e2eCrashDumps names the crash dumps of the angel of home and shows the head
+// of the newest one, so a vanished angel leaves its reason in the test log.
+func e2eCrashDumps(home string) string {
+	dir := filepath.Join(home, "run", "crash")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "none (" + err.Error() + ")"
+	}
+	var names []string
+	newest := ""
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+		if strings.HasSuffix(entry.Name(), ".txt") && entry.Name() > newest {
+			newest = entry.Name()
+		}
+	}
+	out := strings.Join(names, ", ")
+	if newest == "" {
+		return out
+	}
+	data, err := os.ReadFile(filepath.Join(dir, newest))
+	if err != nil {
+		return out
+	}
+	if len(data) > 3000 {
+		data = data[:3000]
+	}
+	return out + "\n" + string(data)
+}
+
 var e2eURLPattern = regexp.MustCompile(`\S*://\S+`)
 var e2eUUIDPattern = regexp.MustCompile(`(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 var e2eTokenPattern = regexp.MustCompile(`\b[A-Za-z0-9_-]{32,}\b`)
@@ -249,6 +308,8 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	// Cleanup registered immediately after Start: any failure below must
 	// not leave the child running.
 	t.Cleanup(p.Stop)
+	// Registered after Stop, so it runs first, while the angel can still answer.
+	testutil.LogOnFail(t, "angel diagnostics ("+filepath.Base(home)+")", func() string { return e2eAngelFailureReport(home, p) })
 	upProcsMu.Lock()
 	upProcs[home] = p
 	upProcsMu.Unlock()
