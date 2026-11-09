@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -564,6 +565,120 @@ func TestStartCoreRetriesOnlyWhileThePortIsBusy(t *testing.T) {
 	}
 	if _, err := startCore(t.Context(), core.Options{}); err == nil || calls != portRetries {
 		t.Fatalf("always busy: err=%v calls=%d, want %d calls and the error", err, calls, portRetries)
+	}
+}
+
+func TestWatchRetriesReplacementAfterBusyPortIsFreed(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+	busyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	busyPort := portOf(busyListener.Addr().String())
+	f.l.mu.Lock()
+	currentPort := f.l.actualPort
+	f.l.mu.Unlock()
+	for busyPort == currentPort {
+		if err := busyListener.Close(); err != nil {
+			t.Fatal(err)
+		}
+		busyListener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		busyPort = portOf(busyListener.Addr().String())
+	}
+	t.Cleanup(func() { _ = busyListener.Close() })
+
+	var occupied atomic.Bool
+	occupied.Store(true)
+	oldStart, oldPortRetryWait := coreStart, portRetryWait
+	portRetryWait = 0
+	busyErr := &cli.Error{Code: "PORT_IN_USE", Message: "busy", Exit: cli.ExitConflict}
+	var busyAttempts atomic.Int32
+	coreStart = func(ctx context.Context, o core.Options) (coreInstance, error) {
+		if o.Port == busyPort && occupied.Load() {
+			busyAttempts.Add(1)
+			return nil, busyErr
+		}
+		return oldStart(ctx, o)
+	}
+	t.Cleanup(func() { coreStart, portRetryWait = oldStart, oldPortRetryWait })
+
+	ticks, polled := make(chan time.Time), make(chan struct{}, 1)
+	f.l.watchTickC, f.l.watchPollDone = ticks, polled
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		f.l.watch(ctx, time.Second)
+		close(done)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("the watcher did not stop")
+		}
+	})
+	poll := func() {
+		t.Helper()
+		select {
+		case ticks <- time.Time{}:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the watcher did not accept a poll")
+		}
+		select {
+		case <-polled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the watcher did not finish its poll")
+		}
+	}
+
+	poll() // let the watcher finish its initial reload before editing files
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Listen.Port = busyPort
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	poll() // establish a pending signature
+	poll() // fail the replacement, then restore the running core
+	if f.script.calls() != 2 {
+		t.Fatalf("successful starts while port is busy = %d, want initial core and rollback", f.script.calls())
+	}
+	if got := busyAttempts.Load(); got != portRetries {
+		t.Fatalf("busy replacement attempts = %d, want %d", got, portRetries)
+	}
+	if f.script.inst(1).isClosed() {
+		t.Fatal("rollback core is not running while the replacement port is busy")
+	}
+	if f.reloads() != 0 {
+		t.Fatalf("reloads after failed replacement = %d, want 0", f.reloads())
+	}
+	if err := busyListener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	occupied.Store(false)
+	poll() // retry the unchanged signature; replacement succeeds after port release
+	if got := f.script.calls(); got != 3 {
+		t.Fatalf("successful starts after port release = %d, want initial, rollback and application", got)
+	}
+	if got := f.script.call(2).Port; got != busyPort || f.reloads() != 1 {
+		t.Fatalf("applied start port = %d reloads = %d, want %d and one reload", f.script.call(2).Port, f.reloads(), busyPort)
+	}
+	f.l.mu.Lock()
+	appliedPort := f.l.applied.cfg.Listen.Port
+	appliedServer := onlyRoute(f.l.applied.pool.nodes)[0]["server"]
+	f.l.mu.Unlock()
+	if appliedPort != busyPort || appliedServer != "192.0.2.1" {
+		t.Fatalf("applied config port=%d node=%v, want port %d and requested node", appliedPort, appliedServer, busyPort)
+	}
+	poll()
+	if got := f.script.calls(); got != 3 {
+		t.Fatalf("unchanged applied config caused another start: %d", got)
 	}
 }
 

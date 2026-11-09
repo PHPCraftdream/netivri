@@ -847,3 +847,262 @@ func TestNodeLogOutageDemotesFirstTierRepeats(t *testing.T) {
 		t.Errorf("%d INFO lines of a first-tier node during the outage, want 0: %q", got, f.lines)
 	}
 }
+
+func TestNodeLogOutageStateSurvivesRouteRefresh(t *testing.T) {
+	f := newBurstFixture(t, 12).withDebug()
+	f.slowly(0, 6)
+	infos := make([]stats.NodeInfo, 0, len(f.log.byLabel))
+	for label, n := range f.log.byLabel {
+		if label == "p/n3" {
+			n.Label, n.Provider = "q/n3", "q"
+		}
+		infos = append(infos, n)
+	}
+	f.log.refresh(infos, nil)
+	if !f.log.outage || len(f.log.downNow) != 6 {
+		t.Fatalf("outage state after refresh: outage=%v down=%d", f.log.outage, len(f.log.downNow))
+	}
+	warns := f.count("WARN")
+	f.log.event(core.NodeEvent{Label: "p/n6", Down: true, Reason: "timeout"})
+	if f.count("WARN") != warns || f.count("DEBUG node p/n6") != 1 {
+		t.Fatalf("refreshed outage did not suppress per-node warning: %q", f.lines)
+	}
+	for i := 0; i < 5; i++ {
+		if i == 3 {
+			f.log.event(core.NodeEvent{Label: "q/n3", Downtime: time.Minute})
+		} else {
+			f.back(i, time.Minute)
+		}
+	}
+	if !strings.HasPrefix(f.lines[len(f.lines)-1], "INFO node outage over: up to 7 of 12 servers were down, 2 still down, after ") {
+		t.Fatalf("outage closing summary after refresh: %q", f.lines[len(f.lines)-1])
+	}
+}
+
+func TestNodeLogRefreshClosesPrunedOutageWithoutBackEvent(t *testing.T) {
+	f := newBurstFixture(t, 12)
+	f.slowly(0, 6)
+	if !f.log.outage || len(f.log.downNow) != 6 {
+		t.Fatalf("fixture outage: active=%v down=%d", f.log.outage, len(f.log.downNow))
+	}
+
+	infos := make([]stats.NodeInfo, 0, 6)
+	for i := 6; i < 12; i++ {
+		infos = append(infos, f.log.byLabel[fmt.Sprintf("p/n%d", i)])
+	}
+	f.log.refresh(infos, nil)
+	want := "INFO node outage over: up to 6 of 6 servers were down, 0 still down, after 1m0s"
+	if got := f.count("INFO node outage over:"); got != 1 || f.lines[len(f.lines)-1] != want {
+		t.Fatalf("outage reconciliation after refresh: count=%d last=%q, want %q", got, f.lines[len(f.lines)-1], want)
+	}
+	f.log.refresh(infos, nil)
+	if got := f.count("INFO node outage over:"); got != 1 || f.log.outage {
+		t.Fatalf("outage closed more than once or remained active: count=%d active=%v", got, f.log.outage)
+	}
+
+	f.now = f.now.Add(burstWindow + time.Second)
+	f.down(6, "timeout")
+	if got := f.lines[len(f.lines)-1]; got != "WARN node p/n6 (provider p, country DE) is down: timeout" {
+		t.Errorf("retained-node failure after outage: %q", got)
+	}
+}
+
+func TestNodeLogRefreshPrunesNeverNodesBeforeOutageDenominator(t *testing.T) {
+	f := newBurstFixture(t, 13)
+	for i := 6; i < 13; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	f.slowly(0, 6)
+	if !f.log.outage || f.log.live() != 6 {
+		t.Fatalf("fixture live/outage: live=%d active=%v", f.log.live(), f.log.outage)
+	}
+	for i := 0; i < 4; i++ {
+		f.back(i, time.Minute)
+	}
+	if !f.log.outage || f.log.live() != 6 || len(f.log.downNow) != 2 {
+		t.Fatalf("outage before refresh: live=%d down=%d active=%v", f.log.live(), len(f.log.downNow), f.log.outage)
+	}
+
+	infos := make([]stats.NodeInfo, 0, 13)
+	for i := 0; i < 6; i++ {
+		infos = append(infos, f.log.byLabel[fmt.Sprintf("p/n%d", i)])
+	}
+	for i := 6; i < 10; i++ {
+		infos = append(infos, f.log.byLabel[fmt.Sprintf("p/n%d", i)])
+	}
+	for i := 0; i < 3; i++ {
+		infos = append(infos, stats.NodeInfo{Label: fmt.Sprintf("q/new%d", i), Provider: "q", Country: "DE"})
+	}
+	f.log.refresh(infos, nil)
+	if len(f.log.never) != 4 || f.log.live() != 9 {
+		t.Errorf("never pruning did not update live denominator: never=%d live=%d, want 4 and 9", len(f.log.never), f.log.live())
+	}
+	if got := f.count("INFO node outage over:"); got != 1 || !strings.HasPrefix(f.lines[len(f.lines)-1], "INFO node outage over: up to 6 of 9 servers were down, 2 still down, after ") || f.log.outage {
+		t.Errorf("outage reconciliation after never pruning: count=%d active=%v last=%q", got, f.log.outage, f.lines[len(f.lines)-1])
+	}
+}
+
+func TestNodeLogRefreshUpdatesMetadataAndTier(t *testing.T) {
+	f := newBurstFixture(t, 2)
+	f.log.first = map[string]bool{"p/n0": true}
+	f.down(0, "timeout")
+	f.log.refresh([]stats.NodeInfo{
+		{Label: "p/n0", Provider: "new-provider", Country: "NL", Name: "new-name"},
+		{Label: "p/n1", Provider: "p", Country: "DE"},
+	}, map[string]bool{})
+	f.now = f.now.Add(time.Minute)
+	f.back(0, time.Minute)
+	f.now = f.now.Add(time.Minute)
+	f.down(0, "timeout")
+	if got := f.lines[len(f.lines)-1]; got != "INFO node p/n0 (new-name, provider new-provider, country NL) is down: timeout" {
+		t.Errorf("updated metadata/tier line = %q", got)
+	}
+}
+
+func TestNodeLogRefreshPrunesRemovedServerState(t *testing.T) {
+	f := newBurstFixture(t, 6)
+	f.down(0, "timeout")
+	f.log.event(core.NodeEvent{Label: "p/n1", Down: true, NeverOK: true, Reason: "timeout"})
+	for i := 0; i < 3; i++ {
+		f.down(2, "timeout")
+		f.back(2, time.Second)
+		f.now = f.now.Add(time.Minute)
+	}
+	f.now = f.now.Add(burstWindow + time.Second)
+	for i := 3; i < 6; i++ {
+		f.down(i, "timeout")
+	}
+	if len(f.log.burst) != 3 || !f.log.flapping["n2"] || len(f.log.neverLabels) != 1 {
+		t.Fatalf("fixture state: burst=%v flapping=%v never=%v", f.log.burst, f.log.flapping, f.log.neverLabels)
+	}
+	f.log.refresh([]stats.NodeInfo{
+		{Label: "q/n3", Provider: "q", Country: "DE"},
+		{Label: "p/n4", Provider: "p", Country: "DE"},
+		{Label: "p/n5", Provider: "p", Country: "DE"},
+	}, nil)
+	for id := range f.log.drops {
+		if id == "n0" || id == "n1" || id == "n2" {
+			t.Errorf("removed server %s retained flap history", id)
+		}
+	}
+	for _, states := range []map[string]drop{f.log.lastDown, f.log.lastNever, f.log.lastBack} {
+		for id := range states {
+			if id == "n0" || id == "n1" || id == "n2" {
+				t.Errorf("removed server %s retained keyed drop state", id)
+			}
+		}
+	}
+	for _, states := range []map[string]struct{}{f.log.downNow, f.log.never, f.log.neverLabels} {
+		for id := range states {
+			if id == "n0" || id == "n1" || id == "n2" {
+				t.Errorf("removed server %s retained keyed state", id)
+			}
+		}
+	}
+	lines := len(f.lines)
+	f.log.event(core.NodeEvent{Label: "p/n1", Down: true, NeverOK: true, Reason: "timeout"})
+	neverPresent := false
+	_, neverPresent = f.log.never["n1"]
+	if len(f.lines) != lines || neverPresent || f.log.lastNever["n1"].label != "" {
+		t.Errorf("late event from removed node changed logger state: %q", f.lines[lines:])
+	}
+	burstN3 := false
+	_, burstN3 = f.log.burst["n3"]
+	if f.log.flapping["n2"] || f.log.neverMeta["n1"].label != "" || len(f.log.window) != 3 || len(f.log.burst) != 3 || !containsLabel(f.log.window, "q/n3") || !burstN3 {
+		t.Errorf("removed server state survived refresh: flapping=%v never=%v window=%v burst=%v", f.log.flapping, f.log.neverMeta, f.log.window, f.log.burst)
+	}
+}
+
+func containsLabel(labels []string, want string) bool {
+	for _, label := range labels {
+		if label == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestNodeLogRefreshSerializesAnInFlightEvent(t *testing.T) {
+	now := time.Unix(10_000, 0)
+	entered, release := make(chan struct{}), make(chan struct{})
+	block := func(string, ...any) { close(entered); <-release }
+	l := newNodeLog([]stats.NodeInfo{{Label: "p/n0", Provider: "p", Country: "DE"}}, block, block, func() time.Time { return now })
+	eventDone := make(chan struct{})
+	go func() {
+		l.event(core.NodeEvent{Label: "p/n0", Down: true, Reason: "timeout"})
+		close(eventDone)
+	}()
+	<-entered
+	refreshStarted, refreshDone := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(refreshStarted)
+		l.refresh([]stats.NodeInfo{{Label: "p/n0", Provider: "p2", Country: "US", Name: "updated"}}, nil)
+		close(refreshDone)
+	}()
+	<-refreshStarted
+	close(release)
+	<-eventDone
+	<-refreshDone
+	if len(l.drops["n0"]) != 1 || l.byLabel["p/n0"].Country != "US" {
+		t.Fatalf("in-flight event or refresh lost: drops=%v metadata=%+v", l.drops["n0"], l.byLabel["p/n0"])
+	}
+}
+
+func TestNodeLogRefreshPreservesBurstPeak(t *testing.T) {
+	f := newBurstFixture(t, 6)
+	for i := 0; i < 4; i++ {
+		f.down(i, "timeout")
+	}
+	f.back(0, time.Second)
+	if f.log.burstSize != 4 || len(f.log.burst) != 3 {
+		t.Fatalf("burst before refresh: peak=%d current=%d", f.log.burstSize, len(f.log.burst))
+	}
+	infos := make([]stats.NodeInfo, 0, len(f.log.byLabel))
+	for _, n := range f.log.byLabel {
+		infos = append(infos, n)
+	}
+	f.log.refresh(infos, nil)
+	if f.log.burstSize != 4 || len(f.log.burst) != 3 {
+		t.Fatalf("refresh lost burst peak: peak=%d current=%d", f.log.burstSize, len(f.log.burst))
+	}
+	for i := 1; i < 4; i++ {
+		f.back(i, time.Second)
+	}
+	if got := f.lines[len(f.lines)-1]; got != "INFO node burst over: 4 nodes were down, all back after 0s" {
+		t.Errorf("burst close after refresh = %q", got)
+	}
+}
+
+func TestNodeLogRefreshRetainsFlappingAndNeverAnsweredState(t *testing.T) {
+	f := newBurstFixture(t, 6).withDebug()
+	for i := 0; i < 2; i++ {
+		f.down(0, "timeout")
+		f.back(0, time.Second)
+		f.now = f.now.Add(time.Minute)
+	}
+	for i := 1; i <= 4; i++ {
+		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
+	}
+	infos := make([]stats.NodeInfo, 0, len(f.log.byLabel))
+	for _, n := range f.log.byLabel {
+		n.Country = "US"
+		infos = append(infos, n)
+	}
+	f.log.refresh(infos, nil)
+	if len(f.log.drops["n0"]) != 2 || f.log.flapping["n0"] || f.log.neverSummary != 3 || len(f.log.neverLabels) != 4 {
+		t.Fatalf("retained state changed: drops=%v flapping=%v summary=%d never=%v", f.log.drops["n0"], f.log.flapping["n0"], f.log.neverSummary, f.log.neverLabels)
+	}
+	f.down(0, "timeout")
+	if got := f.countContaining("is flapping: 3 downs"); got != 1 {
+		t.Fatalf("flapping history lost after refresh: %q", f.lines)
+	}
+	f.log.event(core.NodeEvent{Label: "p/n3", Down: true, NeverOK: true, Reason: "timeout"})
+	if got := f.count("DEBUG node p/n3 (provider p, country US) has never answered: timeout"); got != 1 {
+		t.Fatalf("never-answer repeat level/metadata after refresh: %q", f.lines)
+	}
+	f.log.event(core.NodeEvent{Label: "p/n5", Down: true, NeverOK: true, Reason: "timeout"})
+	f.log.flushNow()
+	if got := f.lines[len(f.lines)-1]; got != "INFO 5 servers have never answered since start (timeout x5; US x5); probed rarely, one DEBUG line each" {
+		t.Errorf("never-answer summary after metadata refresh = %q", got)
+	}
+}

@@ -120,9 +120,12 @@ type liveAngel struct {
 	// refreshRuns tracks the failed refreshes in a row by subscription.
 	refreshRuns map[string]*refreshRun
 	// refreshClock is the clock of the refresh log; nil is time.Now.
-	refreshClock  func() time.Time
-	loopsCancel   context.CancelFunc
-	loopsRunning  sync.WaitGroup
+	refreshClock func() time.Time
+	loopsCancel  context.CancelFunc
+	loopsRunning sync.WaitGroup
+	// watchTickC replaces the real ticker when a test needs deterministic polls.
+	watchTickC    <-chan time.Time
+	watchPollDone chan struct{}
 	retryCancel   context.CancelFunc
 	retryRunning  sync.WaitGroup
 	retryWait     func(context.Context, time.Duration) bool
@@ -214,11 +217,15 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 		nodesLog.asleep = l.sleep().asleep
 		nodeHook = nodesLog.event
 	}
+	optionAuth := a
+	if logged, ok := a.(*loggedAuth); !ok || logged.log != l.connLog() {
+		optionAuth = l.connLog().wrapAuth(a)
+	}
 	return core.Options{
 		HomeDir:               l.opts.Home,
 		Bind:                  d.bind,
 		Port:                  d.port,
-		Authenticator:         l.connLog().wrapAuth(a),
+		Authenticator:         optionAuth,
 		AllowedClients:        config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
 		RouteNodes:            d.pool.nodes,
 		AccountRoute:          d.pool.accountRoutes,
@@ -422,53 +429,115 @@ func updateAccountPolicy(a mihauth.Authenticator, cfg *config.Config) {
 	}
 }
 
+func reloadComparison(a mihauth.Authenticator, applied, candidate desiredState, since uint64) (desiredState, bool, bool) {
+	applied.cfg, candidate.cfg = snapshotReloadCredentials(a, applied.cfg, candidate.cfg, since)
+	same := fingerprint(applied) == fingerprint(candidate)
+	globalPostChanged := applied.cfg.Chain.PostSOCKS5 != candidate.cfg.Chain.PostSOCKS5
+	inPlace := !same && !globalPostChanged && listenerFingerprint(applied) == listenerFingerprint(candidate) &&
+		(((len(applied.pool.accountRoutes) > 0) == (len(candidate.pool.accountRoutes) > 0)) || routesFingerprint(applied) == routesFingerprint(candidate) || (accountClientsFingerprint(applied.cfg) != accountClientsFingerprint(candidate.cfg)))
+	return candidate, same, inPlace
+}
+
+// watchRetryLimit bounds reload attempts for one unchanged file signature.
+// A later file change starts a fresh retry budget.
+const watchRetryLimit = 3
+
+type reloadOutcome uint8
+
+const (
+	reloadHandled reloadOutcome = iota
+	reloadRetry
+)
+
 // reload applies the files on disk when they differ from what runs. A file
 // that does not load, or routes that cannot be built, leave the running core
-// untouched and show up as reload.last_error in the status.
-func (l *liveAngel) reload(ctx context.Context) {
+// untouched and show up as reload.last_error. reloadRetry means the replacement
+// returned PORT_IN_USE after its bounded immediate retries but the previous core
+// was restored, so the watcher may retry.
+func (l *liveAngel) reload(ctx context.Context) reloadOutcome {
 	l.reloadMu.Lock()
 	defer l.reloadMu.Unlock()
 	l.mu.Lock()
 	closed := l.closed
 	l.mu.Unlock()
 	if closed {
-		return
+		return reloadHandled
 	}
+	l.mu.Lock()
+	claimAuth := l.startOpts.Authenticator
+	l.mu.Unlock()
+	claimGeneration := persistClaimGeneration(claimAuth)
 	d, err := l.load()
 	if err != nil {
 		l.noteReloadError("configuration not applied", err)
-		return
+		return reloadHandled
 	}
 	l.mu.Lock()
-	l.latest = d.cfg
 	if d.port == 0 {
 		d.port = l.actualPort
 	}
-	same := fingerprint(l.applied) == fingerprint(d)
+	d, same, inPlace := reloadComparison(l.startOpts.Authenticator, l.applied, d, claimGeneration)
+	l.latest = d.cfg
 	instDown := l.inst == nil
 	if same && !instDown {
 		l.reloadErr = ""
 	}
-	globalPostChanged := l.applied.cfg.Chain.PostSOCKS5 != d.cfg.Chain.PostSOCKS5
-	inPlace := !same && !globalPostChanged && listenerFingerprint(l.applied) == listenerFingerprint(d) &&
-		(((len(l.applied.pool.accountRoutes) > 0) == (len(d.pool.accountRoutes) > 0)) || routesFingerprint(l.applied) == routesFingerprint(d) || (accountClientsFingerprint(l.applied.cfg) != accountClientsFingerprint(d.cfg)))
 	l.mu.Unlock()
 	if instDown {
 		l.mu.Lock()
 		unchangedFailed := l.retryDesired == fingerprint(d)
 		l.mu.Unlock()
 		if unchangedFailed {
-			return
+			return reloadHandled
 		}
-		l.restart(ctx, d)
-		return
+		return l.restart(ctx, d)
 	}
 	switch {
 	case same:
-	case inPlace && l.reconfigure(d):
+	case inPlace && l.reconfigureSince(d, claimGeneration):
 	default:
-		l.restart(ctx, d)
+		return l.restart(ctx, d)
 	}
+	return reloadHandled
+}
+
+type queuedNodeEvents struct {
+	mu      sync.Mutex
+	target  func(core.NodeEvent)
+	pending []core.NodeEvent
+	ready   bool
+}
+
+func (q *queuedNodeEvents) event(ev core.NodeEvent) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if !q.ready {
+		q.pending = append(q.pending, ev)
+		return
+	}
+	if q.target != nil {
+		q.target(ev)
+	}
+}
+
+func (q *queuedNodeEvents) activate() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for _, ev := range q.pending {
+		if q.target != nil {
+			q.target(ev)
+		}
+	}
+	q.pending = nil
+	q.ready = true
+}
+
+func (q *queuedNodeEvents) discard() {
+	q.mu.Lock()
+	q.pending = nil
+	q.target = nil
+	q.ready = true
+	q.mu.Unlock()
 }
 
 // reconfigure gives the running core new routes without closing its
@@ -476,6 +545,13 @@ func (l *liveAngel) reload(ctx context.Context) {
 // health and bindings. False means the core could not take them in place and
 // must be restarted instead.
 func (l *liveAngel) reconfigure(d desiredState) bool {
+	l.mu.Lock()
+	auth := l.startOpts.Authenticator
+	l.mu.Unlock()
+	return l.reconfigureSince(d, persistClaimGeneration(auth))
+}
+
+func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) bool {
 	l.mu.Lock()
 	inst, store, auth := l.inst, l.store, l.startOpts.Authenticator
 	l.mu.Unlock()
@@ -507,6 +583,7 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 			return true
 		}
 		updateAccountPolicy(auth, d.cfg)
+		rebindPersistConfigSince(auth, d.cfg, claimGeneration)
 		d.port = l.actualPort
 		l.startOpts.AccountAllowedClients = accountAllowedClients(d.cfg)
 		l.applied, l.latest = d, d.cfg
@@ -521,7 +598,20 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 		}
 	}
 	o, nodesLog := l.routeOptionsWithLogger(d, auth, store)
+	activeNodeLog := l.activeNodeLogger()
+	var queuedEvents *queuedNodeEvents
+	if activeNodeLog != nil && len(d.pool.infos) > 0 {
+		if serverOnly {
+			o.OnNodeHealth = activeNodeLog.event
+		} else {
+			queuedEvents = &queuedNodeEvents{target: activeNodeLog.event}
+			o.OnNodeHealth = queuedEvents.event
+		}
+	}
 	if err := inst.Reconfigure(o); err != nil {
+		if queuedEvents != nil {
+			queuedEvents.discard()
+		}
 		if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
 			l.noteReloadError("server configuration not applied", err)
 			return true
@@ -534,16 +624,30 @@ func (l *liveAngel) reconfigure(d desiredState) bool {
 	l.mu.Lock()
 	if l.closed || l.inst != inst {
 		l.mu.Unlock()
+		if queuedEvents != nil {
+			queuedEvents.discard()
+		}
 		return true
 	}
 	o.Port, d.port = l.actualPort, l.actualPort
 	updateAccountPolicy(o.Authenticator, d.cfg)
+	rebindPersistConfigSince(o.Authenticator, d.cfg, claimGeneration)
 	l.applied, l.latest, l.startOpts = d, d.cfg, o
 	l.reloads++
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
-	l.installNodeLogger(nodesLog)
+	if activeNodeLog != nil {
+		activeNodeLog.refresh(d.pool.infos, d.pool.firstTierLabels())
+		if len(d.pool.infos) == 0 {
+			l.installNodeLogger(nil)
+		}
+	} else {
+		l.installNodeLogger(nodesLog)
+	}
+	if queuedEvents != nil {
+		queuedEvents.activate()
+	}
 	l.logServerDelta(oldServers, d.servers)
 	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	return true
@@ -582,11 +686,11 @@ func startCore(ctx context.Context, o core.Options) (coreInstance, error) {
 // restart replaces the core. Open connections end with it; the caller only
 // gets here when the fingerprint changed. A failed start of the new core
 // brings the previous one back.
-func (l *liveAngel) restart(ctx context.Context, d desiredState) {
+func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	a, err := newAuthenticator(d.cfg, l.opts.Home)
 	if err != nil {
 		l.noteReloadError("configuration not applied", err)
-		return
+		return reloadHandled
 	}
 	l.mu.Lock()
 	store, prev, old := l.store, l.startOpts, l.inst
@@ -595,7 +699,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
-		return
+		return reloadHandled
 	}
 	l.retryDesired = fingerprint(d)
 	oldServers := cloneServerSpecs(l.applied.servers)
@@ -630,7 +734,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 			l.mu.Unlock()
 			l.warnf("configuration restart failed; retrying: %s", text)
 			l.startRetry()
-			return
+			return reloadHandled
 		}
 		l.mu.Lock()
 		l.reloadErr = text
@@ -647,25 +751,29 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 			l.mu.Unlock()
 			l.warnf("previous configuration could not be restarted; retrying: %s", errText(err2))
 			l.startRetry()
-			return
+			return reloadHandled
 		}
 		l.mu.Lock()
 		if l.closed {
 			l.mu.Unlock()
 			_ = backInst.Close()
-			return
+			return reloadHandled
 		}
 		l.inst, l.startOpts = backInst, back
 		l.noteBindingsRestored(backInst)
 		l.mu.Unlock()
 		l.installNodeLogger(oldNodeLog)
-		return
+		var ce *cli.Error
+		if errors.As(err, &ce) && ce.Code == "PORT_IN_USE" {
+			return reloadRetry
+		}
+		return reloadHandled
 	}
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
 		_ = inst.Close()
-		return
+		return reloadHandled
 	}
 	l.inst, l.applied, l.latest, l.startOpts = inst, d, d.cfg, o
 	l.retryTarget, l.retryOpts, l.retryNodeLog, l.retryDesired = nil, nil, nil, ""
@@ -679,6 +787,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) {
 	l.installNodeLogger(nodesLog)
 	l.logf("configuration applied: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	l.logServerDelta(oldServers, d.servers)
+	return reloadHandled
 }
 
 func cloneDesired(d *desiredState) *desiredState {
@@ -833,30 +942,56 @@ func watchSignature(home string) string {
 
 // watch calls reload when the files changed. A change must be seen on two
 // polls in a row before it is applied, so an edit that is still being written
-// is not read half done.
+// is not read half done. A transient busy-port failure is retried only a
+// bounded number of times for the same file signature.
 func (l *liveAngel) watch(ctx context.Context, every time.Duration) {
 	applied := watchSignature(l.opts.Home)
 	// The angel loaded its files before this started: catch up once.
-	l.reload(ctx)
+	initial := l.reload(ctx)
 	pending := ""
-	t := time.NewTicker(every)
-	defer t.Stop()
+	retries := 0
+	if initial == reloadRetry {
+		pending, applied = watchSignature(l.opts.Home), ""
+		retries = 1 // the startup reload was the initial failed attempt
+	}
+	var ticker *time.Ticker
+	ticks := l.watchTickC
+	if ticks == nil {
+		ticker = time.NewTicker(every)
+		ticks = ticker.C
+		defer ticker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-t.C:
+		case <-ticks:
 		}
 		cur := watchSignature(l.opts.Home)
+		ackPoll := func() {
+			if l.watchPollDone != nil {
+				select {
+				case l.watchPollDone <- struct{}{}:
+				case <-ctx.Done():
+				}
+			}
+		}
 		switch {
 		case cur == applied:
-			pending = ""
+			pending, retries = "", 0
 		case cur != pending:
-			pending = cur
+			pending, retries = cur, 0
 		default:
-			l.reload(ctx)
-			applied, pending = cur, ""
+			if l.reload(ctx) == reloadRetry {
+				retries++
+				if retries <= watchRetryLimit {
+					ackPoll()
+					continue
+				}
+			}
+			applied, pending, retries = cur, "", 0
 		}
+		ackPoll()
 	}
 }
 
