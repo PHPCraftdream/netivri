@@ -10,6 +10,12 @@ versions; every such change is listed here.
 
 ### Added
 
+- **A failed subscription fetch says where it stood.** The `refresh failed` line, `last_error` of
+  `status`, and the errors of `sub update` and `sub add` now end with the path and the phase of the
+  fetch: `request failed: timeout (direct, waiting for the answer)`, `(via proxy, connecting)`,
+  `(direct, reading the body)`. A timeout of the subscription host, of the route to it and of a
+  stalled download used to read the same.
+
 - **The build is named in the log and in `netivri version`.** The angel's `start` line ends with
   `version=0.1.0+05f31ce` (version, and after a `+` the commit when the binary knows it; `-dirty` follows
   a commit built from a modified tree), the crash dump header has the same, and `netivri version`

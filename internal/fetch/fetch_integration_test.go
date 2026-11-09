@@ -473,3 +473,55 @@ func portOf(t *testing.T, urlStr string) string {
 	}
 	return port
 }
+
+// stalledTarget answers like a server that never finishes: with body false it
+// sends nothing, with body true it sends the headers and a part of the body.
+// The handlers end when the test does, before the server is closed.
+func stalledTarget(t *testing.T, body bool) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
+		if body {
+			w.Header().Set("Content-Length", "100")
+			fmt.Fprint(w, "partial")
+			w.(http.Flusher).Flush()
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	return srv
+}
+
+// A fetch that timed out says on which path and in which phase it stood, so a
+// failing subscription host can be told from a failing route to it.
+func TestTimeoutNamesThePhase(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		body  bool
+		proxy bool
+		want  string
+	}{
+		{"direct, no answer", false, false, "(direct, waiting for the answer)"},
+		{"direct, stalled body", true, false, "(direct, reading the body)"},
+		{"via proxy, no answer", false, true, "(via proxy, waiting for the answer)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			srv := stalledTarget(t, c.body)
+			o := Options{Timeout: 700 * time.Millisecond}
+			if c.proxy {
+				o.Proxy = "http://" + newHTTPProxy(t).addr()
+			}
+			_, err := Get(context.Background(), srv.URL+"/sub", o)
+			ce := codeOf(t, err)
+			if ce.Code != "FETCH_FAILED" || !strings.HasSuffix(ce.Message, c.want) {
+				t.Errorf("got %s %q, want suffix %q", ce.Code, ce.Message, c.want)
+			}
+			if strings.Contains(ce.Message, "/sub") || strings.Contains(ce.Message, "127.0.0.1:") {
+				t.Errorf("message leaks the path or an address: %q", ce.Message)
+			}
+		})
+	}
+}
