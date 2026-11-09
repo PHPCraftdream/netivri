@@ -142,6 +142,7 @@ func TestStoreJSONFallbackReturnsErrorWhenKtavRemovalFails(t *testing.T) {
 			Raw: map[string]any{"type": "ss", "private-key": "-----BEGIN KEY-----\n" + secret + "\n-----END KEY-----\n", "note": "  padded  "},
 		}},
 	}
+	s.ktavFn = func(diskSnapshot) (string, error) { return "", errors.New("not representable in Ktav") }
 	removeErr := errors.New("injected remove failure")
 	ktavPath := s.path("main")
 	s.removeFn = func(path string) error {
@@ -181,6 +182,7 @@ func TestStoreJSONFallbackRemovesExistingKtav(t *testing.T) {
 	if err := s.Save("main", testSnap(time.Now().UTC().Truncate(time.Second))); err != nil {
 		t.Fatalf("Save initial Ktav snapshot: %v", err)
 	}
+	s.ktavFn = func(diskSnapshot) (string, error) { return "", errors.New("not representable in Ktav") }
 	fallback := Snapshot{
 		FetchedAt: time.Now().UTC().Truncate(time.Second),
 		Nodes: []Node{{

@@ -34,6 +34,8 @@ type Snapshot struct {
 type Store struct {
 	dir      string
 	removeFn func(string) error
+	// ktavFn encodes a snapshot as Ktav; tests replace it to force the JSON form.
+	ktavFn func(diskSnapshot) (string, error)
 }
 
 // storeMu serialises in-process writers across all Store values: several
@@ -41,7 +43,7 @@ type Store struct {
 var storeMu sync.Mutex
 
 // NewStore returns a store rooted at dir (normally <home>/subscriptions).
-func NewStore(dir string) *Store { return &Store{dir: dir, removeFn: os.Remove} }
+func NewStore(dir string) *Store { return &Store{dir: dir, removeFn: os.Remove, ktavFn: ktavText} }
 
 // Dir returns the store directory.
 func (s *Store) Dir() string { return s.dir }
@@ -119,7 +121,11 @@ func (s *Store) Save(name string, snap Snapshot) error {
 	}
 	storeMu.Lock()
 	defer storeMu.Unlock()
-	if text, err := ktavText(d); err == nil {
+	encode := s.ktavFn
+	if encode == nil {
+		encode = ktavText
+	}
+	if text, err := encode(d); err == nil {
 		if err := writeFileAtomic(s.path(name), []byte(text)); err != nil {
 			return err
 		}
