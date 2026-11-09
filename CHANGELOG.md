@@ -213,6 +213,19 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **Two accounts that reach the same node through different proxy hops no longer share one health
+  record.** A node used directly by one account and through a dead pre-hop by another had one record
+  keyed by its label, so the first account's successful dials cleared the second one's failures and
+  it never moved to its fallback; one failed probe of a node present in two routes also counted
+  twice and marked it down at once. Health is now kept per node and hop chain, and each physical
+  probe counts once per record.
+- **A site's recent answer is remembered per node.** A late answer on an old connection overwrote the
+  answer of the node the site had moved to, so three silent connections could block a node that was
+  answering. The nodes that answer are now remembered one by one.
+- **A failed reload no longer leaves a probing loop behind, and the evidence of silent sites is pruned
+  at most once a minute.** The replacement warmer was never closed when the listener change failed, and
+  a full table was scanned under the routing lock for every new silent destination. A panic in the
+  plain read or write of a connection is now contained and reported like one in the buffered path.
 - **The statistics database recovers from an interrupted upgrade and no longer grows without bound.**
   An upgrade that stopped after adding the node-name column but before saving the schema version failed
   every later start with "duplicate column" and switched statistics off; the schema steps and the version

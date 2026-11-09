@@ -6,7 +6,22 @@ import (
 	"testing"
 
 	"github.com/metacubex/mihomo/common/buf"
+	C "github.com/metacubex/mihomo/constant"
 )
+
+type panicReadConn struct{ *scriptConn }
+
+func (c panicReadConn) Read([]byte) (int, error) {
+	c.panicRead()
+	return 0, nil
+}
+
+type panicWriteConn struct{ *scriptConn }
+
+func (c panicWriteConn) Write([]byte) (int, error) {
+	c.panicWrite()
+	return 0, nil
+}
 
 // overflow panics the way vision.ApplyPadding did: a header written in front
 // of a buffer that has no room there.
@@ -74,10 +89,90 @@ func TestWatchConnReadBufferPanicBecomesAnError(t *testing.T) {
 	}
 }
 
+func TestWatchConnReadWritePanicReturnsNoBytesAndReportsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		panic func()
+		call  func(*watchConn) (int, error)
+	}{
+		{
+			name:  "read",
+			panic: func() { panic("read boom") },
+			call: func(w *watchConn) (int, error) {
+				return w.Read(make([]byte, 8))
+			},
+		},
+		{
+			name:  "write",
+			panic: func() { panic("write boom") },
+			call: func(w *watchConn) (int, error) {
+				return w.Write([]byte("payload"))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := &scriptConn{}
+			var conn C.Conn
+			if tc.name == "read" {
+				inner.panicRead = tc.panic
+				conn = panicReadConn{inner}
+			} else {
+				inner.panicWrite = tc.panic
+				conn = panicWriteConn{inner}
+			}
+			sink := &eventSink{}
+			g := &stickyGroup{events: sink.add}
+			w, ok := g.watch(conn, "alice", "own/a", 0, nil).(*watchConn)
+			if !ok {
+				t.Fatal("watch did not wrap the connection")
+			}
+			n, err := tc.call(w)
+			if n != 0 || !errors.Is(err, errConnPanicked) {
+				t.Fatalf("operation = %d, %v; want 0, errConnPanicked", n, err)
+			}
+			if w.up.Load() != 0 || w.down.Load() != 0 {
+				t.Fatalf("counts up=%d down=%d, want zero", w.up.Load(), w.down.Load())
+			}
+			_ = w.Close()
+			var panics, ended int
+			var end ConnEvent
+			for _, ev := range sink.all() {
+				switch ev.Kind {
+				case ConnPanicked:
+					panics++
+				case ConnStreamEnded:
+					ended++
+					end = ev
+				}
+			}
+			if panics != 1 {
+				t.Fatalf("panic events = %d, want 1: %+v", panics, sink.all())
+			}
+			if ended != 1 || end.Why == "" {
+				t.Fatalf("stream end = %+v, count %d, want one broken end", end, ended)
+			}
+			if inner.closes != 1 {
+				t.Fatalf("inner closes = %d, want 1", inner.closes)
+			}
+		})
+	}
+}
+
 func TestWatchConnWithoutPanicReportsNothing(t *testing.T) {
 	inner := &scriptConn{}
 	w, sink := watched(t, inner)
+	if _, err := w.Write([]byte("ok")); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.Read(make([]byte, 8)); n != 5 || err != nil {
+		t.Fatalf("Read = %d, %v; want 5, nil", n, err)
+	}
 	if err := w.WriteBuffer(buf.As([]byte("ok"))); err != nil {
+		t.Fatal(err)
+	}
+	b := buf.New()
+	defer b.Release()
+	if err := w.ReadBuffer(b); err != nil {
 		t.Fatal(err)
 	}
 	for _, ev := range sink.all() {

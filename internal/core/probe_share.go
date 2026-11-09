@@ -62,7 +62,7 @@ func probeKey(node map[string]any, pre, post string) string {
 // does not need a probe every interval.
 func fallbackIdle(plans []routePlan, health *healthTable) func(string) bool {
 	type fallback struct {
-		label  string
+		key    string
 		better []string
 	}
 	members := make(map[string]fallback)
@@ -81,10 +81,18 @@ func fallbackIdle(plans []routePlan, health *healthTable) func(string) bool {
 			var better []string
 			for j, tier := range plan.tiers {
 				if tier < plan.tiers[i] {
-					better = append(better, plan.labels[j])
+					key := plan.labels[j]
+					if j < len(plan.healthKeys) && plan.healthKeys[j] != "" {
+						key = plan.healthKeys[j]
+					}
+					better = append(better, key)
 				}
 			}
-			members[name] = fallback{label: plan.labels[i], better: better}
+			key := plan.labels[i]
+			if i < len(plan.healthKeys) && plan.healthKeys[i] != "" {
+				key = plan.healthKeys[i]
+			}
+			members[name] = fallback{key: key, better: better}
 		}
 	}
 	if len(members) == 0 {
@@ -95,12 +103,12 @@ func fallbackIdle(plans []routePlan, health *healthTable) func(string) bool {
 		if !ok {
 			return false
 		}
-		h := health.health(m.label)
+		h := health.health(m.key)
 		if h == nil || !h.idleFor(idleAfter) {
 			return false
 		}
-		for _, label := range m.better {
-			if !health.down(label) {
+		for _, key := range m.better {
+			if !health.downKey(key) {
 				return true
 			}
 		}

@@ -156,8 +156,10 @@ type routingState struct {
 	// memberLabels maps this generation's member proxy names to node labels;
 	// connLabels also keeps the names of earlier generations that open
 	// connections still go through, for Activity and the poller.
-	memberLabels map[string]string
-	connLabels   map[string]string
+	memberLabels     map[string]string
+	connLabels       map[string]string
+	memberHealthKeys map[string]string
+	connHealthKeys   map[string]string
 	// routeLabels maps a route key to the statistics label per member, for
 	// SnapshotBindings.
 	routeLabels map[string][]string
@@ -330,13 +332,15 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			// Down feeds the down state back so probed nodes that stay
 			// down are probed with a lengthened interval.
 			nameToLabel := memberNameLabels(plans)
-			wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
-			wo.OnProbeError = probeErrorHook(nameToLabel, health, o.Warm.OnProbeError)
+			nameToHealthKey := memberNameHealthKeys(plans)
+			wo.OnProbe = probeHookKeys(nameToLabel, nameToHealthKey, nil, o.Observer, o.Warm.OnProbe)
+			wo.OnProbeError = probeErrorHookKeys(nameToLabel, nameToHealthKey, nil, o.Warm.OnProbeError)
+			wo.onProbeGroup = probeGroupHealthHook(nameToHealthKey, health)
 			wo.only = func(name string) bool {
 				_, tracked := nameToLabel[name]
 				return generatedMemberName(name) && tracked
 			}
-			wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
+			wo.Down = func(name string) bool { return health.downKey(nameToHealthKey[name]) }
 			wo.Idle = fallbackIdle(plans, health)
 			keys := memberProbeKeys(plans, o)
 			wo.Same = func(name string) string { return keys[name] }
@@ -358,7 +362,9 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		}
 	}
 	if len(plans) > 0 {
-		poller = newThroughputPoller(managerSource{statistic.DefaultManager}, health, o.Observer, memberNameLabels(plans), realStickyClock{})
+		memberLabels := memberNameLabels(plans)
+		memberHealthKeys := memberNameHealthKeys(plans)
+		poller = newThroughputPollerWithHealthKeys(managerSource{statistic.DefaultManager}, health, o.Observer, memberLabels, memberHealthKeys, realStickyClock{})
 		poller.start()
 	}
 
@@ -393,14 +399,16 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		restoredBindings: restored,
 	}
 	inst.routing.Store(&routingState{
-		accountRoutes: copyAccountRoutes(o.AccountRoute),
-		warm:          warm,
-		table:         table,
-		health:        health,
-		memberLabels:  memberNameLabels(plans),
-		connLabels:    memberNameLabels(plans),
-		routeLabels:   routeLabels(plans),
-		names:         append(planProxyNames(plans), proxyMappingNames(proxies)...),
+		accountRoutes:    copyAccountRoutes(o.AccountRoute),
+		warm:             warm,
+		table:            table,
+		health:           health,
+		memberLabels:     memberNameLabels(plans),
+		connLabels:       memberNameLabels(plans),
+		memberHealthKeys: memberNameHealthKeys(plans),
+		connHealthKeys:   memberNameHealthKeys(plans),
+		routeLabels:      routeLabels(plans),
+		names:            append(planProxyNames(plans), proxyMappingNames(proxies)...),
 	})
 	current = inst
 
@@ -449,7 +457,7 @@ func (i *Instance) WarmStats() (WarmStats, bool) {
 		return WarmStats{}, false
 	}
 	ws := st.warm.Stats()
-	annotateDown(ws.Nodes, st.health, st.memberLabels)
+	annotateDown(ws.Nodes, st.health, st.memberHealthKeys)
 	return ws, true
 }
 
@@ -462,12 +470,12 @@ func (i *Instance) ProbeNow() {
 // annotateDown sets NodeHealth.Down from the routing state of the sticky
 // groups: the probe result alone says a node is not alive after one failed
 // probe, while the routing keeps using it until it is down.
-func annotateDown(nodes []NodeHealth, health *healthTable, labels map[string]string) {
+func annotateDown(nodes []NodeHealth, health *healthTable, healthKeys map[string]string) {
 	if health == nil {
 		return
 	}
 	for k := range nodes {
-		nodes[k].Down = health.down(labels[nodes[k].Name])
+		nodes[k].Down = health.downKey(healthKeys[nodes[k].Name])
 	}
 }
 

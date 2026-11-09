@@ -88,8 +88,9 @@ type WarmOptions struct {
 	// so the earlier generations still in Mihomo's proxy map are not probed,
 	// nodes that stay down keep their lengthened interval and the others are
 	// not probed again before their interval is up.
-	only func(name string) bool
-	seed map[string]probeSchedule
+	only         func(name string) bool
+	seed         map[string]probeSchedule
+	onProbeGroup func(names []string, alive bool, delay time.Duration, err error)
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -448,6 +449,13 @@ func (w *warmer) probeGroup(parent context.Context, group []scheduled) {
 	measured, ok, err := w.measure(parent, group[0].proxy)
 	if !ok {
 		return
+	}
+	if w.options.onProbeGroup != nil {
+		names := make([]string, len(group))
+		for i, item := range group {
+			names[i] = item.proxy.Name()
+		}
+		w.options.onProbeGroup(names, err == nil, measured, err)
 	}
 	for _, item := range group {
 		w.record(item.proxy, item.index, measured, err)

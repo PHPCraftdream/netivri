@@ -21,6 +21,8 @@ var ErrReconfigureUnsupported = errors.New("core: this change needs a new instan
 // errInstanceClosed is returned by Reconfigure on a closed instance.
 var errInstanceClosed = errors.New("core: the instance is closed")
 
+var startWarmForReconfigure = startWarm
+
 // Reconfigure replaces the account routes of a running instance: the nodes,
 // their labels and tiers and the login-to-route map of o. Bind, Port,
 // Authenticator and HomeDir are ignored. AllowedClients keeps the mixed
@@ -150,18 +152,37 @@ func (i *Instance) Reconfigure(o Options) error {
 		}
 	}()
 	old.warm.Close()
-	backoff := carryBackoff(old.warm.backoffByName(), old.memberLabels, memberNameLabels(plans))
+	nameToLabel := memberNameLabels(plans)
+	nameToHealthKey := memberNameHealthKeys(plans)
+	// The probe schedule follows the node label, not its hop chain: a changed
+	// hop must not make every node of the route probe at once.
+	backoff := carryBackoff(old.warm.backoffByName(), old.memberLabels, nameToLabel)
 
-	health := carryHealth(old.health, planLabels(plans), o.OnNodeHealth)
 	// The poller also feeds the nodes that only open connections still use;
 	// their records are made now, before the new groups read the table
 	// without a lock.
-	nameToLabel := memberNameLabels(plans)
 	connLabels := liveConnLabels(managerSource{statistic.DefaultManager}, old.connLabels)
+	connHealthKeys := liveConnHealthKeys(managerSource{statistic.DefaultManager}, old.connHealthKeys, old.connLabels)
+	healthMembers := healthMembersForPlans(plans)
+	for name, label := range connLabels {
+		key := connHealthKeys[name]
+		if key == "" {
+			key = label
+			connHealthKeys[name] = key
+		}
+		var hops hopSet
+		if old.health != nil {
+			hops = old.health.hops[key]
+		}
+		healthMembers = append(healthMembers, healthMember{key: key, label: label, hops: hops})
+	}
 	for name, label := range nameToLabel {
 		connLabels[name] = label
 	}
-	health.register(mapValues(connLabels))
+	for name, key := range nameToHealthKey {
+		connHealthKeys[name] = key
+	}
+	health := carryHealthMembers(old.health, healthMembers, o.OnNodeHealth)
 	table := newAffinityTable(nil, o.AffinityTTL)
 	table.setReturnAfter(o.TierReturnAfter)
 	table.carryCounters(old.table)
@@ -190,38 +211,49 @@ func (i *Instance) Reconfigure(o Options) error {
 	tunnel.UpdateRules(rules, nil, tunnel.RuleProviders())
 
 	var warm *warmer
+	warmPublished := false
+	defer func() {
+		if !warmPublished {
+			warm.Close()
+		}
+	}()
 	if o.Warm != nil {
 		wo := *o.Warm
-		wo.OnProbe = probeHook(nameToLabel, health, o.Observer, o.Warm.OnProbe)
-		wo.OnProbeError = probeErrorHook(nameToLabel, health, o.Warm.OnProbeError)
-		wo.Down = func(name string) bool { return health.down(nameToLabel[name]) }
+		nameToHealthKey := memberNameHealthKeys(plans)
+		wo.OnProbe = probeHookKeys(nameToLabel, nameToHealthKey, nil, o.Observer, o.Warm.OnProbe)
+		wo.OnProbeError = probeErrorHookKeys(nameToLabel, nameToHealthKey, nil, o.Warm.OnProbeError)
+		wo.onProbeGroup = probeGroupHealthHook(nameToHealthKey, health)
+		wo.Down = func(name string) bool { return health.downKey(nameToHealthKey[name]) }
 		wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
 		wo.Idle = fallbackIdle(plans, health)
 		keys := memberProbeKeys(plans, o)
 		wo.Same = func(name string) string { return keys[name] }
 		wo.seed = backoff
-		if warm, err = startWarm(wo, nil); err != nil {
+		if warm, err = startWarmForReconfigure(wo, nil); err != nil {
 			return err
 		}
 	}
 
-	i.poller.setTargets(health, connLabels)
 	if err := serverTx.commit(); err != nil {
 		return err
 	}
 	committed = true
+	i.poller.setTargetsWithHealthKeys(health, connLabels, connHealthKeys)
 	i.routing.Store(&routingState{
-		gen:           gen,
-		accountRoutes: copyAccountRoutes(o.AccountRoute),
-		warm:          warm,
-		table:         table,
-		health:        health,
-		memberLabels:  nameToLabel,
-		connLabels:    connLabels,
-		routeLabels:   routeLabels(plans),
-		names:         names,
-		prevNames:     old.names,
+		gen:              gen,
+		accountRoutes:    copyAccountRoutes(o.AccountRoute),
+		warm:             warm,
+		table:            table,
+		health:           health,
+		memberLabels:     nameToLabel,
+		connLabels:       connLabels,
+		memberHealthKeys: nameToHealthKey,
+		connHealthKeys:   connHealthKeys,
+		routeLabels:      routeLabels(plans),
+		names:            names,
+		prevNames:        old.names,
 	})
+	warmPublished = true
 	return nil
 }
 
@@ -283,20 +315,42 @@ func planLabels(plans []routePlan) []string {
 // carryBackoff moves the probe schedule of the old proxy names to the new
 // names of the same node labels. A label that is a member of several routes
 // keeps its longest backoff.
-func carryBackoff(old map[string]probeSchedule, oldLabels, newLabels map[string]string) map[string]probeSchedule {
-	byLabel := make(map[string]probeSchedule, len(old))
+func liveConnHealthKeys(source trackerSource, healthKeys, labels map[string]string) map[string]string {
+	out := make(map[string]string)
+	legacyLabels := len(healthKeys) == 0
+	source.Range(func(t throughputTracker) bool {
+		info := t.Info()
+		if info == nil {
+			return true
+		}
+		for _, name := range info.Chain {
+			if key, ok := healthKeys[name]; ok {
+				out[name] = key
+			} else if legacyLabels {
+				if label, ok := labels[name]; ok {
+					out[name] = label
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+func carryBackoff(old map[string]probeSchedule, oldKeys, newKeys map[string]string) map[string]probeSchedule {
+	byKey := make(map[string]probeSchedule, len(old))
 	for name, st := range old {
-		label, ok := oldLabels[name]
+		key, ok := oldKeys[name]
 		if !ok {
 			continue
 		}
-		if prev, seen := byLabel[label]; !seen || st.downRounds > prev.downRounds {
-			byLabel[label] = st
+		if prev, seen := byKey[key]; !seen || st.downRounds > prev.downRounds || (st.downRounds == prev.downRounds && st.nextDue.After(prev.nextDue)) {
+			byKey[key] = st
 		}
 	}
 	out := make(map[string]probeSchedule)
-	for name, label := range newLabels {
-		if st, ok := byLabel[label]; ok {
+	for name, key := range newKeys {
+		if st, ok := byKey[key]; ok {
 			out[name] = st
 		}
 	}
