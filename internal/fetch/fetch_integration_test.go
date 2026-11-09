@@ -183,6 +183,80 @@ func TestRedirects(t *testing.T) {
 	}
 }
 
+func TestRedirectPolicyStripsRefererOnEveryHop(t *testing.T) {
+	tests := []struct {
+		name    string
+		referer string
+	}{
+		{name: "unset"},
+		{name: "explicit", referer: "https://caller.invalid/original?source=fixture"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			type observation struct {
+				path, query, referer string
+			}
+			observed := make(chan observation, 2)
+			third := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				observed <- observation{r.URL.Path, r.URL.RawQuery, r.Header.Get("Referer")}
+				fmt.Fprint(w, subBody)
+			}))
+			t.Cleanup(third.Close)
+			second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				observed <- observation{r.URL.Path, r.URL.RawQuery, r.Header.Get("Referer")}
+				http.Redirect(w, r, third.URL+"/third?hop=3", http.StatusFound)
+			}))
+			t.Cleanup(second.Close)
+			first := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, second.URL+"/second?hop=2", http.StatusFound)
+			}))
+			t.Cleanup(first.Close)
+
+			pool := x509.NewCertPool()
+			pool.AddCert(first.Certificate())
+			pool.AddCert(second.Certificate())
+			pool.AddCert(third.Certificate())
+			tr := newTransport(nil, &tls.Config{RootCAs: pool})
+			defer tr.CloseIdleConnections()
+			client := &http.Client{Transport: tr, CheckRedirect: redirectPolicy}
+			req, err := http.NewRequest(http.MethodGet, first.URL+"/source/credential-fixture?token=fixture-value", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.referer != "" {
+				req.Header.Set("Referer", tc.referer)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal("redirect request failed")
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("final status = %d, want %d", resp.StatusCode, http.StatusOK)
+			}
+
+			for _, want := range []struct {
+				path, query string
+			}{
+				{"/second", "hop=2"},
+				{"/third", "hop=3"},
+			} {
+				select {
+				case got := <-observed:
+					if got.path != want.path || got.query != want.query {
+						t.Errorf("redirect target does not match expected hop %s", want.path)
+					}
+					if got.referer != "" {
+						t.Errorf("Referer on %s redirect request must be absent", want.path)
+					}
+				default:
+					t.Fatalf("no observation for redirect hop %s", want.path)
+				}
+			}
+		})
+	}
+}
+
 // (f) a body larger than MaxBytes is an error, never a truncation.
 func TestBodyTooLarge(t *testing.T) {
 	tooBig := strings.Repeat("x", 100)

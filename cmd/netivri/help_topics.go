@@ -438,7 +438,7 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri sub rename {OLD} {NEW}"},
 		Description: "Renames a subscription. The accounts that list it as a provider follow the new name and the stored nodes move with it, so routes keep working. " +
 			"The new snapshot is written first, then the configuration, and the old snapshot is removed last: a failure at any step leaves the old name working. " +
-			"A new name that is already used, or the same name, changes nothing. The new name is 1 to 64 letters, digits, dots, underscores or hyphens.",
+			"A new name that is already used, or the same name (a change of letter case only counts as the same), changes nothing. The new name is 1 to 64 letters, digits, dots, underscores or hyphens.",
 		Examples: []helpExample{{"Rename a provider", "netivri sub rename main work"}},
 		Errors: []helpError{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with the current name"),

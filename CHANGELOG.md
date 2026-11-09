@@ -239,6 +239,20 @@ versions; every such change is listed here.
 - **A first login on the legacy single `auth` can no longer overwrite a password set in the meantime.**
   The claim was refused only when neither field was `init`; it is now refused when either field differs
   from what the angel loaded.
+- **A subscription URL no longer leaks through the `Referer` header on a redirect.** Go's HTTP client
+  copies the previous URL, path and query included, into `Referer` when a subscription redirects to
+  another host; subscription URLs are credentials, so the header is now dropped on every hop.
+- **Two `netivri` processes can no longer overwrite each other's server credentials.** The server
+  secrets file was guarded by a lock that exists only inside one process, so two rotations running
+  at once could bring back a revoked password and both report success. Every change now holds a file
+  lock across its read and write.
+- **`server update` with new `cert_file` / `key_file` paths now uses them.** The old certificate paths
+  were kept, so the listener and the client links stayed on the old pair; a stored certificate with
+  a missing key is repaired as one pair instead of getting a key that does not match.
+- **A subscription snapshot that cannot replace its old `.ktav` file reports the failure.** The refresh
+  said it succeeded while the old snapshot kept being loaded.
+- **`sub rename` refuses a name that differs only in letter case.** On Windows and macOS both names
+  are one snapshot file, and the rename deleted it.
 - **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
   Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
   filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read

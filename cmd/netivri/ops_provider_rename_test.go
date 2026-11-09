@@ -112,6 +112,60 @@ func TestProviderRenameSameNameRejected(t *testing.T) {
 	}
 }
 
+func TestProviderRenameCaseOnlyRejectedWithoutWrites(t *testing.T) {
+	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
+	cfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "p"}}
+	if err = config.Save(config.ConfigPath(home), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	wantSnap := subscription.Snapshot{
+		Nodes:     []subscription.Node{{ID: "n1", Country: "DE"}},
+		FetchedAt: testNow,
+		Skipped:   2,
+	}
+	if err = store.Save("p", wantSnap); err != nil {
+		t.Fatal(err)
+	}
+	configPath := config.ConfigPath(home)
+	beforeConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(home, "subscriptions", "p.ktav")
+	beforeSnapshot, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ProviderRename(home, "p", "P")
+	renameAssertCode(t, err, "USAGE", cli.ExitUsage)
+
+	afterConfig, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterConfig) != string(beforeConfig) {
+		t.Fatal("case-only rename changed the config")
+	}
+	afterSnapshot, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterSnapshot) != string(beforeSnapshot) {
+		t.Fatal("case-only rename changed the stored snapshot")
+	}
+	afterSnap, err := store.Load("p")
+	if err != nil || afterSnap.FetchedAt != wantSnap.FetchedAt || afterSnap.Skipped != wantSnap.Skipped || len(afterSnap.Nodes) != len(wantSnap.Nodes) || afterSnap.Nodes[0].ID != wantSnap.Nodes[0].ID || afterSnap.Nodes[0].Country != wantSnap.Nodes[0].Country {
+		t.Fatalf("snapshot after rejected rename: %+v %v", afterSnap, err)
+	}
+}
+
 func TestProviderRenameSnapshotWriteFailureLeavesEverything(t *testing.T) {
 	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))

@@ -1401,7 +1401,7 @@ name). Prefer `exit`.
 netivri sub rename {OLD} {NEW}
 ```
 
-Renames a subscription. The accounts that list it as a provider follow the new name and its stored nodes move with it. The new snapshot is written first, then the configuration, and the old snapshot is removed last, so a failure at any step leaves the old name working. A name that is already used is `SUB_EXISTS_NAME` (exit 6), an unknown name `SUB_NOT_FOUND` (exit 5), the same or an invalid new name `USAGE` (exit 2). Output: `{"name": "work", "renamed_from": "main"}`.
+Renames a subscription. The accounts that list it as a provider follow the new name and its stored nodes move with it. The new snapshot is written first, then the configuration, and the old snapshot is removed last, so a failure at any step leaves the old name working. A name that is already used is `SUB_EXISTS_NAME` (exit 6), an unknown name `SUB_NOT_FOUND` (exit 5), the same name (also one that differs only in letter case: such names share one snapshot file on case-insensitive filesystems) or an invalid new name `USAGE` (exit 2). Output: `{"name": "work", "renamed_from": "main"}`.
 
 ```sh
 netivri sub rename main work
