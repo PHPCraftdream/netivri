@@ -143,6 +143,24 @@ func TestAccountCloneFlagsAfterTheLogins(t *testing.T) {
 	}
 }
 
+func TestAccountClonePreservesLoginAfterDelimiter(t *testing.T) {
+	home := cloneHome(t)
+	var out bytes.Buffer
+	err := runAccount([]string{"clone", "--home", home, "--", "alice", "-bob"}, &out)
+	if err != nil {
+		t.Fatalf("account clone after delimiter: %v (%s)", err, out.String())
+	}
+	var env struct {
+		Data cloneResult `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("decode %s: %v", out.Bytes(), err)
+	}
+	if env.Data.Account.Login != "-bob" || env.Data.ClonedFrom != "alice" {
+		t.Fatalf("result = %+v, want clone of alice with login -bob", env.Data)
+	}
+}
+
 func TestAccountCloneOverridesTheRoute(t *testing.T) {
 	home := cloneHome(t)
 	res, _ := runClone(t, home, "alice", "bob", "--provider", "p2,p1", "--country", "de")

@@ -218,6 +218,19 @@ versions; every such change is listed here.
   filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read
   could overwrite a newer grouping or filter; and "Clear pre-hop" or "Clear post-hop" applied to the
   provider selected when the save ran instead of the one you chose. Each now keeps its own target.
+- **A provider named `any` is no longer mistaken for "Any provider" in the account wizard.**
+  Choosing it, or typing it in the provider edit, stored an empty provider list, so the account could
+  use the nodes of every provider. The wizard now keeps the literal name, and the country hint follows it.
+- **Long client links in the server wizard can be scrolled to the end.** The scroll limit counted the
+  source lines instead of the wrapped rows, so a long VMess link could not be scrolled with Down, PgDn
+  or the wheel.
+- **The server wizard picks a free port for an IPv6 bind address.** `::1` produced the invalid
+  address `::1:0` and the creation failed.
+- **`netivri doctor` checks the transport the server really binds.** A Hysteria2 or TUIC server on a
+  UDP port taken by another program was reported free because only TCP was tried, and an unrelated
+  TCP listener gave a false warning.
+- **A bare `--` ends flag parsing for good.** `netivri account clone -- alice -bob` rejected `-bob`
+  as an unknown flag after taking `alice`.
 - **A node whose connections mostly got no answer is a `WARN` in the one-minute line too, not only
   in the hourly summary.** `138 connections ended, 1 broken, 127 without an answer` was an `INFO` line,
   and a minute with no broken connection at all produced no line for the node. Now at least 20

@@ -158,6 +158,11 @@ scan:
 func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	rest := args
 	var positional []string
+	var positionalTail []string
+	if delimiter := bareFlagDelimiter(fs, args); delimiter >= 0 {
+		positionalTail = args[delimiter+1:]
+		rest = args[:delimiter]
+	}
 	for len(rest) > 0 {
 		if err := fs.Parse(rest); err != nil {
 			return nil, err
@@ -168,7 +173,31 @@ func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 			rest = rest[1:]
 		}
 	}
-	return positional, nil
+	return append(positional, positionalTail...), nil
+}
+
+func bareFlagDelimiter(fs *flag.FlagSet, args []string) int {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			return i
+		}
+		if len(arg) < 2 || arg[0] != '-' || arg == "-" {
+			continue
+		}
+		name := arg[1:]
+		name = strings.TrimPrefix(name, "-")
+		name, _, hasValue := strings.Cut(name, "=")
+		f := fs.Lookup(name)
+		if f == nil || hasValue {
+			continue
+		}
+		boolFlag, isBool := f.Value.(interface{ IsBoolFlag() bool })
+		if !isBool || !boolFlag.IsBoolFlag() {
+			i++
+		}
+	}
+	return -1
 }
 
 // deriveName builds a subscription name from the URL host: lower-case,

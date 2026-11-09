@@ -226,7 +226,15 @@ func (m *serversMenuModal) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 }
 func (m *serversMenuModal) scroll(d int) {
 	slots := max(1, m.height-4)
-	m.offset = max(0, min(max(0, len(m.lines)-slots), m.offset+d))
+	body := m.wrappedBody(m.width)
+	m.offset = max(0, min(max(0, len(body)-slots), m.offset+d))
+}
+func (m *serversMenuModal) wrappedBody(w int) []string {
+	var body []string
+	for _, l := range m.lines {
+		body = append(body, serversWrapLine(l, w)...)
+	}
+	return body
 }
 func (m *serversMenuModal) View(w, h int) string {
 	m.width, m.height = w, h
@@ -241,10 +249,7 @@ func (m *serversMenuModal) View(w, h int) string {
 		}
 	}
 	put(0, ansi.Truncate(m.title, w, ""))
-	var body []string
-	for _, l := range m.lines {
-		body = append(body, serversWrapLine(l, w)...)
-	}
+	body := m.wrappedBody(w)
 	indicator := h - 2
 	if m.scrollable && len(body) > h-4 {
 		slots := h - 4
@@ -476,12 +481,15 @@ func serverPortConflicts(home, protocol, bind string, port int) error {
 	}
 	return checkPortConflict(c, entry)
 }
-func serverPickPort(bind string) (int, error) {
+func serverPickPortAddress(bind string) string {
 	host := strings.TrimSpace(bind)
 	if host == "" || host == "0.0.0.0" {
 		host = ""
 	}
-	l, e := net.Listen("tcp", host+":0")
+	return net.JoinHostPort(host, "0")
+}
+func serverPickPort(bind string) (int, error) {
+	l, e := net.Listen("tcp", serverPickPortAddress(bind))
 	if e != nil {
 		return 0, &cli.Error{Code: "CONFIG_INVALID", Message: "could not find a free port", Hint: "set the port manually and try again", Exit: cli.ExitUsage}
 	}

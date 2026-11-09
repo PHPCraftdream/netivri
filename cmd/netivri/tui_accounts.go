@@ -904,7 +904,7 @@ func accountsTiersText(ts []accountShowTier) string {
 	return strings.Join(out, "; ")
 }
 func (s *accountsScreen) countryFieldHint(ps []string) string {
-	if len(ps) == 0 || len(ps) == 1 && ps[0] == "any" {
+	if len(ps) == 0 || len(ps) == 1 && ps[0] == "" {
 		ps = s.providers
 	}
 	codes := []string{}
@@ -922,11 +922,14 @@ func (s *accountsScreen) countryFieldHint(ps []string) string {
 	}
 	return "Any or country codes: " + strings.Join(codes, ", ")
 }
+
+const accountProviderAnySentinel = "*"
+
 func (s *accountsScreen) beginAdd() tea.Cmd {
 	if len(s.providers) == 0 {
 		return s.switchProviders()
 	}
-	steps := []tui.WizardStep{{Key: "Login", Prompt: prompt(tui.TextPrompt, "Add account · Login", "Login", "Client login name.", "")}, {Key: "Provider", Prompt: choicePrompt("Provider", "Choose a provider; all configured providers are available.", append([]tui.PromptOption{{Label: "Any provider", Value: "any", Description: "Use any configured provider."}}, s.providerOptions()...), "any")}, {Key: "Country", Prompt: prompt(tui.TextPrompt, "Add account · Country", "Countries", s.countryFieldHint(nil), "any")}, {Key: "Exit", Prompt: choicePrompt("Exit", "Route through nodes or connect directly.", []tui.PromptOption{{Label: "Route", Value: "route", Description: "Use provider nodes."}, {Label: "Direct", Value: "direct", Description: "Do not route through a proxy node."}}, "route")}, {Key: "Clients", Prompt: choicePrompt("Allowed clients", "Who can authenticate?", []tui.PromptOption{{Label: "Everyone", Value: "everyone"}, {Label: "This computer only", Value: "loopback"}, {Label: "Custom CIDRs", Value: "custom"}}, "everyone")}, {Key: "CustomClients", Prompt: prompt(tui.TextPrompt, "Add account · Custom clients", "CIDR ranges", "Used when Custom CIDRs was chosen.", "")}, {Key: "Pre-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Pre-hop", "Pre-hop URL", "Optional proxy before the VPN node.", "")}, {Key: "Post-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Post-hop", "Post-hop URL", "Optional proxy after the VPN node.", "")}}
+	steps := []tui.WizardStep{{Key: "Login", Prompt: prompt(tui.TextPrompt, "Add account · Login", "Login", "Client login name.", "")}, {Key: "Provider", Prompt: choicePrompt("Provider", "Choose a provider; all configured providers are available.", append([]tui.PromptOption{{Label: "Any provider", Value: accountProviderAnySentinel, Description: "Use any configured provider."}}, s.providerOptions()...), accountProviderAnySentinel)}, {Key: "Country", Prompt: prompt(tui.TextPrompt, "Add account · Country", "Countries", s.countryFieldHint(nil), "any")}, {Key: "Exit", Prompt: choicePrompt("Exit", "Route through nodes or connect directly.", []tui.PromptOption{{Label: "Route", Value: "route", Description: "Use provider nodes."}, {Label: "Direct", Value: "direct", Description: "Do not route through a proxy node."}}, "route")}, {Key: "Clients", Prompt: choicePrompt("Allowed clients", "Who can authenticate?", []tui.PromptOption{{Label: "Everyone", Value: "everyone"}, {Label: "This computer only", Value: "loopback"}, {Label: "Custom CIDRs", Value: "custom"}}, "everyone")}, {Key: "CustomClients", Prompt: prompt(tui.TextPrompt, "Add account · Custom clients", "CIDR ranges", "Used when Custom CIDRs was chosen.", "")}, {Key: "Pre-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Pre-hop", "Pre-hop URL", "Optional proxy before the VPN node.", "")}, {Key: "Post-hop", Prompt: prompt(tui.SecretPrompt, "Add account · Post-hop", "Post-hop URL", "Optional proxy after the VPN node.", "")}}
 	s.dialog = &accountsDialog{wizard: tui.NewWizard("Add account", steps)}
 	s.dialog.validate = func(v map[string]string) error {
 		if !config.ValidAccountLogin(v["Login"]) {
@@ -1054,7 +1057,7 @@ func (s *accountsScreen) mutateEdit(a accountInfo, id string, v map[string]strin
 	o := AccountUpdateOptions{Login: a.Login}
 	switch id {
 	case "provider":
-		z := providerValue(x)
+		z := strings.TrimSpace(x)
 		o.Provider = &z
 	case "countries":
 		z := countryAny(x)
@@ -1115,7 +1118,7 @@ func (s *accountsScreen) finishMutation(e error, n, login string) tea.Msg {
 	return accountsMutationDone{Rows: rows, Err: e, Notice: n, Login: login}
 }
 func providerValue(v string) string {
-	if v == "any" {
+	if v == accountProviderAnySentinel {
 		return ""
 	}
 	return strings.TrimSpace(v)

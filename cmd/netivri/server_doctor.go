@@ -13,6 +13,22 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
+var doctorServerListenTCP = func(addr string) error {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return ln.Close()
+}
+
+var doctorServerListenUDP = func(addr string) error {
+	pc, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		return err
+	}
+	return pc.Close()
+}
+
 func doctorInvalidClassifierConfig(home string) []doctorCheck {
 	_, err := config.Load(config.ConfigPath(home))
 	if err == nil {
@@ -118,7 +134,11 @@ func (d *doctorContext) checkServers() []doctorCheck {
 		}
 		if !d.angelUp {
 			addr := net.JoinHostPort(s.Bind, strconv.Itoa(s.Port))
-			if err := doctorListen(addr); err != nil {
+			probe := doctorServerListenTCP
+			if proto, ok := servers.Lookup(s.Protocol); ok && servers.IsUDPBound(proto) {
+				probe = doctorServerListenUDP
+			}
+			if err := probe(addr); err != nil {
 				issues = append(issues, s.Name+" port is taken")
 			}
 		}
