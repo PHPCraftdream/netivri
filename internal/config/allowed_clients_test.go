@@ -54,6 +54,14 @@ func TestParseAllowedClientsAllows(t *testing.T) {
 		{"10.0.0.0/8", in("11.0.0.1"), false},
 		{"fd00::/8", in("fd00::1"), true},
 		{"fd00::/8", in("2001::1"), false},
+		{"::ffff:192.0.2.1/128", in("192.0.2.1"), true},
+		{"::ffff:192.0.2.1/128", in("::ffff:192.0.2.1"), true},
+		{"::ffff:192.0.2.1/128", in("192.0.2.2"), false},
+		{"::ffff:192.0.2.0/120", in("192.0.2.99"), true},
+		{"::ffff:192.0.2.0/120", in("::ffff:192.0.2.99"), true},
+		{"::ffff:192.0.2.0/120", in("192.0.3.1"), false},
+		{"::ffff:0.0.0.0/96", in("192.0.2.9"), true},
+		{"::ffff:0.0.0.0/96", in("2001::1"), false},
 		{" 127.0.0.1 , 10.0.0.0/8 ", in("127.0.0.1"), true},
 		{" 127.0.0.1 , 10.0.0.0/8 ", in("10.9.9.9"), true},
 		{" 127.0.0.1 , 10.0.0.0/8 ", in("8.8.8.8"), false},
@@ -71,6 +79,31 @@ func TestParseAllowedClientsAllows(t *testing.T) {
 		}
 		if got := rules.Allows(tc.addr); got != tc.want {
 			t.Errorf("ParseAllowedClients(%q).Allows(%v) = %v, want %v", tc.value, tc.addr, got, tc.want)
+		}
+	}
+}
+
+func TestParseAllowedClientsAllowsAddrMappedPrefixes(t *testing.T) {
+	cases := []struct {
+		rule string
+		peer string
+		want bool
+	}{
+		{"::ffff:192.0.2.1/128", "192.0.2.1", true},
+		{"::ffff:192.0.2.1/128", "::ffff:192.0.2.1", true},
+		{"::ffff:192.0.2.1/128", "192.0.2.2", false},
+		{"::ffff:192.0.2.0/120", "192.0.2.99", true},
+		{"::ffff:192.0.2.0/120", "::ffff:192.0.2.99", true},
+		{"::ffff:192.0.2.0/120", "192.0.3.1", false},
+	}
+	for _, tc := range cases {
+		rules, err := ParseAllowedClients(tc.rule)
+		if err != nil {
+			t.Fatalf("ParseAllowedClients(%q): %v", tc.rule, err)
+		}
+		peer := &net.TCPAddr{IP: net.ParseIP(tc.peer), Port: 1}
+		if got := rules.AllowsAddr(peer); got != tc.want {
+			t.Errorf("ParseAllowedClients(%q).AllowsAddr(%v) = %v, want %v", tc.rule, peer, got, tc.want)
 		}
 	}
 }
@@ -131,6 +164,8 @@ func TestParseAllowedClientsErrors(t *testing.T) {
 		{"19*", `invalid rule "19*"`},
 		{"fd00::*", "CIDR"},
 		{"fd00::*", "*"},
+		{"::ffff:192.0.2.0/95", "must be /96 or narrower"},
+		{"::ffff:0.0.0.0/80", "must be /96 or narrower"},
 		{"999.1.1.1", `invalid rule "999.1.1.1"`},
 		{"not-an-ip", `invalid rule "not-an-ip"`},
 		{strings.Repeat("10.0.0.0/8,", 65) + "10.0.0.0/8", "more than 64 rules"},

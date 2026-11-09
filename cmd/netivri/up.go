@@ -185,13 +185,14 @@ var errClaimStale = errors.New("the configuration changed on disk; try again")
 // in the in-memory config and rewrites the config file. It never
 // returns or logs the credential.
 func newPersist(path string, cfg *config.Config) func(login, passwordHash string) error {
+	claimedLogin, claimedPassword := cfg.Auth.Login, cfg.Auth.Password
 	return func(login, passwordHash string) error {
 		persistMu.Lock()
 		defer persistMu.Unlock()
 		mem := *cfg
 		mem.Auth.Login, mem.Auth.Password = login, passwordHash
 		err := saveClaim(path, &mem, func(disk *config.Config) error {
-			if disk.Auth.Login != config.InitPlaceholder && disk.Auth.Password != config.InitPlaceholder {
+			if disk.Auth.Login != claimedLogin || disk.Auth.Password != claimedPassword {
 				return errClaimStale
 			}
 			disk.Auth.Login, disk.Auth.Password = login, passwordHash
@@ -389,6 +390,9 @@ func runUpAngel(opts upOptions, args []string, stdout io.Writer) error {
 		cli.Success(stdout, alreadyRunningData(live, true))
 		return nil
 	}
+	if !errors.Is(probeErr, angel.ErrNotRunning) {
+		return &cli.Error{Code: "INTERNAL", Message: probeErr.Error(), Exit: cli.ExitInternal}
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return &cli.Error{Code: "INTERNAL", Message: "resolve executable: " + err.Error(), Exit: cli.ExitInternal}
@@ -428,6 +432,9 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 	probeCtx, cancelProbe := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	_, err = angelProbe(probeCtx, opts.Home)
 	cancelProbe()
+	if errors.Is(err, angel.ErrControlTimeout) {
+		return angelNotResponding()
+	}
 	if err == nil {
 		return &cli.Error{
 			Code:    "ALREADY_RUNNING",
@@ -435,6 +442,9 @@ func serve(opts upOptions, stdout io.Writer, bind string, port int, cfg *config.
 			Hint:    "run netivri down first",
 			Exit:    cli.ExitConflict,
 		}
+	}
+	if !errors.Is(err, angel.ErrNotRunning) {
+		return &cli.Error{Code: "INTERNAL", Message: err.Error(), Exit: cli.ExitInternal}
 	}
 	authenticator, err := newAuthenticator(cfg, opts.Home)
 	if err != nil {
