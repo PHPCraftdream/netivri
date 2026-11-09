@@ -20,8 +20,9 @@ import (
 // command runs (docs/design/parity.md).
 
 type statsReadMsg struct {
-	res StatsResult
-	err error
+	res        StatsResult
+	err        error
+	generation uint64
 }
 
 type statsScreen struct {
@@ -41,6 +42,7 @@ type statsScreen struct {
 	loaded     bool
 	busy       string
 	errText    string
+	generation uint64
 	dialog     tui.Modal
 	prompt     *tui.Prompt
 	promptMode string // "since", "sub", "country", "node" or "account"
@@ -132,11 +134,13 @@ func (s *statsScreen) options() StatsOptions {
 
 // reload re-reads the statistics in the background.
 func (s *statsScreen) reload() tea.Cmd {
+	s.generation++
+	generation := s.generation
 	s.busy = "Loading statistics"
-	opts, read := s.options(), s.read
+	home, opts, read := s.home, s.options(), s.read
 	return s.bg(s.busy, func() tea.Msg {
-		res, err := read(s.home, opts)
-		return statsReadMsg{res: res, err: err}
+		res, err := read(home, opts)
+		return statsReadMsg{res: res, err: err, generation: generation}
 	})
 }
 
@@ -166,6 +170,9 @@ func statsErrorText(err error) string {
 }
 
 func (s *statsScreen) applyRead(x statsReadMsg) (tui.Screen, tea.Cmd) {
+	if x.generation != s.generation {
+		return s, nil
+	}
 	s.busy = ""
 	s.loaded = true
 	s.errText = ""

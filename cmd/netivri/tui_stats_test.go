@@ -468,3 +468,158 @@ func TestStatsDurationInput(t *testing.T) {
 		}
 	}
 }
+
+type deferredStatsFixture struct {
+	s      *statsScreen
+	toasts []string
+}
+
+func newDeferredStatsFixture(t *testing.T) *deferredStatsFixture {
+	t.Helper()
+	f := &deferredStatsFixture{}
+	env := tui.Env{
+		Background: func(label string, work func() tea.Msg) tea.Cmd {
+			return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
+		},
+		Toast: func(text string) tea.Cmd {
+			f.toasts = append(f.toasts, text)
+			return nil
+		},
+	}
+	f.s = newStatsScreen(t.TempDir(), env).(*statsScreen)
+	return f
+}
+
+func (f *deferredStatsFixture) deliver(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected a deferred stats command")
+	}
+	screen, _ := f.s.Update(cmd())
+	f.s = screen.(*statsScreen)
+}
+
+func statsTestResult(by, key string) StatsResult {
+	return StatsResult{By: by, Items: []map[string]any{{"login": key, "label": key}}}
+}
+
+func TestStatsReloadDiscardsSupersededGroupingResult(t *testing.T) {
+	f := newDeferredStatsFixture(t)
+	f.s.read = func(string, StatsOptions) (StatsResult, error) {
+		return statsTestResult("node", "old/node"), nil
+	}
+	oldNode := f.s.reload()
+	f.s.read = func(string, StatsOptions) (StatsResult, error) {
+		return statsTestResult("account", "new-account"), nil
+	}
+	newAccount := f.s.toggleBy()
+
+	f.deliver(t, newAccount)
+	if f.s.by != "account" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-account" {
+		t.Fatalf("new account result not applied: by=%q rows=%v", f.s.by, f.s.list.Rows)
+	}
+	f.deliver(t, oldNode)
+	if f.s.by != "account" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-account" {
+		t.Fatalf("superseded node result replaced account rows: by=%q rows=%v", f.s.by, f.s.list.Rows)
+	}
+	if f.s.workspace.Card.Title != "Account new-account" || f.s.busy != "" {
+		t.Fatalf("card=%q busy=%q after stale result", f.s.workspace.Card.Title, f.s.busy)
+	}
+}
+
+func TestStatsReloadDiscardsStaleFilterErrorAndSuccess(t *testing.T) {
+	f := newDeferredStatsFixture(t)
+	f.s.items = []map[string]any{{"label": "previous"}}
+	f.s.errText = "previous error"
+	f.s.loaded = true
+	f.s.refresh()
+
+	f.s.sub = "old"
+	f.s.read = func(_ string, opts StatsOptions) (StatsResult, error) {
+		if opts.Sub != "old" {
+			t.Fatalf("old request options = %+v", opts)
+		}
+		return statsTestResult("node", "old-result"), nil
+	}
+	oldSuccess := f.s.reload()
+
+	f.s.sub = "middle"
+	f.s.read = func(_ string, opts StatsOptions) (StatsResult, error) {
+		if opts.Sub != "middle" {
+			t.Fatalf("middle request options = %+v", opts)
+		}
+		return StatsResult{}, errors.New("stale failure")
+	}
+	staleError := f.s.reload()
+
+	f.s.read = func(_ string, opts StatsOptions) (StatsResult, error) {
+		if opts.Sub != "new" {
+			t.Fatalf("new request options = %+v", opts)
+		}
+		return statsTestResult("node", "new-result"), nil
+	}
+	f.s.openPrompt("sub")
+	screen, newResult := f.s.applyPrompt(tui.PromptResultMsg{Value: "new"})
+	f.s = screen.(*statsScreen)
+
+	f.deliver(t, staleError)
+	if f.s.busy != "Loading statistics" || f.s.errText != "previous error" || !f.s.loaded ||
+		len(f.s.items) != 1 || statsString(f.s.items[0], "label") != "previous" || len(f.toasts) != 0 {
+		t.Fatalf("stale error changed pending state: busy=%q error=%q items=%v toasts=%v", f.s.busy, f.s.errText, f.s.items, f.toasts)
+	}
+
+	f.deliver(t, newResult)
+	if f.s.busy != "" || f.s.errText != "" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-result" {
+		t.Fatalf("new filter result not applied: busy=%q error=%q rows=%v", f.s.busy, f.s.errText, f.s.list.Rows)
+	}
+	f.deliver(t, oldSuccess)
+	if f.s.busy != "" || f.s.errText != "" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-result" {
+		t.Fatalf("stale success replaced newest result: busy=%q error=%q rows=%v", f.s.busy, f.s.errText, f.s.list.Rows)
+	}
+	if len(f.toasts) != 0 {
+		t.Fatalf("stale error produced toast: %v", f.toasts)
+	}
+}
+
+func TestStatsReloadDiscardsOlderSameFilterResult(t *testing.T) {
+	f := newDeferredStatsFixture(t)
+	f.s.read = func(string, StatsOptions) (StatsResult, error) {
+		return statsTestResult("node", "old-same-filter"), nil
+	}
+	old := f.s.reload()
+	f.s.read = func(string, StatsOptions) (StatsResult, error) {
+		return statsTestResult("node", "new-same-filter"), nil
+	}
+	newer := f.s.reload()
+
+	f.deliver(t, newer)
+	if len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-same-filter" {
+		t.Fatalf("newest same-filter result not applied: rows=%v", f.s.list.Rows)
+	}
+	f.deliver(t, old)
+	if len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "new-same-filter" || f.s.busy != "" {
+		t.Fatalf("older same-filter result replaced newest: rows=%v busy=%q", f.s.list.Rows, f.s.busy)
+	}
+}
+
+func TestStatsReadMsgZeroGenerationOnlyAcceptedOnPristineScreen(t *testing.T) {
+	f := newDeferredStatsFixture(t)
+	f.s.applyRead(statsReadMsg{res: statsTestResult("node", "direct-fixture")})
+	if len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "direct-fixture" || !f.s.loaded {
+		t.Fatalf("zero-generation fixture was not applied on pristine screen: rows=%v loaded=%v", f.s.list.Rows, f.s.loaded)
+	}
+
+	f.s.read = func(string, StatsOptions) (StatsResult, error) {
+		return statsTestResult("node", "reload-result"), nil
+	}
+	cmd := f.s.reload()
+	f.s.applyRead(statsReadMsg{res: statsTestResult("node", "stale-zero-generation")})
+	if f.s.busy != "Loading statistics" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "direct-fixture" {
+		t.Fatalf("zero-generation result changed active reload: busy=%q rows=%v", f.s.busy, f.s.list.Rows)
+	}
+
+	f.deliver(t, cmd)
+	if f.s.busy != "" || len(f.s.list.Rows) != 1 || f.s.list.Rows[0].Data != "reload-result" {
+		t.Fatalf("current reload result was not applied: busy=%q rows=%v", f.s.busy, f.s.list.Rows)
+	}
+}

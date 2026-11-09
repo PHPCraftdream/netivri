@@ -36,6 +36,7 @@ type providersScreen struct {
 	env                                 tui.Env
 	get                                 providersFetchFunc
 	now                                 func() time.Time
+	updateProvider                      func(string, string, ProviderUpdateOptions) error
 	workspace                           *tui.Workspace
 	list                                *tui.List
 	card                                *tui.Card
@@ -94,7 +95,7 @@ func newProvidersScreenWith(h string, e tui.Env, g providersFetchFunc, n func() 
 		theme = tui.NewTheme()
 	}
 	ws.SetTheme(theme)
-	return &providersScreen{home: h, env: e, get: g, now: n, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}, nodesList: NodeList, dialNode: DiagDialLabel}
+	return &providersScreen{home: h, env: e, get: g, now: n, updateProvider: ProviderUpdate, list: l, card: c, workspace: ws, providers: map[string]ProviderInfo{}, nodesList: NodeList, dialNode: DiagDialLabel}
 }
 func (s *providersScreen) Title() string        { return "Providers" }
 func (s *providersScreen) CapturingInput() bool { return s.dialog != nil || s.list.Filtering }
@@ -455,6 +456,7 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 		return s, nil
 	}
 	field := s.editField
+	name, home, update := s.selected, s.home, s.updateProvider
 	if (field == "pre" || field == "post") && strings.TrimSpace(value) == "" {
 		s.dialog = nil
 		s.prompt = nil
@@ -463,19 +465,19 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 	}
 	s.busy = "Saving provider"
 	s.prompt.SetSaving(true)
+	var o ProviderUpdateOptions
+	switch field {
+	case "url":
+		o.URL = &value
+	case "pre":
+		o.Pre = &value
+	case "post":
+		o.Post = &value
+	default:
+		o.Via = &value
+	}
 	return s, s.bg(s.busy, func() tea.Msg {
-		var o ProviderUpdateOptions
-		switch field {
-		case "url":
-			o.URL = &value
-		case "pre":
-			o.Pre = &value
-		case "post":
-			o.Post = &value
-		default:
-			o.Via = &value
-		}
-		return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)}
+		return providerResultMsg{"edit", name, update(home, name, o)}
 	})
 }
 func (s *providersScreen) applyRenamePrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
@@ -695,6 +697,9 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		s.prompt = nil
 		s.mode = ""
 		s.pendingSelect = s.selected
+		if name, ok := r.value.(string); ok && name != "" {
+			s.pendingSelect = name
+		}
 		return s, s.load()
 	case "rename":
 		oldNew, _ := r.value.([2]string)
@@ -975,8 +980,9 @@ func (s *providersScreen) clearHop(side string) tea.Cmd {
 	} else {
 		o.Post = &empty
 	}
+	name, home, update := s.selected, s.home, s.updateProvider
 	s.busy = "Saving provider"
-	return s.bg(s.busy, func() tea.Msg { return providerResultMsg{"edit", nil, ProviderUpdate(s.home, s.selected, o)} })
+	return s.bg(s.busy, func() tea.Msg { return providerResultMsg{"edit", name, update(home, name, o)} })
 }
 func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	switch s.card.Lines[s.card.Selected].ID {
