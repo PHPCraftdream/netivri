@@ -44,7 +44,8 @@ const (
 	siteBlockCap = 4096
 	// siteBlockKeep is how long a record that blocks nothing is remembered (for
 	// the doubling of a repeat).
-	siteBlockKeep = 24 * time.Hour
+	siteBlockKeep          = 24 * time.Hour
+	siteBlockPruneInterval = time.Minute
 )
 
 // silentMinLife: a connection that waited for an answer for less than this (from
@@ -108,11 +109,13 @@ func (st *blockState) block(now time.Time) time.Duration {
 }
 
 type siteBlocks struct {
-	mu      sync.RWMutex
-	m       map[blockKey]*blockState
-	n       atomic.Int64 // len(m), read without the lock on the hot path
-	now     func() time.Time
-	minLife time.Duration
+	mu         sync.RWMutex
+	m          map[blockKey]*blockState
+	n          atomic.Int64 // len(m), read without the lock on the hot path
+	now        func() time.Time
+	minLife    time.Duration
+	pruneAfter time.Time
+	pruneScans uint64
 }
 
 func newSiteBlocks(now func() time.Time) *siteBlocks {
@@ -186,7 +189,7 @@ func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Durat
 	defer b.mu.Unlock()
 	st := b.m[key]
 	if st == nil {
-		if len(b.m) >= siteBlockCap {
+		if len(b.m) >= siteBlockCap && !now.Before(b.pruneAfter) {
 			b.pruneLocked(now)
 		}
 		if len(b.m) >= siteBlockCap {
@@ -237,6 +240,8 @@ func (b *siteBlocks) blockInfo(login, site string, member int) (ratio bool, sile
 // pruneLocked forgets the records that block nothing and have not been
 // touched for a long time, or whose run of silent connections is over.
 func (b *siteBlocks) pruneLocked(now time.Time) {
+	b.pruneAfter = now.Add(siteBlockPruneInterval)
+	b.pruneScans++
 	for k, st := range b.m {
 		if now.Before(st.until) {
 			continue
@@ -284,7 +289,7 @@ func (g *stickyGroup) recordNoAnswer(login, site string, member int, label strin
 		return
 	}
 	okAt := g.healths[member].lastOKAt()
-	if !okAt.After(started) || g.health.down(label) {
+	if !okAt.After(started) {
 		return
 	}
 	now := g.clock()

@@ -64,19 +64,20 @@ var _ member = C.Proxy(nil)
 type stickyGroup struct {
 	*outboundgroup.GroupBase
 
-	members  []member  // dial and listen paths
-	proxies  []C.Proxy // the same members as C.Proxy, for Unwrap; may be nil in tests
-	labels   []string  // statistics label per member, same order
-	table    *affinityTable
-	health   *healthTable
-	healths  []*nodeHealth // per member, same order; Down() is one atomic load
-	tiers    []int         // priority tier per member (lower first), nil = one tier
-	isDownFn func(member int) bool
-	betterFn func(member int, now time.Time) bool
-	observer Observer
-	events   func(ConnEvent) // optional, see Options.OnConnEvent
-	hedgeAll bool            // test seam: fake members are hedgeable when set
-	blocks   *siteBlocks     // nodes blocked for sites that never answer
+	members    []member  // dial and listen paths
+	proxies    []C.Proxy // the same members as C.Proxy, for Unwrap; may be nil in tests
+	labels     []string  // statistics label per member, same order
+	healthKeys []string
+	table      *affinityTable
+	health     *healthTable
+	healths    []*nodeHealth // per member, same order; Down() is one atomic load
+	tiers      []int         // priority tier per member (lower first), nil = one tier
+	isDownFn   func(member int) bool
+	betterFn   func(member int, now time.Time) bool
+	observer   Observer
+	events     func(ConnEvent) // optional, see Options.OnConnEvent
+	hedgeAll   bool            // test seam: fake members are hedgeable when set
+	blocks     *siteBlocks     // nodes blocked for sites that never answer
 }
 
 // newStickyGroup builds the group over real Mihomo member proxies.
@@ -93,21 +94,42 @@ func newStickyGroup(name string, proxies []C.Proxy, labels []string, table *affi
 // newStickyGroupMembers is the testable core: it accepts the member
 // interface, so unit tests can use fake members (without Unwrap support).
 func newStickyGroupMembers(name string, members []member, labels []string, table *affinityTable, health *healthTable, observer Observer) *stickyGroup {
-	health.register(labels)
+	return newStickyGroupMembersWithHealthKeys(name, members, labels, labels, nil, table, health, observer)
+}
+
+func newStickyGroupMembersWithHealthKeys(name string, members []member, labels, healthKeys []string, hops []hopSet, table *affinityTable, health *healthTable, observer Observer) *stickyGroup {
+	healthMembers := make([]healthMember, len(labels))
+	for i, label := range labels {
+		key := label
+		if i < len(healthKeys) && healthKeys[i] != "" {
+			key = healthKeys[i]
+		}
+		var hop hopSet
+		if i < len(hops) {
+			hop = hops[i]
+		}
+		healthMembers[i] = healthMember{key: key, label: label, hops: hop}
+	}
+	health.registerMembers(healthMembers)
+	keys := make([]string, len(labels))
+	for i := range labels {
+		keys[i] = healthMembers[i].key
+	}
 	g := &stickyGroup{
 		GroupBase: outboundgroup.NewGroupBase(outboundgroup.GroupBaseOption{
 			Name: name,
 			Type: C.Selector,
 		}),
-		members:  members,
-		labels:   labels,
-		table:    table,
-		health:   health,
-		healths:  make([]*nodeHealth, len(labels)),
-		observer: observer,
+		members:    members,
+		labels:     labels,
+		healthKeys: keys,
+		table:      table,
+		health:     health,
+		healths:    make([]*nodeHealth, len(labels)),
+		observer:   observer,
 	}
-	for i, label := range labels {
-		g.healths[i] = health.health(label)
+	for i, key := range g.healthKeys {
+		g.healths[i] = health.health(key)
 	}
 	g.blocks = newSiteBlocks(table.now)
 	g.isDownFn = g.memberDown
@@ -177,7 +199,7 @@ func (g *stickyGroup) memberDown(member int) bool {
 // locks.
 func (g *stickyGroup) pickFor(login, site string) func() (int, bool) {
 	return func() (int, bool) {
-		views := g.health.views(g.labels)
+		views := g.health.viewsMembers(healthMembersForGroup(g.labels, g.healthKeys))
 		if len(g.tiers) == len(views) {
 			for i := range views {
 				views[i].Tier = g.tiers[i]
@@ -237,9 +259,9 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 
 	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
 	if recorded {
-		g.health.recordDialAt(label, site, err, took)
+		g.health.recordDialAtKey(g.healthKeys[index], site, err, took)
 		if err != nil {
-			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err), Hop: g.health.hopOf(label, err)})
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err), Hop: g.health.hopOfKey(g.healthKeys[index], err)})
 		}
 		g.observeDial(label, err == nil, took)
 		g.observeAccountDial(login, label, err == nil, took)
@@ -255,7 +277,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		conn.AppendToChains(g)
 		return g.watch(conn, login, label, index, metadata), nil
 	}
-	if !g.health.down(label) {
+	if !g.health.downKey(g.healthKeys[index]) {
 		return nil, err
 	}
 
@@ -268,9 +290,9 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	retryStarted := g.clock()
 	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
 	if retryRecorded {
-		g.health.recordDialAt(retryLabel, site, retryErr, retryTook)
+		g.health.recordDialAtKey(g.healthKeys[retry], site, retryErr, retryTook)
 		if retryErr != nil {
-			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr), Hop: g.health.hopOf(retryLabel, retryErr)})
+			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr), Hop: g.health.hopOfKey(g.healthKeys[retry], retryErr)})
 		}
 		g.observeDial(retryLabel, retryErr == nil, retryTook)
 		g.observeAccountDial(login, retryLabel, retryErr == nil, retryTook)
@@ -349,14 +371,15 @@ var _ C.ProxyAdapter = (*stickyGroup)(nil)
 
 // routePlan is one account route prepared for sticky-group installation.
 type routePlan struct {
-	index  int
-	gen    int
-	key    string   // route key the plan was built from
-	group  string   // internal proxy name of the route's group
-	names  []string // internal proxy names, member order
-	labels []string // statistics labels, member order
-	tiers  []int    // priority tier per member, lower first; nil = one tier
-	hops   []hopSet // the chain of every member, to say where a failure came from
+	index      int
+	gen        int
+	key        string   // route key the plan was built from
+	group      string   // internal proxy name of the route's group
+	names      []string // internal proxy names, member order
+	labels     []string // statistics labels, member order
+	healthKeys []string
+	tiers      []int    // priority tier per member, lower first; nil = one tier
+	hops       []hopSet // the chain of every member, to say where a failure came from
 }
 
 // checkedTiers validates the tiers of a route of n nodes: none, or one
@@ -457,6 +480,10 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 			}
 			plan.labels = append([]string(nil), labels...)
 		}
+		plan.healthKeys = make([]string, len(plan.labels))
+		for i, label := range plan.labels {
+			plan.healthKeys[i] = healthMemberKey(label, o.nodePre(key, i), o.nodePost(key, i))
+		}
 		tiers, err := checkedTiers(o.NodeTiers[key], len(nodes))
 		if err != nil {
 			return nil, err
@@ -492,14 +519,6 @@ func installStickyGroups(plans []routePlan, table *affinityTable, health *health
 func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *affinityTable, health *healthTable, observer Observer, events func(ConnEvent)) (map[string]C.Proxy, error) {
 	groups := make(map[string]C.Proxy, len(plans))
 	for _, plan := range plans {
-		for i, hs := range plan.hops {
-			if hs.chained() && i < len(plan.labels) {
-				if health.hops == nil {
-					health.hops = make(map[string]hopSet)
-				}
-				health.hops[plan.labels[i]] = hs
-			}
-		}
 		members := make([]C.Proxy, 0, len(plan.names))
 		for _, memberName := range plan.names {
 			proxy, ok := proxies[memberName]
@@ -511,7 +530,12 @@ func buildStickyGroups(plans []routePlan, proxies map[string]C.Proxy, table *aff
 			}
 			members = append(members, proxy)
 		}
-		group := newStickyGroup(plan.group, members, plan.labels, table, health, observer)
+		memberAdapters := make([]member, len(members))
+		for i, proxy := range members {
+			memberAdapters[i] = proxy
+		}
+		group := newStickyGroupMembersWithHealthKeys(plan.group, memberAdapters, plan.labels, plan.healthKeys, plan.hops, table, health, observer)
+		group.proxies = append([]C.Proxy(nil), members...)
 		group.tiers = plan.tiers
 		group.events = events
 		groups[plan.group] = adapter.NewProxy(group)
@@ -536,9 +560,19 @@ func planProxyNames(plans []routePlan) []string {
 // probeHook maps internal proxy names to node labels and feeds the health
 // table and the observer; the caller's own OnProbe, if any, still runs.
 func probeHook(nameToLabel map[string]string, health *healthTable, observer Observer, next func(string, bool, time.Duration)) func(string, bool, time.Duration) {
+	return probeHookKeys(nameToLabel, nameToLabel, health, observer, next)
+}
+
+func probeHookKeys(nameToLabel, nameToHealthKey map[string]string, health *healthTable, observer Observer, next func(string, bool, time.Duration)) func(string, bool, time.Duration) {
 	return func(name string, alive bool, delay time.Duration) {
 		if label, ok := nameToLabel[name]; ok {
-			health.recordProbe(label, alive, delay)
+			key := nameToHealthKey[name]
+			if key == "" {
+				key = label
+			}
+			if health != nil {
+				health.recordProbeKey(key, alive, delay)
+			}
 			if observer != nil {
 				observer.ObserveProbe(label, alive, delay)
 			}
@@ -552,14 +586,89 @@ func probeHook(nameToLabel map[string]string, health *healthTable, observer Obse
 // probeErrorHook hands the error of a failed probe to the health table, just
 // before its result is recorded; the caller's own OnProbeError still runs.
 func probeErrorHook(nameToLabel map[string]string, health *healthTable, next func(string, error)) func(string, error) {
+	return probeErrorHookKeys(nameToLabel, nameToLabel, health, next)
+}
+
+func probeErrorHookKeys(nameToLabel, nameToHealthKey map[string]string, health *healthTable, next func(string, error)) func(string, error) {
 	return func(name string, err error) {
 		if label, ok := nameToLabel[name]; ok {
-			health.noteProbeError(label, err)
+			key := nameToHealthKey[name]
+			if key == "" {
+				key = label
+			}
+			if health != nil {
+				health.noteProbeErrorKey(key, err)
+			}
 		}
 		if next != nil {
 			next(name, err)
 		}
 	}
+}
+
+func probeGroupHealthHook(nameToHealthKey map[string]string, health *healthTable) func([]string, bool, time.Duration, error) {
+	return func(names []string, alive bool, delay time.Duration, err error) {
+		seen := make(map[*nodeHealth]struct{}, len(names))
+		for _, name := range names {
+			key := nameToHealthKey[name]
+			if key == "" {
+				continue
+			}
+			h := health.health(key)
+			if h == nil {
+				continue
+			}
+			if _, ok := seen[h]; ok {
+				continue
+			}
+			seen[h] = struct{}{}
+			if err != nil {
+				health.noteProbeErrorKey(key, err)
+			}
+			health.recordProbeKey(key, alive, delay)
+		}
+	}
+}
+
+func memberNameHealthKeys(plans []routePlan) map[string]string {
+	keys := make(map[string]string)
+	for _, plan := range plans {
+		for i, name := range plan.names {
+			if i >= len(plan.labels) {
+				continue
+			}
+			label := plan.labels[i]
+			key := label
+			if i < len(plan.healthKeys) && plan.healthKeys[i] != "" {
+				key = plan.healthKeys[i]
+			}
+			if name == "DIRECT" {
+				if _, ok := keys[name]; !ok {
+					keys[name] = key
+				}
+				continue
+			}
+			base := name
+			if isRoutePostName(name) {
+				base = strings.TrimSuffix(name, "-post")
+			}
+			if _, ok := keys[name]; !ok {
+				keys[name] = key
+			}
+			if _, ok := keys[base]; !ok {
+				keys[base] = key
+			}
+			pre := helperProxyNameFromMember(base, "pre")
+			if _, ok := keys[pre]; !ok {
+				keys[pre] = key
+			}
+			post := helperProxyNameFromMember(base, "post")
+			if _, ok := keys[post]; !ok {
+				keys[post] = key
+			}
+		}
+	}
+	return keys
 }
 
 // memberNameLabels maps every member proxy name of every route to its
@@ -634,10 +743,11 @@ func (s managerSource) Range(f func(throughputTracker) bool) {
 }
 
 type trackerTotals struct {
-	label string
-	login string
-	up    int64
-	down  int64
+	label     string
+	healthKey string
+	login     string
+	up        int64
+	down      int64
 }
 
 // accountTraffic accumulates the up/down deltas of one (login, label) pair
@@ -659,9 +769,10 @@ type throughputPoller struct {
 	clock    stickyClock
 
 	// targetsMu guards health and labels, which Reconfigure replaces.
-	targetsMu sync.Mutex
-	health    *healthTable
-	labels    map[string]string // member proxy name -> node label
+	targetsMu  sync.Mutex
+	health     *healthTable
+	labels     map[string]string // member proxy name -> node label
+	healthKeys map[string]string
 
 	// started and lastTick come from the injected clock; last holds the
 	// per-tracker totals of the previous read. All three are touched only by
@@ -676,22 +787,27 @@ type throughputPoller struct {
 }
 
 func newThroughputPoller(source trackerSource, health *healthTable, observer Observer, memberLabels map[string]string, clock stickyClock) *throughputPoller {
+	return newThroughputPollerWithHealthKeys(source, health, observer, memberLabels, memberLabels, clock)
+}
+
+func newThroughputPollerWithHealthKeys(source trackerSource, health *healthTable, observer Observer, memberLabels, memberHealthKeys map[string]string, clock stickyClock) *throughputPoller {
 	if clock == nil {
 		clock = realStickyClock{}
 	}
-	health.register(mapValues(memberLabels))
+	health.registerMembers(healthMembersForNames(memberLabels, memberHealthKeys, health.hops))
 	ctx, cancel := context.WithCancel(context.Background())
 	return &throughputPoller{
-		source:   source,
-		health:   health,
-		observer: observer,
-		labels:   memberLabels,
-		window:   throughputPollInterval,
-		last:     make(map[string]trackerTotals),
-		clock:    clock,
-		ctx:      ctx,
-		cancel:   cancel,
-		done:     make(chan struct{}),
+		source:     source,
+		health:     health,
+		observer:   observer,
+		labels:     memberLabels,
+		healthKeys: memberHealthKeys,
+		window:     throughputPollInterval,
+		last:       make(map[string]trackerTotals),
+		clock:      clock,
+		ctx:        ctx,
+		cancel:     cancel,
+		done:       make(chan struct{}),
 	}
 }
 
@@ -728,9 +844,10 @@ func (p *throughputPoller) run() {
 // that disappeared are pruned.
 func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Duration) {
 	p.targetsMu.Lock()
-	health, labels := p.health, p.labels
+	health, labels, healthKeys := p.health, p.labels, p.healthKeys
 	p.targetsMu.Unlock()
 	type accountKey struct{ login, label string }
+	healthMoved := make(map[string]*accountTraffic)
 	nodeMoved := make(map[string]*accountTraffic)
 	acctMoved := make(map[accountKey]*accountTraffic)
 	seen := make(map[string]struct{}, len(p.last))
@@ -742,6 +859,10 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 		label := chainLabel(info.Chain, labels)
 		if label == "" {
 			return true
+		}
+		healthKey := chainHealthKey(info.Chain, healthKeys)
+		if healthKey == "" {
+			healthKey = label
 		}
 		login := ""
 		if info.Metadata != nil {
@@ -757,15 +878,22 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 			node = &accountTraffic{label: label}
 			nodeMoved[label] = node
 		}
+		healthNode := healthMoved[healthKey]
+		if healthNode == nil {
+			healthNode = &accountTraffic{label: label}
+			healthMoved[healthKey] = healthNode
+		}
 		entry := acctMoved[key]
 		if entry == nil {
 			entry = &accountTraffic{login: login, label: label}
 			acctMoved[key] = entry
 		}
-		if prev, ok := p.last[id]; ok && prev.label == label && prev.login == login {
+		if prev, ok := p.last[id]; ok && prev.label == label && prev.healthKey == healthKey && prev.login == login {
 			if delta := (up - prev.up) + (down - prev.down); delta > 0 {
 				node.up += up - prev.up
 				node.down += down - prev.down
+				healthNode.up += up - prev.up
+				healthNode.down += down - prev.down
 				entry.up += up - prev.up
 				entry.down += down - prev.down
 			}
@@ -773,11 +901,13 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 			if total := up + down; total > 0 {
 				node.up += up
 				node.down += down
+				healthNode.up += up
+				healthNode.down += down
 				entry.up += up
 				entry.down += down
 			}
 		}
-		p.last[id] = trackerTotals{label: label, login: login, up: up, down: down}
+		p.last[id] = trackerTotals{label: label, healthKey: healthKey, login: login, up: up, down: down}
 		return true
 	})
 	for id := range p.last {
@@ -791,10 +921,16 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 	// Two independent gates apply: the node gate is throughputSampleMin on
 	// the combined per-node total of all logins, while the account gate is
 	// the same threshold applied to each individual per-(login, label) entry.
-	for label, node := range nodeMoved {
+	for key, node := range healthMoved {
 		if node.down > 0 {
-			health.noteTraffic(label)
+			health.noteTrafficKey(key)
 		}
+		bytes := node.up + node.down
+		if bytes >= throughputSampleMin {
+			health.recordThroughputKey(key, bytes, window)
+		}
+	}
+	for label, node := range nodeMoved {
 		bytes := node.up + node.down
 		if bytes < throughputSampleMin {
 			continue
@@ -802,7 +938,6 @@ func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Durati
 		if p.observer != nil {
 			p.observer.ObserveThroughput(label, bytes, window)
 		}
-		health.recordThroughput(label, bytes, window)
 	}
 	for key, acc := range acctMoved {
 		if acc.up+acc.down < throughputSampleMin {
@@ -835,9 +970,16 @@ func (p *throughputPoller) setTargets(health *healthTable, memberLabels map[stri
 	if p == nil {
 		return
 	}
-	health.register(mapValues(memberLabels))
+	p.setTargetsWithHealthKeys(health, memberLabels, memberLabels)
+}
+
+func (p *throughputPoller) setTargetsWithHealthKeys(health *healthTable, memberLabels, memberHealthKeys map[string]string) {
+	if p == nil {
+		return
+	}
+	health.registerMembers(healthMembersForNames(memberLabels, memberHealthKeys, health.hops))
 	p.targetsMu.Lock()
-	p.health, p.labels = health, memberLabels
+	p.health, p.labels, p.healthKeys = health, memberLabels, memberHealthKeys
 	p.targetsMu.Unlock()
 }
 
@@ -847,6 +989,15 @@ func chainLabel(chain C.Chain, labels map[string]string) string {
 	for _, name := range chain {
 		if label, ok := labels[name]; ok {
 			return label
+		}
+	}
+	return ""
+}
+
+func chainHealthKey(chain C.Chain, keys map[string]string) string {
+	for _, name := range chain {
+		if key, ok := keys[name]; ok {
+			return key
 		}
 	}
 	return ""

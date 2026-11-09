@@ -56,10 +56,8 @@ type binding struct {
 	boundAt     time.Time
 	lastUsed    atomic.Int64 // unix nanoseconds
 	provisional bool
-	// answerNs is when a connection of the site last got data back, through
-	// answerMember; 0 before. See siteBlocks.
-	answerNs     atomic.Int64
-	answerMember atomic.Int32
+	answerMu    sync.Mutex
+	answers     map[int]int64
 }
 
 type affinityShard struct {
@@ -160,8 +158,7 @@ func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) boo
 	}
 	member, provisional := pick()
 	if (wasDown || wasWorse) && member == previous {
-		// The pick keeps the node: keep the binding too, with what it remembers
-		// (which node last answered the site).
+		// The pick keeps the node: keep the binding too, with its answer history.
 		b.lastUsed.Store(now.UnixNano())
 		return member, false, false, -1
 	}
@@ -175,7 +172,11 @@ func (t *affinityTable) acquireWith(key affinityKey, isDown func(member int) boo
 		t.returns.Add(1)
 		returned = true
 	}
-	nb := &binding{member: member, boundAt: now, provisional: provisional}
+	var answers map[int]int64
+	if (wasDown || wasWorse) && member != previous && b != nil {
+		answers = b.copyAnswers()
+	}
+	nb := &binding{member: member, boundAt: now, provisional: provisional, answers: answers}
 	nb.lastUsed.Store(now.UnixNano())
 	shard.bindings[key] = nb
 	if len(shard.bindings) > shard.cap {
@@ -209,9 +210,13 @@ func (t *affinityTable) noteAnswer(key affinityKey, member int, now time.Time) {
 	shard := t.shards[t.shardIndex(key.login, key.site)]
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
-	if b := shard.bindings[key]; b != nil {
-		b.answerMember.Store(int32(member))
-		b.answerNs.Store(now.UnixNano())
+	if b := shard.bindings[key]; b != nil && !t.expired(b, now) {
+		b.answerMu.Lock()
+		if b.answers == nil {
+			b.answers = make(map[int]int64)
+		}
+		b.answers[member] = now.UnixNano()
+		b.answerMu.Unlock()
 	}
 }
 
@@ -222,11 +227,26 @@ func (t *affinityTable) answeredWithin(key affinityKey, member int, d time.Durat
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 	b := shard.bindings[key]
-	if b == nil || int(b.answerMember.Load()) != member {
+	if b == nil || t.expired(b, now) {
 		return false
 	}
-	at := b.answerNs.Load()
-	return at != 0 && now.UnixNano()-at < int64(d)
+	b.answerMu.Lock()
+	at, ok := b.answers[member]
+	b.answerMu.Unlock()
+	return ok && now.UnixNano()-at < int64(d)
+}
+
+func (b *binding) copyAnswers() map[int]int64 {
+	b.answerMu.Lock()
+	defer b.answerMu.Unlock()
+	if len(b.answers) == 0 {
+		return nil
+	}
+	answers := make(map[int]int64, len(b.answers))
+	for member, at := range b.answers {
+		answers[member] = at
+	}
+	return answers
 }
 
 func (t *affinityTable) expired(b *binding, now time.Time) bool {

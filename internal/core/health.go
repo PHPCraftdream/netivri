@@ -2,6 +2,9 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -507,13 +510,85 @@ func (h *nodeHealth) view(label string) memberHealthView {
 	}
 }
 
-// healthTable keeps a nodeHealth per node label. Entries are created up
-// front by register, so the map is read-only afterwards and lookups need no
-// lock; measurements on unknown labels are ignored.
+type healthMember struct {
+	key   string
+	label string
+	hops  hopSet
+}
+
+// healthMemberKey identifies the node by its reporting label and the effective
+// pre/post chain. The hop values are hashed before they become a map key.
+func healthMemberKey(label, pre, post string) string {
+	hopKey := func(raw string) string {
+		if raw == "" || isNoChain(raw) {
+			return ""
+		}
+		mapping, err := chainProxy(raw, "health-hop")
+		if err != nil {
+			mapping = map[string]any{"raw": raw}
+		}
+		delete(mapping, "name")
+		if server, ok := mapping["server"].(string); ok {
+			mapping["server"] = strings.ToLower(server)
+		}
+		data, _ := json.Marshal(mapping)
+		sum := sha256.Sum256(data)
+		return hex.EncodeToString(sum[:])
+	}
+	raw, _ := json.Marshal([3]string{label, hopKey(pre), hopKey(post)})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
+}
+
+func healthMembersForPlans(plans []routePlan) []healthMember {
+	var members []healthMember
+	for _, plan := range plans {
+		for i, label := range plan.labels {
+			key := label
+			if i < len(plan.healthKeys) && plan.healthKeys[i] != "" {
+				key = plan.healthKeys[i]
+			}
+			var hops hopSet
+			if i < len(plan.hops) {
+				hops = plan.hops[i]
+			}
+			members = append(members, healthMember{key: key, label: label, hops: hops})
+		}
+	}
+	return members
+}
+
+func healthMembersForGroup(labels, keys []string) []healthMember {
+	members := make([]healthMember, len(labels))
+	for i, label := range labels {
+		key := label
+		if i < len(keys) && keys[i] != "" {
+			key = keys[i]
+		}
+		members[i] = healthMember{key: key, label: label}
+	}
+	return members
+}
+
+func healthMembersForNames(labels, keys map[string]string, hops map[string]hopSet) []healthMember {
+	members := make([]healthMember, 0, len(labels))
+	for name, label := range labels {
+		key := keys[name]
+		if key == "" {
+			key = label
+		}
+		members = append(members, healthMember{key: key, label: label, hops: hops[key]})
+	}
+	return members
+}
+
+// healthTable keeps a nodeHealth per node identity and effective hop chain.
+// Entries are created up front by registerMembers, so the map is read-only
+// afterwards and lookups need no lock; unknown keys are ignored.
 type healthTable struct {
 	entries map[string]*nodeHealth
-	// hops is the chain of every node that has a pre or post hop, by label; set
-	// when the groups are built, before the table is used (see hopSet).
+	// hops is the chain of every record, by health key; set when the groups
+	// are built, before the table is used.
 	hops map[string]hopSet
 	// notify, set before the first register, hears every change of a node's
 	// down state with the node label. It may be nil.
@@ -523,40 +598,68 @@ type healthTable struct {
 }
 
 func newHealthTable() *healthTable {
-	return &healthTable{entries: make(map[string]*nodeHealth)}
+	return &healthTable{entries: make(map[string]*nodeHealth), hops: make(map[string]hopSet)}
 }
 
-// register creates the records for the given labels before any traffic.
+// register creates records for legacy label-only callers and tests.
 func (t *healthTable) register(labels []string) {
-	for _, label := range labels {
-		if _, ok := t.entries[label]; !ok {
-			h := &nodeHealth{label: label, notify: t.notify, now: t.now}
+	members := make([]healthMember, len(labels))
+	for i, label := range labels {
+		members[i] = healthMember{key: label, label: label}
+	}
+	t.registerMembers(members)
+}
+
+func (t *healthTable) registerMembers(members []healthMember) {
+	if t.entries == nil {
+		t.entries = make(map[string]*nodeHealth)
+	}
+	if t.hops == nil {
+		t.hops = make(map[string]hopSet)
+	}
+	for _, member := range members {
+		if t.entries[member.key] == nil {
+			h := &nodeHealth{label: member.label, notify: t.notify, now: t.now}
 			h.upSince.Store(h.clock().UnixNano())
 			h.initHedgeBudget()
-			t.entries[label] = h
+			t.entries[member.key] = h
+		}
+		// Known keys are not rewritten: the poller registers them again
+		// while probes already read the map.
+		if _, ok := t.hops[member.key]; !ok {
+			t.hops[member.key] = member.hops
 		}
 	}
 }
 
-// carryHealth builds the table of a new routing generation: a label that
-// stays keeps its measurements, down state and hedge budget, the others start
-// fresh. Nothing is announced, so a node that was down before stays down
-// without a second report. notify is the table's new listener.
+// carryHealth builds the table of a new routing generation for label-only
+// callers and tests. Production routes use carryHealthMembers with hop keys.
 func carryHealth(old *healthTable, labels []string, notify func(NodeEvent)) *healthTable {
+	members := make([]healthMember, len(labels))
+	for i, label := range labels {
+		members[i] = healthMember{key: label, label: label}
+	}
+	return carryHealthMembers(old, members, notify)
+}
+
+func carryHealthMembers(old *healthTable, members []healthMember, notify func(NodeEvent)) *healthTable {
 	t := newHealthTable()
 	t.notify = notify
 	if old != nil {
 		t.now = old.now
 	}
-	for _, label := range labels {
-		if _, done := t.entries[label]; done || old == nil {
+	for _, member := range members {
+		if _, done := t.entries[member.key]; done || old == nil {
 			continue
 		}
-		if h := old.entries[label]; h != nil {
-			t.entries[label] = h.cloneFor(notify)
+		if h := old.entries[member.key]; h != nil {
+			c := h.cloneFor(notify)
+			c.label = member.label
+			t.entries[member.key] = c
+			t.hops[member.key] = member.hops
 		}
 	}
-	t.register(labels)
+	t.registerMembers(members)
 	return t
 }
 
@@ -594,20 +697,39 @@ func (h *nodeHealth) cloneFor(notify func(NodeEvent)) *nodeHealth {
 	return c
 }
 
-// health returns the record for a registered label, or nil.
-func (t *healthTable) health(label string) *nodeHealth { return t.entries[label] }
+// health returns the record for a registered health key.
+func (t *healthTable) health(key string) *nodeHealth { return t.entries[key] }
+
+func (t *healthTable) hopOfKey(key string, err error) string {
+	if t == nil || err == nil {
+		return ""
+	}
+	hs, ok := t.hops[key]
+	if !ok {
+		return ""
+	}
+	return hs.attribute(err)
+}
 
 func (t *healthTable) recordProbe(label string, alive bool, delay time.Duration) {
-	if h := t.entries[label]; h != nil {
+	t.recordProbeKey(label, alive, delay)
+}
+
+func (t *healthTable) recordProbeKey(key string, alive bool, delay time.Duration) {
+	if h := t.entries[key]; h != nil {
 		h.recordProbe(alive, delay)
 	}
 }
 
-// noteProbeError records the kind of a failed probe of a node before its
-// result is recorded.
+// noteProbeError records the kind of a failed probe before its result is
+// recorded.
 func (t *healthTable) noteProbeError(label string, err error) {
-	if h := t.entries[label]; h != nil {
-		h.noteProbeError(withHop(probeFailKind(err), t.hopOf(label, err)))
+	t.noteProbeErrorKey(label, err)
+}
+
+func (t *healthTable) noteProbeErrorKey(key string, err error) {
+	if h := t.entries[key]; h != nil {
+		h.noteProbeError(withHop(probeFailKind(err), t.hopOfKey(key, err)))
 	}
 }
 
@@ -619,43 +741,63 @@ func (t *healthTable) recordDial(label string, ok bool, took time.Duration) {
 
 // recordDialAt records a dial of site with its error (nil on success).
 func (t *healthTable) recordDialAt(label, site string, err error, took time.Duration) {
-	h := t.entries[label]
+	t.recordDialAtKey(label, site, err, took)
+}
+
+func (t *healthTable) recordDialAtKey(key, site string, err error, took time.Duration) {
+	h := t.entries[key]
 	if h == nil {
 		return
 	}
 	kind := ""
 	if err != nil {
-		// Only the fixed kinds, see dialErrKind, and the stage of the chain.
-		kind = withHop(dialErrKind(err), t.hopOf(label, err))
+		kind = withHop(dialErrKind(err), t.hopOfKey(key, err))
 	}
 	h.recordDialAt(err == nil, took, site, kind)
 }
 
 // noteTraffic records data coming back through a node, see nodeHealth.noteTraffic.
 func (t *healthTable) noteTraffic(label string) {
-	if h := t.entries[label]; h != nil {
+	t.noteTrafficKey(label)
+}
+
+func (t *healthTable) noteTrafficKey(key string) {
+	if h := t.entries[key]; h != nil {
 		h.noteTraffic()
 	}
 }
 
 func (t *healthTable) recordThroughput(label string, bytes int64, window time.Duration) {
-	if h := t.entries[label]; h != nil {
+	t.recordThroughputKey(label, bytes, window)
+}
+
+func (t *healthTable) recordThroughputKey(key string, bytes int64, window time.Duration) {
+	if h := t.entries[key]; h != nil {
 		h.recordThroughput(bytes, window)
 	}
 }
 
-func (t *healthTable) down(label string) bool {
-	h := t.entries[label]
+func (t *healthTable) down(label string) bool { return t.downKey(label) }
+
+func (t *healthTable) downKey(key string) bool {
+	h := t.entries[key]
 	return h != nil && h.Down()
 }
 
-// views returns one view per label, in the order given.
 func (t *healthTable) views(labels []string) []memberHealthView {
-	views := make([]memberHealthView, len(labels))
+	members := make([]healthMember, len(labels))
 	for i, label := range labels {
-		views[i] = memberHealthView{Label: label}
-		if h := t.entries[label]; h != nil {
-			views[i] = h.view(label)
+		members[i] = healthMember{key: label, label: label}
+	}
+	return t.viewsMembers(members)
+}
+
+func (t *healthTable) viewsMembers(members []healthMember) []memberHealthView {
+	views := make([]memberHealthView, len(members))
+	for i, member := range members {
+		views[i] = memberHealthView{Label: member.label}
+		if h := t.entries[member.key]; h != nil {
+			views[i] = h.view(member.label)
 		}
 	}
 	return views

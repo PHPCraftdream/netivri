@@ -208,15 +208,17 @@ func (w *watchConn) noteDown(n int) {
 	}
 }
 
-func (w *watchConn) Read(b []byte) (int, error) {
-	n, err := w.Conn.Read(b)
+func (w *watchConn) Read(b []byte) (n int, err error) {
+	defer w.guard(&err)
+	n, err = w.Conn.Read(b)
 	w.noteDown(n)
 	w.fail(err)
 	return n, err
 }
 
-func (w *watchConn) Write(b []byte) (int, error) {
-	n, err := w.Conn.Write(b)
+func (w *watchConn) Write(b []byte) (n int, err error) {
+	defer w.guard(&err)
+	n, err = w.Conn.Write(b)
 	w.noteUp(n)
 	w.fail(err)
 	return n, err
