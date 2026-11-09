@@ -59,6 +59,10 @@ func (s *Store) writerLoop() {
 			}
 			if it.ack != nil {
 				switch {
+				case it.prune != nil:
+					err := s.pruneDB(*it.prune)
+					resetCaches()
+					it.ack <- err
 				case len(it.nodes) > 0:
 					it.ack <- s.writeNodes(it.nodes)
 				case it.bindings != nil:

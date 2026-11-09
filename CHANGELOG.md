@@ -213,6 +213,16 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **The statistics database recovers from an interrupted upgrade and no longer grows without bound.**
+  An upgrade that stopped after adding the node-name column but before saving the schema version failed
+  every later start with "duplicate column" and switched statistics off; the schema steps and the version
+  are now one transaction. The nodes and accounts that no longer have any sample or binding are removed
+  with the old samples, and the writer's id caches are cleared with them.
+- **`netivri stats --since 30d` counts the recent samples.** A window longer than the raw retention read
+  only the hourly table, so a fresh database showed no nodes at all and an older one lacked its last
+  seven days; it now combines both. The node figures are read in one transaction, so a probe written
+  in between can no longer give a delay with no probes, and `--node` filters in the query instead of
+  loading every node's samples.
 - **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
   Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
   filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read

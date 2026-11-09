@@ -2,10 +2,13 @@ package stats
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -144,6 +147,234 @@ func TestNodesFiltersThreeNodes(t *testing.T) {
 	}
 }
 
+func TestNodesDialAverageTruncatesAndExcludesFailures(t *testing.T) {
+	s := newTestStore(t, nil)
+	if err := s.SetNodes([]NodeInfo{{Label: "p1/a"}}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	for _, sm := range []Sample{
+		dial(t0, "p1/a", true, 100),
+		dial(t0.Add(time.Second), "p1/a", true, 203),
+		dial(t0.Add(2*time.Second), "p1/a", false, 999),
+	} {
+		s.Record(sm)
+	}
+	mustFlush(t, s)
+
+	got, err := s.Nodes(Query{})
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Dials != 3 || got[0].DialsOK != 2 || got[0].DialAvgMS != 151 {
+		t.Fatalf("dial aggregates = %+v, want 3/2 avg 151", got)
+	}
+}
+
+func TestLongWindowDialAverageWeightsHourlyAndRaw(t *testing.T) {
+	s := newTestStore(t, nil)
+	old := base.Add(-20 * 24 * time.Hour).Truncate(time.Hour)
+	recent := base.Add(-time.Hour)
+	for _, sm := range []Sample{
+		dial(old, "p1/a", true, 1),
+		dial(old.Add(time.Second), "p1/a", true, 2),
+		dial(recent, "p1/a", true, 100),
+		dial(recent.Add(time.Second), "p1/a", false, 700),
+	} {
+		s.Record(sm)
+	}
+	mustFlush(t, s)
+	if err := s.prune(base); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	got, err := s.Nodes(Query{Since: 30 * 24 * time.Hour})
+	if err != nil {
+		t.Fatalf("Nodes: %v", err)
+	}
+	if len(got) != 1 || got[0].Dials != 4 || got[0].DialsOK != 3 || got[0].DialAvgMS != 34 {
+		t.Fatalf("combined dial aggregates = %+v, want 4/3 avg 34", got)
+	}
+}
+
+type measurementQueryRecorder struct {
+	querier
+	filters       []string
+	queries       []string
+	bad           []string
+	rawDialVector bool
+}
+
+func (q *measurementQueryRecorder) Query(query string, args ...any) (*sql.Rows, error) {
+	q.queries = append(q.queries, query)
+	for _, table := range []string{"sample", "hourly"} {
+		if !strings.Contains(query, "FROM "+table) {
+			continue
+		}
+		join := "JOIN node nf ON nf.id = " + table + ".node"
+		if len(q.filters) != 0 {
+			if !strings.Contains(query, join) {
+				q.bad = append(q.bad, "missing node join: "+query)
+			}
+			for _, filter := range q.filters {
+				if !strings.Contains(query, filter) {
+					q.bad = append(q.bad, "missing "+filter+": "+query)
+				}
+			}
+			if len(args) < 2 || args[0] != "keep" || args[1] != "DE" {
+				q.bad = append(q.bad, fmt.Sprintf("wrong filter args %v: %s", args, query))
+			}
+		} else if strings.Contains(query, join) {
+			q.bad = append(q.bad, "unexpected node join: "+query)
+		}
+		if strings.Contains(query, "FROM sample") && len(args) > 0 {
+			if kind, ok := args[len(args)-1].(int); ok && kind == int(KindDial) &&
+				(strings.Contains(query, "SELECT node, ms FROM sample") || strings.Contains(query, "SELECT sample.node, sample.ms FROM sample")) {
+				q.rawDialVector = true
+			}
+		}
+		maxArgs := 3 + len(q.filters)
+		if len(args) > maxArgs {
+			q.bad = append(q.bad, fmt.Sprintf("unexpectedly many query args (%d): %s", len(args), query))
+		}
+		break
+	}
+	return q.querier.Query(query, args...)
+}
+
+func TestNodesMeasurementQueriesApplyFiltersRawAndHourly(t *testing.T) {
+	s := newTestStore(t, nil)
+	if err := s.SetNodes([]NodeInfo{
+		{Label: "keep/node", Provider: "keep", Country: "DE"},
+		{Label: "drop/node", Provider: "drop", Country: "US"},
+	}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	old := base.Add(-20 * 24 * time.Hour).Truncate(time.Hour)
+	recent := base.Add(-time.Hour)
+	for _, sm := range []Sample{
+		probe(old, "keep/node", true, 100), dial(old, "keep/node", true, 200), throughput(old, "keep/node", 1024, 1000),
+		probe(old, "drop/node", true, 900), dial(old, "drop/node", true, 800), throughput(old, "drop/node", 8192, 1000),
+		probe(recent, "keep/node", true, 300), dial(recent, "keep/node", true, 400), throughput(recent, "keep/node", 2048, 1000),
+		probe(recent, "drop/node", true, 700), dial(recent, "drop/node", true, 600), throughput(recent, "drop/node", 4096, 1000),
+	} {
+		s.Record(sm)
+	}
+	mustFlush(t, s)
+
+	filter := Query{Provider: "keep", Country: "DE"}
+	run := func(since time.Duration, from time.Time) []NodeStats {
+		t.Helper()
+		tx, err := s.db.Begin()
+		if err != nil {
+			t.Fatalf("begin query: %v", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		metas, err := s.filteredNodes(tx, filter)
+		if err != nil {
+			t.Fatalf("filteredNodes: %v", err)
+		}
+		recorder := &measurementQueryRecorder{querier: tx, filters: []string{"nf.provider = ?", "nf.country = ?"}}
+		got, err := s.aggregateNodes(recorder, filter, since, from, metas)
+		if err != nil {
+			t.Fatalf("aggregateNodes: %v", err)
+		}
+		measurements := 0
+		for _, query := range recorder.queries {
+			if strings.Contains(query, "FROM sample") || strings.Contains(query, "FROM hourly") {
+				measurements++
+			}
+		}
+		if measurements == 0 || len(recorder.bad) != 0 {
+			t.Fatalf("measurement queries = %d, filter violations = %v", measurements, recorder.bad)
+		}
+		if len(got) != 1 || got[0].Label != "keep/node" {
+			t.Fatalf("filtered aggregates = %+v, want only keep/node", got)
+		}
+		return got
+	}
+
+	raw := run(24*time.Hour, base.Add(-24*time.Hour))
+	if raw[0].Probes != 1 || raw[0].Dials != 1 || raw[0].Bytes != 2048 || raw[0].DelayP50MS != 300 || raw[0].ThroughputP50KBps != 2 {
+		t.Fatalf("raw filtered aggregates = %+v", raw[0])
+	}
+	if err := s.prune(base); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	long := run(30*24*time.Hour, base.Add(-30*24*time.Hour))
+	if long[0].Probes != 2 || long[0].Dials != 2 || long[0].Bytes != 1024+2048 || long[0].DelayAvgMS != 200 || long[0].DialAvgMS != 300 {
+		t.Fatalf("long filtered aggregates = %+v", long[0])
+	}
+}
+
+type insertAfterCountsQuerier struct {
+	querier
+	afterCounts func() error
+	inserted    bool
+	err         error
+}
+
+func (q *insertAfterCountsQuerier) Query(query string, args ...any) (*sql.Rows, error) {
+	rows, err := q.querier.Query(query, args...)
+	if err == nil && !q.inserted && strings.Contains(query, "COUNT(*)") {
+		q.inserted = true
+		q.err = q.afterCounts()
+	}
+	return rows, err
+}
+
+func TestNodesReadTransactionKeepsSnapshotAfterCounts(t *testing.T) {
+	s := newTestStore(t, nil)
+	if err := s.SetNodes([]NodeInfo{{Label: "p1/a"}}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	s.Record(probe(t0, "p1/a", true, 100))
+	s.Record(probe(t0.Add(time.Second), "p1/a", true, 300))
+	mustFlush(t, s)
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatalf("begin query: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	metas, err := s.filteredNodes(tx, Query{})
+	if err != nil {
+		t.Fatalf("filteredNodes: %v", err)
+	}
+	if len(metas) != 1 {
+		t.Fatalf("filtered nodes = %d, want 1", len(metas))
+	}
+	writer := openRaw(t, s.opts.Path)
+	audit := &measurementQueryRecorder{querier: tx}
+	q := &insertAfterCountsQuerier{querier: audit, afterCounts: func() error {
+		_, err := writer.Exec(`INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, ?, ?, 1, ?, 0)`,
+			t0.Add(2*time.Second).UnixMilli(), metas[0].id, int(KindProbe), 900)
+		return err
+	}}
+	got, err := s.aggregateNodes(q, Query{}, 24*time.Hour, base.Add(-24*time.Hour), metas)
+	if err != nil {
+		t.Fatalf("aggregateNodes: %v", err)
+	}
+	if q.err != nil || !q.inserted {
+		t.Fatalf("insert after count query: inserted=%v err=%v", q.inserted, q.err)
+	}
+	if len(audit.bad) != 0 || audit.rawDialVector {
+		t.Fatalf("unfiltered measurement query checks: dial vectors loaded=%v violations=%v", audit.rawDialVector, audit.bad)
+	}
+	var hasSQLMean bool
+	for _, query := range audit.queries {
+		if strings.Contains(query, "COUNT(*)") && strings.Contains(query, "SUM(CASE WHEN sample.ok = 1 THEN sample.ms ELSE 0 END)") {
+			hasSQLMean = true
+		}
+	}
+	if !hasSQLMean {
+		t.Fatalf("no SQL sum/count mean query found in %v", audit.queries)
+	}
+	if len(got) != 1 || got[0].Probes != 2 || got[0].ProbesOK != 2 || got[0].DelayAvgMS != 200 ||
+		got[0].DelayP50MS != 100 || got[0].DelayP95MS != 300 || !got[0].LastSeen.Equal(t0.Add(time.Second)) {
+		t.Fatalf("snapshot aggregates = %+v, want only the two pre-insert probes", got)
+	}
+}
+
 func TestFlushHonorsCanceledContext(t *testing.T) {
 	s := newTestStore(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -268,6 +499,9 @@ func TestReadOnlyStore(t *testing.T) {
 	ro.Record(probe(t0, "p1/a", true, 500))
 	if err := ro.SetNodes([]NodeInfo{{Label: "p1/a", Provider: "x", Country: "DE"}}); err != nil {
 		t.Fatalf("SetNodes on read-only: %v", err)
+	}
+	if err := ro.prune(base); err != nil {
+		t.Fatalf("prune on read-only: %v", err)
 	}
 	if err := ro.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush on read-only: %v", err)

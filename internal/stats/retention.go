@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// prune folds raw samples older than the retention into hourly, deletes
+// pruneDB folds raw samples older than the retention into hourly, deletes
 // them and drops hourly rows older than 90 days, all in one transaction.
-func (s *Store) prune(now time.Time) error {
+func (s *Store) pruneDB(now time.Time) error {
 	cutoff := now.UTC().Add(-s.opts.Retention).UnixMilli()
 	hourlyCutoff := now.UTC().Add(-hourlyTTL).Unix() / 3600
 
@@ -64,6 +64,22 @@ ON CONFLICT(hour, account, node, kind) DO UPDATE SET
 	}
 	if _, err := tx.Exec("DELETE FROM hourly WHERE hour < ?", hourlyCutoff); err != nil {
 		return fmt.Errorf("stats: delete hourly: %w", err)
+	}
+	if _, err := tx.Exec(`
+DELETE FROM node
+WHERE NOT EXISTS (SELECT 1 FROM sample WHERE sample.node = node.id)
+  AND NOT EXISTS (SELECT 1 FROM hourly WHERE hourly.node = node.id)
+  AND NOT EXISTS (SELECT 1 FROM account_sample WHERE account_sample.node = node.id)
+  AND NOT EXISTS (SELECT 1 FROM account_hourly WHERE account_hourly.node = node.id)
+  AND NOT EXISTS (SELECT 1 FROM binding WHERE binding.label = node.label)`); err != nil {
+		return fmt.Errorf("stats: delete unused nodes: %w", err)
+	}
+	if _, err := tx.Exec(`
+DELETE FROM account
+WHERE NOT EXISTS (SELECT 1 FROM account_sample WHERE account_sample.account = account.id)
+  AND NOT EXISTS (SELECT 1 FROM account_hourly WHERE account_hourly.account = account.id)
+  AND NOT EXISTS (SELECT 1 FROM binding WHERE binding.login = account.login)`); err != nil {
+		return fmt.Errorf("stats: delete unused accounts: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("stats: commit prune: %w", err)

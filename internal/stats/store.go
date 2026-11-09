@@ -136,8 +136,8 @@ type Store struct {
 	// v2 database see false, fresh or migrated stores true.
 	hasName bool
 
-	// queue carries samples, flush requests and SetNodes requests to the
-	// writer goroutine, in order.
+	// queue carries samples, flush, SetNodes, ReplaceBindings and prune
+	// requests to the writer goroutine, in order.
 	queue   chan item
 	ids     map[string]int64 // label -> node id, writer goroutine only
 	accIDs  map[string]int64 // login -> account id, writer goroutine only
@@ -162,7 +162,8 @@ type item struct {
 	acct     *AccountSample
 	nodes    []NodeInfo
 	bindings *bindingWrite
-	ack      chan error // flush, SetNodes and ReplaceBindings requests carry an ack
+	prune    *time.Time
+	ack      chan error // flush, SetNodes, ReplaceBindings and prune requests carry an ack
 }
 
 // Open prepares the store and starts the writer and retention goroutines.
@@ -214,7 +215,7 @@ func openStore(o Options) (*Store, error) {
 	s.hasName = probeHasName(db)
 	// The contract prunes at open. A failure here (for example a busy
 	// database) is not fatal: the data stays and the hourly ticker retries.
-	_ = s.prune(s.now())
+	_ = s.pruneDB(s.now())
 	return s, nil
 }
 
@@ -315,11 +316,9 @@ func fileURI(slashAbs string, readOnly bool) string {
 }
 
 // probeHasName reports whether the node table has the schema v3 name
-// column. Run once at store creation, before any transaction is open, so a
-// writable store's single connection is free and no query inside a
-// transaction can deadlock waiting for a second one.
-func probeHasName(db *sql.DB) bool {
-	rows, err := db.Query("PRAGMA table_info(node)")
+// column. It can query either the database or an open transaction.
+func probeHasName(q querier) bool {
+	rows, err := q.Query("PRAGMA table_info(node)")
 	if err != nil {
 		return false
 	}
@@ -340,8 +339,14 @@ func probeHasName(db *sql.DB) bool {
 }
 
 func migrate(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("stats: begin migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("stats: read schema version: %w", err)
 	}
 	if version > schemaVersion {
@@ -350,11 +355,6 @@ func migrate(db *sql.DB) error {
 	if version == schemaVersion {
 		return nil
 	}
-	// Every step is gated by the current version, so an upgrade from any
-	// version runs only the DDL it has not applied yet: schemaV3's ALTER
-	// fails if the name column already exists, and the other DDLs are
-	// CREATE ... IF NOT EXISTS. A fresh database (version 0) runs all four;
-	// a version 1, 2 or 3 database keeps all of its data.
 	for _, step := range []struct {
 		version int
 		ddl     string
@@ -364,15 +364,18 @@ func migrate(db *sql.DB) error {
 		{3, schemaV3},
 		{4, schemaV4},
 	} {
-		if version >= step.version {
+		if version >= step.version || step.version == 3 && probeHasName(tx) {
 			continue
 		}
-		if _, err := db.Exec(step.ddl); err != nil {
+		if _, err := tx.Exec(step.ddl); err != nil {
 			return fmt.Errorf("stats: migrate: %w", err)
 		}
 	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("stats: set schema version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("stats: commit migration: %w", err)
 	}
 	return nil
 }
@@ -432,6 +435,24 @@ func (s *Store) SetNodes(infos []NodeInfo) error {
 	}
 	ack := make(chan error, 1)
 	s.queue <- item{nodes: infos, ack: ack}
+	s.mu.RUnlock()
+	return <-ack
+}
+
+// prune queues a retention pass on the writer so pruning and cache eviction
+// are ordered with all ID-cache access. On a read-only store or after Close it
+// is a no-op.
+func (s *Store) prune(now time.Time) error {
+	if s.ro {
+		return nil
+	}
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return nil
+	}
+	ack := make(chan error, 1)
+	s.queue <- item{prune: &now, ack: ack}
 	s.mu.RUnlock()
 	return <-ack
 }
