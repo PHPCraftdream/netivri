@@ -140,7 +140,7 @@ func TestAccountsDuplicateAddRetainsWizardAndRedactsSecret(t *testing.T) {
 	s.beginAdd()
 	d := s.dialog
 	secret := "socks5://u:unique-secret@host:1080"
-	d.wizard.Values = map[string]string{"Login": "alice", "Provider": "any", "Country": "any", "Exit": "direct", "Clients": "everyone", "Pre-hop": "", "Post-hop": secret}
+	d.wizard.Values = map[string]string{"Login": "alice", "Provider": accountProviderAnySentinel, "Country": "any", "Exit": "direct", "Clients": "everyone", "Pre-hop": "", "Post-hop": secret}
 	d.wizard.Steps[7].Prompt.Value = secret
 	_, cmd := s.Update(accountsDialogResult{Values: d.wizard.Values})
 	if cmd == nil || !d.wizard.Saving {
@@ -222,7 +222,7 @@ func TestAccountsAddWizardCallbackPersistsEveryoneWildcard(t *testing.T) {
 	s.providers = []string{"main"}
 	s.beginAdd()
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{
-		"Login": "bob", "Provider": "any", "Country": "any", "Exit": "direct",
+		"Login": "bob", "Provider": accountProviderAnySentinel, "Country": "any", "Exit": "direct",
 		"Clients": "everyone", "Pre-hop": "", "Post-hop": "",
 	}})
 	if cmd == nil {
@@ -233,8 +233,8 @@ func TestAccountsAddWizardCallbackPersistsEveryoneWildcard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].AllowedClients != "*" {
-		t.Fatalf("account config did not persist wildcard access: %#v", cfg.Accounts)
+	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].Provider != "" || cfg.Accounts[0].ExitCountry != "" || cfg.Accounts[0].AllowedClients != "*" {
+		t.Fatalf("account config did not persist wildcard access and any-provider selection: %#v", cfg.Accounts)
 	}
 	if s.dialog != nil || s.selectedLogin() != "bob" {
 		t.Fatal("successful wizard did not close and select the new account")

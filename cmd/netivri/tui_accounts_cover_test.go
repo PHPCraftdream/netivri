@@ -374,7 +374,7 @@ func TestAccountsWizardResultPersistsAndValidationRetains(t *testing.T) {
 	}
 	// Valid values create the account and close the dialog.
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{
-		"Login": "bob", "Provider": "any", "Country": "any", "Exit": "direct",
+		"Login": "bob", "Provider": accountProviderAnySentinel, "Country": "any", "Exit": "direct",
 		"Clients": "everyone", "CustomClients": "", "Pre-hop": "", "Post-hop": "",
 	}})
 	if cmd == nil {
@@ -385,8 +385,8 @@ func TestAccountsWizardResultPersistsAndValidationRetains(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].AllowedClients != "*" {
-		t.Fatalf("wizard add did not persist wildcard clients: %#v", cfg.Accounts)
+	if len(cfg.Accounts) != 1 || cfg.Accounts[0].Login != "bob" || cfg.Accounts[0].Provider != "" || cfg.Accounts[0].ExitCountry != "" || cfg.Accounts[0].AllowedClients != "*" {
+		t.Fatalf("wizard add did not persist wildcard clients and any-provider selection: %#v", cfg.Accounts)
 	}
 	if s.dialog != nil {
 		t.Fatal("successful wizard add left the dialog open")

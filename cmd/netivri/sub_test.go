@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
+	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +35,75 @@ const testBody = `proxies:
 const testBodyFI = `proxies:
   - {name: "🇫🇮 Helsinki 1", type: ss, server: example.invalid, port: 8388, cipher: aes-128-gcm, password: pass}
 `
+
+func TestParseFlagsDelimiter(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		want        []string
+		wantEnabled bool
+		wantValue   string
+	}{
+		{
+			name:        "flags after positional",
+			args:        []string{"alice", "--enabled", "bob"},
+			want:        []string{"alice", "bob"},
+			wantEnabled: true,
+		},
+		{
+			name:        "flag before delimiter and flags after it",
+			args:        []string{"alice", "--enabled", "--", "-bob", "--value=ignored"},
+			want:        []string{"alice", "-bob", "--value=ignored"},
+			wantEnabled: true,
+		},
+		{
+			name: "lone delimiter",
+			args: []string{"--"},
+		},
+		{
+			name: "delimiter at end",
+			args: []string{"alice", "--"},
+			want: []string{"alice"},
+		},
+		{
+			name: "tokens after delimiter are verbatim",
+			args: []string{"alice", "--", "-bob", "--enabled", "--"},
+			want: []string{"alice", "-bob", "--enabled", "--"},
+		},
+		{
+			name: "leading delimiter",
+			args: []string{"--", "-alice", "--"},
+			want: []string{"-alice", "--"},
+		},
+		{
+			name:      "flag value that equals delimiter",
+			args:      []string{"--value", "--", "alice"},
+			want:      []string{"alice"},
+			wantValue: "--",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := flag.NewFlagSet("parse flags test", flag.ContinueOnError)
+			fs.SetOutput(io.Discard)
+			enabled := fs.Bool("enabled", false, "")
+			value := fs.String("value", "", "")
+			got, err := parseFlags(fs, tc.args)
+			if err != nil {
+				t.Fatalf("parseFlags(%v): %v", tc.args, err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("positional = %q, want %q", got, tc.want)
+			}
+			if *enabled != tc.wantEnabled {
+				t.Errorf("enabled = %t, want %t", *enabled, tc.wantEnabled)
+			}
+			if *value != tc.wantValue {
+				t.Errorf("value = %q, want %q", *value, tc.wantValue)
+			}
+		})
+	}
+}
 
 func fakeBody(body string) func(context.Context, string, fetch.Options) (*fetch.Result, error) {
 	return func(context.Context, string, fetch.Options) (*fetch.Result, error) {

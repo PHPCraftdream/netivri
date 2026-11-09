@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,6 +603,70 @@ func TestServersLinkRevealAppearsOnlyInRevealFrame(t *testing.T) {
 		t.Fatalf("link appeared in %d frames, want only the reveal dialog", reveals)
 	}
 	serversAssertNoLeaks(t, home, link, frames[:len(frames)-2]) // everything except reveal + after-close still must not leak secrets
+}
+
+func TestServersLinkModalWrappedBodyScrolling(t *testing.T) {
+	const width, height = 80, 17
+	link := "vmess://" + strings.Repeat("a", 1600)
+	newModal := func() *serversMenuModal {
+		return newServersLinkModal(tui.NewTheme(), "long", link, "uri")
+	}
+	assertPage := func(t *testing.T, m *serversMenuModal, offset int) {
+		t.Helper()
+		view := m.View(width, height)
+		body := m.wrappedBody(width)
+		slots := height - 4
+		if offset < 0 || offset > len(body)-slots || m.offset != offset {
+			t.Fatalf("offset = %d, want %d (body=%d slots=%d)", m.offset, offset, len(body), slots)
+		}
+		wantIndicator := fmt.Sprintf("lines %d-%d of %d", offset+1, min(offset+slots, len(body)), len(body))
+		if !strings.Contains(view, wantIndicator) {
+			t.Fatalf("view missing %q: %q", wantIndicator, view)
+		}
+		rows := strings.Split(view, "\n")
+		for i, want := range body[offset : offset+slots] {
+			if got := strings.TrimRight(rows[2+i], " "); got != want {
+				t.Fatalf("body row %d = %q, want wrapped row %q", i, got, want)
+			}
+		}
+	}
+
+	tests := []struct {
+		name   string
+		update func(*serversMenuModal)
+		want   int
+	}{
+		{"down", func(m *serversMenuModal) { _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown}) }, 1},
+		{"page-down", func(m *serversMenuModal) { _, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown}) }, 5},
+		{"wheel-down", func(m *serversMenuModal) {
+			_, _ = m.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+		}, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newModal()
+			assertPage(t, m, 0) // establishes the rendered 80x17 scroll bounds
+			tt.update(m)
+			assertPage(t, m, tt.want)
+		})
+	}
+
+	m := newModal()
+	assertPage(t, m, 0)
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	assertPage(t, m, len(m.wrappedBody(width))-(height-4))
+}
+
+func TestServerPickPortAddressUsesJoinHostPort(t *testing.T) {
+	if got := serverPickPortAddress("::1"); got != net.JoinHostPort("::1", "0") || got != "[::1]:0" {
+		t.Fatalf("IPv6 ephemeral listen address = %q, want [::1]:0", got)
+	}
+	if got := serverPickPortAddress("127.0.0.1"); got != "127.0.0.1:0" {
+		t.Fatalf("IPv4 ephemeral listen address = %q, want 127.0.0.1:0", got)
+	}
+	if got := serverPickPortAddress("0.0.0.0"); got != ":0" {
+		t.Fatalf("wildcard ephemeral listen address = %q, want :0", got)
+	}
 }
 
 func TestServersAngelStoppedEditSavesAndReportsPendingApply(t *testing.T) {
