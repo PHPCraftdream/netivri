@@ -98,13 +98,14 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 
 // ProviderRename renames a provider, rewriting every account's provider list
 // member and moving the stored snapshot so references keep resolving. Nothing
-// is written when validation fails. A leftover old snapshot file is harmless:
-// it is orphaned data, the config no longer references it.
+// is written when validation fails. Case-only renames are rejected because
+// snapshot names alias on case-insensitive filesystems. A leftover old snapshot
+// file is harmless: it is orphaned data, the config no longer references it.
 func ProviderRename(home, oldName, newName string) error {
 	if !validSubName(newName) {
 		return cli.Usage("sub rename: --name must match [A-Za-z0-9._-]{1,64}")
 	}
-	if oldName == newName {
+	if strings.EqualFold(oldName, newName) {
 		return cli.Usage("sub rename: the new name must differ from the current name")
 	}
 	cfg, e := loadConfig(home)

@@ -159,6 +159,81 @@ func mergeMissing(dst map[string]string, src map[string]string) bool {
 	}
 	return changed
 }
+
+func mergeMaterial(dst, generated, params map[string]string) ([]CreatedSecretField, bool) {
+	var receipt []CreatedSecretField
+	changed := false
+	set := func(key, value string) {
+		old, present := dst[key]
+		if present && old == value {
+			return
+		}
+		receipt = append(receipt, CreatedSecretField{Key: key, Value: value, Previous: old, HadPrevious: present})
+		dst[key] = value
+		changed = true
+	}
+	remove := func(key string) {
+		old, present := dst[key]
+		if !present {
+			return
+		}
+		receipt = append(receipt, CreatedSecretField{Key: key, Previous: old, HadPrevious: true, Removed: true})
+		delete(dst, key)
+		changed = true
+	}
+
+	forced := map[string]bool{}
+	configuredFiles := params[tlsCertFileKey] != "" && params[tlsPrivateKeyFileKey] != ""
+	if configuredFiles && generated[tlsCertFileKey] != "" && generated[tlsPrivateKeyFileKey] != "" {
+		for _, key := range []string{tlsCertFileKey, tlsPrivateKeyFileKey, tlsFingerprintKey} {
+			if value, ok := generated[key]; ok {
+				set(key, value)
+				forced[key] = true
+			}
+		}
+		remove(tlsCertKey)
+		remove(tlsKeyKey)
+		forced[tlsCertKey], forced[tlsKeyKey] = true, true
+	} else if generated[tlsCertKey] != "" && generated[tlsKeyKey] != "" && (dst[tlsCertKey] == "" || dst[tlsKeyKey] == "") {
+		for _, key := range []string{tlsCertKey, tlsKeyKey, tlsFingerprintKey} {
+			if value, ok := generated[key]; ok {
+				set(key, value)
+				forced[key] = true
+			}
+		}
+	}
+	for key, value := range generated {
+		if forced[key] {
+			continue
+		}
+		old, present := dst[key]
+		if !present || old == "" {
+			set(key, value)
+		}
+	}
+	return receipt, changed
+}
+
+func applyConfiguredTLS(spec Spec, material map[string]string) (map[string]string, error) {
+	_, hasCert := spec.Params[tlsCertFileKey]
+	_, hasKey := spec.Params[tlsPrivateKeyFileKey]
+	if !hasCert && !hasKey {
+		return material, nil
+	}
+	configured, err := NewTLSMaterial(spec.Params, "")
+	if err != nil {
+		return nil, errors.New("cannot apply server TLS material")
+	}
+	for _, key := range []string{tlsCertFileKey, tlsPrivateKeyFileKey, tlsFingerprintKey} {
+		if value, ok := configured[key]; ok {
+			material[key] = value
+		}
+	}
+	delete(material, tlsCertKey)
+	delete(material, tlsKeyKey)
+	return material, nil
+}
+
 func validateGenerated(m map[string]string) error {
 	for k, v := range m {
 		if !validSecretKey(k) || v == "" {
@@ -168,24 +243,64 @@ func validateGenerated(m map[string]string) error {
 	return nil
 }
 
-// CreatedSecretField records one field added by EnsureSecretsTracked.
+// CreatedSecretField records one field changed by EnsureSecretsTracked.
 type CreatedSecretField struct {
 	Key         string
 	Value       string
 	Previous    string
 	HadPrevious bool
+	Removed     bool
 }
 
 func (CreatedSecretField) String() string   { return "<redacted>" }
 func (CreatedSecretField) GoString() string { return "<redacted>" }
 
-// EnsureSecretsReceipt identifies fields created by one ensure operation.
+// EnsureSecretsReceipt identifies fields changed by one ensure operation.
 type EnsureSecretsReceipt struct {
 	Server       string
 	CreatedEntry bool
 	Material     []CreatedSecretField
 	Users        map[string][]CreatedSecretField
 	CreatedUsers []string
+
+	expectedTLS tlsMaterialState
+	hasTLSState bool
+}
+
+type tlsFieldState struct {
+	value   string
+	present bool
+}
+
+type tlsMaterialState struct {
+	certPEM     tlsFieldState
+	keyPEM      tlsFieldState
+	certFile    tlsFieldState
+	privateFile tlsFieldState
+	fingerprint tlsFieldState
+}
+
+func captureTLSMaterialState(material map[string]string) tlsMaterialState {
+	field := func(key string) tlsFieldState {
+		value, present := material[key]
+		return tlsFieldState{value: value, present: present}
+	}
+	return tlsMaterialState{
+		certPEM:     field(tlsCertKey),
+		keyPEM:      field(tlsKeyKey),
+		certFile:    field(tlsCertFileKey),
+		privateFile: field(tlsPrivateKeyFileKey),
+		fingerprint: field(tlsFingerprintKey),
+	}
+}
+
+func isTLSMaterialKey(key string) bool {
+	switch key {
+	case tlsCertKey, tlsKeyKey, tlsCertFileKey, tlsPrivateKeyFileKey, tlsFingerprintKey:
+		return true
+	default:
+		return false
+	}
 }
 
 func (EnsureSecretsReceipt) String() string   { return "<redacted>" }
@@ -219,6 +334,11 @@ func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spe
 	storeMu.Lock()
 	defer storeMu.Unlock()
 	receipt := EnsureSecretsReceipt{Server: spec.Name, Users: map[string][]CreatedSecretField{}}
+	unlock, err := s.lock()
+	if err != nil {
+		return spec, receipt, err
+	}
+	defer unlock()
 	if err := spec.Validate(); err != nil {
 		return spec, receipt, errors.New("invalid server specification")
 	}
@@ -250,6 +370,11 @@ func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spe
 			}
 		}
 		peer.Material = SecretMap(cloneMap(entry.Material))
+		peerMaterial, err := applyConfiguredTLS(peer, map[string]string(peer.Material))
+		if err != nil {
+			return spec, receipt, err
+		}
+		peer.Material = SecretMap(peerMaterial)
 		peer.Users = UserSecrets(entry.Users)
 		validatedPeers = append(validatedPeers, peer)
 	}
@@ -274,13 +399,9 @@ func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spe
 	if err = validateGenerated(gen); err != nil {
 		return spec, EnsureSecretsReceipt{}, err
 	}
-	for k, v := range gen {
-		old, present := e.Material[k]
-		if !present || old == "" {
-			receipt.Material = append(receipt.Material, CreatedSecretField{Key: k, Value: v, Previous: old, HadPrevious: present})
-		}
-	}
-	if mergeMissing(e.Material, gen) {
+	fields, materialChanged := mergeMaterial(e.Material, gen, spec.Params)
+	receipt.Material = append(receipt.Material, fields...)
+	if materialChanged {
 		changed = true
 	}
 	for _, login := range spec.Accounts {
@@ -325,6 +446,8 @@ func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spe
 			return spec, EnsureSecretsReceipt{}, err
 		}
 	}
+	receipt.expectedTLS = captureTLSMaterialState(e.Material)
+	receipt.hasTLSState = true
 	spec.Material = SecretMap(cloneMap(e.Material))
 	spec.Users = UserSecrets(e.Users)
 	return spec, receipt, nil
@@ -334,6 +457,11 @@ func (s *Store) ensureSecrets(spec Spec, peers []Spec, validate func(Spec, []Spe
 func (s *Store) CleanupCreated(receipt EnsureSecretsReceipt) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !receipt.CreatedEntry && len(receipt.Material) == 0 && len(receipt.Users) == 0 && len(receipt.CreatedUsers) == 0 {
 		return nil
 	}
@@ -347,8 +475,26 @@ func (s *Store) CleanupCreated(receipt EnsureSecretsReceipt) error {
 	}
 	e = cloneEntry(e)
 	changed := false
+	hasTLSReceipt := false
 	for _, field := range receipt.Material {
-		if current, ok := e.Material[field.Key]; ok && current == field.Value {
+		if isTLSMaterialKey(field.Key) {
+			hasTLSReceipt = true
+			break
+		}
+	}
+	restoreTLSGroup := hasTLSReceipt && receipt.hasTLSState && captureTLSMaterialState(e.Material) == receipt.expectedTLS
+	for _, field := range receipt.Material {
+		if isTLSMaterialKey(field.Key) && !restoreTLSGroup {
+			continue
+		}
+		current, present := e.Material[field.Key]
+		if field.Removed {
+			if present {
+				continue
+			}
+			e.Material[field.Key] = field.Previous
+			changed = true
+		} else if present && current == field.Value {
 			if field.HadPrevious {
 				e.Material[field.Key] = field.Previous
 			} else {
@@ -415,6 +561,11 @@ func (s *Store) Apply(spec Spec) (Spec, error) {
 		}
 	}
 	spec.Material = SecretMap(cloneMap(e.Material))
+	material, err := applyConfiguredTLS(spec, map[string]string(spec.Material))
+	if err != nil {
+		return spec, err
+	}
+	spec.Material = SecretMap(material)
 	spec.Users = UserSecrets(e.Users)
 	return spec, nil
 }
@@ -431,6 +582,11 @@ func containsString(values []string, wanted string) bool {
 func (s *Store) Rotate(spec Spec, login string) (Spec, error) {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return spec, err
+	}
+	defer unlock()
 	if !validSecretName(spec.Name) {
 		return spec, errors.New("invalid server name")
 	}
@@ -498,6 +654,11 @@ func (s *Store) Rotate(spec Spec, login string) (Spec, error) {
 func (s *Store) Remove(name string) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !validSecretName(name) {
 		return errors.New("invalid server name")
 	}
@@ -516,6 +677,11 @@ func (s *Store) Remove(name string) error {
 func (s *Store) Prune(specs []Spec) error {
 	storeMu.Lock()
 	defer storeMu.Unlock()
+	unlock, err := s.lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	e, err := s.read()
 	if err != nil {
 		return err

@@ -32,7 +32,8 @@ type Snapshot struct {
 // Snapshots written by earlier versions as {NAME}.json are still read and are
 // replaced by a .ktav file the next time they are saved.
 type Store struct {
-	dir string
+	dir      string
+	removeFn func(string) error
 }
 
 // storeMu serialises in-process writers across all Store values: several
@@ -40,7 +41,7 @@ type Store struct {
 var storeMu sync.Mutex
 
 // NewStore returns a store rooted at dir (normally <home>/subscriptions).
-func NewStore(dir string) *Store { return &Store{dir: dir} }
+func NewStore(dir string) *Store { return &Store{dir: dir, removeFn: os.Remove} }
 
 // Dir returns the store directory.
 func (s *Store) Dir() string { return s.dir }
@@ -132,8 +133,17 @@ func (s *Store) Save(name string, snap Snapshot) error {
 	if err := writeFileAtomic(s.legacyPath(name), data); err != nil {
 		return err
 	}
-	_ = os.Remove(s.path(name))
+	if err := s.removeFile(s.path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove Ktav subscription %q: %w", name, err)
+	}
 	return nil
+}
+
+func (s *Store) removeFile(path string) error {
+	if s.removeFn != nil {
+		return s.removeFn(path)
+	}
+	return os.Remove(path)
 }
 
 // Load reads a snapshot, from {NAME}.ktav or else from the {NAME}.json of an

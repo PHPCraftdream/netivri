@@ -300,6 +300,8 @@ func failKind(err error) string {
 // redirectPolicy enforces the redirect rules; errors are turned into
 // FETCH_FAILED by classifyErr.
 func redirectPolicy(req *http.Request, via []*http.Request) error {
+	// net/http sets Referer before calling CheckRedirect; never forward it.
+	req.Header.Del("Referer")
 	if len(via) >= MaxRedirects {
 		return errors.New("redirect limit exceeded")
 	}

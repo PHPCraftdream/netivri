@@ -126,6 +126,86 @@ func TestStoreRoundTripOfAwkwardValues(t *testing.T) {
 	}
 }
 
+func TestStoreJSONFallbackReturnsErrorWhenKtavRemovalFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "subscriptions")
+	s := NewStore(dir)
+	stale := testSnap(time.Now().UTC().Truncate(time.Second))
+	if err := s.Save("main", stale); err != nil {
+		t.Fatalf("Save stale Ktav snapshot: %v", err)
+	}
+
+	secret := "private-key-must-not-appear-in-errors"
+	fallback := Snapshot{
+		FetchedAt: time.Now().UTC().Truncate(time.Second),
+		Nodes: []Node{{
+			ID: "cccccccccccc", Name: "new", Type: "ss", Server: "example.invalid", Port: 1,
+			Raw: map[string]any{"type": "ss", "private-key": "-----BEGIN KEY-----\n" + secret + "\n-----END KEY-----\n"},
+		}},
+	}
+	removeErr := errors.New("injected remove failure")
+	ktavPath := s.path("main")
+	s.removeFn = func(path string) error {
+		if path == ktavPath {
+			return removeErr
+		}
+		return os.Remove(path)
+	}
+
+	err := s.Save("main", fallback)
+	if !errors.Is(err, removeErr) {
+		t.Fatal("Save did not preserve the wrapped remove failure")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Error("Save error exposed snapshot credentials")
+	}
+	if _, err := os.Stat(s.legacyPath("main")); err != nil {
+		t.Errorf("JSON fallback was not written: %v", err)
+	}
+	if _, err := os.Stat(ktavPath); err != nil {
+		t.Errorf("failed removal should leave the stale Ktav file in place: %v", err)
+	}
+	got, err := s.Load("main")
+	if err != nil {
+		t.Fatalf("Load after failed Save: %v", err)
+	}
+	if len(got.Nodes) == 0 {
+		t.Fatal("Load after failed Save returned no nodes")
+	}
+	if got.Nodes[0].ID != stale.Nodes[0].ID {
+		t.Errorf("Load selected node %q, want stale authoritative Ktav node %q", got.Nodes[0].ID, stale.Nodes[0].ID)
+	}
+}
+
+func TestStoreJSONFallbackRemovesExistingKtav(t *testing.T) {
+	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
+	if err := s.Save("main", testSnap(time.Now().UTC().Truncate(time.Second))); err != nil {
+		t.Fatalf("Save initial Ktav snapshot: %v", err)
+	}
+	fallback := Snapshot{
+		FetchedAt: time.Now().UTC().Truncate(time.Second),
+		Nodes: []Node{{
+			ID: "cccccccccccc", Name: "new", Type: "ss", Server: "example.invalid", Port: 1,
+			Raw: map[string]any{"type": "ss", "private-key": "-----BEGIN KEY-----\nline one\nline two\n-----END KEY-----\n"},
+		}},
+	}
+	if err := s.Save("main", fallback); err != nil {
+		t.Fatalf("Save JSON fallback: %v", err)
+	}
+	if _, err := os.Stat(s.path("main")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Ktav file remains after successful fallback: %v", err)
+	}
+	got, err := s.Load("main")
+	if err != nil {
+		t.Fatalf("Load JSON fallback: %v", err)
+	}
+	if len(got.Nodes) == 0 {
+		t.Fatal("Load JSON fallback returned no nodes")
+	}
+	if got.Nodes[0].ID != fallback.Nodes[0].ID {
+		t.Errorf("Load selected node %q, want JSON node %q", got.Nodes[0].ID, fallback.Nodes[0].ID)
+	}
+}
+
 // A value that Ktav cannot hold without change keeps the snapshot in the JSON
 // form instead of damaging it.
 func TestStoreFallsBackToJSONWhenKtavWouldChangeAValue(t *testing.T) {
