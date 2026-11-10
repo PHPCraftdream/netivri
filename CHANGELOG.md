@@ -219,6 +219,11 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A timeout through a proxy hop is named a timeout.** A probe or dial that ended with `context deadline
+  exceeded` inside the text of a hop error was logged as `error: <addr> connect error context deadline
+  exceeded` and counted as a separate cause in the summaries; it is now `timeout`, as are failed
+  subscription fetches with the same text.
+
 - **A hot reload no longer loses what the angel knew, and a busy port no longer blocks a config change
   for good.** When the new listener port was busy for a while and the previous core had to be restored,
   the watcher still marked the new file as applied and never tried again; it now retries a few times
