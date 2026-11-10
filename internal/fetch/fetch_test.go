@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"math"
@@ -327,6 +328,14 @@ func TestProgressNamesPathAndPhase(t *testing.T) {
 		{false, func(*progress) {}, "request failed: timeout (direct, connecting)"},
 		{false, func(p *progress) { p.trace().DNSStart(httptrace.DNSStartInfo{}) }, "(direct, resolving the name)"},
 		{false, func(p *progress) { p.trace().TLSHandshakeStart() }, "(direct, TLS handshake)"},
+		{false, func(p *progress) {
+			p.trace().TLSHandshakeStart()
+			p.trace().TLSHandshakeDone(tls.ConnectionState{}, errors.New("net/http: TLS handshake timeout"))
+		}, "(direct, TLS handshake)"},
+		{false, func(p *progress) {
+			p.trace().TLSHandshakeStart()
+			p.trace().TLSHandshakeDone(tls.ConnectionState{}, nil)
+		}, "(direct, sending the request)"},
 		{true, func(p *progress) { p.trace().WroteRequest(httptrace.WroteRequestInfo{}) }, "(via proxy, waiting for the answer)"},
 		{true, func(p *progress) { p.trace().GotFirstResponseByte() }, "(via proxy, reading the answer)"},
 		{false, func(p *progress) { p.set(phaseBody) }, "(direct, reading the body)"},

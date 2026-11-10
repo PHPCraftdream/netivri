@@ -525,3 +525,37 @@ func TestTimeoutNamesThePhase(t *testing.T) {
 		})
 	}
 }
+
+// A server that accepts the connection and never answers the TLS hello: the
+// failure names the handshake, not the phase after it.
+func TestTimeoutInTheTLSHandshakeNamesIt(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var conns []net.Conn
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns = append(conns, c)
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		<-done
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+
+	_, err = Get(context.Background(), "https://"+ln.Addr().String()+"/sub", Options{Timeout: 700 * time.Millisecond})
+	ce := codeOf(t, err)
+	if ce.Code != "FETCH_FAILED" || !strings.HasSuffix(ce.Message, "(direct, TLS handshake)") {
+		t.Errorf("got %s %q, want suffix %q", ce.Code, ce.Message, "(direct, TLS handshake)")
+	}
+}

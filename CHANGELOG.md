@@ -219,6 +219,10 @@ versions; every such change is listed here.
 
 ### Fixed
 
+- **A subscription fetch that fails in the TLS handshake says so.** The path and phase added to a failed
+  fetch named the phase after the handshake (`sending the request`) when the handshake itself timed out,
+  because the transport reports a failed handshake as finished; it now stays `TLS handshake`.
+
 - **A timeout through a proxy hop is named a timeout.** A probe or dial that ended with `context deadline
   exceeded` inside the text of a hop error was logged as `error: <addr> connect error context deadline
   exceeded` and counted as a separate cause in the summaries; it is now `timeout`, as are failed
