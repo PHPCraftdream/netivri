@@ -282,7 +282,7 @@ func failKind(err error) string {
 	var netErr net.Error
 	msg := strings.ToLower(err.Error())
 	switch {
-	case errors.As(err, &netErr) && netErr.Timeout(), strings.Contains(msg, "timeout"):
+	case errors.As(err, &netErr) && netErr.Timeout(), strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"):
 		return "timeout"
 	case strings.Contains(msg, "refused"):
 		return "connection refused"

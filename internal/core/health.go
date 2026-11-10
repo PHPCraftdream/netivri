@@ -206,7 +206,7 @@ func probeFailKind(err error) string {
 	msg := strings.ToLower(err.Error())
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout") ||
-		strings.Contains(msg, "did not properly respond") || strings.Contains(msg, "failed to respond"):
+		strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "did not properly respond") || strings.Contains(msg, "failed to respond"):
 		return "timeout"
 	case strings.Contains(msg, "need auth") || strings.Contains(msg, "rejected username") || strings.Contains(msg, "auth failed") ||
 		strings.Contains(msg, "proxy authentication"):

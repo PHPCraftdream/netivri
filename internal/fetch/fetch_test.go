@@ -294,6 +294,7 @@ func TestClassifyErrNamesTheKindOfFailure(t *testing.T) {
 		want string
 	}{
 		{errors.New("dial tcp 10.0.0.1:443: i/o timeout"), "request failed: timeout"},
+		{errors.New("10.0.0.1:443 connect error context deadline exceeded"), "request failed: timeout"},
 		{errors.New("dial tcp 10.0.0.1:443: connect: connection refused"), "request failed: connection refused"},
 		{errors.New("read tcp 10.0.0.1:1->10.0.0.2:443: connection reset by peer"), "request failed: connection reset"},
 		{errors.New("dial tcp: lookup example.com: no such host"), "request failed: dns failure"},

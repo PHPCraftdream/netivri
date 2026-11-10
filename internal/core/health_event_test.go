@@ -153,6 +153,8 @@ func TestProbeFailKindNamesAFewCausesWithoutTheAddress(t *testing.T) {
 		{context.DeadlineExceeded, "timeout"},
 		{fmt.Errorf("probe: %w", context.DeadlineExceeded), "timeout"},
 		{&net.DNSError{Err: "i/o timeout", IsTimeout: true}, "timeout"},
+		// A proxy hop hands the error over as text, so errors.Is cannot see the deadline.
+		{errors.New("203.0.113.9:443 connect error context deadline exceeded"), "timeout"},
 		{errors.New("dial tcp 203.0.113.9:443: connectex: No connection could be made because the target machine actively refused it. (connection refused)"), "connection refused"},
 		{errors.New("read tcp 10.0.0.1:5000->203.0.113.9:443: connection reset by peer"), "connection reset"},
 		{errors.New("lookup node.example: no such host"), "dns failure"},
