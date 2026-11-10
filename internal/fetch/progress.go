@@ -39,11 +39,16 @@ func (p *progress) set(phase string) { p.phase.Store(phase) }
 // phases are those of the proxy; the annotation says "via proxy".
 func (p *progress) trace() *httptrace.ClientTrace {
 	return &httptrace.ClientTrace{
-		GetConn:              func(string) { p.set(phaseConnect) },
-		DNSStart:             func(httptrace.DNSStartInfo) { p.set(phaseResolve) },
-		DNSDone:              func(httptrace.DNSDoneInfo) { p.set(phaseConnect) },
-		TLSHandshakeStart:    func() { p.set(phaseTLS) },
-		TLSHandshakeDone:     func(tls.ConnectionState, error) { p.set(phaseSend) },
+		GetConn:           func(string) { p.set(phaseConnect) },
+		DNSStart:          func(httptrace.DNSStartInfo) { p.set(phaseResolve) },
+		DNSDone:           func(httptrace.DNSDoneInfo) { p.set(phaseConnect) },
+		TLSHandshakeStart: func() { p.set(phaseTLS) },
+		// A failed handshake reports Done too: the phase stays "TLS handshake".
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err == nil {
+				p.set(phaseSend)
+			}
+		},
 		GotConn:              func(httptrace.GotConnInfo) { p.set(phaseSend) },
 		WroteRequest:         func(httptrace.WroteRequestInfo) { p.set(phaseWait) },
 		GotFirstResponseByte: func() { p.set(phaseRead) },
