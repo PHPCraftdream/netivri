@@ -59,9 +59,13 @@ func TestPoolCoreAdaptersPreserveListsAndSingletonScalars(t *testing.T) {
 	if !reflect.DeepEqual(nodes, map[string][]string{"r": {"socks5://single.example:1080", ""}}) {
 		t.Fatalf("scalar node mapping = %v", nodes)
 	}
-	nodePools := nodePoolHopMap(map[string][]config.HopList{"r": {{"socks5://single.example:1080"}, pre}})
+	nodePools := nodePoolHopMap(map[string][]config.HopList{"r": {{"socks5://single.example:1080"}, pre}}, nil)
 	if !reflect.DeepEqual(nodePools, map[string][][]string{"r": {{"socks5://single.example:1080"}, pre}}) {
 		t.Fatalf("node pool mapping = %v", nodePools)
+	}
+	singletonNodePools := nodePoolHopMap(map[string][]config.HopList{"r": {{"socks5://single.example:1080"}}}, map[string]config.HopList{"r": {"socks5://route.example:1080"}})
+	if len(singletonNodePools) != 0 {
+		t.Fatalf("singleton-only node pool mapping = %v, want no additive pool map", singletonNodePools)
 	}
 }
 
@@ -77,7 +81,7 @@ func TestRouteOptionsAcceptsGlobalPostPoolOnlyForAccountRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account route with global pool: %v", err)
 	}
-	if options.GlobalPost != "" || !reflect.DeepEqual(options.RoutePostPool["direct"], multi) || options.AccountRoute["alice"] != "direct" {
+	if options.GlobalPost != "" || !reflect.DeepEqual(options.RoutePostPool["direct"], []string(multi)) || options.AccountRoute["alice"] != "direct" {
 		t.Fatalf("options lost the account pool or exposed MATCH fallback: %+v", options)
 	}
 	cfg.Accounts = nil

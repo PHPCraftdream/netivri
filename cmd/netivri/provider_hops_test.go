@@ -161,8 +161,8 @@ func TestBuildAccountRoutePoolProviderHopsMultiListReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			changedKey := changed.accountRoutes["inherit"]
-			if changedKey == inherit {
-				t.Fatal("reordered provider list did not change route identity")
+			if changedKey != inherit {
+				t.Fatal("reordering provider pool changed logical route identity")
 			}
 			if tc.name == "provider pre order" {
 				if got := changed.nodePre[changedKey][1]; !reflect.DeepEqual(got, tc.want) {
@@ -200,6 +200,39 @@ func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testin
 				t.Fatalf("invalid %s was not rejected with field %s and the unsupported-pool reason: %v", tc.name, tc.field, err)
 			}
 		})
+	}
+}
+
+func TestProviderSingletonRemovalKeepsMultiPoolRouteIdentity(t *testing.T) {
+	globalPre := config.HopList{"socks5://global-pre.example:1080"}
+	accountPost := config.HopList{"socks5://account-post-one.example:1080", "https://account-post-two.example:8443"}
+	account := config.Account{Login: "alice", Provider: "p", ExitCountry: "DE", PostSOCKS5: accountPost}
+	snapshots := map[string]*subscription.Snapshot{"p": snap(node("p1", "DE"))}
+	withProviderPre := hopsOf([]config.Subscription{{Name: "p", PreSOCKS5: config.HopList{hopProvPreA}}})
+	withoutProviderPre := hopsOf([]config.Subscription{{Name: "p"}})
+	before, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, globalPre, nil, withProviderPre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, globalPre, nil, withoutProviderPre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeKey, afterKey := before.accountRoutes["alice"], after.accountRoutes["alice"]
+	if beforeKey != afterKey {
+		t.Fatalf("removing provider singleton changed multi-pool route identity: %q != %q", beforeKey, afterKey)
+	}
+	if got := before.nodePre[beforeKey]; !reflect.DeepEqual(got, []config.HopList{{hopProvPreA}}) {
+		t.Fatalf("provider pre mapping = %v", got)
+	}
+	if got := after.nodePre[afterKey]; len(got) != 0 {
+		t.Fatalf("provider removal should use route-level fallback, got per-node pre mapping %v", got)
+	}
+	if !reflect.DeepEqual(before.routePost[beforeKey], accountPost) || !reflect.DeepEqual(after.routePost[afterKey], accountPost) {
+		t.Fatalf("account post pool mapping changed: before=%v after=%v", before.routePost[beforeKey], after.routePost[afterKey])
+	}
+	if !reflect.DeepEqual(after.routePre[afterKey], globalPre) {
+		t.Fatalf("cleared provider pre did not fall back to route-level global value: %v", after.routePre[afterKey])
 	}
 }
 

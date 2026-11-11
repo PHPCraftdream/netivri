@@ -36,6 +36,65 @@ func TestHopOptionsAccountPoolsPreserveOrderedLists(t *testing.T) {
 	}
 }
 
+func TestHopOptionsGlobalMultiPoolsRetainPerNodeSingletonAndNoneOverrides(t *testing.T) {
+	globalPre := config.HopList{"socks5://global-pre-one.example:1080", "http://global-pre-two.example:8080"}
+	globalPost := config.HopList{"socks5://global-post-one.example:1080", "http://global-post-two.example:8080"}
+	pPre := config.HopList{"socks5://p-pre.example:1080"}
+	pPost := config.HopList{"https://p-post.example:8443"}
+	qPre := config.HopList{"http://q-pre.example:8080"}
+	qPost := config.HopList{"socks5://q-post.example:1080"}
+	for _, tc := range []struct {
+		name                          string
+		pPre, pPost, qPre, qPost      config.HopList
+		wantPre, wantPost             [][]string
+		wantScalarPre, wantScalarPost []string
+	}{
+		{
+			name: "provider singleton then none",
+			pPre: pPre, pPost: pPost, qPre: config.HopList{"none"}, qPost: config.HopList{"none"},
+			wantPre: [][]string{pPre, {"none"}}, wantPost: [][]string{pPost, {"none"}},
+			wantScalarPre: []string{pPre[0], "none"}, wantScalarPost: []string{pPost[0], "none"},
+		},
+		{
+			name: "none then provider singleton",
+			pPre: config.HopList{"none"}, pPost: config.HopList{"none"}, qPre: qPre, qPost: qPost,
+			wantPre: [][]string{{"none"}, qPre}, wantPost: [][]string{{"none"}, qPost},
+			wantScalarPre: []string{"none", qPre[0]}, wantScalarPost: []string{"none", qPost[0]},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			subs := []config.Subscription{
+				{Name: "p", URL: "https://p.example/sub", PreSOCKS5: tc.pPre, PostSOCKS5: tc.pPost},
+				{Name: "q", URL: "https://q.example/sub", PreSOCKS5: tc.qPre, PostSOCKS5: tc.qPost},
+			}
+			cfg := config.Default()
+			cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5 = globalPre, globalPost
+			cfg.Subscriptions = subs
+			cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "p,q", ExitCountry: "DE"}}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("global/provider pool fixture invalid: %v", err)
+			}
+			pool, err := buildAccountRoutePoolHops(cfg.Accounts, map[string]*subscription.Snapshot{
+				"p": snap(node("p1", "DE")), "q": snap(node("q1", "DE")),
+			}, globalPre, globalPost, hopsOf(subs))
+			if err != nil {
+				t.Fatal(err)
+			}
+			options, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg, pool: pool}, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := options.AccountRoute["alice"]
+			if !reflect.DeepEqual(options.NodePrePool[key], tc.wantPre) || !reflect.DeepEqual(options.NodePostPool[key], tc.wantPost) {
+				t.Fatalf("node pools = pre %v post %v, want pre %v post %v", options.NodePrePool[key], options.NodePostPool[key], tc.wantPre, tc.wantPost)
+			}
+			if !reflect.DeepEqual(options.NodePre[key], tc.wantScalarPre) || !reflect.DeepEqual(options.NodePost[key], tc.wantScalarPost) {
+				t.Fatalf("scalar node mappings = pre %v post %v, want pre %v post %v", options.NodePre[key], options.NodePost[key], tc.wantScalarPre, tc.wantScalarPost)
+			}
+		})
+	}
+}
+
 func TestHopOptionsProviderPoolsFollowRouteNodeOrder(t *testing.T) {
 	pPre := config.HopList{"socks5://p-pre-one.example:1080", "http://p-pre-two.example:8080"}
 	pPost := config.HopList{"socks5://p-post-one.example:1080", "https://p-post-two.example:8443"}

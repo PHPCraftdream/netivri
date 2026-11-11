@@ -45,15 +45,17 @@ absent scoped lists inherit. A plain `auth.password` is stored as an argon2id
 hash and never echoed; the literal value `init` stores the placeholder that
 waits for the first client.
 
-The answer reports `restart_needed` per the live-reload rules
-([design/live-reload.md](design/live-reload.md)): `listen.*`,
-`auth.login`/`auth.password` and `chain.post_socks5` restart the
-listener; `auth.allow_init_remote`, `fetch.proxy`,
-`fetch.update_interval` and `chain.pre_socks5` apply without one. A change to a
-single direct-post-only chain may still require a restart when the core reports
-in-place reconfiguration unsupported; do not assume the listener is retained
-for that case. A running angel notices the written file within a few seconds
-and applies it; the command itself never restarts anything.
+The answer reports `restart_needed` from the config key's static metadata, not
+from the routes currently using the value: `listen.*`, `auth.login`/`auth.password`
+and `chain.post_socks5` are marked restart-needed; `auth.allow_init_remote`,
+`fetch.proxy`, `fetch.update_interval` and `chain.pre_socks5` are not. Thus a
+changed `chain.post_socks5` conservatively reports `restart_needed: true`, even
+when the running core can apply a global post change in place for node-backed
+account routes that inherit it. Scalar global-post changes affecting no-account
+`MATCH` traffic require a restart. A change used only by direct-post routes may
+also require a restart when the core reports in-place reconfiguration
+unsupported. A running angel notices the written file within a few seconds and
+applies it; the command itself never restarts anything.
 
 ## Fields
 
@@ -231,7 +233,19 @@ pool state).
 
 A direct account can use its effective post candidates directly. A pre list
 only applies with a VPN node. The global post remains scalar for no-account
-`MATCH` traffic; see the interim scope note above.
+`MATCH` traffic. A multi-entry `chain.post_socks5` is accepted only when named
+accounts are configured and legacy auth (`auth.login`/`auth.password`) is
+absent: those account routes can inherit the global list, while no-account
+`MATCH` traffic cannot use a post pool. With default unauthenticated/no-account
+traffic or legacy auth configured, validation returns exactly:
+
+> the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead
+
+This is an interim core limitation; see
+[`docs/design/live-reload.md`](design/live-reload.md),
+"Applying routes in place" and
+[`internal/core/reconfigure.go`](../internal/core/reconfigure.go) for the
+route reconfiguration boundary.
 
 ## Allowed clients
 

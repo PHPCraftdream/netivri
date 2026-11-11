@@ -230,10 +230,10 @@ func scalarNodeHopMap(in map[string][]config.HopList) map[string][]string {
 	return out
 }
 
-func nodePoolHopMap(in map[string][]config.HopList) map[string][][]string {
+func nodePoolHopMap(in map[string][]config.HopList, routePools map[string]config.HopList) map[string][][]string {
 	out := make(map[string][][]string)
 	for key, lists := range in {
-		needsPool := false
+		needsPool := len(routePools[key]) > 1
 		for _, hops := range lists {
 			if len(hops) > 1 {
 				needsPool = true
@@ -305,8 +305,8 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 	routePostPool := poolHopMap(d.pool.routePost)
 	nodePre := scalarNodeHopMap(d.pool.nodePre)
 	nodePost := scalarNodeHopMap(d.pool.nodePost)
-	nodePrePool := nodePoolHopMap(d.pool.nodePre)
-	nodePostPool := nodePoolHopMap(d.pool.nodePost)
+	nodePrePool := nodePoolHopMap(d.pool.nodePre, d.pool.routePre)
+	nodePostPool := nodePoolHopMap(d.pool.nodePost, d.pool.routePost)
 	globalPost := ""
 	// GlobalPost feeds only MATCH traffic; with account-only authentication it is unreachable.
 	if len(d.cfg.Chain.PostSOCKS5) <= 1 {

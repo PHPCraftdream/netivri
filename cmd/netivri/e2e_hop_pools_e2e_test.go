@@ -32,17 +32,18 @@ type e2ePostPoolFake struct {
 	readyOne    sync.Once
 	acceptReady chan struct{}
 
-	mu         sync.Mutex
-	closing    bool
-	conns      map[net.Conn]struct{}
-	targets    []string
-	forwarded  int
-	acceptDone chan struct{}
-	wg         sync.WaitGroup
-	closeOne   sync.Once
+	mu              sync.Mutex
+	closing         bool
+	conns           map[net.Conn]struct{}
+	targets         []string
+	forwarded       int
+	forwardedTarget map[string]int
+	acceptDone      chan struct{}
+	wg              sync.WaitGroup
+	closeOne        sync.Once
 }
 
-func newE2EPostPoolFake(t *testing.T, backend, target string, live bool) *e2ePostPoolFake {
+func newE2EPostPoolFake(t *testing.T, backend, target string) *e2ePostPoolFake {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -51,9 +52,9 @@ func newE2EPostPoolFake(t *testing.T, backend, target string, live bool) *e2ePos
 	s := &e2ePostPoolFake{
 		t: t, listener: ln, backend: backend, target: target,
 		ready: make(chan struct{}), acceptReady: make(chan struct{}),
-		conns: make(map[net.Conn]struct{}), acceptDone: make(chan struct{}),
+		conns: make(map[net.Conn]struct{}), forwardedTarget: make(map[string]int), acceptDone: make(chan struct{}),
 	}
-	s.live.Store(live)
+	s.live.Store(true)
 	s.wg.Add(1)
 	go s.accept()
 	t.Cleanup(s.close)
@@ -65,6 +66,17 @@ func newE2EPostPoolFake(t *testing.T, backend, target string, live bool) *e2ePos
 		t.Fatal("post-hop fake accept loop did not become ready")
 	}
 	return s
+}
+
+func (s *e2ePostPoolFake) allowsTarget(target string) bool {
+	host, port, err := net.SplitHostPort(target)
+	baseHost, basePort, baseErr := net.SplitHostPort(s.target)
+	if err != nil || baseErr != nil || port != basePort {
+		return false
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	baseHost = strings.ToLower(strings.TrimSuffix(baseHost, "."))
+	return host == baseHost || host == "alpha."+baseHost || host == "beta."+baseHost
 }
 
 func (s *e2ePostPoolFake) address() string { return s.listener.Addr().String() }
@@ -100,8 +112,7 @@ func (s *e2ePostPoolFake) serve(c net.Conn) {
 		_ = c.Close()
 	}()
 	_ = c.SetDeadline(time.Now().Add(e2eIOTimeout))
-	// A closed-mode fake accepts no SOCKS negotiation and closes immediately,
-	// producing a real hop-connect failure while keeping the reserved address.
+	// If shutdown raced an accepted connection, close it without SOCKS negotiation.
 	if !s.live.Load() {
 		return
 	}
@@ -120,17 +131,12 @@ func (s *e2ePostPoolFake) serve(c net.Conn) {
 		_, _ = c.Write(e2eSOCKS5Reply(5))
 		return
 	}
-	if !strings.EqualFold(target, s.target) {
+	if !s.allowsTarget(target) {
 		_, _ = c.Write(e2eSOCKS5Reply(2))
 		return
 	}
-	host, _, err := net.SplitHostPort(target)
-	if err != nil || !strings.HasSuffix(strings.ToLower(host), ".test") {
-		_, _ = c.Write(e2eSOCKS5Reply(2))
-		return
-	}
-	// The .test target is fixed by this test and mapped directly to the loopback
-	// echo endpoint; the fake performs no DNS or external network access.
+	// Approved .test targets are fixed by this test and map directly to the
+	// loopback echo endpoint; the fake performs no DNS or external network access.
 	out, err := net.DialTimeout("tcp", s.backend, 3*time.Second)
 	if err != nil {
 		_, _ = c.Write(e2eSOCKS5Reply(5))
@@ -143,6 +149,7 @@ func (s *e2ePostPoolFake) serve(c net.Conn) {
 	}
 	s.mu.Lock()
 	s.forwarded++
+	s.forwardedTarget[target]++
 	s.mu.Unlock()
 	e2eCopyConn(c, out)
 }
@@ -234,11 +241,6 @@ func e2eCopyConn(a, b net.Conn) {
 	<-done
 }
 
-func (s *e2ePostPoolFake) activate(ctx context.Context) error {
-	s.live.Store(true)
-	return e2ePostPoolReady(ctx, s)
-}
-
 func (s *e2ePostPoolFake) stopListening(ctx context.Context) error {
 	s.live.Store(false)
 	s.closeOne.Do(func() { _ = s.listener.Close() })
@@ -280,16 +282,28 @@ func (s *e2ePostPoolFake) forwardedCount() int {
 	return s.forwarded
 }
 
-func (s *e2ePostPoolFake) recordedTargets() []string {
+func (s *e2ePostPoolFake) forwardedTargetCount(target string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]string(nil), s.targets...)
+	return s.forwardedTarget[target]
+}
+
+func (s *e2ePostPoolFake) recordedTargetCount(target string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, got := range s.targets {
+		if strings.EqualFold(got, target) {
+			count++
+		}
+	}
+	return count
 }
 
 func (s *e2ePostPoolFake) summary() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return fmt.Sprintf("live=%t forwarded=%d active=%d targets=%q", s.live.Load(), s.forwarded, len(s.conns), s.targets)
+	return fmt.Sprintf("live=%t forwarded=%d active=%d targets=%q forwarded-targets=%v", s.live.Load(), s.forwarded, len(s.conns), s.targets, s.forwardedTarget)
 }
 
 func e2eWriteSOCKS5Connect(c net.Conn, target string) error {
@@ -409,21 +423,22 @@ func e2ePostPoolClient(ctx context.Context, proxy, login, password, target strin
 	return nil
 }
 
-func e2ePostPoolTryUntilSuccess(ctx context.Context, proxy, login, password, target string, dead, live *e2ePostPoolFake, maxAttempts int) (string, int, error) {
+func e2ePostPoolTryUntilSuccess(ctx context.Context, proxy, login, password, target string, first, second *e2ePostPoolFake, maxAttempts int) (string, int, error) {
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return "", attempt - 1, err
 		}
-		deadBefore, liveBefore := dead.forwardedCount(), live.forwardedCount()
+		firstBefore, secondBefore := first.forwardedTargetCount(target), second.forwardedTargetCount(target)
+		firstObservedBefore, secondObservedBefore := first.recordedTargetCount(target), second.recordedTargetCount(target)
 		attemptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		err := e2ePostPoolClient(attemptCtx, proxy, login, password, target)
 		cancel()
 		if err == nil {
-			if live.forwardedCount() == liveBefore+1 && dead.forwardedCount() == deadBefore {
-				return "initially-live", attempt, nil
+			if first.forwardedTargetCount(target) == firstBefore+1 && second.forwardedTargetCount(target) == secondBefore && first.recordedTargetCount(target) == firstObservedBefore+1 && second.recordedTargetCount(target) == secondObservedBefore {
+				return "first", attempt, nil
 			}
-			if dead.forwardedCount() == deadBefore+1 && live.forwardedCount() == liveBefore {
-				return "initially-dead", attempt, nil
+			if second.forwardedTargetCount(target) == secondBefore+1 && first.forwardedTargetCount(target) == firstBefore && second.recordedTargetCount(target) == secondObservedBefore+1 && first.recordedTargetCount(target) == firstObservedBefore {
+				return "second", attempt, nil
 			}
 			return "unexpected-forwarder", attempt, nil
 		}
@@ -466,15 +481,17 @@ func TestE2EAccountPostHopPoolBindingAndRecovery(t *testing.T) {
 		t.Fatal("split echo backend address")
 	}
 	target := net.JoinHostPort(e2ePoolTargetHost, portText)
-	dead := newE2EPostPoolFake(t, backend, target, false)
-	deadAddress := dead.address()
-	live := newE2EPostPoolFake(t, backend, target, true)
-	liveAddress := live.address()
-	liveReadyCtx, liveReadyCancel := context.WithTimeout(wholeTest, 10*time.Second)
-	liveReadyErr := e2ePostPoolReady(liveReadyCtx, live)
-	liveReadyCancel()
-	if liveReadyErr != nil {
-		t.Fatalf("initially-live fake did not become ready: %v", liveReadyErr)
+	fakeA := newE2EPostPoolFake(t, backend, target)
+	fakeAAddress := fakeA.address()
+	fakeB := newE2EPostPoolFake(t, backend, target)
+	fakeBAddress := fakeB.address()
+	for name, fake := range map[string]*e2ePostPoolFake{"fake A": fakeA, "fake B": fakeB} {
+		readyCtx, readyCancel := context.WithTimeout(wholeTest, 10*time.Second)
+		readyErr := e2ePostPoolReady(readyCtx, fake)
+		readyCancel()
+		if readyErr != nil {
+			t.Fatalf("%s did not become ready before pool connections: %v", name, readyErr)
+		}
 	}
 	writeConfig(t, home, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: hash, Exit: "direct"}}
@@ -483,79 +500,82 @@ func TestE2EAccountPostHopPoolBindingAndRecovery(t *testing.T) {
 	assertStatusSuccess(t, p.Status())
 	listen := p.Status().Data.Listen
 	testutil.LogOnFail(t, "post-hop pool fake state", func() string {
-		return "initially-dead fake: " + dead.summary() + "\ninitially-live fake: " + live.summary()
+		return "fake A: " + fakeA.summary() + "\nfake B: " + fakeB.summary()
 	})
 
-	deadURL, liveURL := "socks5://"+deadAddress, "socks5://"+live.address()
-	code, out, stderr := accountsCommand(t, home, "set-socks5", "alice", "--post", deadURL, "--post", liveURL)
+	fakeAURL, fakeBURL := "socks5://"+fakeAAddress, "socks5://"+fakeBAddress
+	code, out, stderr := accountsCommand(t, home, "set-socks5", "alice", "--post", fakeAURL, "--post", fakeBURL)
 	if code != 0 {
 		t.Fatal("account set-socks5 with repeated --post did not succeed")
 	}
 	assertNoSecrets(t, out, stderr, password, hash)
 	waitLive(t, home, "repeated post-hop list", func(s liveStatus) bool { return s.Data.Reload.Count >= 1 })
 
-	if dead.address() != deadAddress || live.address() != liveAddress {
+	if fakeA.address() != fakeAAddress || fakeB.address() != fakeBAddress {
 		t.Fatal("post-hop fake address changed")
 	}
-	first, attempts, err := e2ePostPoolTryUntilSuccess(wholeTest, listen, "alice", password, target, dead, live, 40)
+	first, attempts, err := e2ePostPoolTryUntilSuccess(wholeTest, listen, "alice", password, target, fakeA, fakeB, 40)
 	if err != nil {
 		t.Fatalf("first routed echo failed after %d bounded attempts", attempts)
 	}
-	if first != "initially-live" {
-		t.Fatalf("first successful echo used %s, want initially-live fake", first)
-	}
-	if got := live.recordedTargets(); len(got) < 1 || got[len(got)-1] != target {
-		t.Fatalf("initially-live fake did not record original target %q: %q", target, got)
+	var bound, alternate *e2ePostPoolFake
+	switch first {
+	case "first":
+		bound, alternate = fakeA, fakeB
+	case "second":
+		bound, alternate = fakeB, fakeA
+	default:
+		t.Fatalf("first successful echo used unexpected post-hop %s", first)
 	}
 
-	deadBefore, liveBefore := dead.forwardedCount(), live.forwardedCount()
-	secondCtx, secondCancel := context.WithTimeout(wholeTest, 10*time.Second)
-	secondErr := e2ePostPoolClient(secondCtx, listen, "alice", password, target)
-	secondCancel()
-	if secondErr != nil {
-		t.Fatalf("second same-login/site connection failed: %v", secondErr)
+	targets := []string{
+		net.JoinHostPort("alpha.pool-route.test", portText),
+		net.JoinHostPort("beta.pool-route.test", portText),
+		target,
 	}
-	if live.forwardedCount() != liveBefore+1 || dead.forwardedCount() != deadBefore {
-		t.Fatalf("second same-login/site connection used a different post hop: dead=%d live=%d", dead.forwardedCount()-deadBefore, live.forwardedCount()-liveBefore)
+	boundBefore, alternateBefore := bound.forwardedCount(), alternate.forwardedCount()
+	for connection := 0; connection < 12; connection++ {
+		appTarget := targets[connection%len(targets)]
+		boundTargetBefore := bound.forwardedTargetCount(appTarget)
+		boundObservedBefore := bound.recordedTargetCount(appTarget)
+		alternateTargetBefore := alternate.forwardedTargetCount(appTarget)
+		alternateObservedBefore := alternate.recordedTargetCount(appTarget)
+		connectCtx, connectCancel := context.WithTimeout(wholeTest, 10*time.Second)
+		connectErr := e2ePostPoolClient(connectCtx, listen, "alice", password, appTarget)
+		connectCancel()
+		if connectErr != nil {
+			t.Fatalf("same-login/site connection %d to %q failed: %v", connection+1, appTarget, connectErr)
+		}
+		if bound.forwardedCount() != boundBefore+connection+1 || alternate.forwardedCount() != alternateBefore {
+			t.Fatalf("same-login/site connection %d switched post hops: bound=%d alternate=%d", connection+1, bound.forwardedCount()-boundBefore, alternate.forwardedCount()-alternateBefore)
+		}
+		if bound.forwardedTargetCount(appTarget) != boundTargetBefore+1 || alternate.forwardedTargetCount(appTarget) != alternateTargetBefore || bound.recordedTargetCount(appTarget) != boundObservedBefore+1 || alternate.recordedTargetCount(appTarget) != alternateObservedBefore {
+			t.Fatalf("connection %d did not observe and forward original target %q through only the bound hop", connection+1, appTarget)
+		}
 	}
-	if got := live.recordedTargets(); len(got) == 0 || got[len(got)-1] != target {
-		t.Fatalf("same-login/site target changed: want %q, got %q", target, got)
+	if !fakeA.live.Load() || !fakeB.live.Load() {
+		t.Fatal("both post-hop fakes must remain live during repeated same-site connections")
 	}
 
 	stopCtx, stopCancel := context.WithTimeout(wholeTest, 5*time.Second)
-	stopErr := live.stopListening(stopCtx)
+	stopErr := bound.stopListening(stopCtx)
 	stopCancel()
 	if stopErr != nil {
-		t.Fatalf("could not stop site-bound live hop: %v", stopErr)
+		t.Fatalf("could not stop site-bound post hop: %v", stopErr)
 	}
-	// This fake permits only the configured .test target and loopback hop
-	// endpoints; it cannot initiate public-network traffic.
-	for attempt := 0; attempt < 3; attempt++ {
-		failCtx, failCancel := context.WithTimeout(wholeTest, 5*time.Second)
-		connectErr := e2ePostPoolClient(failCtx, listen, "alice", password, target)
-		failCancel()
-		if connectErr == nil {
-			t.Fatalf("connection %d succeeded without a usable post hop", attempt+1)
-		}
+	if bound.live.Load() || !alternate.live.Load() {
+		t.Fatal("stopped bound fake and live alternate fake are not in the expected state")
 	}
-	readyCtx, readyCancel := context.WithTimeout(wholeTest, 10*time.Second)
-	readyErr := dead.activate(readyCtx)
-	readyCancel()
-	if readyErr != nil {
-		t.Fatalf("initially-dead fake did not become ready on its reserved address: %v", readyErr)
-	}
-	if dead.address() != deadAddress {
-		t.Fatal("activated post-hop did not retain its initially reserved address")
-	}
-	targetsBeforeRecovery := dead.recordedTargets()
-	recovered, attempts, err := e2ePostPoolTryUntilSuccess(wholeTest, listen, "alice", password, target, dead, live, 40)
+	// The alternate fake remains live. Retry with bounded per-attempt contexts
+	// until the pool quarantines the stopped hop and succeeds through it.
+	recovered, attempts, err := e2ePostPoolTryUntilSuccess(wholeTest, listen, "alice", password, target, bound, alternate, 40)
 	if err != nil {
 		t.Fatalf("account did not recover through alternate post hop after %d bounded attempts", attempts)
 	}
-	if recovered != "initially-dead" {
-		t.Fatalf("recovery used %s, want activated alternate fake", recovered)
+	if recovered != "second" {
+		t.Fatalf("recovery used %s fake, want the alternate post hop", recovered)
 	}
-	if got := dead.recordedTargets(); len(got) <= len(targetsBeforeRecovery) || got[len(got)-1] != target {
-		t.Fatalf("recovered post-hop did not record original target %q after activation: before=%q after=%q", target, targetsBeforeRecovery, got)
+	if bound.recordedTargetCount(target) != bound.forwardedTargetCount(target) || alternate.recordedTargetCount(target) != alternate.forwardedTargetCount(target) || alternate.forwardedTargetCount(target) < 1 {
+		t.Fatalf("recovery target %q was not observed and forwarded through only the alternate fake", target)
 	}
 }

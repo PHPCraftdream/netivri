@@ -44,10 +44,11 @@ func TestHopReloadCarriesQuarantinedHealthAcrossPoolEdits(t *testing.T) {
 		ID: "local", Name: "local", Type: "socks5", Server: nodeHost, Port: nodePort, Country: "DE",
 		Raw: map[string]any{"name": "local", "type": "socks5", "server": nodeHost, "port": nodePort},
 	}}}}
-	optionsFor := func(hops config.HopList) core.Options {
+	optionsFor := func(hops, providerPre config.HopList) core.Options {
 		account := cfg.Accounts[0]
 		account.PostSOCKS5 = hops
-		routes, err := buildAccountRoutePool([]config.Account{account}, snapshots, nil, nil)
+		subs := []config.Subscription{{Name: "p", PreSOCKS5: providerPre}}
+		routes, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, nil, nil, hopsOf(subs))
 		if err != nil {
 			t.Fatalf("build account routes: %v", err)
 		}
@@ -63,7 +64,8 @@ func TestHopReloadCarriesQuarantinedHealthAcrossPoolEdits(t *testing.T) {
 	secondURL := "socks5://" + reserveLoopback()
 	thirdURL := "socks5://" + reserveLoopback()
 
-	initial := optionsFor(config.HopList{firstURL, secondURL})
+	providerPre := "socks5://" + reserveLoopback()
+	initial := optionsFor(config.HopList{firstURL, secondURL}, config.HopList{providerPre})
 	route := initial.AccountRoute["alice"]
 	if route == "" || len(initial.RoutePostPool[route]) != 2 {
 		t.Fatalf("initial post pool was not mapped: route=%q pools=%v", route, initial.RoutePostPool)
@@ -133,7 +135,7 @@ func TestHopReloadCarriesQuarantinedHealthAcrossPoolEdits(t *testing.T) {
 	}
 
 	// Reorder, add a third candidate, then remove the other original candidate.
-	assertCarried(optionsFor(config.HopList{secondURL, firstURL}), config.HopList{secondURL, firstURL})
-	assertCarried(optionsFor(config.HopList{secondURL, firstURL, thirdURL}), config.HopList{secondURL, firstURL, thirdURL})
-	assertCarried(optionsFor(config.HopList{firstURL, thirdURL}), config.HopList{firstURL, thirdURL})
+	assertCarried(optionsFor(config.HopList{secondURL, firstURL}, nil), config.HopList{secondURL, firstURL})
+	assertCarried(optionsFor(config.HopList{secondURL, firstURL, thirdURL}, nil), config.HopList{secondURL, firstURL, thirdURL})
+	assertCarried(optionsFor(config.HopList{firstURL, thirdURL}, nil), config.HopList{firstURL, thirdURL})
 }

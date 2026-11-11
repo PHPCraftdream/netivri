@@ -646,7 +646,7 @@ func TestSOCKS5ChainHelpCoverage(t *testing.T) {
 	if !strings.Contains(providerSet, "at most 16 hops per side") {
 		t.Error("sub set-socks5 help omits hop limit")
 	}
-	for _, want := range []string{"--pre", "--post", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "at most 16 hops per side", "alternatives", "full replacement"} {
+	for _, want := range []string{"--pre", "--post", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "at most 16 hops per side", "16 URLs per side", "alternatives", "full replacement"} {
 		if !strings.Contains(providerSet, want) {
 			t.Errorf("sub set-socks5 topic lacks %q", want)
 		}
@@ -722,6 +722,25 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Errorf("the config topic does not name these keys: %s", strings.Join(missing, ", "))
+	}
+	for _, want := range []string{
+		"accepted account field keys",
+		"named accounts and no legacy auth",
+		"the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the config topic lacks %q", want)
+		}
+	}
+	configSet := findHelpTopic("config set")
+	if configSet == nil {
+		t.Fatal("no help topic for config set")
+	}
+	setText := conceptText(configSet)
+	for _, want := range []string{"restart_needed: true", "static metadata"} {
+		if !strings.Contains(setText, want) {
+			t.Errorf("the config set topic lacks %q", want)
+		}
 	}
 }
 

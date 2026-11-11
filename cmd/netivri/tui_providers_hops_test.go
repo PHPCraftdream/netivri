@@ -310,22 +310,24 @@ func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
 	if providerChooseHopOperation(t, s, "add") != nil || s.prompt == nil || s.prompt.Kind != tui.SecretPrompt || s.prompt.Value != "" {
 		t.Fatal("Add did not open a blank secret prompt")
 	}
-	newSecret := "socks5://second-user:second-secret@second.example:1080"
-	providerType(s, newSecret)
+	providerType(s, oldPre)
 	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("Add did not attempt a production update")
+		t.Fatal("duplicate Add did not attempt an update")
 	}
 	drainProvider(s, cmd)
 	if s.dialog == nil || s.prompt == nil || s.prompt.Kind != tui.SecretPrompt || s.prompt.Error == nil {
-		t.Fatal("production list limit did not retain the secret prompt")
+		t.Fatal("duplicate Add did not retain the secret prompt")
 	}
-	if strings.Contains(ansi.Strip(s.View(100, 30)), "second-secret") || strings.Contains(s.message, "second-secret") || strings.Contains(s.prompt.Error.Error(), "second-secret") {
-		t.Fatal("failed add exposed the new credentials")
+	if !strings.Contains(s.prompt.Error.Error(), "duplicate hop URLs") {
+		t.Fatalf("duplicate-hop error = %q", s.prompt.Error)
+	}
+	if strings.Contains(ansi.Strip(s.View(100, 30)), "pre-secret") || strings.Contains(s.message, "pre-secret") || strings.Contains(s.prompt.Error.Error(), "pre-secret") {
+		t.Fatal("failed add exposed the existing credentials")
 	}
 	cfg, err := loadConfig(h)
 	if err != nil || !slices.Equal(cfg.Subscriptions[0].PreSOCKS5, config.HopList{oldPre}) || !slices.Equal(cfg.Subscriptions[0].PostSOCKS5, config.HopList{oldPost}) {
-		t.Fatalf("capacity failure changed provider hops: err=%v", err)
+		t.Fatalf("duplicate-add failure changed provider hops: err=%v", err)
 	}
 	_, _ = s.Update(tui.PromptResultMsg{Canceled: true})
 

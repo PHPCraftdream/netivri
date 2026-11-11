@@ -71,13 +71,10 @@ func routeIdentityKey(login, providers, countries string, pre, post config.HopLi
 	if !multiPool {
 		return credentialRouteKeyHops(providers, countries, pre, post, extra...)
 	}
-	// Pools can be edited or reordered without changing the logical route that
-	// core uses to find predecessor pool health and bindings. Include which
-	// providers supply inherited pools, but not their mutable pool contents.
+	// Pools can be edited or reordered without changing the logical route
+	// that core uses to find predecessor pool health and bindings. The route
+	// identity depends on login/providers/countries, not mutable pool levels.
 	payload := providers + "\x00" + countries + "\x00pool\x00" + login
-	for _, tag := range extra {
-		payload += "\x00" + tag
-	}
 	sum := sha256.Sum256([]byte(payload))
 	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
 }
@@ -255,15 +252,6 @@ func (h providerHops) tag(providers []string, rawPre, rawPost config.HopList) st
 	return string(data)
 }
 
-func (h providerHops) identityTag(providers []string, rawPre, rawPost config.HopList) string {
-	var names []string
-	for _, name := range providers {
-		if len(rawPre) == 0 && len(h.pre[name]) > 0 || len(rawPost) == 0 && len(h.post[name]) > 0 {
-			names = append(names, name)
-		}
-	}
-	return strings.Join(names, "\x02")
-}
 func (h providerHops) hasMulti(providers []string, rawPre, rawPost config.HopList) bool {
 	for _, name := range providers {
 		if len(rawPre) == 0 && len(h.pre[name]) > 1 || len(rawPost) == 0 && len(h.post[name]) > 1 {
@@ -406,11 +394,7 @@ func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshot
 			tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
 		}
 		multiPool := len(pre) > 1 || len(post) > 1 || hops.hasMulti(relevant, a.PreSOCKS5, a.PostSOCKS5)
-		routeTag := tag
-		if multiPool {
-			routeTag = hops.identityTag(relevant, a.PreSOCKS5, a.PostSOCKS5)
-		}
-		key := routeIdentityKey(a.Login, config.JoinList(providers), config.JoinList(countries), pre, post, multiPool, tagArgs(routeTag)...)
+		key := routeIdentityKey(a.Login, config.JoinList(providers), config.JoinList(countries), pre, post, multiPool, tagArgs(tag)...)
 		if direct {
 			// Keep implicit default-direct behavior unchanged. Explicit direct
 			// accounts get distinct keys based on their effective post hop.
