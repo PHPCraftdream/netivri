@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/hoppool"
+	hoppool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 	"github.com/ktav-lang/golang/pure"
 )
 

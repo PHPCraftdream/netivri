@@ -92,7 +92,7 @@ func (i *Instance) Reconfigure(o Options) error {
 
 	// Everything that can fail runs before the instance changes.
 	gen := old.gen + 1
-	rawProxies, _, rawRules, err := prepareRoutesGen(o, gen)
+	rawProxies, rawGroups, rawRules, err := prepareRoutesGen(o, gen)
 	if err != nil {
 		return err
 	}
@@ -104,12 +104,7 @@ func (i *Instance) Reconfigure(o Options) error {
 	if err != nil {
 		return err
 	}
-	names := planProxyNames(plans)
-	for _, mapping := range rawProxies {
-		if name, ok := mapping["name"].(string); ok && name != "DIRECT" {
-			names = append(names, name)
-		}
-	}
+	names := generationProxyNames(plans, rawProxies, rawGroups)
 	proxies := tunnel.Proxies()
 	// Route members may intentionally use Mihomo's built-in DIRECT adapter.
 	if direct := proxies["DIRECT"]; direct != nil {
@@ -127,7 +122,10 @@ func (i *Instance) Reconfigure(o Options) error {
 		return err
 	}
 	for _, plan := range plans {
-		for _, name := range plan.names {
+		for index, name := range plan.names {
+			if index < len(plan.postPools) && plan.postPools[index] != nil && len(plan.postPools[index].keys) > 1 {
+				continue // parser placeholder; lifecycle installs the real post adapter.
+			}
 			if members[name] == nil {
 				return errors.New("core: missing route member proxy")
 			}
@@ -182,29 +180,49 @@ func (i *Instance) Reconfigure(o Options) error {
 	for name, key := range nameToHealthKey {
 		connHealthKeys[name] = key
 	}
-	health := carryHealthMembers(old.health, healthMembers, o.OnNodeHealth)
+	health := old.health
+	if health != nil {
+		health = carryHealthMembers(old.health, healthMembers, o.OnNodeHealth)
+	} else {
+		health = newHealthTable()
+		health.notify = o.OnNodeHealth
+	}
+	health.registerMembers(healthMembersForPlans(plans))
 	table := newAffinityTable(nil, o.AffinityTTL)
 	table.setReturnAfter(o.TierReturnAfter)
 	table.carryCounters(old.table)
 	loadInitialBindings(table, plans, o.AccountRoute, sameRouteBindings(old.snapshotBindings(), old.accountRoutes, o.AccountRoute))
-	groups, err := buildStickyGroups(plans, members, table, health, o.Observer, o.OnConnEvent)
+	poolInputs := make(map[string]C.Proxy, len(proxies)+len(members))
+	for name, proxy := range proxies {
+		poolInputs[name] = proxy
+	}
+	for name, proxy := range members {
+		poolInputs[name] = proxy
+	}
+	hopPools := old.hopPools
+	if hopPools == nil {
+		hopPools = newHopPoolLifecycle(o.OnHopEvent)
+	}
+	poolMap, poolNames, err := hopPools.installGen(o, plans, poolInputs, health, gen)
+	if err != nil {
+		return err
+	}
+	groups, err := buildStickyGroups(plans, poolMap, table, health, o.Observer, o.OnConnEvent)
 	if err != nil {
 		return err
 	}
 
-	updated := make(map[string]C.Proxy, len(proxies)+len(members)+len(groups))
-	for name, proxy := range proxies {
+	updated := make(map[string]C.Proxy, len(poolMap)+len(groups))
+	for name, proxy := range poolMap {
 		updated[name] = proxy
 	}
 	for _, name := range old.prevNames {
 		delete(updated, name)
 	}
-	for name, proxy := range members {
-		updated[name] = proxy
-	}
 	for name, group := range groups {
 		updated[name] = group
 	}
+	names = append(names, poolNames...)
 	// Proxies before rules: in between, the old rules still find the old
 	// groups, and afterwards the new rules find the new ones.
 	tunnel.UpdateProxies(updated, tunnel.Providers())
@@ -229,6 +247,18 @@ func (i *Instance) Reconfigure(o Options) error {
 		keys := memberProbeKeys(plans, o)
 		wo.Same = func(name string) string { return keys[name] }
 		wo.seed = backoff
+		wo.probeBaseNames = hopPools.baseProbeNames(plans)
+		if len(hopPools.uses) > 0 {
+			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
+			if normalizeErr != nil {
+				return normalizeErr
+			}
+			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
+			if reviveErr != nil {
+				return reviveErr
+			}
+			wo.hopRevive = reviver.Round
+		}
 		if warm, err = startWarmForReconfigure(wo, nil); err != nil {
 			return err
 		}
@@ -238,10 +268,12 @@ func (i *Instance) Reconfigure(o Options) error {
 		return err
 	}
 	committed = true
+	hopPools.completeInstall(o.SiteBinder)
 	i.poller.setTargetsWithHealthKeys(health, connLabels, connHealthKeys)
 	i.routing.Store(&routingState{
 		gen:              gen,
 		accountRoutes:    copyAccountRoutes(o.AccountRoute),
+		hopPools:         hopPools,
 		warm:             warm,
 		table:            table,
 		health:           health,
@@ -255,6 +287,13 @@ func (i *Instance) Reconfigure(o Options) error {
 	})
 	warmPublished = true
 	return nil
+}
+
+// generationProxyNames includes names introduced by direct routes and raw
+// select groups as well as the planned account-route members.
+func generationProxyNames(plans []routePlan, proxies, groups []map[string]any) []string {
+	names := append(planProxyNames(plans), proxyMappingNames(proxies)...)
+	return append(names, proxyMappingNames(groups)...)
 }
 
 // parseMembers turns the prepared member mappings into Mihomo proxies keyed

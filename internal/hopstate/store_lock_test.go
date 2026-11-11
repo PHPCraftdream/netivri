@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/PHPCraftdream/netivri/internal/hoppool"
+	hoppool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 )
 
 func TestStoreSidecarContentionAndBlockingOperations(t *testing.T) {

@@ -1,4 +1,4 @@
-package hoppool
+package pool
 
 import (
 	"math/rand/v2"
