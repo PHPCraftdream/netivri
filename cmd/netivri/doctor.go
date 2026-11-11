@@ -173,12 +173,18 @@ func (d *doctorContext) reloadErrorDetail() string {
 	}
 	var secrets []string
 	if d.cfg != nil {
-		secrets = append(secrets, d.cfg.Auth.Password, d.cfg.Chain.PreSOCKS5, d.cfg.Chain.PostSOCKS5)
+		secrets = append(secrets, d.cfg.Auth.Password)
+		secrets = append(secrets, d.cfg.Chain.PreSOCKS5...)
+		secrets = append(secrets, d.cfg.Chain.PostSOCKS5...)
 		for _, account := range d.cfg.Accounts {
-			secrets = append(secrets, account.Password, account.PreSOCKS5, account.PostSOCKS5)
+			secrets = append(secrets, account.Password)
+			secrets = append(secrets, account.PreSOCKS5...)
+			secrets = append(secrets, account.PostSOCKS5...)
 		}
 		for _, sub := range d.cfg.Subscriptions {
-			secrets = append(secrets, sub.URL, sub.Via, sub.PreSOCKS5, sub.PostSOCKS5)
+			secrets = append(secrets, sub.URL, sub.Via)
+			secrets = append(secrets, sub.PreSOCKS5...)
+			secrets = append(secrets, sub.PostSOCKS5...)
 		}
 		for _, server := range d.cfg.Servers {
 			for _, value := range server.Params {

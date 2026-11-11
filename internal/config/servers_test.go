@@ -228,7 +228,7 @@ accounts: [
 	for _, chain := range []bool{false, true} {
 		c := *loaded
 		if chain {
-			c.Chain = Chain{PreSOCKS5: "socks5://127.0.0.1:1080"}
+			c.Chain = Chain{PreSOCKS5: HopList{"socks5://127.0.0.1:1080"}}
 		}
 		for _, params := range []map[string]string{nil, {}, loaded.Servers[0].Params} {
 			c.Servers = append([]Server(nil), loaded.Servers...)

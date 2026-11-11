@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -102,7 +103,7 @@ func TestAccountShowDirectHasNoPreChainOrTiers(t *testing.T) {
 		t.Fatalf("show data=%v", data)
 	}
 	pre := data["pre_socks5"].(map[string]any)
-	if pre["value"] != "none" || pre["source"] != "direct" {
+	if !reflect.DeepEqual(pre["value"], []any{"none"}) || pre["source"] != "direct" {
 		t.Fatalf("pre_socks5=%v", pre)
 	}
 	if own, ok := pre["own"]; !ok || own != nil {

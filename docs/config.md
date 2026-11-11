@@ -27,20 +27,22 @@ not preserved, so keep personal notes elsewhere.
 file, or the defaults when the file is missing. Without {KEY} all four
 groups (`listen`, `auth`, `fetch`, `chain`) are printed; with a {KEY} only
 the group that holds it. `auth.password` appears only as `set` or
-`not set` — the hash and the `init` placeholder are never shown. Proxy
-settings (`fetch.proxy`, `chain.pre_socks5`, `chain.post_socks5`) appear
-as `scheme://host:port` plus an `auth` boolean that says whether the URL
-carried credentials. An empty `fetch.update_interval` means the default
-of one hour applies.
+`not set` — the hash and the `init` placeholder are never shown. `fetch.proxy`
+appears as `scheme://host:port` with an `auth` boolean. The redacted value
+fields of `chain.pre_socks5` and `chain.post_socks5` are arrays of
+`scheme://host:port`; their `auth` boolean indicates whether a URL contained
+credentials. This output shape applies to singleton values too. An empty
+`fetch.update_interval` means the default of one hour applies.
 
 `netivri config set {KEY} {VALUE}` changes one global setting. The whole
 candidate configuration is validated exactly like this file, and it is
-written only when valid. `none` or an empty value clears where the key
-allows it (`auth.login`, `auth.password`, `fetch.proxy`,
-`fetch.update_interval`, `chain.pre_socks5`, `chain.post_socks5`). A
-plain `auth.password` is stored as an argon2id hash and never echoed; the
-literal value `init` stores the placeholder that waits for the first
-client.
+written only when valid. For `chain.pre_socks5` / `chain.post_socks5`, this
+command accepts one URL, `none`, or empty to clear. To configure multiple
+URLs, edit the Ktav field as an array. A legacy scalar URL loads as a
+singleton list and singleton lists render back as scalars. `none` or `[none]`
+disables a side and must stand alone. Empty or absent scoped lists inherit.
+A plain `auth.password` is stored as an argon2id hash and never echoed; the
+literal value `init` stores the placeholder that waits for the first client.
 
 The answer reports `restart_needed` per the live-reload rules
 ([design/live-reload.md](design/live-reload.md)): `listen.*`,
@@ -62,10 +64,10 @@ it; the command itself never restarts anything.
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
 | `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
-| `chain.pre_socks5` | string | *(empty)* | Default proxy netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port`, or `none`. An account's own `pre_socks5` overrides it. See "SOCKS5 chain" below. |
-| `chain.post_socks5` | string | *(empty)* | Default proxy the traffic goes to after the VPN node (or directly, for traffic without a route): same format (`socks5://`, `http://` or `https://`). An account's own `post_socks5` overrides it. |
-| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`) and optional `pre_socks5` and `post_socks5` (the hops of this provider's nodes, same values as `chain.*`; see "SOCKS5 chain"). Names must be unique and non-empty. |
-| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), optional `exit` (empty/absent for default `route`, or `direct`), optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before password verification, so an `init` account cannot be claimed from a disallowed address), and optional `pre_socks5` and `post_socks5` (the same URLs as `chain.*`, or `none`, overriding the global value of that side for this account). Direct requires empty provider and exit_country; explicitly configured account pre-proxy is rejected except `none`, inherited pre-proxy is ignored, and effective post-proxy may be used directly. |
+| `chain.pre_socks5` | ordered array of strings (legacy scalar accepted) | `[]` | Default proxy list netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port` URLs, or `none` to disable this side. See "SOCKS5 chain" below. |
+| `chain.post_socks5` | ordered array of strings (legacy scalar accepted) | `[]` | Default proxy list for traffic after the VPN node (or directly, for traffic without a route): same entries as `chain.pre_socks5`. |
+| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`) and optional ordered `pre_socks5` and `post_socks5` arrays (same entries as `chain.*`; legacy scalar URLs load as singleton lists). Names must be unique and non-empty. |
+| `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), optional `exit` (empty/absent for default `route`, or `direct`), optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before password verification, so an `init` account cannot be claimed from a disallowed address), and optional ordered `pre_socks5` and `post_socks5` arrays (same entries as `chain.*`, or `none` to disable and replace the inherited list for that side). Legacy scalar URLs load as singleton lists. Direct requires empty provider and exit_country; explicitly configured account pre-proxy is rejected except `none`, inherited pre-proxy is ignored, and effective post-proxy may be used directly. |
 | `servers` | array | `[]` | Inbound server endpoint objects; see [Server listeners](#server-listeners). Each has `name`, `protocol`, optional `bind`, `port`, `accounts`, optional `public_host`, and flattened protocol-specific option keys. Credentials/material are kept separately in `{HOME}/server-secrets.ktav`. |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
 | `selection.country` | string | *(empty)* | Reserved for the planned `netivri use --country {COUNTRY}`: validated, but nothing reads it yet. |
@@ -134,56 +136,86 @@ servers: [
 ## SOCKS5 chain
 
 `chain.pre_socks5` and `chain.post_socks5` (global), `pre_socks5` and
-`post_socks5` of a provider (a `subscriptions` entry) and of an account put proxies around the VPN node (the names say
-SOCKS5, the value may also be an HTTP or HTTPS proxy):
+`post_socks5` of a provider (a `subscriptions` entry) and of an account are
+ordered arrays of proxy candidates (the names say SOCKS5, the values may also be
+HTTP or HTTPS proxies):
 
 ```text
-client -> netivri -> [pre] -> VPN node -> [post] -> destination
+client -> netivri -> [selected pre proxy, if any] -> VPN node -> [selected post proxy, if any] -> destination
 ```
 
+Every list entry is `{SCHEME}://[user:password@]host:port`; the sole non-URL
+entry is `none`. Schemes are `socks5`, `http` (HTTP CONNECT) or `https` (HTTP
+CONNECT over TLS, certificate checked). Hosts may be names, IPv4 or `[IPv6]`;
+ports are required (1..65535). User name and password are percent-encoded;
+paths, queries and fragments are not allowed. Legacy scalar Ktav URLs load as
+singleton lists and one-entry lists render back as scalar values. Absent or
+empty lists inherit; `none` or `[none]` explicitly disables a side and must
+stand alone. Duplicate URLs are invalid. The production core currently accepts
+at most one URL per side. Future multi-entry support will select one live proxy
+per side per connection; it will not chain entries serially and does not promise
+a selection algorithm. Parse or validation errors are `CONFIG_INVALID`, name
+the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and never echo the value.
+Write a URL with the raw marker, for example
+`chain.pre_socks5:: socks5://user:secret@pre.example:1080`. The Ktav renderer
+writes a singleton scalar for one URL and an array for multiple entries.
+
 - `pre_socks5` is how netivri reaches the VPN node: the node's own connection
-  goes through this proxy. It applies to accounts with a route (a provider
+  uses the configured pre proxy, if any. It applies to accounts with a route (a provider
   and/or an exit country). An account without a route has no VPN node, so a
-  pre never applies to it.
-- `post_socks5` is where the traffic goes after the VPN node: the node hands
-  the connection to the post proxy, which connects to the destination. It
+  pre list never applies to it.
+- `post_socks5` is where traffic goes after the VPN node: the node hands the
+  connection to the configured post proxy, if any; that proxy connects to the destination. It
   applies to accounts with a route, to accounts without one (their traffic
-  goes to the post proxy directly) and to unauthenticated traffic (the global
+  goes to the post list directly) and to unauthenticated traffic (the global
   value).
 
-A value is `{SCHEME}://[user:password@]host:port` with the scheme `socks5`,
-`http` (an HTTP CONNECT proxy) or `https` (an HTTP CONNECT proxy reached over
-TLS, certificate checked), case-insensitive, a host (name, IPv4 or `[IPv6]`), a **required** port
-1..65535, optional percent-encoded user name and password, no path, query or
-fragment. `none` is also accepted. Anything else is `CONFIG_INVALID`; the
-message names the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and
-never contains the value. Write the value with the raw marker:
-`chain.pre_socks5:: socks5://user:secret@pre.example:1080`.
+**Cascade.** Each side is resolved independently. At every level, a non-empty
+list replaces the entire list from the less-specific level; entries are never
+merged or appended across levels. Resolution is account, then the provider of
+the node, then global. An empty or absent value (or `inherit` in a setter)
+passes the decision up. `inherit` is setter-only, not a valid Ktav list entry. A URL list or `none` settles it at that level; `none`
+means no proxy and overrides a list set above.
 
-**Cascade.** Each side is resolved on its own: global, then provider, then account. The more specific level *replaces* the one above it; the levels are never stacked. An empty or absent value (or `inherit` in the commands) passes the decision up; a URL or `none` settles it at that level (`none` means "no hop" and also overrides a hop set above). A node takes the hop of its own provider, so one account route that lists several providers can use different hops for different nodes; an account's own value replaces the provider's and the global one for all its nodes.
+| Global list | Provider list | Account list | Effective |
+| --- | --- | --- | --- |
+| *(empty)* | *(absent)* | *(absent)* | no proxy |
+| `[socks5://g.example:1080]` | *(absent)* | *(absent)* | global value |
+| `[socks5://g.example:1080]` | `[http://p.example:8080]` | *(absent)* | provider value, replacing global |
+| `[socks5://g.example:1080]` | `[http://p.example:8080]` | `[socks5://a.example:1081]` | account value, replacing provider and global |
+| `[socks5://g.example:1080]` | *(absent)* | `[none]` | no proxy (source `none`) |
+| `[none]` | *(absent)* | *(absent)* | no proxy |
 
-| Global | Account | Effective |
-| --- | --- | --- |
-| *(empty)* | *(absent)* | no proxy |
-| `socks5://g.example:1080` | *(absent)* | `socks5://g.example:1080` (source `global`) |
-| `socks5://g.example:1080` | `socks5://a.example:1081` | `socks5://a.example:1081` (source `account`) |
-| `socks5://g.example:1080` | `none` | no proxy (source `none`) |
-| `none` | *(absent)* | no proxy |
+The production core currently accepts at most one URL per side. Future
+multi-entry support is a candidate pool selecting one live proxy per side per
+connection, with no selection-algorithm guarantee and no serial chaining.
 
-| Provider | Account | Effective |
-| --- | --- | --- |
-| *(absent)* | *(absent)* | the global value |
-| `http://p.example:8080` | *(absent)* | `http://p.example:8080` (source `provider`) |
-| `http://p.example:8080` | `socks5://a.example:1081` | `socks5://a.example:1081` (source `account`) |
-| `http://p.example:8080` | `none` | no proxy (source `none`) |
-| `none` | *(absent)* | no proxy, even if the global value is set |
+A node takes its provider's configured value, so an account route over several
+providers can resolve differently per node. `account show` and `status` report
+`varies` (source `provider`) when an account's providers resolve differently.
+An account's configured value overrides provider values for every node.
 
-`netivri account set-socks5 {ACCOUNT} --pre {URL|none|inherit}` and `--post`
-change the account values, `netivri sub set-socks5 {SUBSCRIPTION} --pre
-{URL|none|inherit}` and `--post` the provider values; `inherit` removes the key
-so the level above applies again. When the providers of one account resolve
-differently, `account show` and `status` report the value `varies` with the
-source `provider`.
+`netivri account set-socks5 {ACCOUNT} --pre {URL}` and `--post {URL}` replace
+the full account list for that side; the corresponding `sub set-socks5`
+options replace the provider list. Repeat a replacement flag to give multiple
+entries in order. `none` must be the only entry to explicitly disable a side;
+`inherit` is setter-only and clears the target list so the next level applies.
+The Accounts and Providers shell screens use their existing pre/post picker for
+list replacement, add, remove, inherit and none; no reorder step is needed.
+Lists with more than one URL per side are currently rejected by the production
+core. Both set-socks5 commands also support repeatable incremental `--add-pre {URL}` /
+`--remove-pre {INDEX}` and `--add-post {URL}` / `--remove-post {INDEX}`
+operations: indices are one-based and refer to the original list for that
+command. Duplicate original indexes reject the entire operation; no list is
+saved. Do not combine replacement, add or remove operations on the same side.
+Removing the last entry clears the scoped list to inherit; use `--pre none` or
+`--post none` to explicitly disable instead. Repeated `none` or `inherit`, a
+`none` mixed with URLs, duplicate entries, or multiple URLs per side are invalid;
+the production core currently accepts one proxy per side. JSON pre/post fields
+are redacted arrays; in account objects their `value` and configured `own`
+fields are arrays, while `source` and `auth` metadata remain. When the providers
+of one account resolve differently, `account show` and `status` report `varies`
+with source `provider`.
 
 Credentials are secrets, like subscription URLs: no output, log or error
 shows them. `account list`, `account show` and `status` print the URL as
@@ -327,14 +359,35 @@ accounts: [
 ]
 ```
 
-Direct exits require empty provider and exit_country. An explicitly configured account pre-proxy is rejected, inherited pre-proxy is ignored, and effective post-proxy may be used directly. `set-exit` does not clear provider/country; clear them first. Direct accounts have no node tiers; `account show` reports effective `pre_socks5` as `{"value":"none","source":"direct","auth":false,"own":null}`. If changing another account field while an account's direct exit remains invalid, `CONFIG_INVALID` includes a hint to run `netivri account set-exit {ACCOUNT} route` first. An account route-mode toggle applies in place only when at least one route has stored nodes both before and after; first node-backed route appearing, last disappearing, and direct-only changes restart. Another node-backed account route preserves connections through flips. Adding an account always restarts.
+Direct exits require empty provider and exit_country. An explicitly configured account pre-proxy is rejected, inherited pre-proxy is ignored, and effective post-proxy may be used directly. `set-exit` does not clear provider/country; clear them first. Direct accounts have no node tiers; `account show` reports effective `pre_socks5` as `{"value":["none"],"source":"direct","auth":false,"own":null}`. If changing another account field while an account's direct exit remains invalid, `CONFIG_INVALID` includes a hint to run `netivri account set-exit {ACCOUNT} route` first. An account route-mode toggle applies in place only when at least one route has stored nodes both before and after; first node-backed route appearing, last disappearing, and direct-only changes restart. Another node-backed account route preserves connections through flips. Adding an account always restarts.
 
 Chain settings in a file (global in dotted form, per account inside the
 object):
 
+The Ktav keys `chain.pre_socks5` and `chain.post_socks5` are ordered arrays.
+`none` or `[none]` disables a side, and an empty array or absent key inherits
+at scoped levels. Ktav scalar values are accepted as legacy singleton lists;
+one-item lists render as scalars on disk. Duplicate entries are invalid, and
+`none` must stand alone. Lists with more than one URL are currently rejected
+by the production core.
+
 ```ktav
-chain.pre_socks5:: socks5://user:secret@pre.example:1080
-chain.post_socks5:: socks5://post.example:1080
+chain: {
+    pre_socks5: [
+        socks5://user:secret@pre.example:1080
+    ]
+    post_socks5: none
+}
+
+subscriptions: [
+    {
+        name: main
+        url:: https://provider.example/sub/TOKEN
+        pre_socks5: [
+            http://proxy.example:8080
+        ]
+    }
+]
 
 accounts: [
     {
@@ -342,7 +395,7 @@ accounts: [
         password:: init
         provider: main
         exit_country: NL
-        pre_socks5:: none
+        pre_socks5: none
         post_socks5:: socks5://carol-exit.example:1080
     }
 ]

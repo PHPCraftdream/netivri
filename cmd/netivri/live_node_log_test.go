@@ -20,7 +20,10 @@ func TestLiveNodeLoggerBuilderDoesNotReplaceActiveLogger(t *testing.T) {
 	l.installNodeLogger(old)
 	d := testDesired()
 	d.pool.infos = []stats.NodeInfo{{Label: "p/new", Country: "US"}}
-	o, candidate := l.routeOptionsWithLogger(d, nil, nil)
+	o, candidate, err := l.routeOptionsWithLogger(d, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if candidate == nil || o.OnNodeHealth == nil {
 		t.Fatal("builder did not create candidate logger and hook")
 	}
@@ -32,7 +35,10 @@ func TestLiveNodeLoggerBuilderDoesNotReplaceActiveLogger(t *testing.T) {
 		t.Fatal("candidate hook did not stay isolated")
 	}
 	d.pool.infos = nil
-	o, candidate = l.routeOptionsWithLogger(d, nil, nil)
+	o, candidate, err = l.routeOptionsWithLogger(d, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if candidate != nil || o.OnNodeHealth != nil || l.activeNodeLogger() != old {
 		t.Fatal("empty candidate changed active logger or installed a hook")
 	}

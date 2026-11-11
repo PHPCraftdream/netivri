@@ -51,10 +51,10 @@ type Account struct {
 	ExitCountry string `json:"exit_country,omitempty"`
 	// AllowedClients optionally narrows the client addresses this account
 	// may authenticate from; empty means no account restriction.
-	AllowedClients string `json:"allowed_clients,omitempty"`
-	PreSOCKS5      string `json:"pre_socks5,omitempty"`
-	PostSOCKS5     string `json:"post_socks5,omitempty"`
-	Exit           string `json:"exit,omitempty"`
+	AllowedClients string  `json:"allowed_clients,omitempty"`
+	PreSOCKS5      HopList `json:"pre_socks5,omitempty"`
+	PostSOCKS5     HopList `json:"post_socks5,omitempty"`
+	Exit           string  `json:"exit,omitempty"`
 }
 
 // Account returns the account and its index, or (nil, -1) when absent.
@@ -112,8 +112,8 @@ func NormalizeCountry(code string) (string, bool) {
 
 // Chain is the optional pair of global SOCKS5 hops.
 type Chain struct {
-	PreSOCKS5  string `json:"pre_socks5,omitempty"`
-	PostSOCKS5 string `json:"post_socks5,omitempty"`
+	PreSOCKS5  HopList `json:"pre_socks5,omitempty"`
+	PostSOCKS5 HopList `json:"post_socks5,omitempty"`
 }
 
 // Listen is the local mixed HTTP/SOCKS5 proxy endpoint.
@@ -184,11 +184,10 @@ type Subscription struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	Via  string `json:"via,omitempty"`
-	// PreSOCKS5 and PostSOCKS5 are the provider-level hops (socks5://, http://
-	// or https:// URL, or none). Empty inherits the global chain; an account
-	// value replaces them (cascade global -> provider -> account).
-	PreSOCKS5  string `json:"pre_socks5,omitempty"`
-	PostSOCKS5 string `json:"post_socks5,omitempty"`
+	// PreSOCKS5 and PostSOCKS5 are provider-level ordered hop lists. Empty
+	// inherits the global chain; an account list replaces them.
+	PreSOCKS5  HopList `json:"pre_socks5,omitempty"`
+	PostSOCKS5 HopList `json:"post_socks5,omitempty"`
 }
 
 // Selection is the exit-node choice applied on start and by `netivri use`.
@@ -233,10 +232,10 @@ func (c *Config) Validate() error {
 	if err := validateUpdateInterval(c.Fetch.UpdateInterval); err != nil {
 		return err
 	}
-	if err := validateChainURL("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
+	if err := ValidateHopList("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
 		return err
 	}
-	if err := validateChainURL("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
+	if err := ValidateHopList("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
 		return err
 	}
 	first := make(map[string]int, len(c.Subscriptions))
@@ -262,12 +261,12 @@ func (c *Config) Validate() error {
 		if err := checkScalar(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
 			return err
 		}
-		for _, hop := range []struct{ field, value string }{{"pre_socks5", s.PreSOCKS5}, {"post_socks5", s.PostSOCKS5}} {
+		for _, hop := range []struct {
+			field string
+			list  HopList
+		}{{"pre_socks5", s.PreSOCKS5}, {"post_socks5", s.PostSOCKS5}} {
 			name := fmt.Sprintf("subscriptions[%d].%s", i, hop.field)
-			if err := checkScalar(name, hop.value); err != nil {
-				return err
-			}
-			if err := validateChainURL(name, hop.value); err != nil {
+			if err := ValidateHopList(name, hop.list); err != nil {
 				return err
 			}
 		}
@@ -342,19 +341,13 @@ func (c *Config) Validate() error {
 		if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
 			return invalid("accounts[%d].allowed_clients: %v", i, err)
 		}
+		if err := ValidateHopList(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
+			return err
+		}
+		if err := ValidateHopList(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
+			return err
+		}
 		if err := ValidateAccountExit(*a, i); err != nil {
-			return err
-		}
-		if err := checkScalar(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
-			return err
-		}
-		if err := validateChainURL(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
-			return err
-		}
-		if err := checkScalar(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
-			return err
-		}
-		if err := validateChainURL(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
 			return err
 		}
 	}
@@ -382,7 +375,10 @@ func ValidateAccountExit(a Account, index int) error {
 		if a.ExitCountry != "" {
 			return invalid("accounts[%d].exit requires an empty exit_country for direct", index)
 		}
-		if a.PreSOCKS5 != "" && !strings.EqualFold(a.PreSOCKS5, "none") {
+		if err := ValidateHopList(fmt.Sprintf("accounts[%d].pre_socks5", index), a.PreSOCKS5); err != nil {
+			return err
+		}
+		if len(a.PreSOCKS5) > 0 && !strings.EqualFold(a.PreSOCKS5[0], "none") {
 			return invalid("accounts[%d].exit direct does not allow pre_socks5", index)
 		}
 	default:

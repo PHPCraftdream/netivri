@@ -166,6 +166,62 @@ func assertCode(t *testing.T, err error, code string, exit int) {
 	}
 }
 
+func TestSubAddRepeatedHopFlagsRejectBeforeFetch(t *testing.T) {
+	fetchCalled := false
+	app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		fetchCalled = true
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	})
+	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--pre-socks5", "socks5://first.example:1080", "--pre-socks5", "socks5://second.example:1080"})
+	assertCode(t, err, config.CodeConfigInvalid, cli.ExitUsage)
+	if fetchCalled {
+		t.Fatal("invalid repeated hop flags reached provider fetch")
+	}
+	if _, err := os.Stat(app.configPath()); !os.IsNotExist(err) {
+		t.Fatal("invalid repeated hop flags wrote a config")
+	}
+}
+
+func TestSubSetSOCKS5IncrementalEditAndValidation(t *testing.T) {
+	app, out := testApp(t, fakeBody(testBody))
+	seedConfig(t, app, config.Subscription{Name: "p", URL: "https://provider.example", PreSOCKS5: config.HopList{"socks5://first.example:1080"}})
+	if err := app.setSOCKS5([]string{"--home", app.home, "p", "--remove-pre", "1"}); err != nil {
+		t.Fatalf("remove provider hop: %v", err)
+	}
+	cfg, err := config.Load(app.configPath())
+	if err != nil || len(cfg.Subscriptions[0].PreSOCKS5) != 0 {
+		t.Fatal("provider remove did not clear original singleton")
+	}
+	out.Reset()
+	if err := app.setSOCKS5([]string{"--home", app.home, "p", "--add-post", "socks5://user:secret@second.example:1080"}); err != nil {
+		t.Fatalf("add provider hop: %v", err)
+	}
+	if strings.Contains(out.String(), "user") || strings.Contains(out.String(), "secret") {
+		t.Fatal("provider set output disclosed credentials")
+	}
+	cfg, err = config.Load(app.configPath())
+	if err != nil || !reflect.DeepEqual(cfg.Subscriptions[0].PostSOCKS5, config.HopList{"socks5://user:secret@second.example:1080"}) {
+		t.Fatal("provider incremental addition did not persist")
+	}
+	before, err := os.ReadFile(app.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--home", app.home, "p", "--pre", "none", "--add-pre", "socks5://another.example:1080"},
+		{"--home", app.home, "p", "--remove-post", "0"},
+		{"--home", app.home, "p", "--remove-post", "1", "--remove-post", "1"},
+	} {
+		if err := app.setSOCKS5(args); err == nil {
+			t.Fatalf("accepted invalid provider edit: %q", args)
+		}
+		after, err := os.ReadFile(app.configPath())
+		if err != nil || !reflect.DeepEqual(after, before) {
+			t.Fatalf("invalid provider edit %q wrote config", args)
+		}
+	}
+}
+
 func TestSubAddNew(t *testing.T) {
 	app, out := testApp(t, fakeBody(testBody))
 	err := app.add([]string{"--home", app.home, "https://provider.example/sub?token=secret123", "--name", "prov"})

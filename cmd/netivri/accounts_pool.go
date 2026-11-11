@@ -3,11 +3,13 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -36,11 +38,54 @@ func routeKey(providers, countries string) string {
 // credentialRouteKey keeps credentials out of core route keys and Mihomo rule names.
 func credentialRouteKey(providers, countries, pre, post string, extra ...string) string {
 	payload := providers + "\x00" + countries + "\x00" + pre + "\x00" + post
-	for _, e := range extra {
-		payload += "\x00" + e
+	for _, value := range extra {
+		payload += "\x00" + value
 	}
 	sum := sha256.Sum256([]byte(payload))
 	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
+}
+
+func credentialRouteKeyHops(providers, countries string, pre, post config.HopList, extra ...string) string {
+	if len(pre) <= 1 && len(post) <= 1 {
+		var scalarPre, scalarPost string
+		if len(pre) == 1 {
+			scalarPre = pre[0]
+		}
+		if len(post) == 1 {
+			scalarPost = post[0]
+		}
+		return credentialRouteKey(providers, countries, scalarPre, scalarPost, extra...)
+	}
+	payload := appendRouteIdentity(nil, providers)
+	payload = appendRouteIdentity(payload, countries)
+	payload = appendRouteHopIdentity(payload, pre)
+	payload = appendRouteHopIdentity(payload, post)
+	for _, value := range extra {
+		payload = appendRouteIdentity(payload, value)
+	}
+	sum := sha256.Sum256(payload)
+	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
+}
+
+func appendRouteIdentity(dst []byte, value string) []byte {
+	var size [8]byte
+	for i := 0; i < len(size); i++ {
+		size[len(size)-1-i] = byte(uint64(len(value)) >> (8 * i))
+	}
+	dst = append(dst, size[:]...)
+	return append(dst, value...)
+}
+
+func appendRouteHopIdentity(dst []byte, hops config.HopList) []byte {
+	var size [8]byte
+	for i := 0; i < len(size); i++ {
+		size[len(size)-1-i] = byte(uint64(len(hops)) >> (8 * i))
+	}
+	dst = append(dst, size[:]...)
+	for _, hop := range hops {
+		dst = appendRouteIdentity(dst, hop)
+	}
+	return dst
 }
 
 func tagArgs(tag string) []string {
@@ -117,48 +162,89 @@ type routePool struct {
 	tiers         map[string][]int
 	infos         []stats.NodeInfo
 	accountRoutes map[string]string
-	routePre      map[string]string
-	routePost     map[string]string
+	routePre      map[string]config.HopList
+	routePost     map[string]config.HopList
 	// nodePre and nodePost hold, for the routes whose nodes take provider
-	// hops, one effective hop per node (same order as nodes).
-	nodePre  map[string][]string
-	nodePost map[string][]string
+	// hops, one effective hop list per node (same order as nodes).
+	nodePre  map[string][]config.HopList
+	nodePost map[string][]config.HopList
 }
 
 // providerHops are the provider-level hops by provider name: the middle level
 // of the cascade global -> provider -> account.
-type providerHops struct{ pre, post map[string]string }
+type providerHopValidation struct {
+	preField, postField string
+	pre, post           config.HopList
+}
+
+type providerHops struct {
+	pre, post  map[string]config.HopList
+	validation []providerHopValidation
+}
 
 func hopsOf(subs []config.Subscription) providerHops {
-	h := providerHops{pre: map[string]string{}, post: map[string]string{}}
-	for _, s := range subs {
-		if s.PreSOCKS5 != "" {
+	h := providerHops{pre: map[string]config.HopList{}, post: map[string]config.HopList{}}
+	for i, s := range subs {
+		if len(s.PreSOCKS5) > 0 {
 			h.pre[s.Name] = s.PreSOCKS5
 		}
-		if s.PostSOCKS5 != "" {
+		if len(s.PostSOCKS5) > 0 {
 			h.post[s.Name] = s.PostSOCKS5
 		}
+		h.validation = append(h.validation, providerHopValidation{
+			preField:  fmt.Sprintf("subscriptions[%d].pre_socks5", i),
+			postField: fmt.Sprintf("subscriptions[%d].post_socks5", i),
+			pre:       s.PreSOCKS5,
+			post:      s.PostSOCKS5,
+		})
 	}
 	return h
 }
 
-// tag fingerprints the provider hops that reach the nodes of a route whose
+// tag fingerprints provider hop lists that reach nodes of a route whose
 // account leaves a side to inherit; "" when none do.
-func (h providerHops) tag(providers []string, rawPre, rawPost string) string {
-	var parts []string
+func (h providerHops) tag(providers []string, rawPre, rawPost config.HopList) string {
+	type providerHopIdentity struct {
+		Name string
+		Pre  config.HopList
+		Post config.HopList
+	}
+	var parts []providerHopIdentity
+	var singletonParts []string
+	allSingleton := true
 	for _, name := range providers {
-		pre, post := "", ""
-		if rawPre == "" {
+		pre, post := config.HopList(nil), config.HopList(nil)
+		if len(rawPre) == 0 {
 			pre = h.pre[name]
 		}
-		if rawPost == "" {
+		if len(rawPost) == 0 {
 			post = h.post[name]
 		}
-		if pre != "" || post != "" {
-			parts = append(parts, name+"\x01"+pre+"\x01"+post)
+		if len(pre) > 0 || len(post) > 0 {
+			parts = append(parts, providerHopIdentity{Name: name, Pre: pre, Post: post})
+			if len(pre) > 1 || len(post) > 1 {
+				allSingleton = false
+			}
+		}
+		if len(pre) <= 1 && len(post) <= 1 && (len(pre) > 0 || len(post) > 0) {
+			singletonParts = append(singletonParts, name+"\x01"+singleHopValue(pre)+"\x01"+singleHopValue(post))
 		}
 	}
-	return strings.Join(parts, "\x02")
+	if len(parts) == 0 {
+		return ""
+	}
+	if allSingleton {
+		return strings.Join(singletonParts, "\x02")
+	}
+	data, _ := json.Marshal(parts)
+	return string(data)
+}
+
+func singleHopValue(hops config.HopList) string {
+	if len(hops) == 0 {
+		return ""
+	}
+	return hops[0]
 }
 
 // nodeLabel is the stable identity of a node in statistics and bindings.
@@ -176,14 +262,12 @@ func nodeLabel(provider, id string) string {
 // name); without a country list the tiers are the providers alone. An account
 // with neither has no route. A route without any node is a hard error: `up`
 // fails closed.
-func inheritChain(account, global string) string {
-	if strings.EqualFold(account, "none") {
-		return "none"
-	}
-	if account != "" {
-		return account
-	}
-	return global
+func inheritChain(account, global config.HopList) config.HopList {
+	return config.InheritHops(account, global)
+}
+
+func isNoneHops(hops config.HopList) bool {
+	return len(hops) == 1 && strings.EqualFold(hops[0], "none")
 }
 
 // firstTierLabels returns the labels of the nodes of the first tier of any
@@ -208,33 +292,62 @@ func (p routePool) firstTierLabels() map[string]bool {
 	return first
 }
 
-func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string) (routePool, error) {
+func buildAccountRoutePool(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost config.HopList) (routePool, error) {
 	return buildAccountRoutePoolHops(accounts, snapshots, globalPre, globalPost, providerHops{})
 }
 
-// buildAccountRoutePoolHops is buildAccountRoutePool with the provider hops:
-// a node takes the account hop if the account sets one (a URL or none), else
-// the hop of its provider, else the global one.
-func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost string, hops providerHops) (routePool, error) {
+func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost config.HopList, hops providerHops) (routePool, error) {
+	return buildAccountRoutePoolHopsWithValidation(accounts, snapshots, globalPre, globalPost, hops, config.ValidateHopList)
+}
+
+func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost config.HopList, hops providerHops, validate func(field string, hops config.HopList) error) (routePool, error) {
+	for _, item := range []struct {
+		field string
+		hops  config.HopList
+	}{{"chain.pre_socks5", globalPre}, {"chain.post_socks5", globalPost}} {
+		if err := validate(item.field, item.hops); err != nil {
+			return routePool{}, err
+		}
+	}
+	for _, provider := range hops.validation {
+		for _, item := range []struct {
+			field string
+			hops  config.HopList
+		}{{provider.preField, provider.pre}, {provider.postField, provider.post}} {
+			if err := validate(item.field, item.hops); err != nil {
+				return routePool{}, err
+			}
+		}
+	}
+	for i, account := range accounts {
+		for _, item := range []struct {
+			field string
+			hops  config.HopList
+		}{{fmt.Sprintf("accounts[%d].pre_socks5", i), account.PreSOCKS5}, {fmt.Sprintf("accounts[%d].post_socks5", i), account.PostSOCKS5}} {
+			if err := validate(item.field, item.hops); err != nil {
+				return routePool{}, err
+			}
+		}
+	}
 	pool := routePool{
-		nodePre:       map[string][]string{},
-		nodePost:      map[string][]string{},
+		nodePre:       map[string][]config.HopList{},
+		nodePost:      map[string][]config.HopList{},
 		nodes:         map[string][]map[string]any{},
 		labels:        map[string][]string{},
 		tiers:         map[string][]int{},
 		accountRoutes: map[string]string{},
-		routePre:      map[string]string{},
-		routePost:     map[string]string{},
+		routePre:      map[string]config.HopList{},
+		routePost:     map[string]config.HopList{},
 	}
 	infoSeen := make(map[string]bool)
 	type demand struct {
 		providers []string
 		countries []string
 		key       string
-		pre       string
-		post      string
-		rawPre    string
-		rawPost   string
+		pre       config.HopList
+		post      config.HopList
+		rawPre    config.HopList
+		rawPost   config.HopList
 		perNode   bool
 		direct    bool
 	}
@@ -250,7 +363,7 @@ func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*
 		pre, post := inheritChain(a.PreSOCKS5, globalPre), inheritChain(a.PostSOCKS5, globalPost)
 		direct := a.Exit == "direct" || (len(providers) == 0 && len(countries) == 0)
 		if a.Exit == "direct" {
-			pre = "none"
+			pre = config.HopList{"none"}
 		}
 		relevant := providers
 		if len(relevant) == 0 {
@@ -260,18 +373,18 @@ func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*
 		if !direct {
 			tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
 		}
-		key := credentialRouteKey(config.JoinList(providers), config.JoinList(countries), pre, post, tagArgs(tag)...)
+		key := credentialRouteKeyHops(config.JoinList(providers), config.JoinList(countries), pre, post, tagArgs(tag)...)
 		if direct {
 			// Keep implicit default-direct behavior unchanged. Explicit direct
 			// accounts get distinct keys based on their effective post hop.
-			if a.Exit != "direct" && (post == "" || (strings.EqualFold(post, "none") && !(strings.EqualFold(a.PostSOCKS5, "none") && globalPost != "" && !strings.EqualFold(globalPost, "none")))) {
+			if a.Exit != "direct" && (len(post) == 0 || (isNoneHops(post) && (!isNoneHops(a.PostSOCKS5) || len(globalPost) == 0 || isNoneHops(globalPost)))) {
 				continue
 			}
-			pre = "none"
-			if a.Exit == "direct" && post == "" {
-				post = "none"
+			pre = config.HopList{"none"}
+			if a.Exit == "direct" && len(post) == 0 {
+				post = config.HopList{"none"}
 			}
-			key = credentialRouteKey("", "", pre, post)
+			key = credentialRouteKeyHops("", "", pre, post)
 		}
 		pool.accountRoutes[a.Login] = key
 		if !seen[key] {
@@ -291,7 +404,7 @@ func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*
 	for _, d := range wanted {
 		pool.routePre[d.key], pool.routePost[d.key] = d.pre, d.post
 		if d.direct {
-			pool.routePre[d.key] = "none"
+			pool.routePre[d.key] = config.HopList{"none"}
 			pool.routePost[d.key] = d.post
 			continue
 		}
@@ -357,10 +470,10 @@ func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*
 					pool.tiers[key] = append(pool.tiers[key], tier)
 					if d.perNode {
 						pre, post := d.pre, d.post
-						if d.rawPre == "" && hops.pre[n.provider] != "" {
+						if len(d.rawPre) == 0 && len(hops.pre[n.provider]) > 0 {
 							pre = hops.pre[n.provider]
 						}
-						if d.rawPost == "" && hops.post[n.provider] != "" {
+						if len(d.rawPost) == 0 && len(hops.post[n.provider]) > 0 {
 							post = hops.post[n.provider]
 						}
 						pool.nodePre[key] = append(pool.nodePre[key], pre)
@@ -478,38 +591,44 @@ func warmInfoOf(ws core.WarmStats, labels map[string]string, infos []stats.NodeI
 }
 
 type resolvedChain struct {
-	value, source string
-	auth          bool
+	value  config.HopList
+	source string
+	auth   bool
 }
 
-func resolveChain(account, global string) resolvedChain {
+func resolveChain(account, global config.HopList) resolvedChain {
 	source, effective := "account", account
-	if effective == "" {
+	if len(effective) == 0 {
 		source, effective = "global", global
 	}
-	if effective == "" || strings.EqualFold(effective, "none") {
-		return resolvedChain{value: "none", source: "none"}
+	if len(effective) == 0 || isNoneHops(effective) {
+		return resolvedChain{value: config.HopList{"none"}, source: "none"}
 	}
-	u, err := url.Parse(effective)
-	if err != nil {
-		return resolvedChain{value: "configured", source: source}
+	value := make(config.HopList, 0, len(effective))
+	auth := false
+	for _, hop := range effective {
+		u, err := url.Parse(hop)
+		if err != nil {
+			value = append(value, "configured")
+			continue
+		}
+		auth = auth || u.User != nil
+		u.User = nil
+		u.Path, u.RawQuery, u.Fragment = "", "", ""
+		value = append(value, u.String())
 	}
-	auth := u.User != nil
-	u.User = nil
-	u.Path, u.RawQuery, u.Fragment = "", "", ""
-	return resolvedChain{value: u.String(), source: source, auth: auth}
+	return resolvedChain{value: value, source: source, auth: auth}
 }
 
 // resolveAccountChain is the cascade global -> provider -> account for one side
-// of an account: the account's own value (a URL or none) wins; else the hops of
-// the providers of its route; else the global one. Providers of one route that
-// resolve differently report "varies" (the source is provider).
+// of an account. Provider routes with different effective lists report a
+// singleton "varies" marker.
 func resolveAccountChain(cfg *config.Config, a *config.Account, post bool) resolvedChain {
 	own, global := a.PreSOCKS5, cfg.Chain.PreSOCKS5
 	if post {
 		own, global = a.PostSOCKS5, cfg.Chain.PostSOCKS5
 	}
-	if own != "" {
+	if len(own) > 0 {
 		return resolveChain(own, global)
 	}
 	names, _ := config.ParseProviderList(a.Provider)
@@ -523,39 +642,45 @@ func resolveAccountChain(cfg *config.Config, a *config.Account, post bool) resol
 	if post {
 		set = h.post
 	}
-	values := map[string]bool{}
-	anySet := false
+	var firstRaw config.HopList
+	hasFirst := false
+	source := "none"
 	for _, name := range names {
-		if v := set[name]; v != "" {
-			values[v], anySet = true, true
-		} else {
-			values[global] = true
+		effective := set[name]
+		provider := len(effective) > 0
+		if !provider {
+			effective = global
+		}
+		if !hasFirst {
+			firstRaw = append(config.HopList(nil), effective...)
+			hasFirst = true
+		}
+		if !slices.Equal(firstRaw, effective) {
+			return resolvedChain{value: config.HopList{"varies"}, source: "provider"}
+		}
+		if provider {
+			source = "provider"
+		} else if source == "none" && len(global) > 0 && !isNoneHops(global) {
+			source = "global"
 		}
 	}
-	if !anySet {
-		return resolveChain("", global)
+	if len(names) == 0 {
+		return resolveChain(nil, global)
 	}
-	if len(values) > 1 {
-		return resolvedChain{value: "varies", source: "provider"}
+	if len(firstRaw) == 1 && strings.EqualFold(firstRaw[0], "none") || len(firstRaw) == 0 {
+		return resolvedChain{value: config.HopList{"none"}, source: "none"}
 	}
-	for v := range values {
-		r := resolveChain(v, "")
-		if r.source == "account" {
-			r.source = "provider"
-		}
-		return r
-	}
-	return resolveChain("", global)
+	resolved := resolveChain(firstRaw, nil)
+	resolved.source = source
+	return resolved
 }
 
-func statusAccountChain(accountPre, accountPost, globalPre, globalPost string) *angel.AccountChain {
+func statusAccountChain(accountPre, accountPost, globalPre, globalPost config.HopList) *angel.AccountChain {
 	pre, post := resolveChain(accountPre, globalPre), resolveChain(accountPost, globalPost)
 	return &angel.AccountChain{PreSOCKS5: pre.value, PreSOCKS5Source: pre.source, PreSOCKS5Auth: pre.auth,
 		PostSOCKS5: post.value, PostSOCKS5Source: post.source, PostSOCKS5Auth: post.auth}
 }
 
-// accountStatus lists the configured accounts for the status answer,
-// sorted by login. Exit reports the effective explicit/default mode.
 func chainOfResolved(pre, post resolvedChain) *angel.AccountChain {
 	return &angel.AccountChain{PreSOCKS5: pre.value, PreSOCKS5Source: pre.source, PreSOCKS5Auth: pre.auth,
 		PostSOCKS5: post.value, PostSOCKS5Source: post.source, PostSOCKS5Auth: post.auth}
@@ -573,12 +698,10 @@ func accountStatus(cfg *config.Config, routes map[string]string) []angel.Account
 		}
 		// No normalization: an account without its own rule reports "" here, like
 		// in `account list`.
-		pre := a.PreSOCKS5
+		var chain *angel.AccountChain
 		if a.Exit == "direct" {
-			pre = "none"
-		}
-		chain := statusAccountChain(pre, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
-		if a.Exit != "direct" {
+			chain = statusAccountChain(config.HopList{"none"}, a.PostSOCKS5, cfg.Chain.PreSOCKS5, cfg.Chain.PostSOCKS5)
+		} else {
 			chain = chainOfResolved(resolveAccountChain(cfg, &a, false), resolveAccountChain(cfg, &a, true))
 		}
 		out = append(out, angel.AccountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: country, Exit: effectiveExit(&a), AllowedClients: a.AllowedClients, Chain: chain})

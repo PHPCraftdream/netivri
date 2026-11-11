@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ const cloneHopURL = "socks5://u:fake-hop@hop.example:1080"
 func cloneScreenHome(t *testing.T, extraLogins ...string) (*accountsScreen, string) {
 	t.Helper()
 	h := accountProviderHome(t)
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "p1", Country: "DE", Exit: "route", ExitGiven: true, PreSOCKS5: cloneHopURL, PostSOCKS5: "http://u:fake-post@post.example:8080"}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "p1", Country: "DE", Exit: "route", ExitGiven: true, PreSOCKS5: config.HopList{cloneHopURL}, PostSOCKS5: config.HopList{"http://u:fake-post@post.example:8080"}}); e != nil {
 		t.Fatal(e)
 	}
 	for _, login := range extraLogins {
@@ -121,10 +122,10 @@ func TestAccountsCloneRealKeysEndToEnd(t *testing.T) {
 	if bob.Password != config.InitPlaceholder {
 		t.Fatalf("clone stored a password or hash instead of the placeholder")
 	}
-	if bob.Provider != "p1" || bob.ExitCountry != "DE" || bob.Exit != "route" || bob.PreSOCKS5 != cloneHopURL || bob.PostSOCKS5 != "http://u:fake-post@post.example:8080" || bob.AllowedClients != alice.AllowedClients {
+	if bob.Provider != "p1" || bob.ExitCountry != "DE" || bob.Exit != "route" || !slices.Equal(bob.PreSOCKS5, alice.PreSOCKS5) || !slices.Equal(bob.PostSOCKS5, alice.PostSOCKS5) || bob.AllowedClients != alice.AllowedClients {
 		t.Fatalf("clone did not copy provider/countries/exit/clients/hops: %+v", bob)
 	}
-	if !strings.Contains(alice.Password, "$argon2id$") || alice.PreSOCKS5 != cloneHopURL {
+	if !strings.Contains(alice.Password, "$argon2id$") || !slices.Equal(alice.PreSOCKS5, config.HopList{cloneHopURL}) {
 		t.Fatal("the source account changed")
 	}
 	if ok, e := auth.VerifyHash(alice.Password, cloneSourcePassword); e != nil || !ok {

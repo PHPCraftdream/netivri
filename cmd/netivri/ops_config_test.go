@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -82,12 +83,16 @@ func TestConfigGetDefaultDisplayValuesOnEmptyHome(t *testing.T) {
 		if key != "proxy" {
 			group = res.Groups["chain"]
 		}
-		pv, ok := group[key].(configProxyValue)
-		if !ok {
-			t.Fatalf("%s display = %T, want configProxyValue", key, group[key])
-		}
-		if pv.Value != "" || pv.Auth {
-			t.Errorf("%s = %+v, want empty", key, pv)
+		if key == "proxy" {
+			pv, ok := group[key].(configProxyValue)
+			if !ok || pv.Value != "" || pv.Auth {
+				t.Fatalf("%s display = %T %+v", key, group[key], pv)
+			}
+		} else {
+			pv, ok := group[key].(configHopValue)
+			if !ok || pv.Value == nil || len(pv.Value) != 0 || pv.Auth {
+				t.Fatalf("%s display = %T %+v", key, group[key], pv)
+			}
 		}
 	}
 	if res.Groups["fetch"]["update_interval"] != "" {
@@ -127,7 +132,7 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	cfg := config.Default()
 	cfg.Auth.Login = "proxyuser"
 	cfg.Auth.Password = hash
-	cfg.Chain.PreSOCKS5 = "socks5://alice:s3cret@relay.example:1080"
+	cfg.Chain.PreSOCKS5 = config.HopList{"socks5://alice:s3cret@relay.example:1080"}
 	cfg.Fetch.Proxy = "http://u:p@proxy.example:8443"
 	writeTestConfig(t, home, cfg)
 
@@ -138,11 +143,11 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 	if got := res.Groups["auth"]["password"]; got != "set" {
 		t.Errorf("password display = %v, want \"set\"", got)
 	}
-	pre, ok := res.Groups["chain"]["pre_socks5"].(configProxyValue)
+	pre, ok := res.Groups["chain"]["pre_socks5"].(configHopValue)
 	if !ok {
 		t.Fatalf("pre_socks5 display = %T", res.Groups["chain"]["pre_socks5"])
 	}
-	if pre.Value != "socks5://relay.example:1080" || !pre.Auth {
+	if !ok || !reflect.DeepEqual(pre.Value, []string{"socks5://relay.example:1080"}) || !pre.Auth {
 		t.Errorf("pre_socks5 = %+v", pre)
 	}
 	fp, ok := res.Groups["fetch"]["proxy"].(configProxyValue)
@@ -387,7 +392,7 @@ func TestConfigSetEachKey(t *testing.T) {
 			t.Errorf("result = %+v", res)
 		}
 		lc, _ := loadConfig(home)
-		if lc.Chain.PreSOCKS5 != "http://pre.example:8080" {
+		if !reflect.DeepEqual(lc.Chain.PreSOCKS5, config.HopList{"http://pre.example:8080"}) {
 			t.Errorf("pre = %q", lc.Chain.PreSOCKS5)
 		}
 	})
@@ -401,7 +406,7 @@ func TestConfigSetEachKey(t *testing.T) {
 			t.Errorf("result = %+v", res)
 		}
 		lc, _ := loadConfig(home)
-		if lc.Chain.PostSOCKS5 != "socks5://post.example:1080" {
+		if !reflect.DeepEqual(lc.Chain.PostSOCKS5, config.HopList{"socks5://post.example:1080"}) {
 			t.Errorf("post = %q", lc.Chain.PostSOCKS5)
 		}
 	})
@@ -412,7 +417,7 @@ func TestConfigSetClear(t *testing.T) {
 	cfg := config.Default()
 	cfg.Fetch.Proxy = "socks5://p.example:1080"
 	cfg.Auth.Login, cfg.Auth.Password = "alice", config.InitPlaceholder
-	cfg.Chain.PostSOCKS5 = "socks5://post.example:1080"
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://post.example:1080"}
 	writeTestConfig(t, home, cfg)
 
 	if res, err := ConfigSet(home, "fetch.proxy", "none"); err != nil || !res.Changed {
@@ -466,6 +471,16 @@ func TestConfigSetClear(t *testing.T) {
 }
 
 func TestConfigSetUnchanged(t *testing.T) {
+	chainHome := t.TempDir()
+	if _, err := ConfigSet(chainHome, "chain.pre_socks5", "none"); err != nil {
+		t.Fatal(err)
+	}
+	beforeChain := readTestConfigBytes(t, chainHome)
+	result, err := ConfigSet(chainHome, "chain.pre_socks5", "none")
+	if err != nil || result.Changed || !bytes.Equal(beforeChain, readTestConfigBytes(t, chainHome)) {
+		t.Fatalf("singleton chain no-op = %+v %v", result, err)
+	}
+
 	home := t.TempDir()
 	res, err := ConfigSet(home, "listen.port", "7890")
 	if err != nil {
@@ -475,7 +490,18 @@ func TestConfigSetUnchanged(t *testing.T) {
 		t.Errorf("result = %+v, want no change", res)
 	}
 
-	// Same plain password twice: the second attempt must detect the
+	t.Run("chain none singleton is not cleared", func(t *testing.T) {
+		home := t.TempDir()
+		if _, err := ConfigSet(home, "chain.pre_socks5", "none"); err != nil {
+			t.Fatal(err)
+		}
+		before := readTestConfigBytes(t, home)
+		result, err := ConfigSet(home, "chain.pre_socks5", "none")
+		if err != nil || result.Changed || !bytes.Equal(before, readTestConfigBytes(t, home)) {
+			t.Fatalf("no-op = %+v %v", result, err)
+		}
+	})
+
 	// stored hash already matches and change nothing.
 	pair := t.TempDir()
 	cfg := config.Default()

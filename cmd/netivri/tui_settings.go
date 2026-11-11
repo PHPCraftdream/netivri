@@ -247,8 +247,14 @@ func (s *settingsScreen) promptFor(k ConfigKey) {
 		s.prompt = tui.NewPrompt(tui.SecretPrompt, title, k.Label, hint, "")
 	case ConfigKeyProxy:
 		hint := k.Hint
-		if pv, ok := s.proxyValue(k.Key); ok {
-			hint += "; current: " + settingsProxyText(pv) + " — enter a new URL; none or empty clears"
+		if k.Key == "fetch.proxy" {
+			if pv, ok := s.fetchProxyValue(); ok {
+				hint += "; current: " + settingsProxyText(pv) + " — enter a new URL; none or empty clears"
+			} else {
+				hint += "; none or empty clears"
+			}
+		} else if hv, ok := s.hopValue(k.Key); ok {
+			hint += "; current: " + settingsHopText(hv) + " — enter one URL to replace the ordered list; none or empty clears"
 		} else {
 			hint += "; none or empty clears"
 		}
@@ -266,10 +272,16 @@ func settingsRawValue(cfg *config.Config, key string) string {
 	return v
 }
 
-func (s *settingsScreen) proxyValue(key string) (configProxyValue, bool) {
-	v := ConfigDisplayValue(s.cfg, key)
+func (s *settingsScreen) fetchProxyValue() (configProxyValue, bool) {
+	v := ConfigDisplayValue(s.cfg, "fetch.proxy")
 	pv, ok := v.(configProxyValue)
 	return pv, ok
+}
+
+func (s *settingsScreen) hopValue(key string) (configHopValue, bool) {
+	v := ConfigDisplayValue(s.cfg, key)
+	hv, ok := v.(configHopValue)
+	return hv, ok
 }
 
 // refresh rebuilds the rows and the card of the selected row from the current
@@ -326,7 +338,7 @@ func (s *settingsScreen) buildCard(group string) *tui.Card {
 		if k.Group != group {
 			continue
 		}
-		// The value is a safe state label ("set"/"not set", redacted scheme://host:port),
+		// The value is always a safe state label or a redacted ordered proxy list,
 		// never the secret itself — no Secret flag (same convention as tui_accounts.go pre/post lines).
 		lines = append(lines, tui.CardLine{ID: k.Key, Label: k.Label, Value: s.displayValue(k),
 			Kind: tui.CardField})
@@ -365,14 +377,33 @@ func (s *settingsScreen) displayValue(k ConfigKey) string {
 			return str
 		}
 	case ConfigKeyProxy:
-		if pv, ok := v.(configProxyValue); ok {
-			return settingsProxyText(pv)
+		if k.Key == "fetch.proxy" {
+			if pv, ok := v.(configProxyValue); ok {
+				return settingsProxyText(pv)
+			}
+		} else if hv, ok := v.(configHopValue); ok {
+			return settingsHopText(hv)
 		}
 	}
 	if str, ok := v.(string); ok {
 		return str
 	}
 	return fmt.Sprint(v)
+}
+
+// settingsHopText renders a redacted ordered alternative list.
+func settingsHopText(hv configHopValue) string {
+	if len(hv.Value) == 0 {
+		return "-"
+	}
+	if len(hv.Value) == 1 && strings.EqualFold(hv.Value[0], "none") {
+		return "none"
+	}
+	unit := " alternatives: ["
+	if len(hv.Value) == 1 {
+		unit = " alternative: ["
+	}
+	return fmt.Sprintf("%d%s%s]", len(hv.Value), unit, strings.Join(hv.Value, ", "))
 }
 
 // settingsProxyText renders a proxy for display without its credentials.

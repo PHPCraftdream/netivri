@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -185,7 +186,7 @@ func TestAccountsWorkspaceBoundsAndAddLine(t *testing.T) {
 }
 func TestAccountsOperationsReadback(t *testing.T) {
 	h := accountsHome(t)
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: "socks5://u:fake-token@host:1080"}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: config.HopList{"socks5://u:fake-token@host:1080"}}); e != nil {
 		t.Fatal(e)
 	}
 	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
@@ -197,9 +198,11 @@ func TestAccountsOperationsReadback(t *testing.T) {
 	if e != nil || r[0].AllowedClients != "loopback" {
 		t.Fatalf("edit %#v %v", r, e)
 	}
-	runAccountCmd(s, s.mutateEdit(a, "post", map[string]string{"value": "none"}))
+	_ = s.openEdit(a, "post")
+	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{"value": "none"}})
+	runAccountCmd(s, cmd)
 	r, _ = AccountList(h)
-	if r[0].PostSOCKS5.Value != "none" {
+	if !reflect.DeepEqual(r[0].PostSOCKS5.Value, []string{"none"}) {
 		t.Fatal("hop clear")
 	}
 	runAccountCmd(s, s.bg("clone", func() tea.Msg {
@@ -207,7 +210,7 @@ func TestAccountsOperationsReadback(t *testing.T) {
 		return s.finishMutation(e, "cloned", "bob")
 	}))
 	r, e = AccountList(h)
-	if e != nil || len(r) != 2 || r[1].Login != "bob" || r[1].PostSOCKS5.Value != "none" || r[1].AllowedClients != "loopback" {
+	if e != nil || len(r) != 2 || r[1].Login != "bob" || !reflect.DeepEqual(r[1].PostSOCKS5.Value, []string{"none"}) || r[1].AllowedClients != "loopback" {
 		t.Fatalf("clone %#v %v", r, e)
 	}
 	runAccountCmd(s, s.mutateRemove("bob"))
@@ -282,7 +285,7 @@ func TestAccountsUpdatePreservesExternalUneditedField(t *testing.T) {
 }
 func TestAccountsSecretDisplayAndErrorRedaction(t *testing.T) {
 	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
-	s.rows = []accountInfo{{Login: "alice", PostSOCKS5: accountChainInfo{Source: "account", Value: "socks5://u:fake-token@host"}}}
+	s.rows = []accountInfo{{Login: "alice", PostSOCKS5: accountChainInfo{Source: "account", Value: []string{"socks5://u:fake-token@host"}}}}
 	s.syncRows("alice")
 	v := s.View(120, 30)
 	if strings.Contains(v, "fake-token") || strings.Contains(v, "socks5://") {

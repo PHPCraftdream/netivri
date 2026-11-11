@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -29,6 +30,46 @@ func TestAccountShowChainOwnIsPresentWhenAbsent(t *testing.T) {
 	}
 }
 
+func TestAccountChainJSONContainsRedactedArrays(t *testing.T) {
+	cfg := &config.Config{}
+	account := &config.Account{
+		Login: "alice",
+		PreSOCKS5: config.HopList{
+			"socks5://pre-one:secret-one@pre-one.example:1080",
+			"https://pre-two:secret-two@pre-two.example:8443",
+		},
+		PostSOCKS5: config.HopList{
+			"http://post-one:secret-three@post-one.example:8080",
+			"socks5://post-two:secret-four@post-two.example:1081",
+		},
+	}
+	info := infoForAccount(cfg, account)
+	encoded, err := json.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"pre_socks5", "post_socks5"} {
+		chain := decoded[field].(map[string]any)
+		values, ok := chain["value"].([]any)
+		if !ok || len(values) != 2 {
+			t.Fatalf("%s value is not a two-item JSON array: %s", field, encoded)
+		}
+		own, ok := chain["own"].([]any)
+		if !ok || len(own) != 2 {
+			t.Fatalf("%s own is not a two-item JSON array: %s", field, encoded)
+		}
+	}
+	for _, secret := range []string{"pre-one", "secret-one", "pre-two", "secret-two", "post-one", "secret-three", "post-two", "secret-four"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("account JSON leaked %q", secret)
+		}
+	}
+}
+
 func TestAccountSetSOCKS5Dispatch(t *testing.T) {
 	cfg := &config.Config{Accounts: []config.Account{{Login: "alice"}}}
 	var out strings.Builder
@@ -37,7 +78,7 @@ func TestAccountSetSOCKS5Dispatch(t *testing.T) {
 	if err != nil || !saved {
 		t.Fatalf("set failed: saved=%v err=%v", saved, err)
 	}
-	if cfg.Accounts[0].PreSOCKS5 != "socks5://u:secret@relay.example:1080" {
+	if !slices.Equal(cfg.Accounts[0].PreSOCKS5, config.HopList{"socks5://u:secret@relay.example:1080"}) {
 		t.Fatal("set value not persisted")
 	}
 	if strings.Contains(out.String(), "secret") || strings.Contains(out.String(), "u:") {
@@ -45,12 +86,12 @@ func TestAccountSetSOCKS5Dispatch(t *testing.T) {
 	}
 	out.Reset()
 	err = accountSetSOCKS5(cfg, []string{"alice", "--pre", "inherit"}, func() error { return nil }, &out)
-	if err != nil || cfg.Accounts[0].PreSOCKS5 != "" {
+	if err != nil || len(cfg.Accounts[0].PreSOCKS5) != 0 {
 		t.Fatalf("inherit failed: %v", err)
 	}
 	out.Reset()
 	err = accountSetSOCKS5(cfg, []string{"alice", "--pre", "none"}, func() error { return nil }, &out)
-	if err != nil || cfg.Accounts[0].PreSOCKS5 != "none" {
+	if err != nil || !slices.Equal(cfg.Accounts[0].PreSOCKS5, config.HopList{"none"}) {
 		t.Fatalf("none failed: %v", err)
 	}
 	if err = accountSetSOCKS5(cfg, []string{"alice", "--pre", "https://hidden"}, func() error { return nil }, &out); err == nil || strings.Contains(err.Error(), "hidden") {
@@ -74,13 +115,13 @@ func TestRedactChainRemovesAllCredentials(t *testing.T) {
 	}
 }
 func TestAccountChainOutputSourceAndAuth(t *testing.T) {
-	cfg := &config.Config{Chain: config.Chain{PreSOCKS5: "socks5://global:secret@g.example:1080", PostSOCKS5: "socks5://exit.example"}}
-	a := &config.Account{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: "none"}
+	cfg := &config.Config{Chain: config.Chain{PreSOCKS5: config.HopList{"socks5://global:secret@g.example:1080"}, PostSOCKS5: config.HopList{"socks5://exit.example"}}}
+	a := &config.Account{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: config.HopList{"none"}}
 	info := infoForAccount(cfg, a)
-	if info.PreSOCKS5.Value != "none" || info.PreSOCKS5.Source != "none" || info.PreSOCKS5.Auth {
+	if !slices.Equal(info.PreSOCKS5.Value, []string{"none"}) || info.PreSOCKS5.Source != "none" || info.PreSOCKS5.Auth {
 		t.Fatalf("pre output = %+v", info)
 	}
-	if info.PostSOCKS5.Value != "socks5://exit.example" || info.PostSOCKS5.Source != "global" || info.PostSOCKS5.Auth {
+	if !slices.Equal(info.PostSOCKS5.Value, []string{"socks5://exit.example"}) || info.PostSOCKS5.Source != "global" || info.PostSOCKS5.Auth {
 		t.Fatalf("post output = %+v", info)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -9,8 +10,8 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
-// ConfigKeyKind selects how a settings key is prompted, normalised and
-// displayed (see cmd/netivri/tui_settings.go).
+// ConfigKeyKind selects how a settings key is prompted, normalized and displayed
+// (see cmd/netivri/tui_settings.go).
 type ConfigKeyKind int
 
 const (
@@ -97,17 +98,20 @@ func configUsageError(op, key string) *cli.Error {
 	}
 }
 
-// configProxyValue is the redacted display shape of a proxy setting:
-// the URL without its credentials plus whether credentials are set.
+// configProxyValue is the redacted display shape of a scalar proxy setting.
 type configProxyValue struct {
 	Value string `json:"value"`
 	Auth  bool   `json:"auth"`
 }
 
-// ConfigDisplayValue returns the display value of a settings key:
-// string for text keys, int for listen.port, bool for booleans,
-// "set"/"not set" for auth.password (the hash is never shown) and a
-// configProxyValue for proxy keys. An unknown key yields nil.
+type configHopValue struct {
+	Value []string `json:"value"`
+	Auth  bool     `json:"auth"`
+}
+
+// ConfigDisplayValue returns redacted display values: strings for text keys,
+// integers for ports, booleans, password state, a scalar fetch proxy object,
+// or a redacted ordered array object for chain keys. Unknown keys yield nil.
 func ConfigDisplayValue(cfg *config.Config, key string) any {
 	switch key {
 	case "listen.bind":
@@ -130,9 +134,9 @@ func ConfigDisplayValue(cfg *config.Config, key string) any {
 	case "fetch.update_interval":
 		return cfg.Fetch.UpdateInterval
 	case "chain.pre_socks5":
-		return configProxyValue{Value: redactChain(cfg.Chain.PreSOCKS5), Auth: chainHasAuth(cfg.Chain.PreSOCKS5)}
+		return configHopValue{Value: redactChains(cfg.Chain.PreSOCKS5), Auth: chainsHaveAuth(cfg.Chain.PreSOCKS5)}
 	case "chain.post_socks5":
-		return configProxyValue{Value: redactChain(cfg.Chain.PostSOCKS5), Auth: chainHasAuth(cfg.Chain.PostSOCKS5)}
+		return configHopValue{Value: redactChains(cfg.Chain.PostSOCKS5), Auth: chainsHaveAuth(cfg.Chain.PostSOCKS5)}
 	}
 	return nil
 }
@@ -226,6 +230,13 @@ func parseConfigBool(value string) (bool, bool) {
 	return false, false
 }
 
+func singletonHop(value string) config.HopList {
+	if value == "" {
+		return nil
+	}
+	return config.HopList{value}
+}
+
 // configClearableKey reports whether "none" or an empty value clears
 // the key.
 func configClearableKey(key string) bool {
@@ -302,7 +313,7 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 		}
 	default:
 		text = value
-		if configClearableKey(key) && (value == "" || strings.EqualFold(value, "none")) {
+		if configClearableKey(key) && (value == "" || strings.EqualFold(value, "none") && key != "chain.pre_socks5" && key != "chain.post_socks5") {
 			text = ""
 		}
 		switch key {
@@ -317,9 +328,9 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 		case "fetch.update_interval":
 			changed = cfg.Fetch.UpdateInterval != text
 		case "chain.pre_socks5":
-			changed = cfg.Chain.PreSOCKS5 != text
+			changed = !slices.Equal(cfg.Chain.PreSOCKS5, singletonHop(text))
 		case "chain.post_socks5":
-			changed = cfg.Chain.PostSOCKS5 != text
+			changed = !slices.Equal(cfg.Chain.PostSOCKS5, singletonHop(text))
 		}
 	}
 
@@ -344,9 +355,9 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 	case "fetch.update_interval":
 		cand.Fetch.UpdateInterval = text
 	case "chain.pre_socks5":
-		cand.Chain.PreSOCKS5 = text
+		cand.Chain.PreSOCKS5 = singletonHop(text)
 	case "chain.post_socks5":
-		cand.Chain.PostSOCKS5 = text
+		cand.Chain.PostSOCKS5 = singletonHop(text)
 	}
 	if err := cand.Validate(); err != nil {
 		return ConfigSetResult{}, err

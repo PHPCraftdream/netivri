@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -82,7 +83,7 @@ func TestAccountDirectMutationValidationIsAtomic(t *testing.T) {
 						t.Fatalf("%s provider = %q", login, a.Provider)
 					}
 				case "pre":
-					if a.PreSOCKS5 != "socks5://localhost:1080" {
+					if !slices.Equal(a.PreSOCKS5, config.HopList{"socks5://localhost:1080"}) {
 						t.Fatalf("%s pre_socks5 = %q", login, a.PreSOCKS5)
 					}
 				}
@@ -110,7 +111,7 @@ func TestAccountDirectAllowsPostAndClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := got.Account("alice")
-	if a == nil || a.Exit != "direct" || a.PostSOCKS5 != "socks5://localhost:1080" || a.AllowedClients != "127.0.0.1" {
+	if a == nil || a.Exit != "direct" || !slices.Equal(a.PostSOCKS5, config.HopList{"socks5://localhost:1080"}) || a.AllowedClients != "127.0.0.1" {
 		t.Fatalf("direct account after post/client changes = %+v", a)
 	}
 }

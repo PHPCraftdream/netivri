@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -187,25 +188,89 @@ func portOf(addr string) int {
 	return n
 }
 
+func scalarHopMap(field string, in map[string]config.HopList) (map[string]string, error) {
+	out := make(map[string]string, len(in))
+	for key, hops := range in {
+		value, err := config.SingleHop(hops)
+		if err != nil {
+			return nil, fmt.Errorf("%s: multiple hops cannot be passed to core.Options", field)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+func scalarNodeHopMap(field string, in map[string][]config.HopList) (map[string][]string, error) {
+	out := make(map[string][]string, len(in))
+	for key, lists := range in {
+		values := make([]string, 0, len(lists))
+		for i, hops := range lists {
+			value, err := config.SingleHop(hops)
+			if err != nil {
+				return nil, fmt.Errorf("%s[%d]: multiple hops cannot be passed to core.Options", field, i)
+			}
+			values = append(values, value)
+		}
+		out[key] = values
+	}
+	return out, nil
+}
+
 func (l *liveAngel) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
-	o, _ := l.coreOptionsWithLogger(d, a, store)
+	o, _ := l.coreOptionsChecked(d, a, store)
 	return o
 }
 
-func (l *liveAngel) coreOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog) {
-	o, nodesLog := l.routeOptionsWithLogger(d, a, store)
+func (l *liveAngel) coreOptionsChecked(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, error) {
+	o, _, err := l.coreOptionsWithLogger(d, a, store)
+	return o, err
+}
+
+func (l *liveAngel) coreOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
+	return l.coreOptionsWithLoggerChecked(d, a, store)
+}
+
+func (l *liveAngel) coreOptionsWithLoggerChecked(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
+	o, nodesLog, err := l.routeOptionsWithLogger(d, a, store)
+	if err != nil {
+		return core.Options{}, nil, err
+	}
 	o.InitialBindings = initialBindings(store, l.warnf)
-	return o, nodesLog
+	return o, nodesLog, nil
 }
 
 // routeOptions is coreOptions without the stored bindings, which only a
 // starting core reads.
 func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
-	o, _ := l.routeOptionsWithLogger(d, a, store)
+	o, _, _ := l.routeOptionsWithLogger(d, a, store)
 	return o
 }
 
-func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog) {
+func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
+	return l.routeOptionsWithLoggerChecked(d, a, store)
+}
+
+func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
+	pre, err := scalarHopMap("routePre", d.pool.routePre)
+	if err != nil {
+		return core.Options{}, nil, err
+	}
+	post, err := scalarHopMap("routePost", d.pool.routePost)
+	if err != nil {
+		return core.Options{}, nil, err
+	}
+	nodePre, err := scalarNodeHopMap("nodePre", d.pool.nodePre)
+	if err != nil {
+		return core.Options{}, nil, err
+	}
+	nodePost, err := scalarNodeHopMap("nodePost", d.pool.nodePost)
+	if err != nil {
+		return core.Options{}, nil, err
+	}
+	globalPost, err := config.SingleHop(d.cfg.Chain.PostSOCKS5)
+	if err != nil {
+		return core.Options{}, nil, fmt.Errorf("globalPost: multiple hops cannot be passed to core.Options")
+	}
 	var observer core.Observer
 	if store != nil {
 		observer = statsObserver{store: store}
@@ -229,11 +294,11 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 		AllowedClients:        config.AllowedClientPrefixes(d.cfg.Listen.AllowedClients),
 		RouteNodes:            d.pool.nodes,
 		AccountRoute:          d.pool.accountRoutes,
-		RoutePre:              d.pool.routePre,
-		RoutePost:             d.pool.routePost,
-		NodePre:               d.pool.nodePre,
-		NodePost:              d.pool.nodePost,
-		GlobalPost:            d.cfg.Chain.PostSOCKS5,
+		RoutePre:              pre,
+		RoutePost:             post,
+		NodePre:               nodePre,
+		NodePost:              nodePost,
+		GlobalPost:            globalPost,
 		Servers:               cloneServerSpecs(d.servers),
 		AccountAllowedClients: accountAllowedClients(d.cfg),
 		NodeLabels:            d.pool.labels,
@@ -243,7 +308,7 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 		Observer:              observer,
 		Warm:                  warmOptions(d.pool.nodes),
 		AffinityTTL:           stats.BindingTTL,
-	}, nodesLog
+	}, nodesLog, nil
 }
 
 func (l *liveAngel) activeNodeLogger() *nodeLog {
@@ -271,7 +336,10 @@ func (l *liveAngel) flushNodeLogger() {
 
 // start opens the first core instance.
 func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authenticator, store *stats.Store) error {
-	o, nodesLog := l.coreOptionsWithLogger(d, a, store)
+	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store)
+	if err != nil {
+		return err
+	}
 	inst, err := coreStart(ctx, o)
 	if err != nil {
 		return err
@@ -356,11 +424,11 @@ func routesFingerprint(d desiredState) string {
 		Tiers      map[string][]int
 		Routes     map[string]string
 		Exit       []struct{ Login, Exit string }
-		Pre        map[string]string
-		Post       map[string]string
-		NodePre    map[string][]string
-		NodePost   map[string][]string
-		GlobalPost string
+		Pre        map[string]config.HopList
+		Post       map[string]config.HopList
+		NodePre    map[string][]config.HopList
+		NodePost   map[string][]config.HopList
+		GlobalPost config.HopList
 	}{
 		Nodes: nodesWithoutNames(d.pool.nodes), Labels: d.pool.labels, Tiers: d.pool.tiers,
 		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost, NodePre: d.pool.nodePre, NodePost: d.pool.nodePost,
@@ -432,7 +500,7 @@ func updateAccountPolicy(a mihauth.Authenticator, cfg *config.Config) {
 func reloadComparison(a mihauth.Authenticator, applied, candidate desiredState, since uint64) (desiredState, bool, bool) {
 	applied.cfg, candidate.cfg = snapshotReloadCredentials(a, applied.cfg, candidate.cfg, since)
 	same := fingerprint(applied) == fingerprint(candidate)
-	globalPostChanged := applied.cfg.Chain.PostSOCKS5 != candidate.cfg.Chain.PostSOCKS5
+	globalPostChanged := !slices.Equal(applied.cfg.Chain.PostSOCKS5, candidate.cfg.Chain.PostSOCKS5)
 	inPlace := !same && !globalPostChanged && listenerFingerprint(applied) == listenerFingerprint(candidate) &&
 		(((len(applied.pool.accountRoutes) > 0) == (len(candidate.pool.accountRoutes) > 0)) || routesFingerprint(applied) == routesFingerprint(candidate) || (accountClientsFingerprint(applied.cfg) != accountClientsFingerprint(candidate.cfg)))
 	return candidate, same, inPlace
@@ -597,7 +665,11 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-	o, nodesLog := l.routeOptionsWithLogger(d, auth, store)
+	o, nodesLog, err := l.routeOptionsWithLogger(d, auth, store)
+	if err != nil {
+		l.noteReloadError("routes not applied", err)
+		return false
+	}
 	activeNodeLog := l.activeNodeLogger()
 	var queuedEvents *queuedNodeEvents
 	if activeNodeLog != nil && len(d.pool.infos) > 0 {
@@ -719,7 +791,11 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-	o, nodesLog := l.coreOptionsWithLogger(d, a, store)
+	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store)
+	if err != nil {
+		l.noteReloadError("configuration not applied", err)
+		return reloadHandled
+	}
 	l.mu.Lock()
 	l.store = store
 	l.mu.Unlock()

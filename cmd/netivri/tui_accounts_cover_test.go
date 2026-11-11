@@ -276,7 +276,7 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
 	hop := "socks5://u:pw@h:1"
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: hop}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "main", Country: "DE", Exit: "route", ExitGiven: true, PostSOCKS5: config.HopList{hop}}); e != nil {
 		t.Fatal(e)
 	}
 	enter := func(s *accountsScreen) tea.Cmd {
@@ -349,8 +349,26 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Accounts[0].Login != "alice" || cfg.Accounts[0].PostSOCKS5 == hop {
+	if cfg.Accounts[0].Login != "alice" || len(cfg.Accounts[0].PostSOCKS5) != 0 {
 		t.Fatalf("clear-post did not clear the stored hop: %#v", cfg.Accounts[0])
+	}
+	// Inherit-pre line clears the stored override through AccountUpdate.
+	s4 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	focusCard(s4)
+	if !selectLine(s4, "clear-pre") || s4.workspace.Card.Lines[s4.workspace.Card.Selected].Disabled {
+		t.Fatal("inherit-pre line is missing or disabled")
+	}
+	if c := enter(s4); c == nil {
+		t.Fatal("inherit-pre activation produced no command")
+	} else {
+		runAccountCmd(s4, c)
+	}
+	cfg, err = config.Load(config.ConfigPath(h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Accounts[0].PreSOCKS5) != 0 {
+		t.Fatal("inherit-pre left the account override set")
 	}
 }
 
@@ -397,7 +415,7 @@ func TestAccountsWizardResultPersistsAndValidationRetains(t *testing.T) {
 // result path, plus the save-time country validation error path.
 func TestAccountsOpenEditPromptsPersistAndValidate(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: "socks5://u:pw@h:1"}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: config.HopList{"socks5://u:pw@h:1"}}); e != nil {
 		t.Fatal(e)
 	}
 	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
@@ -424,12 +442,15 @@ func TestAccountsOpenEditPromptsPersistAndValidate(t *testing.T) {
 		t.Fatalf("clients edit not persisted: dialog=%v accounts=%#v", s.dialog != nil, cfg.Accounts)
 	}
 
-	// post edit: submitting "none" clears the hop.
+	// post editor is a safe operation picker, not a prefilled URL prompt.
 	s.rows, _ = AccountList(h)
 	a = s.rows[0]
 	_ = s.openEdit(a, "post")
-	if s.dialog == nil || s.dialog.prompt == nil {
-		t.Fatalf("post editor did not open: %+v", s.dialog)
+	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.ChoicePrompt {
+		t.Fatalf("post-hop picker did not open: %+v", s.dialog)
+	}
+	if strings.Contains(s.dialog.View(100, 20), "fake") || strings.Contains(s.dialog.View(100, 20), "socks5://") {
+		t.Fatal("hop picker revealed a raw URL")
 	}
 	_, cmd = s.Update(accountsDialogResult{Values: map[string]string{"value": "none"}})
 	runAccountCmd(s, cmd)
@@ -437,8 +458,8 @@ func TestAccountsOpenEditPromptsPersistAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Accounts[0].PostSOCKS5 != "none" {
-		t.Fatalf("post edit not persisted: %#v", cfg.Accounts[0])
+	if len(cfg.Accounts[0].PostSOCKS5) != 1 || cfg.Accounts[0].PostSOCKS5[0] != "none" {
+		t.Fatalf("none action not persisted: %#v", cfg.Accounts[0])
 	}
 
 	// countries edit: "NLD" is not a valid code, the save fails, the prompt

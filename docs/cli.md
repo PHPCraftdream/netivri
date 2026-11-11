@@ -1,8 +1,9 @@
 # CLI contract
 
 This document is the contract between `netivri` and its callers (humans,
-scripts, AI agents). Changing anything here is a breaking change and bumps
-`schema_version`.
+scripts, AI agents). Breaking changes normally bump `schema_version`. The
+unreleased SOCKS5-chain JSON shape change is intentionally breaking and is
+explicitly documented without a schema-version bump.
 
 ## Global flags
 
@@ -32,11 +33,11 @@ Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list
 
 ### Providers
 
-The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, a preview of the countries the subscription offers — the same fetch as `sub countries --url` with the same figures (nodes, countries with their node counts, nodes with no country), a busy state while it runs and Esc to cancel it; a failed preview does not block the add —, then the fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (state only: `inherited`, `none` or `set`, never the URL; an empty answer keeps the hop, the Clear pre-hop (`P`) and Clear post-hop (`O`) actions return it to the global value; each clear applies to the provider selected when the action is activated, even if the selection changes before it completes); Enter on the Subscription, Via, Pre-hop or Post-hop field line opens its edit prompt, and the Name is renamed via the Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts), Nodes... (`n`; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name — `/` filters by text, `c` cycles the country filter over all and the countries present, Esc closes; no addresses, ports or credentials are shown; disabled while the provider has no stored snapshot) and Diagnose... (`g`; the dial diagnostics of `netivri diag dial --node` for one node of the provider, through the same operation: a prompt picks the node from the provider's stored labels and an optional one asks for the samples count (default 5, 1..20), the run happens in the background with a busy state Esc cancels, and the result dialog shows per phase (dns, tcp, tls, first_byte) p50/p90/max in ms with the sample count plus the failure counts — the idle survival test is not run, as with `--idle off`; errors are shown by message and hint only, Esc closes the result).
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, a preview of the countries the subscription offers — the same fetch as `sub countries --url` with the same figures (nodes, countries with their node counts, nodes with no country), a busy state while it runs and Esc to cancel it; a failed preview does not block the add —, then the fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (list state only: `inherited`, `none` or `set`, never the URL; Enter opens an operation picker to replace the list, add a URL, remove an entry by its original position, inherit or disable; URL prompts are masked and list order is not changed; the production core currently accepts at most one URL per side, so adding a second is rejected; Clear pre-hop (`P`) and Clear post-hop (`O`) return it to the global value). Each action applies to the provider selected when activated, even if the selection changes before it completes. Enter on Subscription or Via opens its edit prompt, and the Name is renamed via Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts), Nodes... (`n`; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name — `/` filters by text, `c` cycles the country filter over all and the countries present, Esc closes; no addresses, ports or credentials are shown; disabled while the provider has no stored snapshot) and Diagnose... (`g`; the dial diagnostics of `netivri diag dial --node` for one node of the provider, through the same operation: a prompt picks the node from the provider's stored labels and an optional one asks for the samples count (default 5, 1..20), the run happens in the background with a busy state Esc cancels, and the result dialog shows per phase (dns, tcp, tls, first_byte) p50/p90/max in ms with the sample count plus the failure counts — the idle survival test is not run, as with `--idle off`; errors are shown by message and hint only, Esc closes the result).
 
 ### Accounts
 
-The list shows Login, Provider and Exit, plus a mark column: Space or `m` marks or unmarks the selected account, `A` marks all, `M` clears all marks; marks survive reloads and are dropped for accounts that disappear. `a` adds (wizard: login, provider, countries, exit, allowed clients, optional hops). The card shows Provider, Countries, Exit, Allowed clients, Pre-hop and Post-hop (shown only as set or none, never the value; Enter on either opens a prompt where a new URL replaces the hop and an empty answer leaves it unchanged; clearing is the Clear pre-hop / Clear post-hop action) and the Password state (`set` or `waiting for the first login`). Actions: Route... (`v`; a read-only dialog with the route of `netivri account show`: for every tier the country, the providers in priority order and their nodes with label and country — while the angel runs also the live state `up`/`down`/`not probed`, the connection count of every node and the total fallback connections; with the angel stopped it says so in one line and shows the configured route only; Esc closes), Apply to marked... (`b`; disabled while nothing is marked: a picker of provider, countries, exit, allowed clients, pre-hop and post-hop, then the same value prompt as the single edit — `any` or `none` clears providers and countries, `none` clears clients, `none` cancels an inherited hop and `inherit` clears the account's own, an empty answer leaves hops unchanged —, a confirmation naming how many marked accounts change, and then the same shared operation as the comma lists and `--all` of `account set-country`, `account set-provider`, `account set-clients`, `account set-exit` and `account set-socks5`; one invalid account or value changes nothing and is reported by message and hint), Clear pre-hop (`P`) and Clear post-hop (`O`, disabled when the account has no such hop), Clone... (`c`; the copy gets the provider, countries, exit and clients of the source and a fresh placeholder password — the first client that authenticates sets it; the password is never copied), Remove (`d`). Passwords are never displayed or set by the shell.
+The list shows Login, Provider and Exit, plus a mark column: Space or `m` marks or unmarks the selected account, `A` marks all, `M` clears all marks; marks survive reloads and are dropped for accounts that disappear. `a` adds (wizard: login, provider, countries, exit, allowed clients, optional hops). The card shows Provider, Countries, Exit, Allowed clients, Pre-hop and Post-hop (list state is shown without proxy addresses; Enter on either opens an operation picker to replace the list, add an entry, remove an entry by its original position, inherit or disable; URL prompts are masked, and list order is not changed) and the Password state (`set` or `waiting for the first login`). Actions: Route... (`v`; a read-only dialog with the route of `netivri account show`: for every tier the country, the providers in priority order and their nodes with label and country — while the angel runs also the live state `up`/`down`/`not probed`, the connection count of every node and the total fallback connections; with the angel stopped it says so in one line and shows the configured route only; Esc closes), Apply to marked... (`b`; disabled while nothing is marked: a picker of provider, countries, exit, allowed clients, pre-hop and post-hop, then the same value prompt as the single edit — `any` or `none` clears providers and countries, `none` clears clients, `none` cancels an inherited hop and `inherit` clears the account's own, an empty answer leaves hops unchanged —, a confirmation naming how many marked accounts change, and then the same shared operation as the comma lists and `--all` of `account set-country`, `account set-provider`, `account set-clients`, `account set-exit` and `account set-socks5`; one invalid account or value changes nothing and is reported by message and hint), Clear pre-hop (`P`) and Clear post-hop (`O`, disabled when the account has no such hop), Clone... (`c`; the copy gets the provider, countries, exit and clients of the source and a fresh placeholder password — the first client that authenticates sets it; the password is never copied), Remove (`d`). Passwords are never displayed or set by the shell.
 
 ### Servers
 
@@ -72,9 +73,9 @@ See [`design/tui.md`](design/tui.md) for the frame, forms, and implementation de
 ## Commands
 
 ```
-netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none}] [--post-socks5 {URL|none}]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]
                                           add a subscription (idempotent by URL)
-netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
+netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit} ...] [--post {URL|none|inherit} ...] [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]
 netivri sub rename {OLD} {NEW}
 netivri sub set {SUBSCRIPTION} [--url {URL}] [--via {PROXY|none}]
 netivri sub list
@@ -87,7 +88,7 @@ netivri node test [{NODE} | --all] [--exit] [--timeout {DURATION}]   (planned)
 
 netivri account add {ACCOUNT} [--exit {route|direct}]
 netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]
-netivri account add {ACCOUNT} [--clients {RULES}] [--pre-socks5 {URL}] [--post-socks5 {URL}]
+netivri account add {ACCOUNT} [--clients {RULES}] [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]
 netivri account clone {SOURCE} {ACCOUNT} [--exit {route|direct}] [--password {PASSWORD}|init]
 netivri account clone {SOURCE} {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]] [--clients {RULES}]
 netivri account list
@@ -98,7 +99,7 @@ netivri account set-country {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] {SUBSCRIPTION}[,{SUBSCRIPTION}...] | --all {SUBSCRIPTION}[,{SUBSCRIPTION}...]
 netivri account set-provider {ACCOUNT}[,{ACCOUNT}...] --none | --all --none
 netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] {RULES} | --all {RULES}
-netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
+netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] [--pre {URL|none|inherit} ...] [--post {URL|none|inherit} ...] [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]
 netivri account set-clients {ACCOUNT}[,{ACCOUNT}...] --none
 netivri account rm {ACCOUNT}
 
@@ -182,6 +183,12 @@ error: {
 {"schema_version": 1, "ok": false,
  "error": {"code": "FETCH_HTTP_STATUS", "message": "unexpected HTTP status 403", "hint": "the subscription server rejected the request"}}
 ```
+
+The unreleased SOCKS5-chain output changes its JSON value shape: pre/post chain
+`value` fields, including account `own`, are redacted arrays, even for a single
+URL. This is an intentional breaking contract change; `schema_version` remains
+1 as directed. Ktav scalar strings for these fields remain the backward-compatible
+singleton representation on disk; list values use Ktav arrays.
 
 A Ktav document starts with `schema_version` and `ok`, then holds `data` or
 `error`; the keys inside are sorted. Values keep their types (numbers,
@@ -649,15 +656,13 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   value is stored in this canonical form, with upper-case codes).
   `--exit {route|direct}` chooses route mode by default or explicit direct mode.
   Direct requires empty provider and country; an explicitly configured
-  account pre-proxy is rejected, `pre_socks5: none` is allowed, and an
-  inherited pre-proxy is ignored. An effective post-proxy may be used directly.
+  account pre-proxy is rejected except explicit `none`, and an inherited
+  pre-proxy is ignored. An effective post-proxy may be used directly.
   Direct bypasses the VPN, exposing this machine's address to destinations; direct is not a safety fallback. Success includes a security hint.
   `--clients {RULES}` restricts the addresses the account may authenticate
   from: one comma-separated allowed-clients rule list (same grammar as
   `listen.allowed_clients`; see [config.md](config.md), "Allowed clients").
-  `--pre-socks5 {URL}` and `--post-socks5 {URL}` give the account its own
-  proxy before and after the VPN node, each `{socks5|http|https}://[user:password@]host:port`
-  with a required port or `none` (see `set-socks5`). Repeating
+  `--pre-socks5` and `--post-socks5` each take a URL or `none` and are repeatable; repeated URLs form a candidate list. `none` must be the only entry for that side. The current core accepts one URL per side; operation adding a second URL fails validation. Repeating
   `add` with the same providers, country, and exit mode in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
@@ -680,10 +685,9 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `--password init` when that matters. `{SOURCE}` is not changed.
 - `list` reports `login`, `provider`, `exit_country`, `exit` (`route` or `direct`),
   `allowed_clients` (empty when the account has no rule of its own), `pre_socks5`
-  and `post_socks5` (the effective proxy of each side, `socks5://`, `http://` or
-  `https://`, see `set-socks5`)
-  and `password_set` (`false` until the placeholder is claimed); it never
-  returns a password, a hash or the credentials of a proxy URL.
+  and `post_socks5` effective chain objects with redacted array `value` fields,
+  and `password_set` (`false` until the placeholder is claimed). Credentials and
+  hashes are never returned.
 - `show {ACCOUNT}` reports one account: its login, its configured provider
   and `exit_country` lists, and its route as ordered tiers (countries in
   list order, inside a country the providers in list order, so a tier is the
@@ -710,15 +714,17 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   that site, see `netivri help routing`), and a site goes back for its next connection once a
   node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective proxy of each side (see
-  `set-socks5`); in `show` they also carry `own`, the account's own value
-  (`none`, or a redacted URL), and no `own` when the account has none. The
+  `set-socks5`); in `show` `own` is the configured account list as a redacted
+  array, or null when no own list is configured. Effective `value` fields are
+  arrays; `source` and `auth` identify their origin and whether any URL had
+  credentials. The
   document:
 
   ```json
   {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
-   "pre_socks5": {"value": "socks5://pre.example:1080", "source": "global", "auth": true},
-   "post_socks5": {"value": "socks5://alice-exit.example:1080", "source": "account", "auth": false,
-                   "own": "socks5://alice-exit.example:1080"},
+   "pre_socks5": {"value": ["socks5://pre.example:1080"], "source": "global", "auth": true},
+   "post_socks5": {"value": ["socks5://alice-exit.example:1080"], "source": "account", "auth": false,
+                   "own": ["socks5://alice-exit.example:1080"]},
    "exit": "route", "providers": ["main", "backup"], "countries": ["DE", "*"], "live": true,
    "tiers": [
      {"tier": 0, "country": "DE", "providers": ["main"],
@@ -747,20 +753,25 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   allowed by neither is refused before the password is verified, so an
   `init` account cannot be claimed from a disallowed address. A running
   angel applies the change within a few seconds.
-- `set-socks5` sets the proxy hops (`socks5://`, `http://` or `https://`) of one or several accounts (`{ACCOUNT}`
+- `set-socks5` replaces ordered proxy lists (`socks5://`, `http://` or `https://`) of one or several accounts (`{ACCOUNT}`
   is one login or several separated by commas, as in `set-clients`):
-  `--pre {VALUE}` is the proxy netivri connects through to reach the VPN node,
-  `--post {VALUE}` the proxy the traffic goes to after the node. At least one
-  of the two is required (exit 2 otherwise); a side that is not given stays as
-  it is. `{VALUE}` is `{socks5|http|https}://[user:password@]host:port` (`http`
-  is an HTTP CONNECT proxy, `https` the same over TLS, a host, a required port 1..65535, optional percent-encoded
-  credentials, no path or query), or `none` to cancel the global value of that
-  side for these accounts, or `inherit` to remove the account's own value so
-  that the provider's own hop (`netivri sub set-socks5`), or else the global `chain.pre_socks5` / `chain.post_socks5` of `config.ktav`,
-  applies again (see [config.md](config.md), "SOCKS5 chain", for the cascade).
-  A malformed URL is `CONFIG_INVALID` (exit 2); the message names the flag and
-  never contains the value, because it can carry credentials. Unknown login:
-  `ACCOUNT_NOT_FOUND` (exit 5). The result is the single-account form
+  repeat `--pre {URL}` and/or `--post {URL}` to replace that entire side, in
+  order; a side not given is unchanged. At least one operation is required.
+  URLs use socks5://, http:// (HTTP CONNECT) or https:// (HTTP CONNECT over TLS),
+  with a host, required port 1..65535, and optional percent-encoded credentials.
+  Repeating a replacement flag sets the full ordered list; `none` must stand
+  alone to disable. `inherit` is setter-only and clears the account's own list,
+  so the provider's list or the global list applies again. The current core
+  accepts at most one URL per side. These are candidate lists, not serial chains; future support selects one live proxy per side per connection without a promised selection algorithm. The repeatable incremental flags `--add-pre {URL}` and
+  `--add-post {URL}` append one URL; `--remove-pre {INDEX}` and
+  `--remove-post {INDEX}` remove by one-based index. Each index refers to the
+  original list before any operation in that command. Repeating an original index rejects the entire operation without saving any changes.
+  Repeated `none` or `inherit`, mixing either with URLs, or invalid indexes are errors. Do not combine replace, add and remove operations on the same side. Removing the last own entry clears
+  the list to inherit; use `none` to disable explicitly. `none` or `inherit`
+  cannot be repeated or combined with other entries/operations on that side.
+  Duplicate entries are invalid. A malformed URL is `CONFIG_INVALID` (exit 2);
+  the message names the flag and never contains the credential. Unknown login:
+  `ACCOUNT_NOT_FOUND` (exit 5). Output is the single-account form
   `{"account": {...}}` for one login and `{"accounts": [...]}` for several
   (both as in `list`). A pre applies only to accounts with a route (a
   provider and/or an exit country); a post applies to every account, also to
@@ -826,21 +837,26 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
 
 ```json
 {"login": "alice", "provider": "main,backup", "exit_country": "DE,NL", "providers": ["main", "backup"], "countries": ["DE", "NL"], "live": false, "tiers": [{"tier": 0, "country": "DE", "providers": ["main"], "nodes": [{"label": "main/de-1", "provider": "main", "country": "DE", "tier": 0, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 1, "country": "DE", "providers": ["backup"], "nodes": [{"label": "backup/de-2", "provider": "backup", "country": "DE", "tier": 1, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 2, "country": "NL", "providers": ["main"], "nodes": [{"label": "main/nl-1", "provider": "main", "country": "NL", "tier": 2, "alive": null, "delay_ms": null, "connections": null}]}, {"tier": 3, "country": "NL", "providers": ["backup"], "skipped": true, "reason": "no nodes for this country and provider", "nodes": []}]}
-{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "exit": "route", "allowed_clients": "", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}, "existing": false}
-{"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": "none", "source": "none", "auth": false}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}]}
-{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": "socks5://pre.example:1080", "source": "account", "auth": true}, "post_socks5": {"value": "none", "source": "none", "auth": false}, "password_set": false}}
-{"login": "alice", "provider": "", "exit_country": "", "exit": "direct", "pre_socks5": {"value": "none", "source": "direct", "auth": false, "own": null}, "post_socks5": {"value": "none", "source": "none", "auth": false, "own": null}, "providers": [], "countries": [], "tiers": [], "live": false, "fallback_connections": null}
+{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "exit": "route", "allowed_clients": "", "pre_socks5": {"value": ["none"], "source": "none", "auth": false}, "post_socks5": {"value": ["none"], "source": "none", "auth": false}, "password_set": false}, "existing": false}
+{"accounts": [{"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": ["none"], "source": "none", "auth": false}, "post_socks5": {"value": ["none"], "source": "none", "auth": false}, "password_set": false}]}
+{"account": {"login": "alice", "provider": "main", "exit_country": "DE", "allowed_clients": "", "pre_socks5": {"value": ["socks5://pre.example:1080"], "source": "account", "auth": true}, "post_socks5": {"value": ["none"], "source": "none", "auth": false}, "password_set": false}}
+{"login": "alice", "provider": "", "exit_country": "", "exit": "direct", "pre_socks5": {"value": ["none"], "source": "direct", "auth": false, "own": null}, "post_socks5": {"value": ["none"], "source": "none", "auth": false, "own": null}, "providers": [], "countries": [], "tiers": [], "live": false, "fallback_connections": null}
 {"removed": "alice"}
 ```
 
-These are the `data` values, respectively, for add, list, set-country/
+For the unreleased array contract, account `pre_socks5` and `post_socks5`
+objects have redacted `value` arrays (including `["none"]` for an explicitly
+disabled side); in `show`, configured `own` is an array and remains null when
+inherited. This is an intentional breaking JSON shape change in the unreleased
+contract; `schema_version` remains 1, with no bump. These are the `data` values,
+respectively, for add, list, set-country/
 set-provider with one login, show, rm and, last, `set-socks5 alice --pre
 socks5://user:secret@pre.example:1080 --post none` (the credentials are not
 in the output; `auth` says the URL had some). `set-country` and `set-provider`
 with several logins or `--all` print the `{"accounts": [...]}` form of `list` with
 the accounts that were addressed, in the order given (`--all`: config order).
 The `show` object with `"exit": "direct"` is the document of a direct account:
-its `tiers` are empty and its effective pre hop has source `direct`, value `none`
+its `tiers` are empty and its effective pre hop has source `direct`, value `["none"]`
 and own value `null`.
 
 Routing is applied by `up`. An account with providers and/or exit countries
@@ -904,9 +920,9 @@ defaults when the file is missing. Without {KEY} all four groups
 (`listen`, `auth`, `fetch`, `chain`) are printed; with a {KEY} only the
 group that holds it. The password of the legacy credential is shown only
 as `set` or `not set` — never the hash, and the `init` placeholder counts
-as `not set`. Proxy settings (`fetch.proxy`, `chain.pre_socks5`,
-`chain.post_socks5`) are shown as `scheme://host:port` without
-credentials, plus an `auth` boolean that says whether the URL had them.
+as `not set`. Proxy setting `fetch.proxy` is shown as `scheme://host:port` without credentials,
+plus an `auth` boolean. `chain.pre_socks5` and `chain.post_socks5` are redacted
+arrays in `value`, plus `auth` indicating whether any URL had credentials.
 An empty `fetch.update_interval` means the default of one hour applies.
 
 ```json
@@ -915,12 +931,24 @@ An empty `fetch.update_interval` means the default of one hour applies.
    "listen": {"bind": "127.0.0.1", "port": 7890, "allowed_clients": "*"},
    "auth": {"login": "", "password": "not set", "allow_init_remote": false},
    "fetch": {"proxy": {"value": "", "auth": false}, "update_interval": ""},
-   "chain": {"pre_socks5": {"value": "", "auth": false},
-             "post_socks5": {"value": "socks5://post.example:1080", "auth": false}}}}}
+   "chain": {"pre_socks5": {"value": [], "auth": false},
+             "post_socks5": {"value": ["socks5://post.example:1080"], "auth": false}}}}}
 ```
 
 Errors: `USAGE` (exit 2) for an unknown {KEY} or more than one argument,
 `CONFIG_INVALID` (exit 2) when the configuration file does not load.
+
+`config get` exposes global chain values as redacted JSON arrays, including
+`[]` when unset; `auth` indicates credentials. This singleton-array JSON shape
+is intentionally breaking in the unreleased contract, but `schema_version`
+stays at 1. In Ktav, one URL is a scalar string and multiple URLs use an array.
+
+```ktav
+chain.pre_socks5:: socks5://pre.example:1080
+chain.post_socks5: [http://first.example:8080]
+subscriptions: [{ name: main, url:: https://provider.example/sub/TOKEN, pre_socks5: [socks5://provider.example:1080] }]
+accounts: [{ login: alice, password:: init, provider: main, pre_socks5: [none] }]
+```
 
 ### `config set`
 
@@ -937,12 +965,12 @@ when the validation fails. The valid keys and their values are listed by
 (`auth.allow_init_remote` true/false), `fetch.proxy` (a `socks5://`,
 `socks5h://`, `http://` or `https://` URL), `fetch.update_interval`
 (`off` or `5m`–`168h`) and `chain.pre_socks5` / `chain.post_socks5`
-(`socks5://`, `http://` or `https://` with a host and a port). `none` or
-an empty value clears the keys that allow it (`auth.login`,
-`auth.password`, `fetch.proxy`, `fetch.update_interval`,
-`chain.pre_socks5`, `chain.post_socks5`). A plain `auth.password` is
-stored as an argon2id hash and is never echoed; the literal value `init`
-stores the placeholder that waits for the first client.
+(one scalar URL, `none`, or empty to clear; edit `config.ktav` directly for
+multiple entries). The Ktav fields are ordered arrays, and legacy scalar URLs load as singleton
+lists. The production core currently rejects multiple
+URLs per side. A plain `auth.password` is stored as an argon2id hash and is
+never echoed; the literal value `init` stores the placeholder that waits for
+the first client.
 
 The answer reports `restart_needed`: `true` when the running angel has to
 restart its listener for the change to apply (`listen.bind`,
@@ -1153,10 +1181,7 @@ directories](#separate-state-directories)), `allowed_clients` (which client
 addresses may connect; `*` when unrestricted), `accounts` (see `account`; each
 record has `{"login", "provider", "exit_country", "exit", "allowed_clients", "chain"}`,
 sorted by login; `chain` is `{"pre_socks5", "pre_socks5_source",
-"pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}` (a `_source` is `account`, `provider`, `global`, `none` or `direct`; `varies` as a value means the providers of the account resolve differently),
-the proxies of the running core (`socks5://`, `http://` or `https://`),
-redacted to `scheme://host:port` or `none`, `source` being `account`, `global` or `none` and `auth` whether the URL
-had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
+"pre_socks5_auth", "post_socks5", "post_socks5_source", "post_socks5_auth"}` (a `_source` is `account`, `provider`, `global`, `none` or `direct`; `varies` means providers resolve differently). Pre/post values are redacted arrays of `scheme://host:port`; `auth` says whether any URL had credentials), `active_accounts`, `activity`, the summary form of `warm`, `refresh`
 and `reload`. The full view (`--full`) adds, next to everything above: the full
 `warm` (the pool counters and `nodes[]`), `stats` and `affinity`. `servers` is
 an optional array in both short and full views: omitted when no server is
@@ -1427,28 +1452,22 @@ netivri sub set main --via none
 ### `sub set-socks5`
 
 ```
-netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit}] [--post {URL|none|inherit}]
+netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit} ...] [--post {URL|none|inherit} ...]
+netivri sub set-socks5 {SUBSCRIPTION} [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]
 ```
 
-Sets the pre and post proxy hops of one provider: every node of the provider is reached through
-the pre hop and leaves through the post hop. At least one side is required (exit 2 otherwise); a
-side that is not given stays as it is. Values are `socks5://`, `http://` (an HTTP CONNECT proxy)
-or `https://` URLs with a required port, `none` (no hop; it also overrides a hop set globally) or
-`inherit` (use the global `chain.*` value again). The cascade is global, then provider, then
-account; the more specific level replaces the one above (see [config.md](config.md), "SOCKS5
-chain"). A malformed URL is `CONFIG_INVALID` (exit 2) and never echoes the value; an unknown
-name is `SUB_NOT_FOUND` (exit 5). Output: `{"name": "main", "pre_socks5": "http://p.example:8080",
-"post_socks5": ""}` with credentials removed. A running angel applies the change within a few seconds.
+Sets the provider's ordered pre/post lists. Repeat replacement flags to supply entries; these lists are candidates, not serial hops. The current production core accepts at most one URL per side; future multi-entry support will use one live proxy per side per connection, without a selection-algorithm guarantee. `none` or `inherit` must stand alone. Add and remove edits use one-based positions in the original list; repeating a position rejects the whole operation without saving changes. Do not combine replacement, add and remove on one side. The Providers shell's existing pre/post picker supports replacement, adding a URL, removing an entry, inherit and none without reordering. `sub set-socks5` returns the updated provider name and redacted `pre_socks5` and `post_socks5` arrays, always present, including `[]` when unset and `["none"]` when disabled. A running angel applies changes within a few seconds.
 
 ### `sub add`
 
 ```
-netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none}] [--post-socks5 {URL|none}]
+netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]
 ```
 
-`--pre-socks5` and `--post-socks5` set the provider-level hops of a new subscription (`socks5://`,
-`http://` or `https://`, or `none`; see [`sub set-socks5`](#sub-set-socks5)); they are ignored for a
-URL that is already configured.
+`--pre-socks5` and `--post-socks5` set the provider's ordered lists; repeat
+flags to supply entries, and use `none` alone to explicitly disable. The
+production core currently accepts at most one URL per side; future multi-entry support uses a non-serial candidate pool with one live proxy per side per connection and no promised selection algorithm. These flags are ignored when
+the subscription URL is already configured.
 
 Fetches the subscription through `--via` if given, otherwise through
 `fetch.proxy` from `config.ktav`; strict: with no proxy the fetch is
@@ -1477,17 +1496,19 @@ without an inferable country are counted under `"unknown"`.
 ```json
 {"subscriptions": [
   {"name": "main", "host": "provider.example", "via_set": true,
+   "pre_socks5": ["socks5://proxy.example:1080"], "post_socks5": [],
    "nodes": 24, "fetched_at": "2026-10-19T10:00:00Z",
    "quota": {"used": 123, "total": 107374182400, "expire": "2026-12-31T00:00:00Z"}},
   {"name": "backup", "host": "other.example", "via_set": false,
+   "pre_socks5": [], "post_socks5": ["none"],
    "nodes": null, "fetched_at": null, "quota": null}
 ]}
 ```
 
 The URL and the via proxy are never printed: only the host of the
-subscription URL and a `via_set` boolean. When a provider sets its own proxy hops, `pre_socks5` and / or `post_socks5`
-are added to its entry (the URL without credentials and path, or `none`); an entry without them inherits the global hops. `nodes` / `fetched_at` are
-`null` when no snapshot is stored for the subscription. `quota` carries
+subscription URL and a `via_set` boolean. `pre_socks5` and `post_socks5` are always-present redacted arrays,
+including `[]` when unset and `["none"]` when disabled. `nodes` / `fetched_at`
+are `null` when no snapshot is stored for the subscription. `quota` carries
 what the provider reports in its `subscription-userinfo` header: `used`
 (upload plus download bytes), `total` (bytes, `null` when the provider
 sends none) and `expire` (RFC3339 UTC, `null` when absent). It is `null`

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,38 +12,38 @@ import (
 // credentials are stored but never printed.
 func TestAccountSetHopAcceptsHTTPAndHTTPS(t *testing.T) {
 	cfg := &config.Config{Accounts: []config.Account{{Login: "alice"}}}
-	for _, url := range []string{"http://u:secret@proxy.example:8080", "https://u:secret@proxy.example:8443", "HTTP://proxy.example:3128"} {
+	for i, url := range []string{"http://u:secret@proxy.example:8080", "https://u:secret@proxy.example:8443", "HTTP://proxy.example:3128"} {
 		var out strings.Builder
 		if err := accountSetSOCKS5(cfg, []string{"alice", "--post", url}, func() error { return nil }, &out); err != nil {
-			t.Fatalf("set --post %q: %v", url, err)
+			t.Fatalf("case %d: set failed", i)
 		}
-		if cfg.Accounts[0].PostSOCKS5 != url {
-			t.Errorf("stored %q, want %q", cfg.Accounts[0].PostSOCKS5, url)
+		if !slices.Equal(cfg.Accounts[0].PostSOCKS5, []string{url}) {
+			t.Errorf("case %d: stored value did not match expected singleton", i)
 		}
 		if strings.Contains(out.String(), "secret") || strings.Contains(out.String(), "u:") {
-			t.Errorf("output leaked the credentials of %q: %s", url, out.String())
+			t.Errorf("case %d: output leaked credentials", i)
 		}
 	}
 	if got := redactChain("https://u:secret@proxy.example:8443"); got != "https://proxy.example:8443" {
-		t.Errorf("redacted = %q", got)
+		t.Error("credential redaction did not match expected output")
 	}
 	info := infoForAccount(cfg, &cfg.Accounts[0])
-	if info.PostSOCKS5.Value != "http://proxy.example:3128" || info.PostSOCKS5.Source != "account" || info.PostSOCKS5.Auth {
-		t.Errorf("post = %+v", info.PostSOCKS5)
+	if !slices.Equal(info.PostSOCKS5.Value, []string{"http://proxy.example:3128"}) || info.PostSOCKS5.Source != "account" || info.PostSOCKS5.Auth {
+		t.Error("post chain info did not match expected singleton")
 	}
 }
 
 func TestAccountSetHopRejectsOtherSchemesWithoutLeaking(t *testing.T) {
 	cfg := &config.Config{Accounts: []config.Account{{Login: "alice"}}}
-	for _, url := range []string{"ftp://u:hidden@proxy.example:21", "socks4://u:hidden@proxy.example:1080", "http://u:hidden@proxy.example"} {
+	for i, url := range []string{"ftp://u:hidden@proxy.example:21", "socks4://u:hidden@proxy.example:1080", "http://u:hidden@proxy.example"} {
 		err := accountSetSOCKS5(cfg, []string{"alice", "--pre", url}, func() error { return nil }, &strings.Builder{})
 		if err == nil {
-			t.Errorf("accepted %q", url)
+			t.Errorf("case %d: invalid scheme was accepted", i)
 		} else if strings.Contains(err.Error(), "hidden") {
-			t.Errorf("error leaked the credentials of %q: %v", url, err)
+			t.Errorf("case %d: error leaked credentials", i)
 		}
 	}
-	if cfg.Accounts[0].PreSOCKS5 != "" {
-		t.Errorf("a rejected value was stored: %q", cfg.Accounts[0].PreSOCKS5)
+	if len(cfg.Accounts[0].PreSOCKS5) != 0 {
+		t.Error("a rejected value was stored")
 	}
 }
