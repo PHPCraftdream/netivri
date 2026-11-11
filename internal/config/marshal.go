@@ -29,7 +29,7 @@ func Marshal(cfg *Config) (string, error) {
 	var body string
 	var err error
 	if len(render.Servers) == 0 {
-		if render.Chain == (Chain{}) {
+		if chainEmpty(render.Chain) {
 			// No chain proxies: render exactly as before the chain existed, so a
 			// rewrite adds no empty chain table to an existing file.
 			body, err = ktavDumps(&configWithoutChain{
@@ -41,7 +41,7 @@ func Marshal(cfg *Config) (string, error) {
 		}
 	} else {
 		wire := renderServers(&render)
-		if render.Chain == (Chain{}) {
+		if chainEmpty(render.Chain) {
 			body, err = ktavDumps(&configServersWithoutChain{
 				Listen: render.Listen, Auth: render.Auth, Fetch: render.Fetch,
 				Subscriptions: render.Subscriptions, Accounts: render.Accounts, Servers: wire, Selection: render.Selection,
@@ -101,6 +101,10 @@ type configServersWithChain struct {
 	Selection     Selection        `json:"selection"`
 }
 
+func chainEmpty(c Chain) bool {
+	return len(c.PreSOCKS5) == 0 && len(c.PostSOCKS5) == 0
+}
+
 func renderServers(cfg *Config) []map[string]any {
 	out := make([]map[string]any, 0, len(cfg.Servers))
 	for _, s := range cfg.Servers {
@@ -136,6 +140,13 @@ func cloneStringParams(params map[string]string) map[string]string {
 	return cloned
 }
 
+func normalizeHopList(hops HopList) HopList {
+	if len(hops) == 0 {
+		return nil
+	}
+	return hops
+}
+
 // configEqual compares two configurations, treating nil and empty
 // subscriptions, accounts, servers, and server parameter maps as equivalent
 // when omitempty renders them identically.
@@ -144,6 +155,10 @@ func configEqual(a, b *Config) bool {
 		return a == b
 	}
 	x, y := *a, *b
+	x.Accounts = append([]Account(nil), a.Accounts...)
+	y.Accounts = append([]Account(nil), b.Accounts...)
+	x.Subscriptions = append([]Subscription(nil), a.Subscriptions...)
+	y.Subscriptions = append([]Subscription(nil), b.Subscriptions...)
 	x.Servers = append([]Server(nil), a.Servers...)
 	y.Servers = append([]Server(nil), b.Servers...)
 	for i := range x.Servers {
@@ -164,6 +179,26 @@ func configEqual(a, b *Config) bool {
 	if len(y.Subscriptions) == 0 {
 		y.Subscriptions = nil
 	}
+	for i := range x.Accounts {
+		x.Accounts[i].PreSOCKS5 = normalizeHopList(x.Accounts[i].PreSOCKS5)
+		x.Accounts[i].PostSOCKS5 = normalizeHopList(x.Accounts[i].PostSOCKS5)
+	}
+	for i := range y.Accounts {
+		y.Accounts[i].PreSOCKS5 = normalizeHopList(y.Accounts[i].PreSOCKS5)
+		y.Accounts[i].PostSOCKS5 = normalizeHopList(y.Accounts[i].PostSOCKS5)
+	}
+	for i := range x.Subscriptions {
+		x.Subscriptions[i].PreSOCKS5 = normalizeHopList(x.Subscriptions[i].PreSOCKS5)
+		x.Subscriptions[i].PostSOCKS5 = normalizeHopList(x.Subscriptions[i].PostSOCKS5)
+	}
+	for i := range y.Subscriptions {
+		y.Subscriptions[i].PreSOCKS5 = normalizeHopList(y.Subscriptions[i].PreSOCKS5)
+		y.Subscriptions[i].PostSOCKS5 = normalizeHopList(y.Subscriptions[i].PostSOCKS5)
+	}
+	x.Chain.PreSOCKS5 = normalizeHopList(x.Chain.PreSOCKS5)
+	y.Chain.PreSOCKS5 = normalizeHopList(y.Chain.PreSOCKS5)
+	x.Chain.PostSOCKS5 = normalizeHopList(x.Chain.PostSOCKS5)
+	y.Chain.PostSOCKS5 = normalizeHopList(y.Chain.PostSOCKS5)
 	if len(x.Servers) == 0 {
 		x.Servers = nil
 	}
@@ -201,19 +236,6 @@ func configEqual(a, b *Config) bool {
 	}
 	if strings.TrimSpace(y.Listen.AllowedClients) == "" {
 		y.Listen.AllowedClients = AllowedClientsAny
-	}
-	// Empty chain fields and the sentinel both represent the same disabled state.
-	if strings.EqualFold(x.Chain.PreSOCKS5, "none") {
-		x.Chain.PreSOCKS5 = ""
-	}
-	if strings.EqualFold(y.Chain.PreSOCKS5, "none") {
-		y.Chain.PreSOCKS5 = ""
-	}
-	if strings.EqualFold(x.Chain.PostSOCKS5, "none") {
-		x.Chain.PostSOCKS5 = ""
-	}
-	if strings.EqualFold(y.Chain.PostSOCKS5, "none") {
-		y.Chain.PostSOCKS5 = ""
 	}
 	return reflect.DeepEqual(x, y)
 }

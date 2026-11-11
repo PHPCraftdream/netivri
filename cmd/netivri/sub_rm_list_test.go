@@ -33,7 +33,7 @@ func TestSubListRedactsURLs(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	s := out.String()
-	for _, secret := range []string{"topsecret123", "token=abcd", "secretpw", "socks5", "/sub/"} {
+	for _, secret := range []string{"topsecret123", "token=abcd", "secretpw", "user:secretpw@", "/sub/", "socks5://", "http://", "https://"} {
 		if strings.Contains(s, secret) {
 			t.Errorf("sub list output leaks %q: %s", secret, s)
 		}

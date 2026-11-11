@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,6 +19,89 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
+
+func ptrHop(s string) *config.HopList { hops := config.HopList{s}; return &hops }
+func TestAccountHopEditSaveFailureRollsBackEveryTarget(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{
+		{Login: "alice", Password: config.InitPlaceholder},
+		{Login: "bob", Password: config.InitPlaceholder},
+	}
+	before := append([]config.Account(nil), cfg.Accounts...)
+	targets := []*config.Account{&cfg.Accounts[0], &cfg.Accounts[1]}
+	saveErr := errors.New("save failed")
+	saved := false
+	_, err := mutateAccountSOCKS5Edits(cfg, targets, true, false, HopEdit{Add: config.HopList{"socks5://relay.example:1080"}}, HopEdit{}, func() error {
+		saved = true
+		return saveErr
+	})
+	if !saved || !errors.Is(err, saveErr) {
+		t.Fatalf("save called=%v err=%v", saved, err)
+	}
+	if !reflect.DeepEqual(cfg.Accounts, before) {
+		t.Fatal("bulk hop edit left an in-memory account changed after save failure")
+	}
+}
+
+func TestAccountUpdateHopReplacementAndEditAreExclusive(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
+	replacement := config.HopList{"none"}
+	edit := HopEdit{Remove: []int{1}}
+	saved := false
+	_, err := accountUpdateWith(t.TempDir(), cfg, AccountUpdateOptions{Login: "alice", Pre: &replacement, PreEdit: &edit}, func() error {
+		saved = true
+		return nil
+	})
+	if err == nil || saved || len(cfg.Accounts[0].PreSOCKS5) != 0 {
+		t.Fatal("conflicting hop update was persisted or mutated the candidate")
+	}
+}
+
+func TestAccountAddSaveFailureRestoresOriginalSlice(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
+	before := cfg.Accounts
+	saveErr := errors.New("save failed")
+	err := accountAddWith(t.TempDir(), cfg, AccountAddOptions{Login: "bob"}, func() error { return saveErr }, &AccountAddResult{})
+	if !errors.Is(err, saveErr) || len(cfg.Accounts) != 1 || &cfg.Accounts[0] != &before[0] {
+		t.Fatal("failed account add changed the original account slice")
+	}
+}
+
+func TestAccountAddDifferingHopRepeatConflicts(t *testing.T) {
+	home := accountProviderHome(t)
+	original := AccountAddOptions{Login: "alice", PreSOCKS5: config.HopList{"socks5://first.example:1080"}}
+	if _, err := AccountAdd(home, original); err != nil {
+		t.Fatal("initial account add failed")
+	}
+	before := mustReadConfig(t, home)
+	_, err := AccountAdd(home, AccountAddOptions{Login: "alice", PreSOCKS5: config.HopList{"socks5://second.example:1080"}})
+	if !codeIs(err, "ACCOUNT_EXISTS") {
+		t.Fatal("repeated account add with different hops did not conflict")
+	}
+	if after := mustReadConfig(t, home); !bytes.Equal(before, after) {
+		t.Fatal("conflicting account add wrote config")
+	}
+}
+
+func TestAccountUpdateIncrementalHopEdit(t *testing.T) {
+	home := accountProviderHome(t)
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: config.HopList{"socks5://first.example:1080"}}}
+	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	edit := HopEdit{Add: config.HopList{"socks5://second.example:1080"}}
+	_, err := AccountUpdate(home, AccountUpdateOptions{Login: "alice", PreEdit: &edit})
+	if err == nil || !strings.Contains(err.Error(), "pre_socks5: pool of several hops is not supported yet; one per side for now") {
+		t.Fatal("cap-one incremental edit returned an unexpected error")
+	}
+	got, err := config.Load(config.ConfigPath(home))
+	if err != nil || !slices.Equal(got.Accounts[0].PreSOCKS5, config.HopList{"socks5://first.example:1080"}) {
+		t.Fatal("failed incremental account edit changed persisted config")
+	}
+}
 
 func TestAccountOperationsRoundTrip(t *testing.T) {
 	stubAccountProbe(t)
@@ -29,7 +113,7 @@ func TestAccountOperationsRoundTrip(t *testing.T) {
 	if e != nil || a.Existing {
 		t.Fatalf("add=%#v %v", a, e)
 	}
-	if _, e = AccountUpdate(home, AccountUpdateOptions{Login: "alice", PostSOCKS5: ptr("none")}); e != nil {
+	if _, e = AccountUpdate(home, AccountUpdateOptions{Login: "alice", Pre: ptrHop("none")}); e != nil {
 		t.Fatal(e)
 	}
 	clone, e := AccountClone(home, AccountCloneOptions{Source: "alice", Login: "bob"})
@@ -61,7 +145,7 @@ func TestAccountOpsValidationMatrix(t *testing.T) {
 		name string
 		o    AccountAddOptions
 		code string
-	}{{"login", AccountAddOptions{Login: "bad login"}, "ACCOUNT_INVALID"}, {"provider", AccountAddOptions{Login: "u", Provider: "missing"}, "SUB_NOT_FOUND"}, {"country", AccountAddOptions{Login: "u", Country: "NLD"}, "COUNTRY_INVALID"}, {"pre", AccountAddOptions{Login: "u", PreSOCKS5: "bad"}, "CONFIG_INVALID"}, {"post", AccountAddOptions{Login: "u", PostSOCKS5: "http://host"}, "CONFIG_INVALID"}, {"clients", AccountAddOptions{Login: "u", Clients: "bad rule"}, "CONFIG_INVALID"}, {"exit", AccountAddOptions{Login: "u", ExitGiven: true}, config.CodeConfigInvalid}}
+	}{{"login", AccountAddOptions{Login: "bad login"}, "ACCOUNT_INVALID"}, {"provider", AccountAddOptions{Login: "u", Provider: "missing"}, "SUB_NOT_FOUND"}, {"country", AccountAddOptions{Login: "u", Country: "NLD"}, "COUNTRY_INVALID"}, {"pre", AccountAddOptions{Login: "u", PreSOCKS5: config.HopList{"bad"}}, "CONFIG_INVALID"}, {"post", AccountAddOptions{Login: "u", PostSOCKS5: config.HopList{"http://host"}}, "CONFIG_INVALID"}, {"clients", AccountAddOptions{Login: "u", Clients: "bad rule"}, "CONFIG_INVALID"}, {"exit", AccountAddOptions{Login: "u", ExitGiven: true}, config.CodeConfigInvalid}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, e := AccountAdd(home, tc.o)
@@ -157,7 +241,9 @@ func TestAccountUpdateIndependentFieldsAtomic(t *testing.T) {
 		name string
 		o    AccountUpdateOptions
 		ok   func(config.Account) bool
-	}{{"provider", AccountUpdateOptions{Login: "alice", Provider: ptr("p2")}, func(a config.Account) bool { return a.Provider == "p2" && a.ExitCountry == "DE" }}, {"country", AccountUpdateOptions{Login: "alice", Country: ptr("NL")}, func(a config.Account) bool { return a.Provider == "p1" && a.ExitCountry == "NL" }}, {"clients", AccountUpdateOptions{Login: "alice", Clients: ptr("loopback")}, func(a config.Account) bool { return a.Provider == "p1" && a.AllowedClients == "loopback" }}, {"exit", AccountUpdateOptions{Login: "alice", Exit: ptr("direct")}, func(a config.Account) bool { return a.Exit == "direct" }}, {"pre", AccountUpdateOptions{Login: "alice", PreSOCKS5: ptr("none")}, func(a config.Account) bool { return a.PreSOCKS5 == "none" }}, {"post", AccountUpdateOptions{Login: "alice", PostSOCKS5: ptr("http://proxy.example:8080")}, func(a config.Account) bool { return a.PostSOCKS5 == "http://proxy.example:8080" }}}
+	}{{"provider", AccountUpdateOptions{Login: "alice", Provider: ptr("p2")}, func(a config.Account) bool { return a.Provider == "p2" && a.ExitCountry == "DE" }}, {"country", AccountUpdateOptions{Login: "alice", Country: ptr("NL")}, func(a config.Account) bool { return a.Provider == "p1" && a.ExitCountry == "NL" }}, {"clients", AccountUpdateOptions{Login: "alice", Clients: ptr("loopback")}, func(a config.Account) bool { return a.Provider == "p1" && a.AllowedClients == "loopback" }}, {"exit", AccountUpdateOptions{Login: "alice", Exit: ptr("direct")}, func(a config.Account) bool { return a.Exit == "direct" }}, {"pre", AccountUpdateOptions{Login: "alice", Pre: ptrHop("none")}, func(a config.Account) bool { return slices.Equal(a.PreSOCKS5, config.HopList{"none"}) }}, {"post", AccountUpdateOptions{Login: "alice", Post: ptrHop("http://proxy.example:8080")}, func(a config.Account) bool {
+		return slices.Equal(a.PostSOCKS5, config.HopList{"http://proxy.example:8080"})
+	}}}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			base := config.Default()
@@ -207,10 +293,9 @@ func TestAccountDirectAtomicCombinedChange(t *testing.T) {
 	if e := config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)
 	}
-	empty := ""
 	direct := "direct"
-	none := "none"
-	if _, e := AccountUpdate(h, AccountUpdateOptions{Login: "alice", Provider: &empty, Country: &empty, PreSOCKS5: &none, Exit: &direct}); e != nil {
+	empty := ""
+	if _, e := AccountUpdate(h, AccountUpdateOptions{Login: "alice", Provider: &empty, Country: &empty, Pre: ptrHop("none"), Exit: &direct}); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -218,7 +303,7 @@ func TestAccountShowRemoveValidationAndSecrets(t *testing.T) {
 	stubAccountProbe(t)
 	h := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", PreSOCKS5: "socks5://fakeuser:FAKEPASS@proxy.invalid:1080", PostSOCKS5: "http://postuser:POSTPASS@post.invalid:8080"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", PreSOCKS5: config.HopList{"socks5://fakeuser:FAKEPASS@proxy.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}}
 	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}
 	if e := config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)
@@ -247,7 +332,7 @@ func TestAccountShowRemoveValidationAndSecrets(t *testing.T) {
 	for _, out := range outputs {
 		for _, secret := range []string{"FAKEHASH", "fakeuser", "FAKEPASS", "postuser", "POSTPASS", "subuser", "SUBTOKEN", "/private/token"} {
 			if containsString(out, secret) {
-				t.Errorf("output includes %q", secret)
+				t.Error("account output disclosed a secret")
 			}
 		}
 	}
@@ -292,7 +377,7 @@ func TestAccountOperationSecretTypeSafety(t *testing.T) {
 	h := t.TempDir()
 	c := config.Default()
 	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", Provider: "p", ExitCountry: "DE", AllowedClients: "loopback", PreSOCKS5: "socks5://hopuser:HOPPASS@hop.invalid:1080", PostSOCKS5: "http://postuser:POSTPASS@post.invalid:8080"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", Provider: "p", ExitCountry: "DE", AllowedClients: "loopback", PreSOCKS5: config.HopList{"socks5://hopuser:HOPPASS@hop.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}}
 	c.Servers = []config.Server{{Name: "s", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 10000, Accounts: "alice", Params: map[string]string{"cipher": "aes-128-gcm"}}}
 	if e := config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)
@@ -329,7 +414,7 @@ func TestAccountOperationSecretTypeSafety(t *testing.T) {
 		t.Fatal(e)
 	}
 	secrets := []string{"FAKEHASH", "hopuser", "HOPPASS", "postuser", "POSTPASS", "subuser", "SUBTOKEN", "/private/token"}
-	for _, v := range []any{rows, show, providers, countries, servers, server} {
+	for i, v := range []any{rows, show, providers, countries, servers, server} {
 		b, e := json.Marshal(v)
 		if e != nil {
 			t.Fatal(e)
@@ -337,7 +422,7 @@ func TestAccountOperationSecretTypeSafety(t *testing.T) {
 		s := fmt.Sprintf("%+v %s", v, b)
 		for _, secret := range secrets {
 			if strings.Contains(s, secret) {
-				t.Errorf("output includes %q: %s", secret, s)
+				t.Errorf("account operation output case %d disclosed a secret", i)
 			}
 		}
 	}
@@ -379,11 +464,11 @@ func TestAccountUpdateCLIErrorParity(t *testing.T) {
 		{"invalid clients", "", AccountUpdateOptions{Login: "alice", Clients: ptr("bad rule")}, []string{"set-clients", "alice", "bad rule"}, "CONFIG_INVALID"},
 		{"invalid exit", "", AccountUpdateOptions{Login: "alice", Exit: ptr("bad")}, []string{"set-exit", "alice", "bad"}, config.CodeConfigInvalid},
 		{"direct route conflict", "", AccountUpdateOptions{Login: "alice", Exit: ptr("direct")}, []string{"set-exit", "alice", "direct"}, config.CodeConfigInvalid},
-		{"invalid pre", "", AccountUpdateOptions{Login: "alice", PreSOCKS5: ptr("bad")}, []string{"set-socks5", "alice", "--pre", "bad"}, "CONFIG_INVALID"},
-		{"invalid post", "", AccountUpdateOptions{Login: "alice", PostSOCKS5: ptr("http://host")}, []string{"set-socks5", "alice", "--post", "http://host"}, "CONFIG_INVALID"},
+		{"invalid pre", "", AccountUpdateOptions{Login: "alice", Pre: ptrHop("bad")}, []string{"set-socks5", "alice", "--pre", "bad"}, "CONFIG_INVALID"},
+		{"invalid post", "", AccountUpdateOptions{Login: "alice", Post: ptrHop("http://host")}, []string{"set-socks5", "alice", "--post", "http://host"}, "CONFIG_INVALID"},
 		{"direct account country conflict", "direct", AccountUpdateOptions{Login: "alice", Country: ptr("NL")}, []string{"set-country", "alice", "NL"}, config.CodeConfigInvalid},
 		{"direct account provider conflict", "direct", AccountUpdateOptions{Login: "alice", Provider: ptr("p")}, []string{"set-provider", "alice", "p"}, config.CodeConfigInvalid},
-		{"direct account pre conflict", "direct", AccountUpdateOptions{Login: "alice", PreSOCKS5: ptr("socks5://proxy.invalid:1080")}, []string{"set-socks5", "alice", "--pre", "socks5://proxy.invalid:1080"}, config.CodeConfigInvalid},
+		{"direct account pre conflict", "direct", AccountUpdateOptions{Login: "alice", Pre: ptrHop("socks5://proxy.invalid:1080")}, []string{"set-socks5", "alice", "--pre", "socks5://proxy.invalid:1080"}, config.CodeConfigInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -398,8 +483,27 @@ func TestAccountUpdateCLIErrorParity(t *testing.T) {
 			if !errors.As(opErr, &a) || !errors.As(cliErr, &b) {
 				t.Fatalf("errors not cli.Error: update=%v cli=%v", opErr, cliErr)
 			}
-			if a.Code != tc.code || a.Code != b.Code || a.Message != b.Message || a.Hint != b.Hint || a.Exit != b.Exit {
+			messageA, messageB := a.Message, b.Message
+			switch tc.name {
+			case "invalid pre", "invalid post":
+				field, flag := "pre_socks5", "--pre"
+				if tc.name == "invalid post" {
+					field, flag = "post_socks5", "--post"
+				}
+				operationPrefix, cliPrefix := field+" ", flag+" "
+				if !strings.HasPrefix(messageA, operationPrefix) || !strings.HasPrefix(messageB, cliPrefix) {
+					t.Fatalf("unexpected hop error prefixes: update=%q cli=%q", messageA, messageB)
+				}
+				messageA = strings.TrimPrefix(messageA, operationPrefix)
+				messageB = strings.TrimPrefix(messageB, cliPrefix)
+			}
+			if a.Code != tc.code || a.Code != b.Code || messageA != messageB || a.Hint != b.Hint || a.Exit != b.Exit {
 				t.Fatalf("update=%+v cli=%+v", a, b)
+			}
+			if strings.HasPrefix(tc.name, "direct account ") {
+				if a.Hint == "" || !strings.Contains(a.Hint, "account set-exit alice route") || a.Hint != b.Hint {
+					t.Fatalf("direct-exit validation hints differ or lack repair guidance: update=%q cli=%q", a.Hint, b.Hint)
+				}
 			}
 			if out.Len() != 0 {
 				t.Fatalf("stdout=%q", out.String())

@@ -10,6 +10,8 @@ versions; every such change is listed here.
 
 ### Added
 
+- **Ordered proxy-chain settings.** Global, provider and account `pre_socks5` / `post_socks5` values are ordered arrays; the nearest non-empty level replaces the complete list, and legacy Ktav scalars continue to load as singleton lists and render back as scalars. `none` must stand alone, duplicate entries are invalid. The production core currently accepts one proxy per side; multi-entry support is future work for a candidate pool selecting one live proxy per side per connection, with no promised selection algorithm or serial chaining. Setters accept repeated replacement flags plus one-based, original-list `--remove-pre {INDEX}` / `--remove-post {INDEX}` and repeatable `--add-pre {URL}` / `--add-post {URL}` operations; duplicate original removal indexes reject the entire operation. The Accounts and Providers shells both support list replacement, add, remove, inherit and none through their existing pre/post pickers, without reordering. JSON pre/post values (including account `own`) are redacted arrays, an intentional breaking shape change documented under Unreleased without a schema/version bump.
+
 - **A failed subscription fetch says where it stood.** The `refresh failed` line, `last_error` of
   `status`, and the errors of `sub update` and `sub add` now end with the path and the phase of the
   fetch: `request failed: timeout (direct, waiting for the answer)`, `(via proxy, connecting)`,

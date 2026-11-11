@@ -11,10 +11,11 @@ import (
 )
 
 type accountChainInfo struct {
-	Value  string  `json:"value"`
-	Source string  `json:"source"`
-	Auth   bool    `json:"auth"`
-	Own    *string `json:"own,omitempty"`
+	Value  []string  `json:"value"`
+	Source string    `json:"source"`
+	Auth   bool      `json:"auth"`
+	Own    *[]string `json:"own,omitempty"`
+	OwnSet bool      `json:"-"`
 }
 
 type accountInfo struct {
@@ -70,8 +71,8 @@ func runAccount(args []string, stdout io.Writer) error {
 		country := fs.String("country", "", "exit country")
 		provider := fs.String("provider", "", "subscription (provider) the account exits through")
 		clients := fs.String("clients", "", "client addresses that may use this account (allowed-clients rules)")
-		pre := fs.String("pre-socks5", "", "pre-hop proxy URL (socks5://, http:// or https://)")
-		post := fs.String("post-socks5", "", "post-hop proxy URL (socks5://, http:// or https://)")
+		pre := addRepeatedStringFlag(fs, "pre-socks5", "pre-hop proxy URL (repeat for each hop)")
+		post := addRepeatedStringFlag(fs, "post-socks5", "post-hop proxy URL (repeat for each hop)")
 		exitFlag := fs.String("exit", "", "account exit mode (route or direct)")
 		pos, e := parseFlags(fs, rest)
 		if e != nil {
@@ -89,20 +90,18 @@ func runAccount(args []string, stdout io.Writer) error {
 				exitModeGiven = true
 			}
 		})
-		if preGiven {
-			if err := validateCLIChain(*pre, "--pre-socks5"); err != nil {
-				return err
-			}
+		preList, err := parseHopListFlag(*pre, preGiven, "--pre-socks5")
+		if err != nil {
+			return err
 		}
-		if postGiven {
-			if err := validateCLIChain(*post, "--post-socks5"); err != nil {
-				return err
-			}
+		postList, err := parseHopListFlag(*post, postGiven, "--post-socks5")
+		if err != nil {
+			return err
 		}
 		if len(pos) != 1 {
 			return usage("requires LOGIN")
 		}
-		o := AccountAddOptions{Login: pos[0], Provider: *provider, Country: *country, Clients: *clients, PreSOCKS5: *pre, PostSOCKS5: *post}
+		o := AccountAddOptions{Login: pos[0], Provider: *provider, Country: *country, Clients: *clients, PreSOCKS5: preList, PostSOCKS5: postList}
 		if exitModeGiven {
 			o.Exit = *exitFlag
 		}

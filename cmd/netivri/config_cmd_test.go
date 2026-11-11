@@ -210,11 +210,20 @@ func TestConfigSecretsAreNeverDisplayedOrStoredPlaintext(t *testing.T) {
 	}
 	cfg.Auth.Login = "ops"
 	cfg.Auth.Password = hash
-	cfg.Chain.PostSOCKS5 = "socks5://alice:s3cret@relay.example:1080"
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://alice:s3cret@relay.example:1080"}
 	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
 		t.Fatalf("save fixture: %v", err)
 	}
 
+	chainGroup := configGroups(t, "config", "get", "--home", home)["chain"]
+	post, ok := chainGroup["post_socks5"].(map[string]any)
+	if !ok {
+		t.Fatal("chain.post_socks5 display is not an object")
+	}
+	postHops, ok := post["value"].([]any)
+	if !ok || len(postHops) != 1 || postHops[0] != "socks5://relay.example:1080" {
+		t.Fatal("chain.post_socks5 display does not contain the redacted one-hop list")
+	}
 	out := func() string {
 		t.Helper()
 		var buf bytes.Buffer
@@ -249,9 +258,9 @@ func TestConfigSecretsAreNeverDisplayedOrStoredPlaintext(t *testing.T) {
 	if !strings.HasPrefix(cfg2.Auth.Password, "$argon2id$") {
 		t.Errorf("stored password = %q, want an argon2id hash", cfg2.Auth.Password)
 	}
-	ok, err := auth.VerifyHash(cfg2.Auth.Password, "fresh-secret")
-	if err != nil || !ok {
-		t.Errorf("VerifyHash(stored, fresh-secret) = %v, %v, want true, nil", ok, err)
+	verified, err := auth.VerifyHash(cfg2.Auth.Password, "fresh-secret")
+	if err != nil || !verified {
+		t.Errorf("VerifyHash(stored, fresh-secret) = %v, %v, want true, nil", verified, err)
 	}
 	if strings.Contains(string(file), "fresh-secret") {
 		t.Error("config.ktav stores the password in plaintext")

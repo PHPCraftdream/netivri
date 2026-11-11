@@ -98,29 +98,93 @@ func dualSettingsSeed(t *testing.T) string {
 func dualProvidersScreen(d *dualShell) *providersScreen { return d.screen.(*providersScreen) }
 func dualSettingsScreen(d *dualShell) *settingsScreen   { return d.screen.(*settingsScreen) }
 
-// dualSelectCardLine walks the card with real "down"/"up" presses until the
-// line with the id is selected: movement skips disabled and read-only lines,
-// so the presses are counted, not derived from the line index.
+// dualSelectCardLine walks the card with real key presses until the line with
+// the id is selected. Card movement skips disabled and read-only rows, so it
+// targets a row by ID rather than treating its physical offset as a key count.
 func dualSelectCardLine(t *testing.T, d *dualShell, card *tui.Card, id string) {
 	t.Helper()
-	idx := -1
-	for i, l := range card.Lines {
-		if l.ID == id {
-			idx = i
+	switch screen := d.screen.(type) {
+	case *accountsScreen:
+		if screen.width >= 100 && screen.workspace.Focus() != tui.PaneCard {
+			d.Keys("tab")
+		} else if screen.width < 100 && !screen.workspace.Drilled {
+			d.Keys("enter")
+		}
+	case *providersScreen:
+		if screen.width >= 100 && screen.workspace.Focus() != tui.PaneCard {
+			d.Keys("tab")
+		} else if screen.width < 100 && !screen.workspace.Drilled {
+			d.Keys("enter")
+		}
+	case *settingsScreen:
+		if screen.width >= 100 && screen.workspace.Focus() != tui.PaneCard {
+			d.Keys("tab")
+		} else if screen.width < 100 && !screen.workspace.Drilled {
+			d.Keys("enter")
 		}
 	}
-	if idx < 0 {
+	target := -1
+	for i, line := range card.Lines {
+		if line.ID == id {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
 		t.Fatalf("no card line %q", id)
 	}
-	for i := 0; i < 2*len(card.Lines) && card.Selected != idx; i++ {
-		if card.Selected < idx {
-			d.Keys("down")
-		} else {
-			d.Keys("up")
+	if card.Lines[target].Disabled || card.Lines[target].Kind == tui.CardReadOnly {
+		t.Fatalf("card line %q is not selectable", id)
+	}
+	d.Keys("home")
+	for i := 0; i < len(card.Lines) && card.Lines[card.Selected].ID != id; i++ {
+		before := card.Selected
+		d.Keys("down")
+		if card.Selected == before {
+			break
 		}
 	}
-	if card.Selected != idx {
-		t.Fatalf("card walk did not reach %q: selected %d, want %d", id, card.Selected, idx)
+	if card.Lines[card.Selected].ID != id {
+		t.Fatalf("card walk stopped at %q, did not reach %q", card.Lines[card.Selected].ID, id)
+	}
+}
+
+// dualChooseProviderHopOperation chooses from the real operation picker.
+func dualChooseProviderHopOperation(t *testing.T, d *dualShell, value string) {
+	t.Helper()
+	s := dualProvidersScreen(d)
+	if s.prompt == nil || s.prompt.Kind != tui.ChoicePrompt {
+		t.Fatal("provider hop operation picker is not open")
+	}
+	choice := -1
+	for i, option := range s.prompt.Options {
+		if option.Value == value {
+			choice = i
+			break
+		}
+	}
+	if choice < 0 {
+		t.Fatalf("provider hop picker has no operation %q", value)
+	}
+	for i := 0; i < len(s.prompt.Options); i++ {
+		selected, err := s.prompt.GetAnswer()
+		if err != nil {
+			t.Fatalf("read provider hop picker choice: %v", err)
+		}
+		if selected == value {
+			break
+		}
+		d.Keys("down")
+	}
+	selected, err := s.prompt.GetAnswer()
+	if err != nil || selected != value {
+		t.Fatalf("provider hop picker walk did not reach operation %q", value)
+	}
+	d.Keys("enter")
+	if value == "replace" || value == "add" {
+		if s.prompt == nil || s.prompt.Kind != tui.SecretPrompt || s.prompt.Value != "" {
+			t.Fatal("provider hop operation did not open a blank secret prompt")
+		}
 	}
 }
 
@@ -236,6 +300,7 @@ func dualProviderHopsScenario(t *testing.T) {
 
 	dualSelectCardLine(t, d, s.card, "pre")
 	d.Keys("enter")
+	dualChooseProviderHopOperation(t, d, "replace")
 	d.Type(pre)
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome, dualVolatileFetched)
@@ -243,24 +308,26 @@ func dualProviderHopsScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "sub", "set-socks5", "main", "--post", post)
 	dualSelectCardLine(t, d, s.card, "post")
 	d.Keys("enter")
+	dualChooseProviderHopOperation(t, d, "replace")
 	d.Type(post)
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome, dualVolatileFetched)
 
 	dualRunCLI(t, cliHome, "sub", "set-socks5", "main", "--pre", "inherit")
-	dualSelectCardLine(t, d, s.card, "clear-pre")
+	dualSelectCardLine(t, d, s.card, "pre")
 	d.Keys("enter")
+	dualChooseProviderHopOperation(t, d, "inherit")
 	dualEqual(t, cliHome, shellHome, dualVolatileFetched)
 
 	dualRunCLI(t, cliHome, "sub", "set-socks5", "main", "--pre", pre2, "--post", "none")
 	dualSelectCardLine(t, d, s.card, "pre")
 	d.Keys("enter")
+	dualChooseProviderHopOperation(t, d, "replace")
 	d.Type(pre2)
 	d.Keys("enter")
 	dualSelectCardLine(t, d, s.card, "post")
 	d.Keys("enter")
-	d.Type("none")
-	d.Keys("enter")
+	dualChooseProviderHopOperation(t, d, "none")
 	dualEqual(t, cliHome, shellHome, dualVolatileFetched)
 }
 

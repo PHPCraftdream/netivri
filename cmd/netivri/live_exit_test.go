@@ -73,7 +73,7 @@ func TestReloadDirectOnlyPostChangeRestarts(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Exit: "direct"})
 	running := f.script.inst(0)
 	running.setInPlace(nil)
-	f.writeConfig(t, config.Account{Login: "alice", Password: f.hash, Exit: "direct", PostSOCKS5: "socks5://post.example:1080"})
+	f.writeConfig(t, config.Account{Login: "alice", Password: f.hash, Exit: "direct", PostSOCKS5: config.HopList{"socks5://post.example:1080"}})
 	f.l.reload(t.Context())
 	if f.script.calls() != 2 || !running.isClosed() {
 		t.Fatalf("direct-only post change: starts=%d closed=%v", f.script.calls(), running.isClosed())

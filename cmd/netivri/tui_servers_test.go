@@ -19,7 +19,7 @@ func serversFixture(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash", PreSOCKS5: "socks5://user:fake-chain-password@127.0.0.1:1080"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash", PreSOCKS5: config.HopList{"socks5://user:fake-chain-password@127.0.0.1:1080"}}}
 	c.Servers = []config.Server{{Name: "ss", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 1234, Accounts: "alice", PublicHost: "pub.test", Params: map[string]string{"cipher": "aes-128-gcm"}}, {Name: "vless", Protocol: "vless-reality", Bind: "127.0.0.1", Port: 2345, Accounts: "alice", Params: map[string]string{"sni": "secret-reality-sni.example"}}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("invalid fixture: %v", err)

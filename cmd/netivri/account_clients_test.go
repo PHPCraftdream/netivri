@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -133,7 +134,7 @@ func TestSetClientsErrorsChangeNothing(t *testing.T) {
 		t.Fatal("a refused set-clients rewrote the accounts")
 	}
 	for i := range before.Accounts {
-		if before.Accounts[i] != after.Accounts[i] {
+		if !reflect.DeepEqual(before.Accounts[i], after.Accounts[i]) {
 			t.Fatalf("a refused set-clients changed %s", after.Accounts[i].Login)
 		}
 	}

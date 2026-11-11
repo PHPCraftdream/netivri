@@ -728,10 +728,12 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 	if a.PasswordSet {
 		pw = "set"
 	}
-	pre, post := accountsHopLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
-	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
-		{ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: a.PreSOCKS5.Source != "account"}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false}, // value is a state label ("set"/"none"); never put the hop URL here
-		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: a.PostSOCKS5.Source != "account"}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}, {ID: "route", Label: "Route...", Kind: tui.CardAction, Action: true, Hotkey: "v"}, {ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: len(s.marked) == 0}}
+	preOwn := a.Exit != "direct" && (a.PreSOCKS5.OwnSet || a.PreSOCKS5.Own != nil || a.PreSOCKS5.Source == "account")
+	postOwn := a.PostSOCKS5.OwnSet || a.PostSOCKS5.Own != nil || a.PostSOCKS5.Source == "account"
+	pre, post := accountsHopListStateLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopListStateLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
+	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: false}, // show only numbered hop state
+		{ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: !preOwn}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false},
+		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: !postOwn}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}, {ID: "route", Label: "Route...", Kind: tui.CardAction, Action: true, Hotkey: "v"}, {ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: len(s.marked) == 0}}
 	if s.workspace.Card != nil {
 		s.workspace.Card.Focused = true
 	}
@@ -782,9 +784,9 @@ func (s *accountsScreen) activateCard() tea.Cmd {
 	case "provider", "countries", "exit", "clients", "pre", "post":
 		return s.openEdit(a, l.ID)
 	case "clear-pre":
-		return s.mutateEdit(a, "pre", map[string]string{"value": "", "clear": "true"})
+		return s.mutateEdit(a, "pre", map[string]string{"operation": "inherit"})
 	case "clear-post":
-		return s.mutateEdit(a, "post", map[string]string{"value": "", "clear": "true"})
+		return s.mutateEdit(a, "post", map[string]string{"operation": "inherit"})
 	case "clone":
 		return s.beginClone(a)
 	case "route":
@@ -868,6 +870,51 @@ func accountsHopLabel(source, value string) string {
 	}
 	return source + " set"
 }
+func accountsHopListLabel(source string, value []string) string {
+	if len(value) == 1 && strings.EqualFold(value[0], "varies") {
+		return accountsHopLabel(source, value[0])
+	}
+	if len(value) == 0 || len(value) == 1 && strings.EqualFold(value[0], "none") {
+		return accountsHopLabel(source, "none")
+	}
+	redacted := make([]string, len(value))
+	for i, hop := range value {
+		redacted[i] = redactChain(hop)
+	}
+	count := strconv.Itoa(len(redacted))
+	unit := " hops: "
+	if len(redacted) == 1 {
+		unit = " hop: "
+	}
+	label := strings.Join(redacted, " → ")
+	if source == "" || source == "none" {
+		return count + unit + label
+	}
+	return source + " " + count + unit + label
+}
+
+// accountsHopListStateLabel shows the number and positions of pool alternatives
+// without implying a serial chain or displaying hop addresses.
+func accountsHopListStateLabel(source string, value []string) string {
+	if len(value) == 1 && strings.EqualFold(value[0], "varies") {
+		return accountsHopLabel(source, value[0])
+	}
+	if len(value) == 0 || len(value) == 1 && strings.EqualFold(value[0], "none") {
+		return accountsHopLabel(source, "none")
+	}
+	if len(value) == 1 {
+		return accountsHopLabel(source, "set")
+	}
+	states := make([]string, len(value))
+	for i := range states {
+		states[i] = strconv.Itoa(i+1) + " set"
+	}
+	label := strconv.Itoa(len(value)) + " alternatives: [" + strings.Join(states, ", ") + "]"
+	if source == "" || source == "none" {
+		return label
+	}
+	return source + " " + label
+}
 func accountsFallbackText(v *int) string {
 	if v == nil {
 		return "unknown"
@@ -923,6 +970,13 @@ func (s *accountsScreen) countryFieldHint(ps []string) string {
 	return "Any or country codes: " + strings.Join(codes, ", ")
 }
 
+func accountWizardHopList(value string) config.HopList {
+	if value == "" {
+		return nil
+	}
+	return config.HopList{value}
+}
+
 const accountProviderAnySentinel = "*"
 
 func (s *accountsScreen) beginAdd() tea.Cmd {
@@ -957,7 +1011,7 @@ func (s *accountsScreen) beginAdd() tea.Cmd {
 		}
 		s.pendingLogin = v["Login"]
 		return s.bg("add account", func() tea.Msg {
-			_, e := AccountAdd(s.env.Home, AccountAddOptions{Login: v["Login"], Provider: providerValue(v["Provider"]), Country: countryAny(v["Country"]), Clients: clients, Exit: v["Exit"], ExitGiven: true, PreSOCKS5: v["Pre-hop"], PostSOCKS5: v["Post-hop"]})
+			_, e := AccountAdd(s.env.Home, AccountAddOptions{Login: v["Login"], Provider: providerValue(v["Provider"]), Country: countryAny(v["Country"]), Clients: clients, Exit: v["Exit"], ExitGiven: true, PreSOCKS5: accountWizardHopList(v["Pre-hop"]), PostSOCKS5: accountWizardHopList(v["Post-hop"])})
 			return s.finishMutation(e, "Account added · first login sets password", v["Login"])
 		})
 	}
@@ -1011,10 +1065,13 @@ func (s *accountsScreen) beginClone(a accountInfo) tea.Cmd {
 	return nil
 }
 func (s *accountsScreen) openEdit(a accountInfo, id string) tea.Cmd {
+	if id == "pre" || id == "post" {
+		return s.openHopPicker(a, id)
+	}
 	f := map[string]struct {
 		label, hint, value string
 		kind               tui.PromptKind
-	}{"provider": {"Provider", "Comma-separated providers; blank means any.", a.Provider, tui.TextPrompt}, "countries": {"Countries", s.countryFieldHint(strings.Split(a.Provider, ",")), a.ExitCountry, tui.TextPrompt}, "exit": {"Exit", "Route or direct.", a.Exit, tui.ChoicePrompt}, "clients": {"Allowed clients", "Everyone, loopback or custom CIDR ranges.", a.AllowedClients, tui.TextPrompt}, "pre": {"Pre-hop", "Proxy URL replaces the hop; empty leaves it unchanged; clearing is the Clear pre-hop action.", "", tui.SecretPrompt}, "post": {"Post-hop", "Proxy URL replaces the hop; empty leaves it unchanged; clearing is the Clear post-hop action.", "", tui.SecretPrompt}}[id]
+	}{"provider": {"Provider", "Comma-separated providers; blank means any.", a.Provider, tui.TextPrompt}, "countries": {"Countries", s.countryFieldHint(strings.Split(a.Provider, ",")), a.ExitCountry, tui.TextPrompt}, "exit": {"Exit", "Route or direct.", a.Exit, tui.ChoicePrompt}, "clients": {"Allowed clients", "Everyone, loopback or custom CIDR ranges.", a.AllowedClients, tui.TextPrompt}}[id]
 	if f.label == "" {
 		return nil
 	}
@@ -1046,13 +1103,100 @@ func (s *accountsScreen) openEdit(a accountInfo, id string) tea.Cmd {
 	s.dialog = &accountsDialog{prompt: p, onResult: func(v map[string]string) tea.Cmd { s.pendingLogin = a.Login; return s.mutateEdit(a, id, v) }}
 	return nil
 }
+func (s *accountsScreen) openHopPicker(a accountInfo, id string) tea.Cmd {
+	side, own := "pre", config.HopList(nil)
+	if id == "post" {
+		side = "post"
+	}
+	cfg, err := loadConfig(s.env.Home)
+	if err != nil {
+		s.message = accountsErrorText(err)
+		return s.notice(s.message)
+	}
+	account, _ := cfg.Account(a.Login)
+	if account == nil {
+		return nil
+	}
+	if effectiveExit(account) == "direct" && side == "pre" {
+		s.message = "Pre-hop is unavailable for a direct account."
+		return s.notice(s.message)
+	}
+	if side == "pre" {
+		own = account.PreSOCKS5
+	} else {
+		own = account.PostSOCKS5
+	}
+	options := []tui.PromptOption{}
+	if side != "pre" || effectiveExit(account) != "direct" {
+		options = append(options, tui.PromptOption{Label: "Replace whole list", Value: "replace", Description: "Enter a new proxy URL; the previous list is replaced."})
+		if !chainDisabled(own) {
+			options = append(options, tui.PromptOption{Label: "Add hop", Value: "add", Description: "Append one proxy URL to the ordered alternatives list."})
+		}
+	}
+	for i, hop := range own {
+		if strings.EqualFold(hop, "none") {
+			continue
+		}
+		options = append(options, tui.PromptOption{Label: fmt.Sprintf("Remove entry %d · %s", i+1, accountsHopListLabel("", []string{hop})), Value: "remove:" + strconv.Itoa(i+1)})
+	}
+	if len(own) > 0 {
+		options = append(options, tui.PromptOption{Label: "Inherit", Value: "inherit", Description: "Remove the account override."})
+	}
+	options = append(options, tui.PromptOption{Label: "None", Value: "none", Description: "Explicitly disable this side of the chain."})
+	label := "Pre-hop"
+	if side == "post" {
+		label = "Post-hop"
+	}
+	p := choicePrompt(label, "Choose a list operation. Hop URLs and credentials are never prefilled.", options, "")
+	s.dialog = &accountsDialog{prompt: p}
+	s.dialog.onResult = func(v map[string]string) tea.Cmd {
+		choice := v["value"]
+		if choice == "replace" || choice == "add" {
+			verb := "Add"
+			if choice == "replace" {
+				verb = "Replace"
+			}
+			secret := prompt(tui.SecretPrompt, "Account "+a.Login+" · "+verb+" "+label, "New proxy URL", "A proxy URL is secret and is never shown again.", "")
+			s.dialog = &accountsDialog{prompt: secret, onResult: func(answer map[string]string) tea.Cmd {
+				return s.mutateEdit(a, side, map[string]string{"operation": choice, "value": answer["value"]})
+			}}
+			return nil
+		}
+		if strings.HasPrefix(choice, "remove:") {
+			return s.mutateEdit(a, side, map[string]string{"operation": "remove", "position": strings.TrimPrefix(choice, "remove:")})
+		}
+		if choice == "inherit" || choice == "none" {
+			return s.mutateEdit(a, side, map[string]string{"operation": choice})
+		}
+		s.dialog = nil
+		return nil
+	}
+	return nil
+}
+
 func (s *accountsScreen) mutateEdit(a accountInfo, id string, v map[string]string) tea.Cmd {
 	x := v["value"]
 	if id == "pre" || id == "post" {
-		if x == "" && v["clear"] != "true" {
-			s.dialog = nil
-			return nil
+		op := v["operation"]
+		if op == "" {
+			if x == "" {
+				s.dialog = nil
+				return nil
+			}
+			op = "replace"
 		}
+		position := 0
+		if op == "remove" {
+			var err error
+			position, err = strconv.Atoi(v["position"])
+			if err != nil || position < 1 {
+				if s.dialog != nil {
+					s.dialog.validationError(errors.New("invalid hop position"))
+				}
+				return nil
+			}
+		}
+		return s.mutateHopList(a.Login, id, op, x, position)
 	}
 	o := AccountUpdateOptions{Login: a.Login}
 	switch id {
@@ -1069,16 +1213,63 @@ func (s *accountsScreen) mutateEdit(a accountInfo, id string, v map[string]strin
 			x = "*"
 		}
 		o.Clients = &x
-	case "pre":
-		o.PreSOCKS5 = &x
-	case "post":
-		o.PostSOCKS5 = &x
 	}
 	return s.bg("update account", func() tea.Msg {
 		_, e := AccountUpdate(s.env.Home, o)
 		return s.finishMutation(e, "Account updated", a.Login)
 	})
 }
+
+func accountHopEdit(operation, value string, position int) (HopEdit, error) {
+	var edit HopEdit
+	switch operation {
+	case "replace", "add":
+		if value == "" || strings.EqualFold(value, "none") || strings.EqualFold(value, "inherit") {
+			return edit, errors.New("enter a proxy URL, or choose None or Inherit")
+		}
+		hops := config.HopList{value}
+		if operation == "replace" {
+			edit.Replace = &hops
+		} else {
+			edit.Add = hops
+		}
+	case "remove":
+		if position < 1 {
+			return edit, errors.New("no hop exists at that position")
+		}
+		edit.Remove = []int{position}
+	case "inherit":
+		hops := config.HopList(nil)
+		edit.Replace = &hops
+	case "none":
+		hops := config.HopList{"none"}
+		edit.Replace = &hops
+	default:
+		return edit, errors.New("unknown hop list operation")
+	}
+	return edit, nil
+}
+
+func (s *accountsScreen) mutateHopList(login, side, operation, value string, position int) tea.Cmd {
+	edit, err := accountHopEdit(operation, value, position)
+	if err != nil {
+		return s.bg("update account hops", func() tea.Msg { return s.finishMutation(err, "Account updated", login) })
+	}
+	o := AccountUpdateOptions{Login: login}
+	switch side {
+	case "pre":
+		o.PreEdit = &edit
+	case "post":
+		o.PostEdit = &edit
+	default:
+		return s.bg("update account hops", func() tea.Msg { return s.finishMutation(errors.New("unknown hop side"), "Account updated", login) })
+	}
+	return s.bg("update account hops", func() tea.Msg {
+		_, err := AccountUpdate(s.env.Home, o)
+		return s.finishMutation(err, "Account updated", login)
+	})
+}
+
 func (s *accountsScreen) mutateRemove(login string) tea.Cmd {
 	return s.bg("remove account", func() tea.Msg {
 		e := AccountRemove(s.env.Home, login)

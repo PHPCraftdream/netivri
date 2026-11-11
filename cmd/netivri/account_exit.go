@@ -19,7 +19,7 @@ func saveAccountConfig(home string, cfg *config.Config) error {
 		if errors.As(err, &validation) && validation.Code == config.CodeConfigInvalid {
 			for i := range cfg.Accounts {
 				a := cfg.Accounts[i]
-				if a.Exit != "direct" || (a.Provider == "" && a.ExitCountry == "" && (a.PreSOCKS5 == "" || strings.EqualFold(a.PreSOCKS5, "none"))) {
+				if a.Exit != "direct" || (a.Provider == "" && a.ExitCountry == "" && (len(a.PreSOCKS5) == 0 || chainDisabled(a.PreSOCKS5))) {
 					continue
 				}
 				if directErr := config.ValidateAccountExit(a, i); directErr != nil {
@@ -45,17 +45,27 @@ func saveAccountConfig(home string, cfg *config.Config) error {
 }
 
 func validateAccountCandidate(cfg *config.Config, updates map[int]config.Account) error {
+	candidate := *cfg
+	candidate.Accounts = append([]config.Account(nil), cfg.Accounts...)
 	for index, account := range updates {
 		if err := config.ValidateAccountExit(account, index); err != nil {
 			var validation *cli.Error
-			if errors.As(err, &validation) && account.Exit == "direct" && (account.Provider != "" || account.ExitCountry != "" || (account.PreSOCKS5 != "" && !strings.EqualFold(account.PreSOCKS5, "none"))) {
+			if errors.As(err, &validation) && account.Exit == "direct" && (account.Provider != "" || account.ExitCountry != "" || (len(account.PreSOCKS5) != 0 && !chainDisabled(account.PreSOCKS5))) {
 				hint := "account " + account.Login + " is using direct exit; run netivri account set-exit " + account.Login + " route first"
 				return &cli.Error{Code: config.CodeConfigInvalid, Message: validation.Message, Hint: hint, Exit: cli.ExitUsage}
 			}
 			return err
 		}
+		if index < 0 || index > len(candidate.Accounts) {
+			return &cli.Error{Code: config.CodeConfigInvalid, Message: "account update index is out of range", Exit: cli.ExitUsage}
+		}
+		if index == len(candidate.Accounts) {
+			candidate.Accounts = append(candidate.Accounts, account)
+		} else {
+			candidate.Accounts[index] = account
+		}
 	}
-	return nil
+	return candidate.Validate()
 }
 
 func effectiveExit(a *config.Account) string {
@@ -73,7 +83,7 @@ func validateAccountExitMode(value string) error {
 }
 
 func validateAccountExitChange(account config.Account, index int) error {
-	if account.Exit == "direct" && (account.Provider != "" || account.ExitCountry != "" || (account.PreSOCKS5 != "" && !strings.EqualFold(account.PreSOCKS5, "none"))) {
+	if account.Exit == "direct" && (account.Provider != "" || account.ExitCountry != "" || (len(account.PreSOCKS5) != 0 && !chainDisabled(account.PreSOCKS5))) {
 		return configInvalidAt(index, "direct requires empty provider and exit_country and no pre_socks5")
 	}
 	return nil

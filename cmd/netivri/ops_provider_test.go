@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,138 @@ func walkSecret(t *testing.T, v reflect.Value) {
 		}
 	}
 }
+func TestProviderHopUpdateCandidateRollback(t *testing.T) {
+	cfg := config.Default()
+	cfg.Subscriptions = []config.Subscription{{Name: "p", URL: "https://provider.invalid", PreSOCKS5: config.HopList{"socks5://first.example:1080"}}}
+	before := *cfg
+	before.Subscriptions = append([]config.Subscription(nil), cfg.Subscriptions...)
+	before.Subscriptions[0].PreSOCKS5 = cloneHopList(cfg.Subscriptions[0].PreSOCKS5)
+	before.Subscriptions[0].PostSOCKS5 = cloneHopList(cfg.Subscriptions[0].PostSOCKS5)
+	called := false
+	replacement := config.HopList{"none"}
+	err := providerUpdateWith(cfg, "p", ProviderUpdateOptions{Pre: &replacement, PreEdit: &HopEdit{Remove: []int{1}}}, func(*config.Config) error {
+		called = true
+		return nil
+	})
+	if err == nil || called || !reflect.DeepEqual(*cfg, before) {
+		t.Fatal("conflicting provider edit mutated or saved configuration")
+	}
+
+	edit := HopEdit{Remove: []int{1}}
+	err = providerUpdateWith(cfg, "p", ProviderUpdateOptions{PreEdit: &edit}, func(candidate *config.Config) error {
+		called = true
+		if len(candidate.Subscriptions[0].PreSOCKS5) != 0 || len(cfg.Subscriptions[0].PreSOCKS5) != 1 {
+			t.Fatal("provider update did not validate an isolated candidate")
+		}
+		return errors.New("injected save failure")
+	})
+	if err == nil || !called || !reflect.DeepEqual(*cfg, before) {
+		t.Fatal("failed provider save changed source config")
+	}
+}
+
+func TestProviderAddExistingURLIgnoresHopFlagsAndRefreshesSnapshot(t *testing.T) {
+	pre := "socks5://pre-user:" + providerSecret + "@first.example:1080"
+	post := "https://post-user:" + providerSecret + "@last.example:8443"
+	home := providerSeed(t, config.Subscription{
+		Name:       "p",
+		URL:        "https://provider.invalid",
+		PreSOCKS5:  config.HopList{pre},
+		PostSOCKS5: config.HopList{post},
+	})
+	beforeCfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	oldSnapshot := subscription.Snapshot{
+		FetchedAt: testNow.Add(-time.Hour),
+		Nodes:     []subscription.Node{{ID: "stale"}},
+	}
+	if err := store.Save("p", oldSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	fetchCalls := 0
+	get := func(_ context.Context, raw string, _ fetch.Options) (*fetch.Result, error) {
+		fetchCalls++
+		if raw != "https://provider.invalid" {
+			t.Fatal("re-fetch did not use the configured provider URL")
+		}
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	}
+	providedPre := config.HopList{"http://different-pre.example:8080"}
+	providedPost := config.HopList{"socks5://different-post.example:1080"}
+	result, err := ProviderAdd(home, ProviderAddOptions{
+		URL:  "https://provider.invalid",
+		Pre:  providedPre,
+		Post: providedPost,
+	}, get, func() time.Time { return testNow })
+	if err != nil || !result.Existing || result.Added || result.Name != "p" {
+		t.Fatalf("result = %+v, err = %v; want existing provider success", result, err)
+	}
+	if fetchCalls != 1 {
+		t.Fatalf("fetch calls = %d; want 1", fetchCalls)
+	}
+	assertNoSecret(t, result)
+
+	afterCfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterCfg, beforeCfg) {
+		t.Fatal("re-adding the provider changed its config")
+	}
+	if !reflect.DeepEqual(afterCfg.Subscriptions[0].PreSOCKS5, config.HopList{pre}) || !reflect.DeepEqual(afterCfg.Subscriptions[0].PostSOCKS5, config.HopList{post}) {
+		t.Fatal("re-adding the provider changed its stored hops")
+	}
+	refreshed, err := store.Load("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refreshed.FetchedAt.Equal(testNow) || len(refreshed.Nodes) != 3 || refreshed.Nodes[0].ID == "stale" {
+		t.Fatalf("snapshot was not refreshed: fetched_at=%s nodes=%d", refreshed.FetchedAt, len(refreshed.Nodes))
+	}
+}
+
+func TestProviderAddSaveFailureRemovesNewSnapshot(t *testing.T) {
+	home := providerSeed(t)
+	configPath := config.ConfigPath(home)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveCalls := 0
+	_, err = providerAddWith(home, ProviderAddOptions{URL: "https://provider.invalid", Name: "provider"}, providerFetcher([]byte(testBody)), func() time.Time { return testNow }, func(_ string, _ *config.Config) error {
+		saveCalls++
+		return errors.New("injected save failure")
+	})
+	if saveCalls != 1 {
+		t.Fatalf("injected save called %d times, want 1", saveCalls)
+	}
+	if err == nil {
+		t.Fatal("provider add reported success after injected config save failure")
+	}
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if _, err := store.Load("provider"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("provider snapshot load error = %v, want not-exist after rollback", err)
+	}
+	for _, path := range []string{
+		filepath.Join(home, "subscriptions", "provider.ktav"),
+		filepath.Join(home, "subscriptions", "provider.json"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("provider snapshot %s remains after rollback: stat error = %v", path, err)
+		}
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("provider save failure changed the existing config bytes")
+	}
+}
+
 func TestProviderUpdatePreservesReferencesAndSnapshot(t *testing.T) {
 	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid/token", Via: "http://proxy.invalid:8080"})
 	cfg, err := loadConfig(home)
@@ -176,6 +309,7 @@ func TestProviderUpdateErrorsDoNotPersistAndRedact(t *testing.T) {
 }
 
 func providerUpdateString(s string) *string { return &s }
+
 func TestProviderAddTypedAndSecretRedaction(t *testing.T) {
 	home := providerSeed(t)
 	r, e := ProviderAdd(home, ProviderAddOptions{URL: "https://provider.invalid/token?key=" + providerSecret}, providerFetcher([]byte(testBody)), func() time.Time { return testNow })
@@ -236,6 +370,23 @@ func TestProviderRefreshWrapperDoesNotPrintEarlyErrors(t *testing.T) {
 		t.Fatalf("config error output %q %v", out.String(), e)
 	}
 }
+func TestProviderRefreshEmptyConfigSucceedsWithoutFetching(t *testing.T) {
+	home := providerSeed(t)
+	fetchCalled := false
+	get := func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		fetchCalled = true
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	}
+
+	results, err := ProviderRefresh(home, "", false, get, time.Now)
+	if err != nil || results == nil || len(results) != 0 {
+		t.Fatalf("results = %#v, err = %v; want empty successful results", results, err)
+	}
+	if fetchCalled {
+		t.Fatal("empty provider configuration reached provider fetch")
+	}
+}
+
 func TestProviderRefreshMixedFailurePreservesSnapshot(t *testing.T) {
 	home := providerSeed(t, config.Subscription{Name: "one", URL: "https://one.invalid"}, config.Subscription{Name: "two", URL: "https://two.invalid"})
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))

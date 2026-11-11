@@ -17,10 +17,10 @@ func TestValidateDirectAccountExit(t *testing.T) {
 		wantErr string
 	}{
 		{"valid plain", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct"}, ""},
-		{"valid post", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: "socks5://proxy.example:1080"}, ""},
+		{"valid post", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: HopList{"socks5://proxy.example:1080"}}, ""},
 		{"provider", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", Provider: "main"}, "accounts[0].exit"},
 		{"country", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", ExitCountry: "DE"}, "accounts[0].exit"},
-		{"pre", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: "socks5://proxy.example:1080"}, "accounts[0].exit"},
+		{"pre", Account{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: HopList{"socks5://proxy.example:1080"}}, "accounts[0].exit"},
 		{"unknown", Account{Login: "alice", Password: InitPlaceholder, Exit: "invalid"}, "accounts[0].exit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -39,7 +39,10 @@ func TestValidateDirectAccountExit(t *testing.T) {
 
 func TestDirectAccountKtavRoundTrip(t *testing.T) {
 	cfg := Default()
-	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: "socks5://proxy.example:1080"}}
+	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: HopList{"socks5://proxy.example:1080"}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("direct account fixture failed validation: %v", err)
+	}
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
@@ -88,8 +91,11 @@ func TestAccountExitSaveLoadRoundTrips(t *testing.T) {
 			cfg := Default()
 			cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: exit}}
 			if exit == "direct" {
-				cfg.Chain.PreSOCKS5 = "socks5://global.example:1080"
-				cfg.Accounts[0].PreSOCKS5 = "none"
+				cfg.Chain.PreSOCKS5 = HopList{"socks5://global.example:1080"}
+				cfg.Accounts[0].PreSOCKS5 = HopList{"none"}
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("exit %q fixture failed validation: %v", exit, err)
 			}
 			path := filepath.Join(t.TempDir(), "config.ktav")
 			if err := Save(path, cfg); err != nil {
@@ -125,8 +131,8 @@ func TestAccountExitRawValuesFailConfigInvalid(t *testing.T) {
 
 func TestDirectExitAllowsNonePreAndPreservesRouteFields(t *testing.T) {
 	cfg := Default()
-	cfg.Chain.PreSOCKS5 = "socks5://global.example:1080"
-	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: "none"}}
+	cfg.Chain.PreSOCKS5 = HopList{"socks5://global.example:1080"}
+	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PreSOCKS5: HopList{"none"}}}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}

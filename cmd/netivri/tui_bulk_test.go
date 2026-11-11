@@ -1,6 +1,8 @@
 package main
 
 import (
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,7 +26,7 @@ func accountsEqual(a, b []config.Account) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if !reflect.DeepEqual(a[i], b[i]) {
 			return false
 		}
 	}
@@ -151,17 +153,32 @@ func TestAccountsBulkApplyEachField(t *testing.T) {
 			return a.AllowedClients
 		case "exit":
 			return a.Exit
+		}
+		return ""
+	}
+	hopList := func(login, field string) config.HopList {
+		t.Helper()
+		c, err := loadConfig(h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, _ := c.Account(login)
+		if a == nil {
+			t.Fatalf("account %s vanished", login)
+		}
+		switch field {
 		case "pre":
 			return a.PreSOCKS5
 		case "post":
 			return a.PostSOCKS5
 		}
-		return ""
+		return nil
 	}
 	apply := func(field, val string) {
 		t.Helper()
 		runAccountCmd(s, s.applyBulk(field, val))
 	}
+
 	apply("country", "DE")
 	if value("alice", "country") != "DE" || value("bob", "country") != "DE" || s.message != "2 accounts updated" {
 		t.Fatalf("country bulk: alice=%s bob=%s message=%q", value("alice", "country"), value("bob", "country"), s.message)
@@ -183,27 +200,27 @@ func TestAccountsBulkApplyEachField(t *testing.T) {
 		t.Fatal("clients everyone did not become the wildcard")
 	}
 	apply("post", "socks5://192.0.2.1:1080")
-	if value("alice", "post") != "socks5://192.0.2.1:1080" {
+	if !slices.Equal(hopList("alice", "post"), config.HopList{"socks5://192.0.2.1:1080"}) {
 		t.Fatal("post bulk")
 	}
 	apply("post", "none")
-	if value("alice", "post") != "none" {
+	if !slices.Equal(hopList("alice", "post"), config.HopList{"none"}) {
 		t.Fatal("post none")
 	}
 	apply("post", "inherit")
-	if value("alice", "post") != "" {
+	if len(hopList("alice", "post")) != 0 {
 		t.Fatal("post inherit did not clear")
 	}
 	apply("pre", "socks5://192.0.2.1:1080")
-	if value("alice", "pre") != "socks5://192.0.2.1:1080" {
+	if !slices.Equal(hopList("alice", "pre"), config.HopList{"socks5://192.0.2.1:1080"}) {
 		t.Fatal("pre bulk")
 	}
 	apply("pre", "inherit")
-	if value("alice", "pre") != "" {
+	if len(hopList("alice", "pre")) != 0 {
 		t.Fatal("pre inherit did not clear")
 	}
 	apply("pre", "none")
-	if value("alice", "pre") != "none" {
+	if !slices.Equal(hopList("alice", "pre"), config.HopList{"none"}) {
 		t.Fatal("pre none")
 	}
 }

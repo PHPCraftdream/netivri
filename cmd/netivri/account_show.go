@@ -46,14 +46,20 @@ type accountShowNode struct {
 }
 
 type accountShowChainInfo struct {
-	Value  string  `json:"value"`
-	Source string  `json:"source"`
-	Auth   bool    `json:"auth"`
-	Own    *string `json:"own"`
+	Value  []string  `json:"value"`
+	Source string    `json:"source"`
+	Auth   bool      `json:"auth"`
+	Own    *[]string `json:"own"`
 }
 
 func showChainInfoForAccount(info accountChainInfo) accountShowChainInfo {
-	return accountShowChainInfo{Value: info.Value, Source: info.Source, Auth: info.Auth, Own: info.Own}
+	value := append([]string{}, info.Value...)
+	var own *[]string
+	if info.Own != nil {
+		copy := append([]string{}, (*info.Own)...)
+		own = &copy
+	}
+	return accountShowChainInfo{Value: value, Source: info.Source, Auth: info.Auth, Own: own}
 }
 
 // accountShow implements `account show`: the configured lists, the route as

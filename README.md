@@ -38,12 +38,12 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
-- **A proxy before and after the VPN.** Optional `pre_socks5` (how netivri
+- **A proxy before and after the VPN.** Optional ordered lists of `pre_socks5` (how netivri
   reaches the VPN node) and `post_socks5` (where the traffic goes after it),
-  each a `socks5://`, `http://` (HTTP CONNECT) or `https://` proxy, set
-  globally, per provider and per account. The levels cascade (global, then
-  provider, then account): the more specific one replaces the one above, it is
-  never stacked, and `none` cancels a hop set above.
+  each using `socks5://`, `http://` (HTTP CONNECT) or `https://` over TLS,
+  set globally, per provider and per account. The levels cascade (global, then
+  provider, then account): the more specific non-empty list replaces the one
+  above, it is never merged, and `none` explicitly disables that side. The production core currently accepts one proxy per side. Future multi-entry support will select one live proxy per side per connection; no selection algorithm is promised, and list entries are not serial hops.
 - **Separate runs.** `--local` makes `./.netivri` its own state directory
   (settings, tokens, subscriptions, statistics, angel), found again without a
   flag from that directory; `--home {DIR}` names any directory.
@@ -237,15 +237,16 @@ accounts: [
 ```
 
 ```sh
-netivri account set-socks5 alice --post none        # alice skips the global post
-netivri account set-socks5 alice --post inherit     # back to the global value
-netivri account add bob --provider main --country NL --pre-socks5 socks5://pre2.example:1080
-netivri account set-socks5 bob --post http://proxy.example:8080   # an HTTP proxy as the post hop
-netivri account show alice                          # effective values, never the credentials
+# One URL is accepted today; repeat a flag to specify an ordered list (more than one is currently rejected).
+netivri account add alice --provider main --country DE --pre-socks5 socks5://pre.example:1080
+netivri account set-socks5 alice --post none        # alice explicitly disables the inherited post
+netivri account set-socks5 alice --post inherit     # clear the account list; inherit the provider/global list
+netivri account set-socks5 alice --pre socks5://pre.example:1080 --pre socks5://backup.example:1080 # rejected today: max 1
+netivri account show alice                          # effective arrays, redacted; never the credentials
 
 netivri sub add https://provider.example/sub/{TOKEN} --name main --pre-socks5 http://proxy.example:8080
-netivri sub set-socks5 main --post socks5://exit.example:1080   # a provider-level post hop
-netivri sub set-socks5 main --pre none               # main skips the global pre hop
+netivri sub set-socks5 main --post socks5://exit.example:1080   # a provider-level post list
+netivri sub set-socks5 main --pre none               # main disables the global pre
 netivri sub set-socks5 main --pre inherit            # back to the global value
 
 netivri sub rename main work                        # accounts and stored nodes follow
@@ -253,15 +254,20 @@ netivri sub set work --url https://provider.example/sub/{TOKEN}   # a new link; 
 netivri sub set work --via none                     # stop fetching through a proxy
 ```
 
-Each side is independent and the most specific level wins: an account value
-replaces the provider's, which replaces the global one. An absent value (or
-`inherit`) hands the decision to the level above, `none` cancels the hop. A
-node takes the hops of its own provider, so one account over several providers
-can use a different proxy per provider. `account show` and `status` print the
-effective value and its source (`account`, `provider`, `global`, `none`); in
-the shell, the Providers card has Pre-hop and Post-hop fields. See
-[`docs/config.md`](docs/config.md), `netivri help account set-socks5` and
-`netivri help sub set-socks5`.
+Each side is an ordered list of candidates, resolved independently. The nearest
+configured list wins in full: account replaces provider, provider replaces
+global; lists are never merged. An absent or empty list inherits; `none` alone
+(or `[none]` in Ktav) disables a side. Duplicate entries are invalid. Legacy
+Ktav scalar URLs load as singleton lists, and singleton lists render back as
+scalar values. The production core currently accepts one proxy per side.
+Multiple entries are candidate alternatives for future support: select one live
+proxy per side per connection, with no promised selection algorithm or serial
+chaining. `account show` and `status` print redacted arrays and the source
+(`account`, `provider`, `global`, `none`); in the shell, the Providers card has
+Pre-hop and Post-hop fields. Both the Accounts and Providers screens support
+list replacement, add, remove, inherit and none through the existing picker;
+list order is not changed. See [`docs/config.md`](docs/config.md),
+`netivri help account set-socks5` and `netivri help sub set-socks5`.
 
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one

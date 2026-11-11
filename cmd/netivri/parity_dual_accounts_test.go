@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/PHPCraftdream/netivri/internal/tui"
+)
 
 // Dual-run scenarios for the account capabilities (check 6 of
 // docs/design/parity.md): the CLI command on one home, the shell walk (real
@@ -11,16 +15,11 @@ import "testing"
 // account command touches the subscription snapshots, so no volatile regexp
 // is needed here.
 //
-// The account card (refreshSelectedCard in tui_accounts.go) lists its lines
-// in this order: provider, countries, exit, clients, pre, clear-pre, post,
-// clear-post, password, clone, remove, route, bulk. clear-pre and clear-post
-// are enabled only while the account owns that hop (a URL, not "none"; the
-// resolved source of "none" is "none", not "account"), bulk is enabled only
-// while accounts are marked, and the password line is read-only. Every
-// mutation rebuilds the card and selects the provider line again, so each
-// walk below counts its "down" presses over the enabled lines of the current
-// layout. The dialog a card line or hotkey opens is reached with plain keys;
-// the remove and bulk confirmations arrive through env.OpenModal and are
+// The account card (refreshSelectedCard in tui_accounts.go) orders fields and
+// actions, but card movement skips disabled and read-only rows. The hop parity
+// scenario therefore selects by line ID using real movement keys. Hop fields
+// open an operation picker; URL choices open a separate blank secret prompt.
+// The remove and bulk confirmations arrive through env.OpenModal and are
 // answered with Confirm.
 
 func init() {
@@ -43,6 +42,62 @@ func dualAccountAt(d *dualShell, pos int) {
 	d.Keys("home")
 	for i := 0; i < pos; i++ {
 		d.Keys("down")
+	}
+}
+
+// account card selection follows real movement, which skips disabled and
+// read-only rows. Resolve the target on each walk rather than assuming that
+// the physical line offset is the number of key presses.
+func dualSelectAccountCardLine(t *testing.T, d *dualShell, id string) {
+	t.Helper()
+	s, ok := d.screen.(*accountsScreen)
+	if !ok || s.workspace.Card == nil {
+		t.Fatal("account card is unavailable")
+	}
+	if s.width >= 100 && s.workspace.Focus() != tui.PaneCard {
+		d.Keys("tab")
+	} else if s.width < 100 && !s.workspace.Drilled {
+		d.Keys("enter")
+	}
+	dualSelectCardLine(t, d, s.workspace.Card, id)
+}
+
+// dualChooseAccountHopOperation makes the operation choice with real key
+// presses. The subsequent URL entry belongs to the blank SecretPrompt, not
+// the ChoicePrompt.
+func dualChooseAccountHopOperation(t *testing.T, d *dualShell, value string) {
+	t.Helper()
+	s, ok := d.screen.(*accountsScreen)
+	if !ok || s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.ChoicePrompt {
+		t.Fatal("account hop operation picker is not open")
+	}
+	choice := -1
+	for i, option := range s.dialog.prompt.Options {
+		if option.Value == value {
+			choice = i
+			break
+		}
+	}
+	if choice < 0 {
+		t.Fatalf("account hop picker has no operation %q", value)
+	}
+	for i := 0; i < len(s.dialog.prompt.Options); i++ {
+		selected, err := s.dialog.prompt.GetAnswer()
+		if err != nil {
+			t.Fatalf("read account hop picker choice: %v", err)
+		}
+		if selected == value {
+			break
+		}
+		d.Keys("down")
+	}
+	selected, err := s.dialog.prompt.GetAnswer()
+	if err != nil || selected != value {
+		t.Fatalf("account hop picker walk did not reach operation %q", value)
+	}
+	d.Keys("enter")
+	if (value == "replace" || value == "add") && (s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.SecretPrompt || s.dialog.prompt.Value != "") {
+		t.Fatal("account hop operation did not open a blank secret prompt")
 	}
 }
 
@@ -204,47 +259,47 @@ func dualAccountScenarioClients(t *testing.T) {
 	dualEqual(t, cliHome, shellHome)
 }
 
-// account.hops: pre-hop and post-hop set through the card fields, pre cleared
-// with the Clear pre-hop action while it is enabled, the "none" value through
-// the field, post cleared with Clear post-hop. The down counts follow the
-// card layout documented at the top of the file.
+// account.hops: card fields open an operation picker; URL operations then
+// open a blank secret prompt. Clear actions inherit from the next scope.
 func dualAccountScenarioHops(t *testing.T) {
 	cliHome, shellHome := dualHomes(t, switchHome)
-	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--pre", "socks5://pre.example:1080")
 	d := newDualShell(t, shellHome, "Accounts")
-	d.Keys("enter")                        // drill into alice
-	d.Keys("down", "down", "down", "down") // provider, countries, exit, clients -> pre-hop
+
+	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--pre", "socks5://pre.example:1080")
+	dualSelectAccountCardLine(t, d, "pre")
 	d.Keys("enter")
+	dualChooseAccountHopOperation(t, d, "replace")
 	d.Type("socks5://pre.example:1080")
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome)
 
-	// alice owns her pre-hop now, so Clear pre-hop is enabled: five downs.
 	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--pre", "inherit")
-	d.Keys("down", "down", "down", "down", "down") // -> clear pre-hop
+	dualSelectAccountCardLine(t, d, "clear-pre")
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome)
 
 	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--pre", "none")
-	d.Keys("down", "down", "down", "down") // -> pre-hop (clear-pre disabled again)
+	dualSelectAccountCardLine(t, d, "pre")
 	d.Keys("enter")
-	d.Type("none")
+	dualChooseAccountHopOperation(t, d, "none")
+	dualEqual(t, cliHome, shellHome)
+
+	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--pre", "inherit")
+	dualSelectAccountCardLine(t, d, "pre")
 	d.Keys("enter")
+	dualChooseAccountHopOperation(t, d, "inherit")
 	dualEqual(t, cliHome, shellHome)
 
 	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--post", "http://post.example:8080")
-	// clear-pre and clear-post are both disabled: five downs pass pre-hop and
-	// land on post-hop.
-	d.Keys("down", "down", "down", "down", "down")
+	dualSelectAccountCardLine(t, d, "post")
 	d.Keys("enter")
+	dualChooseAccountHopOperation(t, d, "replace")
 	d.Type("http://post.example:8080")
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome)
 
-	// alice owns her post-hop now, so Clear post-hop is enabled; clear-pre is
-	// still disabled: six downs pass pre-hop and post-hop.
 	dualCLI(t, cliHome, "account", "set-socks5", "alice", "--post", "inherit")
-	d.Keys("down", "down", "down", "down", "down", "down") // -> clear post-hop
+	dualSelectAccountCardLine(t, d, "clear-post")
 	d.Keys("enter")
 	dualEqual(t, cliHome, shellHome)
 }

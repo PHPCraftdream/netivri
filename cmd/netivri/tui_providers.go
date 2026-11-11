@@ -56,6 +56,7 @@ type providersScreen struct {
 	pendingSelect                       string
 	providers                           map[string]ProviderInfo
 	editField                           string
+	hopOperation                        string
 	pendingToast                        string
 	nodesList                           func(string, string, string) ([]NodeEntry, error)
 	dialNode                            func(context.Context, string, string, int) (core.NodeDiag, error)
@@ -266,6 +267,8 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 			return s.applyRenamePrompt(x)
 		case "countries-prompt":
 			return s.applyCountriesPrompt(x)
+		case "hop-picker":
+			return s.applyHopPickerPrompt(x)
 		case "diag-prompt-node":
 			return s.applyDiagNodePrompt(x)
 		case "diag-prompt-samples":
@@ -371,18 +374,148 @@ func (s *providersScreen) startWizard() {
 }
 func (s *providersScreen) startEditPrompt(field string) {
 	s.editField = field
+	s.hopOperation = ""
 	label, hint := "Via URL", "Credential hidden while editing"
 	switch field {
 	case "url":
 		label = "Subscription URL"
-	case "pre", "post":
-		label = map[string]string{"pre": "Pre-hop", "post": "Post-hop"}[field]
-		hint = "socks5://, http:// or https:// URL, or none; empty leaves it unchanged; clearing is the Clear action"
 	}
 	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Edit provider — "+label, label, hint, "")
 	s.prompt.SetTheme(s.workspace.Theme)
 	s.dialog = s.prompt
 	s.mode = "edit-prompt"
+}
+
+func (s *providersScreen) startHopSecretPrompt(side, operation string) {
+	label := "Pre-hop"
+	if side == "post" {
+		label = "Post-hop"
+	}
+	verb := "Replace"
+	if operation == "add" {
+		verb = "Add"
+	}
+	s.editField = side
+	s.hopOperation = operation
+	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Provider "+s.selected+" · "+verb+" "+label, "New proxy URL", "A proxy URL is secret and is never shown again.", "")
+	s.prompt.SetTheme(s.workspace.Theme)
+	s.dialog = s.prompt
+	s.mode = "edit-prompt"
+}
+
+func (s *providersScreen) openHopPicker(name, side string) tea.Cmd {
+	cfg, err := loadConfig(s.home)
+	if err != nil {
+		s.setError(err)
+		s.toast(s.message)
+		return nil
+	}
+	var own config.HopList
+	found := false
+	for _, sub := range cfg.Subscriptions {
+		if sub.Name != name {
+			continue
+		}
+		found = true
+		if side == "pre" {
+			own = sub.PreSOCKS5
+		} else {
+			own = sub.PostSOCKS5
+		}
+		break
+	}
+	if !found || side != "pre" && side != "post" {
+		return nil
+	}
+	options := []tui.PromptOption{{Label: "Replace whole list", Value: "replace", Description: "Enter one new proxy URL; the previous list is replaced."}}
+	if !chainDisabled(own) {
+		options = append(options, tui.PromptOption{Label: "Add hop", Value: "add", Description: "Append one proxy URL to the ordered alternatives list."})
+	}
+	for i, hop := range own {
+		if strings.EqualFold(hop, "none") {
+			continue
+		}
+		options = append(options, tui.PromptOption{Label: fmt.Sprintf("Remove entry %d · set", i+1), Value: "remove:" + strconv.Itoa(i+1)})
+	}
+	if len(own) > 0 {
+		options = append(options, tui.PromptOption{Label: "Inherit", Value: "inherit", Description: "Remove the provider override."})
+	}
+	options = append(options, tui.PromptOption{Label: "None", Value: "none", Description: "Explicitly disable this side of the chain."})
+	label := "Pre-hop"
+	if side == "post" {
+		label = "Post-hop"
+	}
+	p := tui.NewPrompt(tui.ChoicePrompt, "Provider "+name+" · "+label, "Operation", "Choose a list operation. Hop URLs and credentials are never shown.", "")
+	p.Options = options
+	p.SetTheme(s.workspace.Theme)
+	s.selected = name
+	s.prompt = p
+	s.dialog = p
+	s.mode = "hop-picker"
+	s.editField = side
+	return nil
+}
+
+func (s *providersScreen) applyHopPickerPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+	if x.Canceled {
+		s.dialog, s.prompt = nil, nil
+		s.mode, s.hopOperation = "", ""
+		return s, nil
+	}
+	side, name, operation := s.editField, s.selected, x.Value
+	if operation == "replace" || operation == "add" {
+		s.startHopSecretPrompt(side, operation)
+		return s, nil
+	}
+	var position int
+	if strings.HasPrefix(operation, "remove:") {
+		var err error
+		position, err = strconv.Atoi(strings.TrimPrefix(operation, "remove:"))
+		if err != nil || position < 1 {
+			s.prompt.SetError(errors.New("invalid hop position"))
+			return s, nil
+		}
+		operation = "remove"
+	}
+	edit, err := providerHopEdit(operation, "", position)
+	if err != nil {
+		s.prompt.SetError(err)
+		return s, nil
+	}
+	return s, s.updateHopList(name, side, edit)
+}
+
+func providerHopEdit(operation, value string, position int) (HopEdit, error) {
+	var edit HopEdit
+	switch operation {
+	case "replace", "add":
+		if value == "" || strings.EqualFold(value, "inherit") || operation == "add" && strings.EqualFold(value, "none") {
+			return edit, errors.New("enter a proxy URL, or choose None or Inherit")
+		}
+		hops := config.HopList{value}
+		if strings.EqualFold(value, "none") {
+			hops[0] = "none"
+		}
+		if operation == "replace" {
+			edit.Replace = &hops
+		} else {
+			edit.Add = hops
+		}
+	case "remove":
+		if position < 1 {
+			return edit, errors.New("no hop exists at that position")
+		}
+		edit.Remove = []int{position}
+	case "inherit":
+		hops := config.HopList(nil)
+		edit.Replace = &hops
+	case "none":
+		hops := config.HopList{"none"}
+		edit.Replace = &hops
+	default:
+		return edit, errors.New("unknown hop list operation")
+	}
+	return edit, nil
 }
 func (s *providersScreen) startRenamePrompt() {
 	s.editField = "name"
@@ -448,6 +581,7 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 		s.dialog = nil
 		s.prompt = nil
 		s.mode = ""
+		s.hopOperation = ""
 		return s, nil
 	}
 	value := x.Value
@@ -457,11 +591,25 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 	}
 	field := s.editField
 	name, home, update := s.selected, s.home, s.updateProvider
-	if (field == "pre" || field == "post") && strings.TrimSpace(value) == "" {
-		s.dialog = nil
-		s.prompt = nil
-		s.mode = ""
-		return s, nil
+	if field == "pre" || field == "post" {
+		operation := s.hopOperation
+		if operation == "" {
+			operation = "replace"
+		}
+		if operation == "replace" && strings.TrimSpace(value) == "" {
+			s.dialog = nil
+			s.prompt = nil
+			s.mode = ""
+			s.hopOperation = ""
+			return s, nil
+		}
+		edit, err := providerHopEdit(operation, value, 0)
+		if err != nil {
+			s.prompt.SetError(err)
+			return s, nil
+		}
+		s.prompt.SetSaving(true)
+		return s, s.updateHopList(name, field, edit)
 	}
 	s.busy = "Saving provider"
 	s.prompt.SetSaving(true)
@@ -469,15 +617,31 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 	switch field {
 	case "url":
 		o.URL = &value
-	case "pre":
-		o.Pre = &value
-	case "post":
-		o.Post = &value
 	default:
 		o.Via = &value
 	}
 	return s, s.bg(s.busy, func() tea.Msg {
 		return providerResultMsg{"edit", name, update(home, name, o)}
+	})
+}
+
+func (s *providersScreen) updateHopList(name, side string, edit HopEdit) tea.Cmd {
+	var options ProviderUpdateOptions
+	switch side {
+	case "pre":
+		options.PreEdit = &edit
+	case "post":
+		options.PostEdit = &edit
+	default:
+		return nil
+	}
+	home, update := s.home, s.updateProvider
+	s.busy = "Saving provider"
+	if s.prompt != nil {
+		s.prompt.SetSaving(true)
+	}
+	return s.bg(s.busy, func() tea.Msg {
+		return providerResultMsg{"edit", name, update(home, name, options)}
 	})
 }
 func (s *providersScreen) applyRenamePrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
@@ -696,6 +860,7 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 		s.dialog = nil
 		s.prompt = nil
 		s.mode = ""
+		s.hopOperation = ""
 		s.pendingSelect = s.selected
 		if name, ok := r.value.(string); ok && name != "" {
 			s.pendingSelect = name
@@ -940,13 +1105,15 @@ func (s *providersScreen) updateCard() {
 	s.card.Lines[3].Value = nodes
 	s.card.Lines[4].Value = strings.Join(countries, ", ")
 	s.card.Lines[5].Value = updated
-	for _, h := range []struct{ id, value string }{{"pre", p.Pre}, {"post", p.Post}} {
+	for _, h := range []struct {
+		id, value string
+	}{{"pre", providerHopListLabel(p.Pre)}, {"post", providerHopListLabel(p.Post)}} {
 		for i := range s.card.Lines {
 			switch s.card.Lines[i].ID {
 			case h.id:
-				s.card.Lines[i].Value = providerHopLabel(h.value)
+				s.card.Lines[i].Value = h.value
 			case "clear-" + h.id:
-				s.card.Lines[i].Disabled = h.value == ""
+				s.card.Lines[i].Disabled = h.value == "inherited"
 			}
 		}
 	}
@@ -961,28 +1128,29 @@ func (s *providersScreen) updateCard() {
 	}
 }
 
-// providerHopLabel is the state of a provider hop; the URL is never shown.
-func providerHopLabel(value string) string {
-	switch {
-	case value == "":
+// providerHopListLabel describes ordered alternatives without suggesting a
+// serial chain or exposing a host, URL, or userinfo from the redacted values.
+func providerHopListLabel(values []string) string {
+	if len(values) == 0 {
 		return "inherited"
-	case strings.EqualFold(value, "none"):
+	}
+	if len(values) == 1 && strings.EqualFold(values[0], "none") {
 		return "none"
 	}
-	return "set"
+	if len(values) == 1 {
+		return "set"
+	}
+	states := make([]string, len(values))
+	for i := range states {
+		states[i] = strconv.Itoa(i+1) + " set"
+	}
+	return strconv.Itoa(len(values)) + " alternatives: [" + strings.Join(states, ", ") + "]"
 }
 
 func (s *providersScreen) clearHop(side string) tea.Cmd {
-	empty := ""
-	var o ProviderUpdateOptions
-	if side == "pre" {
-		o.Pre = &empty
-	} else {
-		o.Post = &empty
-	}
-	name, home, update := s.selected, s.home, s.updateProvider
-	s.busy = "Saving provider"
-	return s.bg(s.busy, func() tea.Msg { return providerResultMsg{"edit", name, update(home, name, o)} })
+	empty := config.HopList(nil)
+	ed := HopEdit{Replace: &empty}
+	return s.updateHopList(s.selected, side, ed)
 }
 func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	switch s.card.Lines[s.card.Selected].ID {
@@ -995,7 +1163,7 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	case "via":
 		s.startEditPrompt("via")
 	case "pre", "post":
-		s.startEditPrompt(s.card.Lines[s.card.Selected].ID)
+		return s, s.openHopPicker(s.selected, s.card.Lines[s.card.Selected].ID)
 	case "clear-pre":
 		return s, s.clearHop("pre")
 	case "clear-post":

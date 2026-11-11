@@ -152,7 +152,7 @@ func TestSettingsMasksSecrets(t *testing.T) {
 		t.Fatalf("hash: %v", err)
 	}
 	f.cfg.Auth = config.Auth{Login: "alice", Password: hash}
-	f.cfg.Chain = config.Chain{PreSOCKS5: "socks5://alice:s3cret@relay.example:1080"}
+	f.cfg.Chain = config.Chain{PreSOCKS5: config.HopList{"socks5://alice:s3cret@relay.example:1080"}}
 	f.s.refresh()
 	f.selectGroup("auth")
 	if l, _ := cardLine(f.s.workspace.Card, "auth.password"); l.Value != "set" {
@@ -160,19 +160,19 @@ func TestSettingsMasksSecrets(t *testing.T) {
 	}
 	// the auth card shows the hash only as "set": never the hash itself
 	if v := ansi.Strip(f.s.View(80, 24)); strings.Contains(v, hash) || strings.Contains(v, "s3cret") {
-		t.Fatalf("the auth card leaks the password:\n%s", v)
+		t.Fatal("the auth card leaked a credential")
 	}
 	f.selectGroup("chain")
-	if l, _ := cardLine(f.s.workspace.Card, "chain.pre_socks5"); l.Value != "socks5://relay.example:1080" {
+	if l, _ := cardLine(f.s.workspace.Card, "chain.pre_socks5"); l.Value != "1 alternative: [socks5://relay.example:1080]" {
 		t.Fatalf("chain.pre_socks5 = %q", l.Value)
 	}
 	v := ansi.Strip(f.s.View(100, 30)) // two panes from 100 columns
-	if !strings.Contains(v, "socks5://relay.example:1080") {
-		t.Fatalf("the chain card must show the redacted proxy:\n%s", v)
+	if !strings.Contains(v, "1 alternative: [socks5://relay.example:1080]") {
+		t.Fatal("the chain card did not show the redacted proxy list")
 	}
 	for _, secret := range []string{hash, "s3cret", "alice"} {
 		if strings.Contains(v, secret) {
-			t.Fatalf("the chain card leaks %q:\n%s", secret, v)
+			t.Fatal("the chain card leaked credential text")
 		}
 	}
 }
@@ -182,6 +182,70 @@ type settingsPromptCase struct {
 	kind      tui.PromptKind
 	value     string
 	skipValue bool // the raw preset depends on the file, not asserted here
+}
+
+func TestSettingsDisplaysOrderedHopArraysRedactedAndFetchProxyScalar(t *testing.T) {
+	f := newSettingsFixture(t)
+	f.cfg.Fetch.Proxy = "http://fetch-user:fetch-secret@fetch.example:8080"
+	f.cfg.Chain.PreSOCKS5 = config.HopList{
+		"socks5://pre-user:pre-secret@pre.example:1080",
+		"http://second-user:second-secret@second.example:3128",
+	}
+	f.cfg.Chain.PostSOCKS5 = config.HopList{"http://post-user:post-secret@post.example:3128"}
+	f.s.refresh()
+
+	for _, tc := range []struct {
+		group, key, want string
+	}{
+		{"fetch", "fetch.proxy", "http://fetch.example:8080"},
+		{"chain", "chain.pre_socks5", "2 alternatives: [socks5://pre.example:1080, http://second.example:3128]"},
+		{"chain", "chain.post_socks5", "1 alternative: [http://post.example:3128]"},
+	} {
+		f.selectGroup(tc.group)
+		line, ok := cardLine(f.s.workspace.Card, tc.key)
+		if !ok || line.Value != tc.want {
+			t.Errorf("%s display did not match expected redacted value", tc.key)
+		}
+		view := ansi.Strip(f.s.View(100, 30))
+		for _, secret := range []string{"fetch-user", "fetch-secret", "pre-user", "pre-secret", "post-user", "post-secret"} {
+			if strings.Contains(view, secret) {
+				t.Errorf("%s display leaked credential text", tc.key)
+			}
+		}
+	}
+	f.cfg.Chain.PostSOCKS5 = config.HopList{"none"}
+	f.s.refresh()
+	f.selectGroup("chain")
+	if line, ok := cardLine(f.s.workspace.Card, "chain.post_socks5"); !ok || line.Value != "none" {
+		t.Errorf("disabled chain.post_socks5 display = %q, want none", line.Value)
+	}
+}
+
+func TestSettingsProxyPromptShowsRedactedCurrentValueWithoutPrefill(t *testing.T) {
+	f := newSettingsFixture(t)
+	f.cfg.Fetch.Proxy = "http://fetch-user:fetch-secret@fetch.example:8080"
+	f.cfg.Chain.PreSOCKS5 = config.HopList{"socks5://hop-user:hop-secret@relay.example:1080"}
+	f.cfg.Chain.PostSOCKS5 = config.HopList{"https://hop-user:hop-secret@relay.example:443", "http://other.example:3128"}
+	f.s.refresh()
+
+	for _, tc := range []struct {
+		id, current string
+	}{
+		{"fetch.proxy", "current: http://fetch.example:8080"},
+		{"chain.pre_socks5", "current: 1 alternative: [socks5://relay.example:1080]"},
+		{"chain.post_socks5", "current: 2 alternatives: [https://relay.example:443, http://other.example:3128]"},
+	} {
+		f.activate(t, tc.id)
+		if f.s.prompt == nil || f.s.prompt.Kind != tui.SecretPrompt || f.s.prompt.Value != "" {
+			t.Errorf("%s prompt must be secret and have no prefill", tc.id)
+		} else if !strings.Contains(f.s.prompt.Hint, tc.current) {
+			t.Errorf("%s prompt did not show the expected redacted current value", tc.id)
+		}
+		if f.s.prompt != nil && (strings.Contains(f.s.prompt.Hint, "hop-secret") || strings.Contains(f.s.prompt.Hint, "fetch-secret")) {
+			t.Errorf("%s prompt hint leaked credential text", tc.id)
+		}
+		f.s.dialog, f.s.prompt, f.s.promptKey = nil, nil, ""
+	}
 }
 
 func TestSettingsFieldOpensTheRightPrompt(t *testing.T) {
@@ -267,7 +331,7 @@ func TestSettingsSecretEditIsMaskedUntilSaved(t *testing.T) {
 	f.typeKeys("xyz")
 	v := ansi.Strip(f.s.View(80, 24))
 	if strings.Contains(v, "xyz") {
-		t.Fatalf("the typed secret is echoed:\n%s", v)
+		t.Fatal("the typed secret was echoed")
 	}
 	f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(f.calls) != 1 || f.calls[0] != [2]string{"auth.password", "xyz"} {
@@ -326,7 +390,7 @@ func TestSettingsPlainErrorIsNeverEchoed(t *testing.T) {
 		t.Fatalf("error = %q, want the fixed safe text", got)
 	}
 	if v := ansi.Strip(f.s.View(80, 24)); strings.Contains(v, "secret-looking") {
-		t.Fatalf("a plain error must not be echoed:\n%s", v)
+		t.Fatal("a plain error was echoed")
 	}
 }
 
@@ -380,6 +444,96 @@ func TestSettingsOpenPromptFitsEverySize(t *testing.T) {
 		if !strings.Contains(v, "Settings · listen.port") {
 			t.Fatalf("%dx%d: prompt title missing:\n%s", size[0], size[1], v)
 		}
+	}
+}
+
+func TestSettingsProxyPromptSubmitsRawURLThroughUpdate(t *testing.T) {
+	for _, tc := range []struct {
+		key, raw string
+	}{
+		{"fetch.proxy", "http://fetch-user:fetch-pass@fetch.example:8080"},
+		{"chain.pre_socks5", "socks5://chain-user:chain-pass@relay.example:1080"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			f := newSettingsFixture(t)
+			f.activate(t, tc.key)
+			f.typeKeys(tc.raw)
+			f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(f.calls) != 1 || f.calls[0][0] != tc.key || f.calls[0][1] != tc.raw {
+				t.Errorf("%s: entered URL did not reach the save callback unchanged", tc.key)
+			}
+			if f.s.dialog != nil {
+				t.Errorf("%s: successful save left the prompt open", tc.key)
+			}
+		})
+	}
+}
+
+func TestSettingsProxyPromptCancelDoesNotSave(t *testing.T) {
+	for _, tc := range []struct {
+		key, raw string
+	}{
+		{"fetch.proxy", "http://fetch-user:fetch-pass@fetch.example:8080"},
+		{"chain.pre_socks5", "socks5://chain-user:chain-pass@relay.example:1080"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			f := newSettingsFixture(t)
+			f.activate(t, tc.key)
+			f.typeKeys(tc.raw)
+			f.key(tea.KeyPressMsg{Code: tea.KeyEsc})
+			view := ansi.Strip(f.s.View(100, 24))
+			if !strings.Contains(view, "Discard changes? Continue editing or discard") || !strings.Contains(view, "Continue") || !strings.Contains(view, "Discard") {
+				t.Errorf("%s: changed prompt did not show the discard confirmation", tc.key)
+			}
+			f.key(tea.KeyPressMsg{Code: tea.KeyRight})
+			f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(f.calls) != 0 {
+				t.Errorf("%s: cancel invoked the save callback", tc.key)
+			}
+			if f.s.dialog != nil {
+				t.Errorf("%s: canceled prompt remains open", tc.key)
+			}
+		})
+	}
+}
+
+func TestSettingsProxyPromptSaveErrorKeepsCredentialsOutOfUI(t *testing.T) {
+	for _, tc := range []struct {
+		key, raw, username, password string
+	}{
+		{"fetch.proxy", "http://fetch-user:fetch-pass@fetch.example:8080", "fetch-user", "fetch-pass"},
+		{"chain.pre_socks5", "socks5://chain-user:chain-pass@relay.example:1080", "chain-user", "chain-pass"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			f := newSettingsFixture(t)
+			f.setErr = errors.New("save failed for " + tc.raw)
+			f.activate(t, tc.key)
+			f.typeKeys(tc.raw)
+			f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+			if len(f.calls) != 1 || f.calls[0][0] != tc.key || f.calls[0][1] != tc.raw {
+				t.Errorf("%s: entered URL did not reach the save callback unchanged", tc.key)
+			}
+			if f.s.dialog == nil || f.s.prompt == nil || f.s.prompt.Saving {
+				t.Errorf("%s: save error did not leave an editable prompt open", tc.key)
+			}
+			if f.s.prompt != nil && (f.s.prompt.Error == nil || f.s.prompt.Error.Error() != "settings operation failed") {
+				t.Errorf("%s: save error was not replaced with the safe message", tc.key)
+			}
+
+			view := ansi.Strip(f.s.View(100, 30))
+			cardLine, _ := cardLine(f.s.workspace.Card, tc.key)
+			for _, text := range []string{tc.raw, tc.username, tc.password} {
+				if strings.Contains(view, text) || strings.Contains(cardLine.Value, text) {
+					t.Errorf("%s: save error exposed credential text in the UI", tc.key)
+				}
+				if f.s.prompt != nil && f.s.prompt.Error != nil && strings.Contains(f.s.prompt.Error.Error(), text) {
+					t.Errorf("%s: save error exposed credential text in the prompt", tc.key)
+				}
+			}
+		})
 	}
 }
 

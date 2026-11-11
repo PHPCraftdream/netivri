@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"strings"
+	"slices"
 
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -10,8 +10,9 @@ import (
 )
 
 type AccountAddOptions struct {
-	Login, Provider, Country, Clients, PreSOCKS5, PostSOCKS5, Exit string
-	ExitGiven                                                      bool
+	Login, Provider, Country, Clients, Exit string
+	PreSOCKS5, PostSOCKS5                   config.HopList
+	ExitGiven                               bool
 }
 type AccountAddResult struct {
 	Account  accountInfo
@@ -19,8 +20,10 @@ type AccountAddResult struct {
 	Hint     string
 }
 type AccountUpdateOptions struct {
-	Login                                                   string
-	Provider, Country, Clients, Exit, PreSOCKS5, PostSOCKS5 *string
+	Login                            string
+	Provider, Country, Clients, Exit *string
+	Pre, Post                        *config.HopList
+	PreEdit, PostEdit                *HopEdit
 }
 type AccountCloneOptions struct {
 	Source, Login, Password, Provider, Country, Clients, Exit string
@@ -55,15 +58,11 @@ func accountAddWith(home string, c *config.Config, o AccountAddOptions, save fun
 	if !config.ValidAccountLogin(o.Login) {
 		return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
 	}
-	if o.PreSOCKS5 != "" {
-		if e := validateCLIChain(o.PreSOCKS5, "--pre-socks5"); e != nil {
-			return e
-		}
+	if err := validateCLIHopList(o.PreSOCKS5, "--pre-socks5"); err != nil {
+		return err
 	}
-	if o.PostSOCKS5 != "" {
-		if e := validateCLIChain(o.PostSOCKS5, "--post-socks5"); e != nil {
-			return e
-		}
+	if err := validateCLIHopList(o.PostSOCKS5, "--post-socks5"); err != nil {
+		return err
 	}
 	cc := ""
 	if o.Country != "" {
@@ -96,24 +95,26 @@ func accountAddWith(home string, c *config.Config, o AccountAddOptions, save fun
 		clients = config.NormalizeAllowedClients(o.Clients)
 	}
 	if a, _ := c.Account(o.Login); a != nil {
-		if a.ExitCountry == cc && a.Provider == prov && effectiveExit(a) == effectiveExit(&config.Account{Exit: exit}) && a.AllowedClients == clients && a.PreSOCKS5 == o.PreSOCKS5 && a.PostSOCKS5 == o.PostSOCKS5 {
+		if a.ExitCountry == cc && a.Provider == prov && effectiveExit(a) == effectiveExit(&config.Account{Exit: exit}) && a.AllowedClients == clients && slices.Equal(a.PreSOCKS5, o.PreSOCKS5) && slices.Equal(a.PostSOCKS5, o.PostSOCKS5) {
 			r.Account, r.Existing = infoForAccount(c, a), true
 			if a.Exit == "direct" {
 				r.Hint = directExitHint
 			}
 			return nil
 		}
-		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country, exit or clients rule", Exit: cli.ExitConflict}
+		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists with a different provider, country, exit, clients rule or proxy hops", Exit: cli.ExitConflict}
 	}
 	if c.Auth.Login == o.Login && c.Auth.Login != config.InitPlaceholder {
 		return &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists", Exit: cli.ExitConflict}
 	}
-	n := config.Account{Login: o.Login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, Exit: exit, AllowedClients: clients, PreSOCKS5: o.PreSOCKS5, PostSOCKS5: o.PostSOCKS5}
+	n := config.Account{Login: o.Login, Password: config.InitPlaceholder, Provider: prov, ExitCountry: cc, Exit: exit, AllowedClients: clients, PreSOCKS5: cloneHopList(o.PreSOCKS5), PostSOCKS5: cloneHopList(o.PostSOCKS5)}
 	if e := validateAccountCandidate(c, map[int]config.Account{len(c.Accounts): n}); e != nil {
 		return e
 	}
+	originalAccounts := c.Accounts
 	c.Accounts = append(c.Accounts, n)
 	if e := save(); e != nil {
+		c.Accounts = originalAccounts
 		return e
 	}
 	r.Account, r.Existing = infoForAccount(c, &c.Accounts[len(c.Accounts)-1]), false
@@ -171,6 +172,8 @@ func accountUpdateWith(home string, c *config.Config, o AccountUpdateOptions, sa
 		return accountInfo{}, accountNotFound()
 	}
 	n := *a
+	n.PreSOCKS5 = cloneHopList(a.PreSOCKS5)
+	n.PostSOCKS5 = cloneHopList(a.PostSOCKS5)
 	if o.Provider != nil {
 		v, e := normalizeAccountField(c, "provider", *o.Provider)
 		if e != nil {
@@ -198,11 +201,15 @@ func accountUpdateWith(home string, c *config.Config, o AccountUpdateOptions, sa
 		}
 		n.Exit = *o.Exit
 	}
-	if e := updateChainValue(o.PreSOCKS5, "pre", &n.PreSOCKS5); e != nil {
+	if hops, e := hopUpdate(n.PreSOCKS5, o.Pre, o.PreEdit, "pre_socks5"); e != nil {
 		return accountInfo{}, e
+	} else {
+		n.PreSOCKS5 = hops
 	}
-	if e := updateChainValue(o.PostSOCKS5, "post", &n.PostSOCKS5); e != nil {
+	if hops, e := hopUpdate(n.PostSOCKS5, o.Post, o.PostEdit, "post_socks5"); e != nil {
 		return accountInfo{}, e
+	} else {
+		n.PostSOCKS5 = hops
 	}
 	_, i := c.Account(o.Login)
 	if o.Exit != nil {
@@ -219,8 +226,10 @@ func accountUpdateWith(home string, c *config.Config, o AccountUpdateOptions, sa
 			return accountInfo{}, e
 		}
 	}
+	original := *a
 	*a = n
 	if e := save(); e != nil {
+		*a = original
 		return accountInfo{}, e
 	}
 	return infoForAccount(c, a), nil
@@ -248,24 +257,6 @@ func normalizeAccountField(c *config.Config, field, value string) (string, error
 	}
 	return value, nil
 }
-func updateChainValue(v *string, side string, target *string) error {
-	if v == nil {
-		return nil
-	}
-	if strings.EqualFold(*v, "inherit") {
-		*target = ""
-		return nil
-	}
-	if strings.EqualFold(*v, "none") {
-		*target = "none"
-		return nil
-	}
-	if e := validateCLIChain(*v, "--"+side); e != nil {
-		return e
-	}
-	*target = *v
-	return nil
-}
 func AccountClone(home string, o AccountCloneOptions) (AccountCloneResult, error) {
 	c, e := loadConfig(home)
 	if e != nil {
@@ -286,7 +277,7 @@ func accountCloneWith(home string, c *config.Config, o AccountCloneOptions, save
 	if a, _ := c.Account(o.Login); a != nil || (c.Auth.Login == o.Login && c.Auth.Login != config.InitPlaceholder) {
 		return AccountCloneResult{}, &cli.Error{Code: "ACCOUNT_EXISTS", Message: "account already exists: " + o.Login, Exit: cli.ExitConflict}
 	}
-	n := config.Account{Login: o.Login, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, Exit: src.Exit, AllowedClients: src.AllowedClients, PreSOCKS5: src.PreSOCKS5, PostSOCKS5: src.PostSOCKS5}
+	n := config.Account{Login: o.Login, Password: src.Password, Provider: src.Provider, ExitCountry: src.ExitCountry, Exit: src.Exit, AllowedClients: src.AllowedClients, PreSOCKS5: cloneHopList(src.PreSOCKS5), PostSOCKS5: cloneHopList(src.PostSOCKS5)}
 	mode := clonePasswordCopied
 	if src.Password == config.InitPlaceholder {
 		mode = clonePasswordInit
@@ -345,8 +336,10 @@ func accountCloneWith(home string, c *config.Config, o AccountCloneOptions, save
 			return AccountCloneResult{}, e
 		}
 	}
+	originalAccounts := c.Accounts
 	c.Accounts = append(c.Accounts, n)
 	if e := save(); e != nil {
+		c.Accounts = originalAccounts
 		return AccountCloneResult{}, e
 	}
 	return AccountCloneResult{Account: infoForAccount(c, &c.Accounts[len(c.Accounts)-1]), ClonedFrom: o.Source, Password: mode}, nil
@@ -366,10 +359,19 @@ func accountRemoveWith(c *config.Config, login string, save func() error) error 
 	if i < 0 {
 		return accountNotFound()
 	}
-	c.Accounts = append(c.Accounts[:i], c.Accounts[i+1:]...)
-	return save()
+	originalAccounts := c.Accounts
+	candidateAccounts := append([]config.Account(nil), c.Accounts...)
+	c.Accounts = append(candidateAccounts[:i], candidateAccounts[i+1:]...)
+	if err := save(); err != nil {
+		c.Accounts = originalAccounts
+		return err
+	}
+	return nil
 }
 func updateAccountTargets(home string, c *config.Config, field string, targets []*config.Account, spec string, all bool, value string, save func() error) ([]accountInfo, error) {
+	if len(targets) == 0 {
+		return nil, accountNotFound()
+	}
 	v, e := normalizeAccountField(c, field, value)
 	if e != nil {
 		return nil, e
@@ -377,6 +379,8 @@ func updateAccountTargets(home string, c *config.Config, field string, targets [
 	updates := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
 		n := *a
+		n.PreSOCKS5 = cloneHopList(a.PreSOCKS5)
+		n.PostSOCKS5 = cloneHopList(a.PostSOCKS5)
 		switch field {
 		case "country":
 			n.ExitCountry = v
@@ -388,24 +392,31 @@ func updateAccountTargets(home string, c *config.Config, field string, targets [
 		_, i := c.Account(a.Login)
 		updates[i] = n
 	}
-	if e := validateAccountCandidate(c, updates); e != nil {
-		return nil, e
+	if err := validateAccountCandidate(c, updates); err != nil {
+		return nil, err
 	}
 	if field != "clients" {
 		for _, a := range targets {
 			_, i := c.Account(a.Login)
 			n := updates[i]
-			if n != *a {
+			if n.Provider != a.Provider || n.ExitCountry != a.ExitCountry || n.AllowedClients != a.AllowedClients || n.Exit != a.Exit {
 				if e := checkRoute(home, c, n); e != nil {
 					return nil, e
 				}
 			}
 		}
 	}
+	originals := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
-		*a = updates[func() int { _, i := c.Account(a.Login); return i }()]
+		_, i := c.Account(a.Login)
+		originals[i] = *a
+		*a = updates[i]
 	}
 	if e := save(); e != nil {
+		for _, a := range targets {
+			_, i := c.Account(a.Login)
+			*a = originals[i]
+		}
 		return nil, e
 	}
 	out := make([]accountInfo, 0, len(targets))
@@ -415,6 +426,9 @@ func updateAccountTargets(home string, c *config.Config, field string, targets [
 	return out, nil
 }
 func mutateAccountExit(home string, c *config.Config, targets []*config.Account, value string, save func() error) ([]accountInfo, error) {
+	if len(targets) == 0 {
+		return nil, accountNotFound()
+	}
 	next := make([]config.Account, len(targets))
 	for i, a := range targets {
 		next[i] = *a
@@ -429,19 +443,26 @@ func mutateAccountExit(home string, c *config.Config, targets []*config.Account,
 			}
 		}
 	}
-	copyCfg := *c
-	copyCfg.Accounts = append([]config.Account(nil), c.Accounts...)
+	candidate := *c
+	candidate.Accounts = append([]config.Account(nil), c.Accounts...)
 	for i, a := range targets {
 		_, idx := c.Account(a.Login)
-		copyCfg.Accounts[idx] = next[i]
+		candidate.Accounts[idx] = next[i]
 	}
-	if e := copyCfg.Validate(); e != nil {
-		return nil, e
+	if err := candidate.Validate(); err != nil {
+		return nil, err
 	}
+	originals := make(map[int]config.Account, len(targets))
 	for i, a := range targets {
+		_, idx := c.Account(a.Login)
+		originals[idx] = *a
 		*a = next[i]
 	}
 	if e := save(); e != nil {
+		for _, a := range targets {
+			_, idx := c.Account(a.Login)
+			*a = originals[idx]
+		}
 		return nil, e
 	}
 	out := make([]accountInfo, 0, len(targets))
@@ -451,40 +472,64 @@ func mutateAccountExit(home string, c *config.Config, targets []*config.Account,
 	return out, nil
 }
 func mutateAccountSOCKS5(c *config.Config, targets []*config.Account, preGiven, postGiven bool, pre, post string, save func() error) ([]accountInfo, error) {
-	pv, qv := pre, post
-	var e error
+	preEdit, postEdit := HopEdit{}, HopEdit{}
 	if preGiven {
-		e = updateChainValue(&pre, "pre", &pv)
-		if e != nil {
-			return nil, e
+		edit, _, err := parseHopEditFlags([]string{pre}, nil, nil, true, false, false, "pre")
+		if err != nil {
+			return nil, err
 		}
+		preEdit = edit
 	}
 	if postGiven {
-		e = updateChainValue(&post, "post", &qv)
-		if e != nil {
-			return nil, e
+		edit, _, err := parseHopEditFlags([]string{post}, nil, nil, true, false, false, "post")
+		if err != nil {
+			return nil, err
 		}
+		postEdit = edit
+	}
+	return mutateAccountSOCKS5Edits(c, targets, preGiven, postGiven, preEdit, postEdit, save)
+}
+
+func mutateAccountSOCKS5Edits(c *config.Config, targets []*config.Account, preGiven, postGiven bool, preEdit, postEdit HopEdit, save func() error) ([]accountInfo, error) {
+	if len(targets) == 0 {
+		return nil, accountNotFound()
 	}
 	updates := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
 		n := *a
+		n.PreSOCKS5 = cloneHopList(a.PreSOCKS5)
+		n.PostSOCKS5 = cloneHopList(a.PostSOCKS5)
 		if preGiven {
-			n.PreSOCKS5 = pv
+			list, err := validateHopEdit(n.PreSOCKS5, preEdit, "pre_socks5")
+			if err != nil {
+				return nil, err
+			}
+			n.PreSOCKS5 = list
 		}
 		if postGiven {
-			n.PostSOCKS5 = qv
+			list, err := validateHopEdit(n.PostSOCKS5, postEdit, "post_socks5")
+			if err != nil {
+				return nil, err
+			}
+			n.PostSOCKS5 = list
 		}
 		_, i := c.Account(a.Login)
 		updates[i] = n
 	}
-	if e := validateAccountCandidate(c, updates); e != nil {
-		return nil, e
+	if err := validateAccountCandidate(c, updates); err != nil {
+		return nil, err
 	}
+	originals := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
-		n := updates[func() int { _, i := c.Account(a.Login); return i }()]
-		*a = n
+		_, i := c.Account(a.Login)
+		originals[i] = *a
+		*a = updates[i]
 	}
 	if e := save(); e != nil {
+		for _, a := range targets {
+			_, i := c.Account(a.Login)
+			*a = originals[i]
+		}
 		return nil, e
 	}
 	out := make([]accountInfo, 0, len(targets))

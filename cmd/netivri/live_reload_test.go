@@ -962,7 +962,7 @@ func TestReloadRestartsOnGlobalPostOnlyChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1080"}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func TestReloadRestartsOnGlobalPostWithRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1080"}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -994,7 +994,7 @@ func TestReloadRestartsOnGlobalPostWithRoutes(t *testing.T) {
 	if len(running.reconfigured()) != 0 {
 		t.Fatal("global post change attempted Reconfigure")
 	}
-	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5 {
+	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5[0] {
 		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
 	}
 }
@@ -1026,8 +1026,8 @@ func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Accounts[0].PreSOCKS5 = "socks5://127.0.0.1:1081"
-	cfg.Accounts[0].PostSOCKS5 = "socks5://127.0.0.1:1082"
+	cfg.Accounts[0].PreSOCKS5 = config.HopList{"socks5://127.0.0.1:1081"}
+	cfg.Accounts[0].PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1082"}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -1040,7 +1040,11 @@ func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
 		t.Fatalf("Reconfigure calls = %d, want 1", len(got))
 	}
 	key := got[0].AccountRoute["alice"]
-	if got[0].RoutePre[key] != cfg.Accounts[0].PreSOCKS5 || got[0].RoutePost[key] != cfg.Accounts[0].PostSOCKS5 {
+	wantKey := "p~DE~ad36dd3fed1abc790d3e786d22294e511f86b7603bc6828cebb8825471504e3d"
+	if key != wantKey {
+		t.Errorf("Reconfigure account route key = %q, want legacy singleton key %q", key, wantKey)
+	}
+	if got[0].RoutePre[key] != cfg.Accounts[0].PreSOCKS5[0] || got[0].RoutePost[key] != cfg.Accounts[0].PostSOCKS5[0] {
 		t.Errorf("Reconfigure chain options pre=%v post=%v, want the account's URLs under route key %q", got[0].RoutePre, got[0].RoutePost, key)
 	}
 }
@@ -1048,7 +1052,7 @@ func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
 func TestReloadReconfiguresAccountPolicyWithGlobalPostNoneAndServers(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice"})
 	cfg := config.Default()
-	cfg.Chain.PostSOCKS5 = "none"
+	cfg.Chain.PostSOCKS5 = config.HopList{"none"}
 	cfg.Accounts = []config.Account{{Login: "alice", Password: f.hash}}
 	cfg.Servers = []config.Server{{Name: "edge", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 12345, Accounts: "alice"}}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
@@ -1146,7 +1150,7 @@ func TestReloadRestartsOnGlobalPostWithNoRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Chain.PostSOCKS5 = "socks5://127.0.0.1:1080"
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1080"}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -1161,7 +1165,7 @@ func TestReloadRestartsOnGlobalPostWithNoRoutes(t *testing.T) {
 	if !f.script.inst(0).isClosed() {
 		t.Fatal("old core remains open after fallback restart")
 	}
-	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5 {
+	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5[0] {
 		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
 	}
 }

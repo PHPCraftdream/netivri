@@ -616,24 +616,36 @@ func conceptText(tp *helpTopic) string {
 }
 
 func TestSOCKS5ChainHelpCoverage(t *testing.T) {
-	for _, name := range []string{"account set-socks5", "account show", "config", "routing"} {
+	for _, name := range []string{"account add", "account set-socks5", "account show", "config", "routing", "sub set-socks5", "interactive"} {
 		if findHelpTopic(name) == nil {
 			t.Errorf("no help topic for %q", name)
 		}
 	}
-	add := renderTopic(findHelpTopic("account add"))
+	add := strings.Join(strings.Fields(renderTopic(findHelpTopic("account add"))), " ")
 	for _, flag := range []string{"--pre-socks5", "--post-socks5"} {
 		if !strings.Contains(add, flag) {
 			t.Errorf("account add topic lacks %q", flag)
 		}
 	}
-	set := renderTopic(findHelpTopic("account set-socks5"))
-	for _, want := range []string{"--pre", "--post", "inherit", "none", "socks5://", "port required", "netivri help"} {
+	set := strings.Join(strings.Fields(renderTopic(findHelpTopic("account set-socks5"))), " ")
+	for _, want := range []string{"--pre", "--post", "inherit", "none", "socks5://", "required port", "netivri help", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "production core", "entire less-specific list"} {
 		if !strings.Contains(set, want) {
 			t.Errorf("account set-socks5 topic lacks %q", want)
 		}
 	}
-	show := renderTopic(findHelpTopic("account show"))
+	providerSet := strings.Join(strings.Fields(renderTopic(findHelpTopic("sub set-socks5"))), " ")
+	for _, want := range []string{"--pre", "--post", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "production core currently accepts at most one URL per side", "non-serial candidate pool", "selection-algorithm guarantee"} {
+		if !strings.Contains(providerSet, want) {
+			t.Errorf("sub set-socks5 topic lacks %q", want)
+		}
+	}
+	interactive := strings.Join(strings.Fields(renderTopic(findHelpTopic("interactive"))), " ")
+	for _, want := range []string{"Providers", "operation picker", "replace the list", "add a URL", "remove an entry", "inherit or disable", "list order is not changed", "production core rejects a second URL per side"} {
+		if !strings.Contains(interactive, want) {
+			t.Errorf("interactive topic lacks %q", want)
+		}
+	}
+	show := strings.Join(strings.Fields(renderTopic(findHelpTopic("account show"))), " ")
 	for _, want := range []string{"pre_socks5", "post_socks5", "redacted"} {
 		if !strings.Contains(show, want) {
 			t.Errorf("account show topic lacks %q", want)
@@ -807,9 +819,9 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 		}
 		return renderTopic(tp)
 	}
-	routing := text("routing")
-	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "client -> pre-hop -> selected exit -> post-hop -> target", "port", "inherit", "none", "redacted", "netivri help"} {
-		if !strings.Contains(strings.Join(strings.Fields(routing), " "), want) {
+	routing := strings.Join(strings.Fields(text("routing")), " ")
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "client -> selected pre proxy (if any) -> selected VPN exit -> selected post proxy (if any) -> target", "Each ordered pre/post list is a set of alternatives per side", "one live proxy per side per connection", "list order does not promise a selection algorithm", "not serial hops", "at most one URL per side", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
+		if !strings.Contains(routing, want) {
 			t.Errorf("routing topic lacks %q", want)
 		}
 	}

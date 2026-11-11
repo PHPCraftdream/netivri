@@ -9,10 +9,9 @@ import (
 )
 
 // The Route... dialog of the Accounts screen mirrors `netivri account show`:
-// the configured provider and country lists, the route as ordered tiers and,
-// when the angel runs, the live node state. It carries labels and country
-// codes only — a hop URL, an address or any other credential never enters a
-// line (accountsHopLabel shows state labels, not values).
+// provider and country lists, ordered route tiers, live node state, and the
+// redacted count and order of configured hop lists; addresses and credentials
+// are never shown.
 
 // routeCloseMsg closes the route viewer that sent it.
 type routeCloseMsg struct{}
@@ -105,8 +104,8 @@ func accountsListOrAny(ss []string) string {
 	return strings.Join(ss, ",")
 }
 
-// lines builds the dialog text: labels and countries only, never Own, never a
-// Value URL, never an address.
+// lines builds dialog text from labels and countries, and ordered hop lists
+// whose URL credentials are redacted; it never reads Own or displays raw URLs.
 func (v *routeViewer) lines() []string {
 	if v.loading || v.result == nil {
 		return nil
@@ -115,7 +114,7 @@ func (v *routeViewer) lines() []string {
 	lines := []string{
 		"Exit " + r.Exit,
 		"Providers " + accountsListOrAny(r.Providers) + " · Countries " + accountsListOrAny(r.Countries),
-		"Pre-hop " + accountsHopLabel(r.PreSOCKS5.Source, r.PreSOCKS5.Value) + " · Post-hop " + accountsHopLabel(r.PostSOCKS5.Source, r.PostSOCKS5.Value),
+		"Pre-hop " + accountsHopListStateLabel(r.PreSOCKS5.Source, r.PreSOCKS5.Value) + " · Post-hop " + accountsHopListStateLabel(r.PostSOCKS5.Source, r.PostSOCKS5.Value),
 	}
 	if !r.Live {
 		lines = append(lines, "The angel is not running; live node state and connection counts are unavailable.")

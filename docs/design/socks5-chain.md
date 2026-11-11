@@ -1,19 +1,20 @@
 # Proxies before and after the VPN
 
-Two optional proxies wrap the VPN node of a route (`socks5://`, `http://` for an
-HTTP CONNECT proxy, or `https://` for one reached over TLS; the settings are
-still called `pre_socks5` and `post_socks5`):
+Ordered proxy alternatives wrap the VPN node of a route (`socks5://`,
+`http://` for an HTTP CONNECT proxy, or `https://` for one reached over TLS;
+the settings are still called `pre_socks5` and `post_socks5`):
 
 - `pre_socks5` is the proxy netivri uses to **reach** the VPN node.
 - `post_socks5` is the proxy the traffic is handed to **after** the VPN node;
-  it connects to the destination.
+  that proxy connects to the destination.
 
 ```text
-client -> netivri -> [pre] -> VPN node -> [post] -> destination
+client -> netivri -> [selected pre proxy, if any] -> VPN node -> [selected post proxy, if any] -> destination
 ```
 
 Both are set globally (`chain.pre_socks5`, `chain.post_socks5` in
-`config.ktav`) and per account (`pre_socks5`, `post_socks5`). User-facing
+`config.ktav`), per provider (`subscriptions[].pre_socks5` / `post_socks5`)
+and per account (`accounts[].pre_socks5` / `post_socks5`). User-facing
 description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 [../cli.md](../cli.md), `account set-socks5`.
 
@@ -22,7 +23,7 @@ description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 - Reach a VPN node that is only reachable through a proxy (pre), and let the
   traffic leave through a proxy chosen by the user instead of the VPN's exit
   (post).
-- Global defaults with a per-account override, side by side, one value each.
+- Global defaults with full nearest-level replacement per provider and account.
 - Credentials never leave the process: not in output, logs, errors, route
   keys, statistics labels or proxy names.
 - A running angel applies a change without a command, and keeps open
@@ -30,8 +31,10 @@ description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 
 ## Non-goals
 
-- More than one proxy per side, other schemes (`socks5h://`, HTTP), an
-  authentication method other than user and password.
+- More than one proxy per side in the production core today; future multi-entry
+  support uses a candidate pool of alternatives, not a serial chain, and does
+  not promise a selection algorithm. Other schemes (`socks5h://`) and an
+  authentication method other than user and password are also out of scope.
 - A pre without a VPN node: an account without a route (no provider and no
   exit country) has nothing to reach through a pre, so its pre is ignored.
 - Separate health and statistics per chain: they stay per node (see
@@ -39,47 +42,54 @@ description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 
 ## Configuration and cascade
 
-A value is `{scheme}://[user:password@]host:port`, or `none`. The scheme is
-`socks5`, `http` (an HTTP CONNECT proxy) or `https` (the same over TLS, with the
-certificate checked), any case, and is rendered as a Mihomo `socks5` or `http`
-outbound (`tls: true` for `https`); the setting names keep `socks5`. The host a name, an IPv4 address or `[IPv6]`, the port is
-**required** (1..65535), the user name and password are percent-encoded, no
-path, query or fragment. Validation (`internal/config`) fails with
-`CONFIG_INVALID` naming the key (`chain.pre_socks5`, `accounts[N].post_socks5`)
-and never echoing the value.
+Each list entry is `{scheme}://[user:password@]host:port`, or the sole entry
+`none`. Legacy scalar Ktav URLs load as singleton lists, and singleton lists
+render back as scalar values. The scheme is `socks5`, `http` (HTTP CONNECT)
+or `https` (HTTP CONNECT over TLS, certificate checked); the setting names keep
+`socks5`. Host: name, IPv4 or `[IPv6]`; port: required, 1..65535. User name and
+password are percent-encoded. No path, query or fragment. Validation
+(`internal/config`) fails with `CONFIG_INVALID` naming the key
+(`chain.pre_socks5`, `accounts[N].post_socks5`) and never echoing the value.
 
-The cascade is resolved per side and independently, from the most specific
-level: account, then provider (`subscriptions[].pre_socks5` / `post_socks5`),
-then global. A level that sets a value *replaces* the ones above it; nothing is
-stacked:
+The cascade resolves each side independently, nearest level first: account,
+then the node's provider, then global. A non-empty list replaces the complete
+less-specific value; levels are never merged. Empty or absent inherits;
+`[none]` explicitly disables. Multi-entry support is future work: lists are
+candidate pools from which one live proxy per side will be selected for a
+connection. This does not promise a selection algorithm and entries are not
+serial hops. The production core currently accepts at most one URL per side.
 
-| Account value | Provider value | Effective |
-| --- | --- | --- |
-| a URL | anything | the account URL (source `account`) |
-| `none` | anything | no proxy (source `none`) |
-| absent or empty | a URL | the provider URL (source `provider`) |
-| absent or empty | `none` | no proxy (source `none`), whatever the global value is |
-| absent or empty | absent or empty | the global value (source `global`), or no proxy |
+| Account list | Provider list | Global list | Effective |
+| --- | --- | --- | --- |
+| `[URL]` | anything | anything | account value (`account`) |
+| `[none]` | anything | anything | no proxy (`none`) |
+| empty/absent | `[URL]` | anything | provider value (`provider`) |
+| empty/absent | `[none]` | anything | no proxy (`none`) |
+| empty/absent | empty/absent | `[URL]` | global value (`global`) |
 
-A node takes the hops of its own provider, so an account route over several
-providers can have different hops per node (`core.Options.NodePre` /
-`NodePost`, one value per node of the route; a route without them uses the
-route-level `RoutePre` / `RoutePost`). `account show` and `status` report
-the value `varies` (source `provider`) when the providers of an account
-resolve differently. An account that sets a side itself is not affected by its
-providers on that side.
-
-`none` as a global value is the same as no value. `account set-socks5 ...
-inherit` deletes the account key and `sub set-socks5 ... inherit` the provider key.
-The shared resolver in `cmd/netivri/accounts_pool.go` (`resolveAccountChain`) is used by
-`account list`, `account show` and `status`, so they agree; the pool builder
-(`buildAccountRoutePoolHops`) applies the same order per node.
+`none` as a global value explicitly means no proxy. The replacement flags are
+repeatable. `account set-socks5 ... inherit` clears the account list;
+`sub set-socks5 ... inherit` clears the provider list. Both setters also have repeatable `--add-pre {URL}` / `--add-post {URL}`
+and `--remove-pre {INDEX}` / `--remove-post {INDEX}` operations. Indexes are
+one-based positions in the original list. Repeating an original index rejects
+the entire operation without saving the list. Replace, add and remove operations
+cannot be combined on the same side; removing the last scoped entry restores
+inheritance. `none` and `inherit` cannot be repeated or combined with other
+entries on their side. The Accounts and Providers shell screens both support
+list replacement, add, remove, inherit and none through the existing picker;
+list order is not changed. The shared resolver is used by
+`account list`, `account show` and `status`.
 
 ## How the chain is built (Mihomo)
 
-netivri builds one Mihomo proxy per element and links them with Mihomo's
+The production core currently accepts at most one URL per side. Future
+multi-entry support is a candidate pool selecting one live proxy per side for
+a connection; it makes no selection-algorithm guarantee and entries are not
+serial hops.
+
+netivri builds one Mihomo proxy for each configured side and links them with Mihomo's
 `dialer-proxy` option: a proxy with `dialer-proxy: X` makes its own connection
-to its server through the proxy `X`. For a route member (`internal/core/accounts.go`):
+to its server through the proxy `X`. A route member's configured proxy chain is built as follows:
 
 ```text
 pre helper   socks5 to the pre proxy                    (no dialer)
@@ -87,7 +97,7 @@ node         the VPN node, dialer-proxy = pre helper    (only with a pre)
 post member  socks5 to the post proxy, dialer-proxy = node   (only with a post)
 ```
 
-The member the sticky group dials is the outermost one: the post member when
+The member the sticky group dials is the outermost one: the post proxy when
 the route has a post, else the node. A connection to it therefore goes
 netivri -> pre -> node -> post -> destination.
 
@@ -139,7 +149,7 @@ file watcher like any other. How it is applied:
 
 | Change | Applied |
 | --- | --- |
-| new nodes, a new `pre_socks5` or `post_socks5` of an account that has a route, a `chain.pre_socks5` change | in place (`core.Instance.Reconfigure`): the listener stays, open connections go on, health, probe schedule and site bindings of nodes that stay are kept |
+| new nodes, a new account pre/post list for a routed account or a `chain.pre_socks5` list change | in place (`core.Instance.Reconfigure`): the listener stays, open connections go on, health, probe schedule and site bindings of nodes that stay are kept |
 | `chain.post_socks5` changed | restart of the listener on the same port, open connections end |
 | a route appears or disappears entirely (the first account gets a provider or country, the last one loses it) | restart |
 | an account is added or removed, a password or `allowed_clients` changes, bind or port changes | restart (as before) |
@@ -153,8 +163,11 @@ previous configuration is started again. See [live-reload.md](live-reload.md).
 ## Secrets
 
 The URLs are credentials like subscription URLs. Output shows
-`socks5://host:port` and a boolean `auth`; the user name is dropped too.
-`status` reports the chain of the **running core**, not of the file on disk.
+`socks5://host:port` arrays and a boolean `auth`; the user name is dropped too.
+Account JSON carries effective `value` and configured `own` arrays, while
+`source` and `auth` metadata remain. The JSON array shape is an intentional
+breaking change in the unreleased contract; `schema_version` is intentionally
+not bumped. `status` reports the chain of the **running core**, not of the file on disk.
 Errors name the key or the flag, never the value. The tests scan the whole
 output of the commands for the credentials they feed in.
 
@@ -167,6 +180,8 @@ output of the commands for the credentials they feed in.
 - A change of the global post restarts the listener.
 
 ## Tests
+
+The JSON account-chain shape intentionally changes from scalar values to redacted arrays in the unreleased contract; `schema_version` is not bumped.
 
 Unit: URL validation and cascade (`internal/config`), the route pool and route
 keys, `account` commands and their redaction, status of the applied state, the

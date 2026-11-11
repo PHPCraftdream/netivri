@@ -21,9 +21,8 @@ import (
 type ProviderInfo struct {
 	Name, Host string
 	ViaSet     bool
-	// Pre and Post are the provider-level hops without credentials; "" inherits
-	// the global chain, "none" disables the hop.
-	Pre, Post string
+	// Pre and Post are redacted provider-level ordered hop lists.
+	Pre, Post []string
 	Nodes     *int
 	FetchedAt *string
 	Quota     map[string]any
@@ -32,11 +31,17 @@ type ProviderInfo struct {
 	State     string
 }
 type ProviderListResult struct{ Providers []ProviderInfo }
-type ProviderAddOptions struct{ URL, Name, Via, Pre, Post string }
+type ProviderAddOptions struct {
+	URL, Name, Via string
+	Pre, Post      config.HopList
+}
 
-// ProviderUpdateOptions: a nil field is left as it is; an empty Pre or Post
-// returns that hop to the global chain.
-type ProviderUpdateOptions struct{ NewName, URL, Via, Pre, Post *string }
+// ProviderUpdateOptions stores provider field updates; hop list replacement and incremental edits are exclusive per side.
+type ProviderUpdateOptions struct {
+	NewName, URL, Via *string
+	Pre, Post         *config.HopList
+	PreEdit, PostEdit *HopEdit
+}
 
 func validProviderURL(raw string) bool {
 	if raw == "" || raw != strings.TrimSpace(raw) {
@@ -59,6 +64,18 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 	if err != nil {
 		return err
 	}
+	return providerUpdateWith(cfg, name, o, func(candidate *config.Config) error {
+		if err := config.Save(config.ConfigPath(home), candidate); err != nil {
+			return &cli.Error{Code: "INTERNAL", Message: "save config failed", Exit: cli.ExitInternal}
+		}
+		return nil
+	})
+}
+
+func providerUpdateWith(cfg *config.Config, name string, o ProviderUpdateOptions, save func(*config.Config) error) error {
+	if o.Pre != nil && o.PreEdit != nil || o.Post != nil && o.PostEdit != nil {
+		return cli.Usage("sub set-socks5: replacement and incremental edits cannot be combined")
+	}
 	idx := -1
 	for i := range cfg.Subscriptions {
 		if cfg.Subscriptions[i].Name == name {
@@ -72,28 +89,35 @@ func ProviderUpdate(home, name string, o ProviderUpdateOptions) error {
 	if o.NewName != nil && *o.NewName != name {
 		return &cli.Error{Code: codeSubExistsName, Message: "provider rename is unavailable because related configuration and stored data cannot be updated safely", Exit: cli.ExitConflict}
 	}
+	candidate := *cfg
+	candidate.Subscriptions = append([]config.Subscription(nil), cfg.Subscriptions...)
+	sub := candidate.Subscriptions[idx]
 	if o.URL != nil {
 		if !validProviderURL(*o.URL) {
 			return &cli.Error{Code: "CONFIG_INVALID", Message: "invalid subscription URL"}
 		}
-		cfg.Subscriptions[idx].URL = *o.URL
+		sub.URL = *o.URL
 	}
 	if o.Via != nil {
-		cfg.Subscriptions[idx].Via = *o.Via
+		sub.Via = *o.Via
 	}
-	if o.Pre != nil {
-		cfg.Subscriptions[idx].PreSOCKS5 = *o.Pre
-	}
-	if o.Post != nil {
-		cfg.Subscriptions[idx].PostSOCKS5 = *o.Post
-	}
-	if err := cfg.Validate(); err != nil {
+	pre, err := hopUpdate(sub.PreSOCKS5, o.Pre, o.PreEdit, "subscriptions[].pre_socks5")
+	if err != nil {
 		return err
 	}
-	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
-		return &cli.Error{Code: "INTERNAL", Message: "save config failed", Exit: cli.ExitInternal}
+	post, err := hopUpdate(sub.PostSOCKS5, o.Post, o.PostEdit, "subscriptions[].post_socks5")
+	if err != nil {
+		return err
 	}
-	return nil
+	sub.PreSOCKS5, sub.PostSOCKS5 = pre, post
+	candidate.Subscriptions[idx] = sub
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	if save == nil {
+		return cli.Usage("sub update: save function is required")
+	}
+	return save(&candidate)
 }
 
 // ProviderRename renames a provider, rewriting every account's provider list
@@ -206,7 +230,7 @@ func ProviderList(home string) (ProviderListResult, error) {
 	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
 	out := ProviderListResult{Providers: make([]ProviderInfo, 0, len(cfg.Subscriptions))}
 	for _, s := range cfg.Subscriptions {
-		p := ProviderInfo{Name: s.Name, Host: urlHost(s.URL), ViaSet: s.Via != "", Pre: redactChain(s.PreSOCKS5), Post: redactChain(s.PostSOCKS5), State: "missing"}
+		p := ProviderInfo{Name: s.Name, Host: urlHost(s.URL), ViaSet: s.Via != "", Pre: redactChains(s.PreSOCKS5), Post: redactChains(s.PostSOCKS5), State: "missing"}
 		snap, err := store.Load(s.Name)
 		if err == nil {
 			n := len(snap.Nodes)
@@ -226,6 +250,13 @@ func ProviderList(home string) (ProviderListResult, error) {
 	return out, nil
 }
 func ProviderAdd(home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time) (ProviderAddResult, error) {
+	return providerAddWith(home, o, get, now, nil)
+}
+
+func providerAddWith(home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time, saveConfig func(string, *config.Config) error) (ProviderAddResult, error) {
+	if saveConfig == nil {
+		saveConfig = config.Save
+	}
 	if o.Name != "" && !validSubName(o.Name) {
 		return ProviderAddResult{}, cli.Usage("sub add: --name must match [A-Za-z0-9._-]{1,64}")
 	}
@@ -252,19 +283,32 @@ func ProviderAdd(home string, o ProviderAddOptions, get func(context.Context, st
 			}
 		}
 	}
+	// Validate a new provider on a candidate before fetching or persisting anything.
+	candidate := *cfg
+	candidate.Subscriptions = append([]config.Subscription(nil), cfg.Subscriptions...)
+	if !existing {
+		if err := validateCLIHopList(o.Pre, "--pre-socks5"); err != nil {
+			return ProviderAddResult{}, err
+		}
+		if err := validateCLIHopList(o.Post, "--post-socks5"); err != nil {
+			return ProviderAddResult{}, err
+		}
+		candidate.Subscriptions = append(candidate.Subscriptions, config.Subscription{Name: name, URL: o.URL, Via: o.Via, PreSOCKS5: cloneHopList(o.Pre), PostSOCKS5: cloneHopList(o.Post)})
+		if err := candidate.Validate(); err != nil {
+			return ProviderAddResult{}, err
+		}
+	}
 	snap, e := fetchSnapshot(context.Background(), get, now, cfg, config.Subscription{Name: name, URL: o.URL, Via: o.Via})
 	if e != nil {
 		return ProviderAddResult{}, e
 	}
-	if e = subscription.NewStore(filepath.Join(home, "subscriptions")).Save(name, snap); e != nil {
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if e = store.Save(name, snap); e != nil {
 		return ProviderAddResult{}, &cli.Error{Code: "INTERNAL", Message: "store subscription: " + e.Error(), Exit: cli.ExitInternal}
 	}
 	if !existing {
-		cfg.Subscriptions = append(cfg.Subscriptions, config.Subscription{Name: name, URL: o.URL, Via: o.Via, PreSOCKS5: o.Pre, PostSOCKS5: o.Post})
-		if e = cfg.Validate(); e != nil {
-			return ProviderAddResult{}, e
-		}
-		if e = config.Save(config.ConfigPath(home), cfg); e != nil {
+		if e = saveConfig(config.ConfigPath(home), &candidate); e != nil {
+			_ = store.Remove(name)
 			return ProviderAddResult{}, &cli.Error{Code: "INTERNAL", Message: "save config: " + e.Error(), Exit: cli.ExitInternal}
 		}
 	}

@@ -74,13 +74,13 @@ func TestAccountsRouteViewerRunningAngelInjected(t *testing.T) {
 	s := routeTestScreen(t, "")
 	up, off, down := true, false, true
 	conn3, conn0, fb := 3, 0, 2
-	secret := "socks5://u:fake-token@host:1080"
+	secret := []string{"socks5://u:fake-token@host:1080"}
 	s.show = func(_, _ string) (AccountShowResult, error) {
 		return AccountShowResult{
 			Login: "alice", Provider: "p1", ExitCountry: "DE", Exit: "route",
 			Providers: []string{"p1"}, Countries: []string{"DE", "NL"},
-			PreSOCKS5:  accountShowChainInfo{Source: "account", Value: "socks5://192.0.2.1:1080", Own: &secret},
-			PostSOCKS5: accountShowChainInfo{Source: "global", Value: "none"},
+			PreSOCKS5:  accountShowChainInfo{Source: "account", Value: []string{"socks5://192.0.2.1:1080"}, Own: &secret},
+			PostSOCKS5: accountShowChainInfo{Source: "global", Value: []string{"none"}},
 			Live:       true, FallbackConnections: &fb,
 			Tiers: []accountShowTier{
 				{Tier: 0, Country: "DE", Providers: []string{"p1"}, Nodes: []accountShowNode{
@@ -115,8 +115,8 @@ func TestAccountsRouteViewerRunningAngelInjected(t *testing.T) {
 	if strings.Contains(v, "The angel is not running") {
 		t.Fatal("running angel reported as stopped")
 	}
-	if strings.Contains(v, "fake-token") || strings.Contains(v, "u:") {
-		t.Fatal("route view leaked a hop credential")
+	if strings.Contains(v, "fake-token") || strings.Contains(v, "u:") || strings.Contains(v, "secret") {
+		t.Fatal("route view leaked a hop address or credential")
 	}
 }
 
