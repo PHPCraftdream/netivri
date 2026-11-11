@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -167,18 +168,69 @@ func assertCode(t *testing.T, err error, code string, exit int) {
 }
 
 func TestSubAddRepeatedHopFlagsRejectBeforeFetch(t *testing.T) {
-	fetchCalled := false
-	app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
-		fetchCalled = true
-		return &fetch.Result{Body: []byte(testBody)}, nil
-	})
-	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--pre-socks5", "socks5://first.example:1080", "--pre-socks5", "socks5://second.example:1080"})
-	assertCode(t, err, config.CodeConfigInvalid, cli.ExitUsage)
-	if fetchCalled {
-		t.Fatal("invalid repeated hop flags reached provider fetch")
+	for _, tc := range []struct {
+		name        string
+		values      func() []string
+		wantMessage string
+	}{
+		{
+			name: "over production limit",
+			values: func() []string {
+				values := make([]string, 0, config.MaxHopsPerSide+1)
+				for i := 0; i < config.MaxHopsPerSide+1; i++ {
+					values = append(values, fmt.Sprintf("socks5://hop-%d.example:1080", i))
+				}
+				return values
+			},
+			wantMessage: "at most 16 hops per side",
+		},
+		{
+			name:        "duplicate URL",
+			values:      func() []string { return []string{"socks5://same.example:1080", "socks5://same.example:1080"} },
+			wantMessage: "must not contain duplicate hop URLs",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fetchCalled := false
+			app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+				fetchCalled = true
+				return &fetch.Result{Body: []byte(testBody)}, nil
+			})
+			args := []string{"--home", app.home, "https://provider.example/sub"}
+			for _, value := range tc.values() {
+				args = append(args, "--pre-socks5", value)
+			}
+			err := app.add(args)
+			assertCode(t, err, config.CodeConfigInvalid, cli.ExitUsage)
+			if !strings.Contains(err.Error(), tc.wantMessage) {
+				t.Fatalf("error = %q, want diagnostic containing %q", err, tc.wantMessage)
+			}
+			if fetchCalled {
+				t.Fatal("invalid repeated hop flags reached provider fetch")
+			}
+			if _, err := os.Stat(app.configPath()); !os.IsNotExist(err) {
+				t.Fatal("invalid repeated hop flags wrote a config")
+			}
+		})
 	}
-	if _, err := os.Stat(app.configPath()); !os.IsNotExist(err) {
-		t.Fatal("invalid repeated hop flags wrote a config")
+}
+
+func TestSubAddRepeatedHopFlagsAcceptValidList(t *testing.T) {
+	app, _ := testApp(t, fakeBody(testBody))
+	want := config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}
+	args := []string{"--home", app.home, "https://provider.example/sub"}
+	for _, value := range want {
+		args = append(args, "--pre-socks5", value)
+	}
+	if err := app.add(args); err != nil {
+		t.Fatalf("add with valid repeated hop flags: %v", err)
+	}
+	cfg, err := config.Load(app.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Subscriptions) != 1 || !reflect.DeepEqual(cfg.Subscriptions[0].PreSOCKS5, want) {
+		t.Fatalf("saved pre hops = %v, want %v", cfg.Subscriptions[0].PreSOCKS5, want)
 	}
 }
 

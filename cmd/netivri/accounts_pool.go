@@ -67,6 +67,18 @@ func credentialRouteKeyHops(providers, countries string, pre, post config.HopLis
 	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
 }
 
+func routeIdentityKey(login, providers, countries string, pre, post config.HopList, multiPool bool, extra ...string) string {
+	if !multiPool {
+		return credentialRouteKeyHops(providers, countries, pre, post, extra...)
+	}
+	// Pools can be edited or reordered without changing the logical route
+	// that core uses to find predecessor pool health and bindings. The route
+	// identity depends on login/providers/countries, not mutable pool levels.
+	payload := providers + "\x00" + countries + "\x00pool\x00" + login
+	sum := sha256.Sum256([]byte(payload))
+	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
+}
+
 func appendRouteIdentity(dst []byte, value string) []byte {
 	var size [8]byte
 	for i := 0; i < len(size); i++ {
@@ -240,6 +252,14 @@ func (h providerHops) tag(providers []string, rawPre, rawPost config.HopList) st
 	return string(data)
 }
 
+func (h providerHops) hasMulti(providers []string, rawPre, rawPost config.HopList) bool {
+	for _, name := range providers {
+		if len(rawPre) == 0 && len(h.pre[name]) > 1 || len(rawPost) == 0 && len(h.post[name]) > 1 {
+			return true
+		}
+	}
+	return false
+}
 func singleHopValue(hops config.HopList) string {
 	if len(hops) == 0 {
 		return ""
@@ -373,7 +393,8 @@ func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshot
 		if !direct {
 			tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
 		}
-		key := credentialRouteKeyHops(config.JoinList(providers), config.JoinList(countries), pre, post, tagArgs(tag)...)
+		multiPool := len(pre) > 1 || len(post) > 1 || hops.hasMulti(relevant, a.PreSOCKS5, a.PostSOCKS5)
+		key := routeIdentityKey(a.Login, config.JoinList(providers), config.JoinList(countries), pre, post, multiPool, tagArgs(tag)...)
 		if direct {
 			// Keep implicit default-direct behavior unchanged. Explicit direct
 			// accounts get distinct keys based on their effective post hop.
@@ -384,7 +405,7 @@ func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshot
 			if a.Exit == "direct" && len(post) == 0 {
 				post = config.HopList{"none"}
 			}
-			key = credentialRouteKeyHops("", "", pre, post)
+			key = routeIdentityKey(a.Login, "", "", pre, post, len(pre) > 1 || len(post) > 1)
 		}
 		pool.accountRoutes[a.Login] = key
 		if !seen[key] {

@@ -45,6 +45,19 @@ func TestAccountSOCKS5DispatchAddFlagsAndPersistence(t *testing.T) {
 	}
 }
 
+func TestAccountSOCKS5DispatchRepeatedReplacementAcceptsPools(t *testing.T) {
+	home := t.TempDir()
+	runAccountOK(t, home, "add", "alice")
+	var out bytes.Buffer
+	if err := runAccount([]string{"set-socks5", "alice", "--pre", "socks5://one.example:1080", "--pre", "http://two.example:8080", "--home", home}, &out); err != nil {
+		t.Fatalf("two-hop replacement: %v", err)
+	}
+	cfg, err := config.Load(config.ConfigPath(home))
+	if err != nil || !slices.Equal(cfg.Accounts[0].PreSOCKS5, config.HopList{"socks5://one.example:1080", "http://two.example:8080"}) {
+		t.Fatalf("persisted list = %v, err=%v", cfg.Accounts[0].PreSOCKS5, err)
+	}
+}
+
 func TestAccountSOCKS5DispatchRepeatedReplacementRejectsOverCapWithoutWrite(t *testing.T) {
 	home := t.TempDir()
 	runAccountOK(t, home, "add", "alice")
@@ -54,11 +67,15 @@ func TestAccountSOCKS5DispatchRepeatedReplacementRejectsOverCapWithoutWrite(t *t
 		t.Fatal(err)
 	}
 	secret := "socks5://user:secret@proxy.example:1080"
+	args := []string{"set-socks5", "alice", "--pre", secret}
+	for i := 1; i < config.MaxHopsPerSide+1; i++ {
+		args = append(args, "--pre", "socks5://proxy"+strings.Repeat("x", i)+".example:1080")
+	}
 	var out bytes.Buffer
-	err = runAccount([]string{"set-socks5", "alice", "--pre", secret, "--pre", "socks5://other.example:1080", "--home", home}, &out)
+	err = runAccount(append(args, "--home", home), &out)
 	var cliErr *cli.Error
-	if !errors.As(err, &cliErr) || cliErr.Code != "CONFIG_INVALID" || cliErr.Exit != cli.ExitUsage || cliErr.Message != "--pre: pool of several hops is not supported yet; one per side for now" {
-		t.Fatal("repeated replacement did not return the sanitized over-cap CONFIG_INVALID diagnostic")
+	if !errors.As(err, &cliErr) || cliErr.Code != "CONFIG_INVALID" || cliErr.Exit != cli.ExitUsage || cliErr.Message != "--pre: must contain at most 16 hops per side" {
+		t.Fatal("over-cap replacement did not return the sanitized CONFIG_INVALID diagnostic")
 	}
 	if err != nil && (strings.Contains(err.Error()+out.String(), "user") || strings.Contains(err.Error()+out.String(), "secret")) {
 		t.Fatal("repeated replacement error leaked credentials")

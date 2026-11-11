@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,20 @@ func TestChainValidation(t *testing.T) {
 }
 
 func TestConfigValidateHopLimits(t *testing.T) {
+	if MaxHopsPerSide != 16 {
+		t.Fatalf("MaxHopsPerSide = %d, want 16", MaxHopsPerSide)
+	}
+	valid := make(HopList, MaxHopsPerSide)
+	for i := range valid {
+		valid[i] = fmt.Sprintf("socks5://hop-%d.example:1080", i)
+	}
+	if err := ValidateHopList("pre_socks5", valid); err != nil {
+		t.Fatalf("accepted maximum-length hop pool: %v", err)
+	}
+	tooMany := append(append(HopList(nil), valid...), "socks5://hop-extra.example:1080")
+	if err := ValidateHopList("pre_socks5", tooMany); err == nil || !strings.Contains(err.Error(), "at most 16 hops per side") {
+		t.Fatalf("17-hop list error = %v, want maximum 16 diagnostic", err)
+	}
 	cases := []struct {
 		name  string
 		field string
@@ -61,15 +76,35 @@ func TestConfigValidateHopLimits(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Default()
-			tc.set(cfg, HopList{"socks5://one.example:1080", "socks5://two.example:1080"})
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
-				t.Fatalf("validation error = %v, want field %s and unsupported-pool reason", err, tc.field)
+			// A 17-entry global post list is rejected by the separate MATCH
+			// fallback guard before the size check unless account-only auth has
+			// a configured named account. Keep these limit cases independent
+			// of that guard so they exercise the list cap itself.
+			cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: "provider", ExitCountry: "DE"}}
+			hops := HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
+			for len(hops) < MaxHopsPerSide+1 {
+				hops = append(hops, fmt.Sprintf("socks5://extra-%d.example:1080", len(hops)))
+			}
+			tc.set(cfg, hops)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "at most 16 hops per side") {
+				t.Fatalf("validation error = %v, want field %s and maximum-length diagnostic", err, tc.field)
 			}
 		})
 	}
 }
 
 func TestHopListValidation(t *testing.T) {
+	valid := make(HopList, MaxHopsPerSide)
+	for i := range valid {
+		valid[i] = fmt.Sprintf("socks5://valid-%d.example:1080", i)
+	}
+	if err := ValidateHopList("pre_socks5", valid); err != nil {
+		t.Fatalf("accepted 16-hop list: %v", err)
+	}
+	tooMany := append(append(HopList(nil), valid...), "socks5://extra.example:1080")
+	if err := ValidateHopList("pre_socks5", tooMany); err == nil || !strings.Contains(err.Error(), "at most 16 hops per side") {
+		t.Fatalf("17-hop list error = %v", err)
+	}
 	cases := []struct {
 		name string
 		hops HopList
@@ -78,7 +113,6 @@ func TestHopListValidation(t *testing.T) {
 		{"none mixed", HopList{"none", "socks5://proxy.example:1080"}, "none must stand alone"},
 		{"duplicate", HopList{"socks5://proxy.example:1080", "socks5://proxy.example:1080"}, "duplicate"},
 		{"empty entry", HopList{"socks5://proxy.example:1080", ""}, "empty hop"},
-		{"unsupported pool", HopList{"socks5://one.example:1080", "socks5://two.example:1080"}, "pool of several hops is not supported yet; one per side for now"},
 		{"invalid later entry", HopList{"socks5://one.example:1080", "ftp://secret.example:21"}, "pre_socks5[1]"},
 		{"empty later entry", HopList{"socks5://one.example:1080", ""}, "pre_socks5[1]"},
 	}
@@ -90,8 +124,8 @@ func TestHopListValidation(t *testing.T) {
 			}
 		})
 	}
-	if err := validateHopListLimit("hops", HopList{"socks5://one.example:1080", "socks5://two.example:1080"}, 2); err != nil {
-		t.Fatalf("explicit test limit rejected list: %v", err)
+	if err := ValidateHopList("pre_socks5", valid); err != nil {
+		t.Fatalf("accepted maximum hop list: %v", err)
 	}
 	secret := "socks5://fake-user:fake-password@proxy.example:1080"
 	for _, hops := range []HopList{
@@ -105,9 +139,6 @@ func TestHopListValidation(t *testing.T) {
 	}
 	if got := InheritHops(HopList{"NONE"}, HopList{"parent"}); len(got) != 1 || !strings.EqualFold(got[0], "none") {
 		t.Fatalf("explicit none was not preserved: %#v", got)
-	}
-	if got, err := SingleHop(HopList{"one", "two"}); err == nil || strings.Contains(got, "one") || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
-		t.Fatalf("SingleHop = %q, %v", got, err)
 	}
 	if got := InheritHops(nil, HopList{"parent"}); len(got) != 1 || got[0] != "parent" {
 		t.Fatalf("inherited = %#v", got)
@@ -276,7 +307,7 @@ func TestLoadHopListShapes(t *testing.T) {
 		{name: "empty item", source: "chain: {\n    pre_socks5: [\n        ::\n    ]\n}\n", wantErr: true},
 		{name: "mixed none", source: "chain: {\n    pre_socks5: [\n        none\n        socks5://other.example:1080\n    ]\n}\n", wantErr: true},
 		{name: "duplicate", source: "chain: {\n    pre_socks5: [\n        socks5://same.example:1080\n        socks5://same.example:1080\n    ]\n}\n", wantErr: true},
-		{name: "more than one hop", source: "chain: {\n    pre_socks5: [\n        socks5://one.example:1080\n        socks5://two.example:1080\n    ]\n}\n", wantErr: true},
+		{name: "multiple hops", source: "chain: {\n    pre_socks5: [\n        socks5://one.example:1080\n        socks5://two.example:1080\n    ]\n}\n", want: HopList{"socks5://one.example:1080", "socks5://two.example:1080"}},
 		{name: "malformed credential URI", source: "chain: {\n    pre_socks5: " + secret + "\n}\n", wantErr: true},
 	}
 	for _, tc := range cases {

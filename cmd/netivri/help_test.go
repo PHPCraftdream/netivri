@@ -628,19 +628,34 @@ func TestSOCKS5ChainHelpCoverage(t *testing.T) {
 		}
 	}
 	set := strings.Join(strings.Fields(renderTopic(findHelpTopic("account set-socks5"))), " ")
-	for _, want := range []string{"--pre", "--post", "inherit", "none", "socks5://", "required port", "netivri help", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "production core", "entire less-specific list"} {
+	if strings.Contains(set, "production core currently accepts at most one URL per side") || strings.Contains(set, "future multi-entry support") {
+		t.Error("account set-socks5 help retains obsolete one-hop limit")
+	}
+	if !strings.Contains(set, "at most 16 hops per side") {
+		t.Error("account set-socks5 help omits hop limit")
+	}
+	for _, want := range []string{"--pre", "--post", "inherit", "none", "socks5://", "required port", "netivri help", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "16 URLs per side", "alternatives", "entire less-specific list"} {
 		if !strings.Contains(set, want) {
 			t.Errorf("account set-socks5 topic lacks %q", want)
 		}
 	}
 	providerSet := strings.Join(strings.Fields(renderTopic(findHelpTopic("sub set-socks5"))), " ")
-	for _, want := range []string{"--pre", "--post", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "production core currently accepts at most one URL per side", "non-serial candidate pool", "selection-algorithm guarantee"} {
+	if strings.Contains(providerSet, "production core currently accepts at most one URL per side") || strings.Contains(providerSet, "future multi-entry support") {
+		t.Error("sub set-socks5 help retains obsolete one-hop/future wording")
+	}
+	if !strings.Contains(providerSet, "at most 16 hops per side") {
+		t.Error("sub set-socks5 help omits hop limit")
+	}
+	for _, want := range []string{"--pre", "--post", "--add-pre", "--remove-pre", "--add-post", "--remove-post", "one-based", "original list", "at most 16 hops per side", "16 URLs per side", "alternatives", "full replacement"} {
 		if !strings.Contains(providerSet, want) {
 			t.Errorf("sub set-socks5 topic lacks %q", want)
 		}
 	}
 	interactive := strings.Join(strings.Fields(renderTopic(findHelpTopic("interactive"))), " ")
-	for _, want := range []string{"Providers", "operation picker", "replace the list", "add a URL", "remove an entry", "inherit or disable", "list order is not changed", "production core rejects a second URL per side"} {
+	if strings.Contains(interactive, "production core rejects a second URL per side") || !strings.Contains(interactive, "up to 16 candidates") {
+		t.Error("interactive help has incorrect pool-limit wording")
+	}
+	for _, want := range []string{"Providers", "operation picker", "replace the list", "add a URL", "remove an entry", "inherit or disable", "list order is not changed"} {
 		if !strings.Contains(interactive, want) {
 			t.Errorf("interactive topic lacks %q", want)
 		}
@@ -707,6 +722,25 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Errorf("the config topic does not name these keys: %s", strings.Join(missing, ", "))
+	}
+	for _, want := range []string{
+		"accepted account field keys",
+		"named accounts and no legacy auth",
+		"the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the config topic lacks %q", want)
+		}
+	}
+	configSet := findHelpTopic("config set")
+	if configSet == nil {
+		t.Fatal("no help topic for config set")
+	}
+	setText := conceptText(configSet)
+	for _, want := range []string{"restart_needed: true", "static metadata"} {
+		if !strings.Contains(setText, want) {
+			t.Errorf("the config set topic lacks %q", want)
+		}
 	}
 }
 
@@ -820,7 +854,10 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 		return renderTopic(tp)
 	}
 	routing := strings.Join(strings.Fields(text("routing")), " ")
-	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "client -> selected pre proxy (if any) -> selected VPN exit -> selected post proxy (if any) -> target", "Each ordered pre/post list is a set of alternatives per side", "one live proxy per side per connection", "list order does not promise a selection algorithm", "not serial hops", "at most one URL per side", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
+	if strings.Contains(routing, "at most one URL per side") || strings.Contains(routing, "future multi-entry support") {
+		t.Error("routing topic retains obsolete one-hop/future wording")
+	}
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "weighted hop health", "alternatives", "serial hops", "scalar global post", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
 		if !strings.Contains(routing, want) {
 			t.Errorf("routing topic lacks %q", want)
 		}

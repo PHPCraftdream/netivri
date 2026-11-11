@@ -31,10 +31,10 @@ description: [../config.md](../config.md), "SOCKS5 chain"; commands:
 
 ## Non-goals
 
-- More than one proxy per side in the production core today; future multi-entry
-  support uses a candidate pool of alternatives, not a serial chain, and does
-  not promise a selection algorithm. Other schemes (`socks5h://`) and an
-  authentication method other than user and password are also out of scope.
+- More than one proxy per side in the production core is supported by candidate
+  pools; single-hop routes retain the legacy scalar path. Candidates are not
+  serial hops. Other schemes (`socks5h://`) and authentication methods beyond
+  user and password are out of scope.
 - A pre without a VPN node: an account without a route (no provider and no
   exit country) has nothing to reach through a pre, so its pre is ignored.
 - Separate health and statistics per chain: they stay per node (see
@@ -54,10 +54,12 @@ password are percent-encoded. No path, query or fragment. Validation
 The cascade resolves each side independently, nearest level first: account,
 then the node's provider, then global. A non-empty list replaces the complete
 less-specific value; levels are never merged. Empty or absent inherits;
-`[none]` explicitly disables. Multi-entry support is future work: lists are
-candidate pools from which one live proxy per side will be selected for a
-connection. This does not promise a selection algorithm and entries are not
-serial hops. The production core currently accepts at most one URL per side.
+`[none]` explicitly disables. Up to 16 URLs per side are accepted; entries are
+alternatives, not serial hops. The no-account `MATCH` path still uses scalar
+`GlobalPost` and rejects multi-entry global post lists needed there with
+`the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`.
+Account routes can inherit global/provider/account pools; no `GlobalPre` field
+is defined.
 
 | Account list | Provider list | Global list | Effective |
 | --- | --- | --- | --- |
@@ -82,14 +84,13 @@ list order is not changed. The shared resolver is used by
 
 ## How the chain is built (Mihomo)
 
-The production core currently accepts at most one URL per side. Future
-multi-entry support is a candidate pool selecting one live proxy per side for
-a connection; it makes no selection-algorithm guarantee and entries are not
-serial hops.
-
-netivri builds one Mihomo proxy for each configured side and links them with Mihomo's
-`dialer-proxy` option: a proxy with `dialer-proxy: X` makes its own connection
-to its server through the proxy `X`. A route member's configured proxy chain is built as follows:
+Single-candidate routes retain the legacy Mihomo `dialer-proxy` mapping below;
+account-route pools use native core pool adapters. A pre adapter carries the
+VPN-node dial through a selected pre candidate. A post candidate dials through
+the selected node; the post adapter selects and attributes the hop. Direct
+accounts use a direct carrier. This requires no helper process or static
+pre × node × post matrix. The no-account `MATCH` route continues to use scalar
+`GlobalPost`. See [hop-pools.md](hop-pools.md) for health and persistence.
 
 ```text
 pre helper   socks5 to the pre proxy                    (no dialer)

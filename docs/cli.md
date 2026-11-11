@@ -33,7 +33,7 @@ Keys: Up/Down move over rows and card lines, Tab/Shift-Tab move between the list
 
 ### Providers
 
-The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, a preview of the countries the subscription offers — the same fetch as `sub countries --url` with the same figures (nodes, countries with their node counts, nodes with no country), a busy state while it runs and Esc to cancel it; a failed preview does not block the add —, then the fetch with a cancel). The card shows the Subscription (masked, never the URL), the Via proxy, the Name, Nodes, Countries and Updated, and the provider's Pre-hop and Post-hop (list state only: `inherited`, `none` or `set`, never the URL; Enter opens an operation picker to replace the list, add a URL, remove an entry by its original position, inherit or disable; URL prompts are masked and list order is not changed; the production core currently accepts at most one URL per side, so adding a second is rejected; Clear pre-hop (`P`) and Clear post-hop (`O`) return it to the global value). Each action applies to the provider selected when activated, even if the selection changes before it completes. Enter on Subscription or Via opens its edit prompt, and the Name is renamed via Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts), Nodes... (`n`; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name — `/` filters by text, `c` cycles the country filter over all and the countries present, Esc closes; no addresses, ports or credentials are shown; disabled while the provider has no stored snapshot) and Diagnose... (`g`; the dial diagnostics of `netivri diag dial --node` for one node of the provider, through the same operation: a prompt picks the node from the provider's stored labels and an optional one asks for the samples count (default 5, 1..20), the run happens in the background with a busy state Esc cancels, and the result dialog shows per phase (dns, tcp, tls, first_byte) p50/p90/max in ms with the sample count plus the failure counts — the idle survival test is not run, as with `--idle off`; errors are shown by message and hint only, Esc closes the result).
+The list shows Name, Nodes and State. `a` adds (wizard: name, subscription URL — a masked secret — optional via proxy, a preview of the countries the subscription offers — the same fetch as `sub countries --url` with the same figures (nodes, countries with their node counts, nodes with no country), a busy state while it runs and Esc to cancel it; a failed preview does not block the add —, then the fetch with a cancel). The Accounts and Providers card shows pre/post list state without URLs; the picker replaces a list, appends or removes a candidate, inherits or clears with `none`, without reordering. Each side accepts up to 16 candidates, and entries are alternatives rather than serial hops. Changes are account/provider route pools; the global no-account post remains scalar-only. URL prompts are masked. Each action applies to the provider selected when activated, even if the selection changes before it completes. Enter on Subscription or Via opens its edit prompt, and the Name is renamed via Rename... action. Actions: Refresh now (`r`), Refresh all (`R`), Countries... (`c`; a multi-choice picker of the provider's countries with node counts, Space toggles, Enter applies the selection), Rename... (renaming updates the accounts that use the provider and moves the stored snapshot before saving the config; a snapshot failure changes nothing and a config failure leaves the old config and old snapshot), Remove... (`d`; the confirmation names the dependent accounts), Nodes... (`n`; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name — `/` filters by text, `c` cycles the country filter over all and the countries present, Esc closes; no addresses, ports or credentials are shown; disabled while the provider has no stored snapshot) and Diagnose... (`g`; the dial diagnostics of `netivri diag dial --node` for one node of the provider, through the same operation: a prompt picks the node from the provider's stored labels and an optional one asks for the samples count (default 5, 1..20), the run happens in the background with a busy state Esc cancels, and the result dialog shows per phase (dns, tcp, tls, first_byte) p50/p90/max in ms with the sample count plus the failure counts — the idle survival test is not run, as with `--idle off`; errors are shown by message and hint only, Esc closes the result).
 
 ### Accounts
 
@@ -662,7 +662,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   `--clients {RULES}` restricts the addresses the account may authenticate
   from: one comma-separated allowed-clients rule list (same grammar as
   `listen.allowed_clients`; see [config.md](config.md), "Allowed clients").
-  `--pre-socks5` and `--post-socks5` each take a URL or `none` and are repeatable; repeated URLs form a candidate list. `none` must be the only entry for that side. The current core accepts one URL per side; operation adding a second URL fails validation. Repeating
+  `--pre-socks5` and `--post-socks5` each take a URL or `none` and are repeatable; repeated URLs form an ordered candidate list of up to 16 URLs per side. `none` must be the only entry for that side. Candidates are alternatives, not serial hops. A legacy scalar Ktav URL still loads as a singleton list and singleton lists render as scalars. Repeating
   `add` with the same providers, country, and exit mode in the same order succeeds with
   `existing: true`; any difference, the order included, is `ACCOUNT_EXISTS`
   (exit 6).
@@ -715,11 +715,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` `own` is the configured account list as a redacted
-  array, or null when no own list is configured. Effective `value` fields are
-  arrays; `source` and `auth` identify their origin and whether any URL had
-  credentials. The
-  document:
-
+  array, or null when no own list is configured. For this account's alternate providers, `account show` / `status` can report `varies` with source `provider`; an account list overrides that provider candidate list. See [config.md](config.md#socks5-chain) for the full cascade and scalar-only no-account global post scope.
   ```json
   {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
    "pre_socks5": {"value": ["socks5://pre.example:1080"], "source": "global", "auth": true},
@@ -759,25 +755,19 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   order; a side not given is unchanged. At least one operation is required.
   URLs use socks5://, http:// (HTTP CONNECT) or https:// (HTTP CONNECT over TLS),
   with a host, required port 1..65535, and optional percent-encoded credentials.
-  Repeating a replacement flag sets the full ordered list; `none` must stand
-  alone to disable. `inherit` is setter-only and clears the account's own list,
-  so the provider's list or the global list applies again. The current core
-  accepts at most one URL per side. These are candidate lists, not serial chains; future support selects one live proxy per side per connection without a promised selection algorithm. The repeatable incremental flags `--add-pre {URL}` and
-  `--add-post {URL}` append one URL; `--remove-pre {INDEX}` and
-  `--remove-post {INDEX}` remove by one-based index. Each index refers to the
-  original list before any operation in that command. Repeating an original index rejects the entire operation without saving any changes.
-  Repeated `none` or `inherit`, mixing either with URLs, or invalid indexes are errors. Do not combine replace, add and remove operations on the same side. Removing the last own entry clears
-  the list to inherit; use `none` to disable explicitly. `none` or `inherit`
-  cannot be repeated or combined with other entries/operations on that side.
-  Duplicate entries are invalid. A malformed URL is `CONFIG_INVALID` (exit 2);
-  the message names the flag and never contains the credential. Unknown login:
-  `ACCOUNT_NOT_FOUND` (exit 5). Output is the single-account form
-  `{"account": {...}}` for one login and `{"accounts": [...]}` for several
-  (both as in `list`). A pre applies only to accounts with a route (a
-  provider and/or an exit country); a post applies to every account, also to
-  one without a route, whose traffic then goes to the post proxy directly. A
-  running angel applies a change of an account's pre or post in place, within
-  a few seconds, and the open connections go on.
+  A replacement flag sets the complete ordered side; a side not given is
+  unchanged. At most 16 hops per side are supported. Candidates are alternatives,
+  not serial hops. The nearest configured account/provider/global list replaces
+  less-specific lists without merging. `none` clears inherited candidates;
+  setter-only `inherit` clears the account list. Repeatable `--add-pre` /
+  `--add-post` append, and `--remove-pre` / `--remove-post` remove one-based
+  positions in the original list. Duplicate removal indexes reject the
+  operation. Replacement/add/remove cannot be mixed on a side; removing the
+  last entry restores inheritance. Legacy scalar URLs remain valid. A post
+  list on an account without a VPN route is used directly. A running angel
+  applies account-route list changes in place when supported; direct-post-only
+  changes may restart if the core reports in-place reconfiguration unsupported.
+  See [design/hop-pools.md](design/hop-pools.md) for exact health, binding, state-file and log semantics, including role-separated files `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health`.
 - `set-exit` takes one login or comma-separated logins, or `--all`, followed by
   `route` or `direct`. Direct requires empty provider and country; no
   `--none` form exists. An explicitly configured pre-proxy is rejected, an
@@ -964,19 +954,23 @@ when the validation fails. The valid keys and their values are listed by
 (comma-separated client rules), `auth.login`, `auth.password`
 (`auth.allow_init_remote` true/false), `fetch.proxy` (a `socks5://`,
 `socks5h://`, `http://` or `https://` URL), `fetch.update_interval`
-(`off` or `5m`–`168h`) and `chain.pre_socks5` / `chain.post_socks5`
-(one scalar URL, `none`, or empty to clear; edit `config.ktav` directly for
-multiple entries). The Ktav fields are ordered arrays, and legacy scalar URLs load as singleton
-lists. The production core currently rejects multiple
-URLs per side. A plain `auth.password` is stored as an argon2id hash and is
-never echoed; the literal value `init` stores the placeholder that waits for
-the first client.
+(`off` or `5m`–`168h`) and `chain.pre_socks5` / `chain.post_socks5` (one
+scalar URL, `none`, or empty to clear; edit `config.ktav` for candidate arrays).
+The fields accept up to 16 URLs per side; legacy scalar URLs remain accepted and
+singleton lists render as scalars. `none` stands alone to clear inherited
+candidates. Entries are alternatives, not serial hops. Multi-entry global post
+is supported for account routes that inherit it, but the no-account `MATCH`
+path still uses scalar `GlobalPost`; a multi-entry global post needed by a
+connection without an account is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. A plain `auth.password` is stored as an argon2id hash and is never echoed; the literal value `init` stores the placeholder that waits for the first client.
 
 The answer reports `restart_needed`: `true` when the running angel has to
-restart its listener for the change to apply (`listen.bind`,
-`listen.port`, `listen.allowed_clients`, `auth.login`, `auth.password`,
-`chain.post_socks5`), `false` when it applies without one
-(`auth.allow_init_remote`, `fetch.*`, `chain.pre_socks5`); see
+restart its listener for the change to apply (`listen.bind`, `listen.port`,
+`listen.allowed_clients`, `auth.login`, `auth.password`), `false` when it
+applies without a listener restart (`auth.allow_init_remote`, `fetch.*`,
+route changes including account-route pre/post pools and global/provider list
+changes used by account routes). A global post change affecting only the
+no-account `MATCH` path restarts the listener; direct-post-only changes may
+also restart if the core reports in-place reconfiguration unsupported. See
 [design/live-reload.md](design/live-reload.md). The command itself never
 restarts anything: a running angel notices the written file within a few
 seconds and applies it.
@@ -1456,7 +1450,16 @@ netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit} ...] [--post {UR
 netivri sub set-socks5 {SUBSCRIPTION} [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]
 ```
 
-Sets the provider's ordered pre/post lists. Repeat replacement flags to supply entries; these lists are candidates, not serial hops. The current production core accepts at most one URL per side; future multi-entry support will use one live proxy per side per connection, without a selection-algorithm guarantee. `none` or `inherit` must stand alone. Add and remove edits use one-based positions in the original list; repeating a position rejects the whole operation without saving changes. Do not combine replacement, add and remove on one side. The Providers shell's existing pre/post picker supports replacement, adding a URL, removing an entry, inherit and none without reordering. `sub set-socks5` returns the updated provider name and redacted `pre_socks5` and `post_socks5` arrays, always present, including `[]` when unset and `["none"]` when disabled. A running angel applies changes within a few seconds.
+Sets up to 16 ordered pre/post candidates per side; repeat replacement flags
+for the full list. Entries are alternatives, not serial hops. `none` clears
+inherited candidates, and setter-only `inherit` clears the provider's own list.
+The account/provider/global cascade uses full replacement, never merging.
+Add/remove operations use one-based positions in the original list; duplicate
+indexes reject the operation. Replacement/add/remove cannot be mixed on a side,
+and removing the final scoped entry restores inheritance. Legacy scalar URLs
+remain supported. The Providers shell picker supports replacement, add,
+remove, inherit and none without reordering. Results contain redacted arrays;
+a running angel applies changes within a few seconds.
 
 ### `sub add`
 
@@ -1464,10 +1467,10 @@ Sets the provider's ordered pre/post lists. Repeat replacement flags to supply e
 netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]
 ```
 
-`--pre-socks5` and `--post-socks5` set the provider's ordered lists; repeat
-flags to supply entries, and use `none` alone to explicitly disable. The
-production core currently accepts at most one URL per side; future multi-entry support uses a non-serial candidate pool with one live proxy per side per connection and no promised selection algorithm. These flags are ignored when
-the subscription URL is already configured.
+`--pre-socks5` and `--post-socks5` set the provider's ordered candidate lists;
+repeat flags for up to 16 URLs per side, and use `none` alone to clear
+inherited candidates. These flags are ignored when the subscription URL is
+already configured.
 
 Fetches the subscription through `--via` if given, otherwise through
 `fetch.proxy` from `config.ktav`; strict: with no proxy the fetch is

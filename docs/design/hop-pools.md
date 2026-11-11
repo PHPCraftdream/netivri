@@ -1,109 +1,81 @@
 # Pools of pre and post hops
 
-Today an account route has at most one `pre_socks5` hop (before the node) and
-one `post_socks5` hop (after it). This note fixes how both become **lists**
-(pools): the hops of a pool are sorted by health, dead ones wait in a separate
-list until a probe sees them alive, and a site keeps leaving through the same
-post hop. The model follows `resocks5` (sand rating, quarantine with doubling
-backoff, one leased probe per due hop); the places where netivri differs are
-named below.
+An account route can configure up to 16 `pre_socks5` candidates (before the VPN
+node) and 16 `post_socks5` candidates (after it). They are alternatives, not
+serial hops. The core uses weighted selection, quarantine and recovery probes;
+a post candidate can be bound per login and site. This note describes the
+current implementation: sibling core clients integrate with the native route
+adapters, while Mihomo retains responsibility for the VPN node protocols.
 
-## Decisions
+## Configuration and cascade
 
-- **Configuration:** each of the six fields (global `chain`, provider,
-  account; pre and post) is an ordered list of hop URLs. A scalar reads as a
-  one-element list; one element is written back as a scalar. The nearest level
-  that sets a list replaces the lower ones entirely (no merging); `none`
-  stays an explicit empty chain.
-- **Order of choice:** as in `resocks5`. Every hop has *sand*: +1 per soft
-  failure (cap 8), half-life 30 s, a success halves it. The weight of a hop is
-  `exp(-k * sand)` (floor 0.05) and the choice is weighted random: a failing
-  hop is drawn less often, never excluded by the weights alone.
-- **Quarantine:** 3 hard failures in a row take a hop out of the draw for 30 s,
-  doubling on every re-trip up to 600 s. After the backoff the hop is on
-  probation: one probe at a time (a lease of 25 s) tests it; a success returns
-  it to the common list, a failure re-trips it with the doubled period. While
-  at least one hop is healthy, quarantined and probing hops are not drawn;
-  when none is healthy the quarantine is ignored, so a pool never runs dry.
-- **Dead hops are persisted** in a separate state file and are probed at once
-  after a restart (task Pool 5).
+Each global, provider and account side is a full candidate list. The global
+list is inherited by default, a provider list replaces global for that
+provider's nodes, and an account list replaces its provider/global candidates.
+Lists are not merged. `none` explicitly clears inherited candidates;
+empty/absent scoped values inherit. Legacy scalar Ktav URLs continue to load
+as singleton lists and render back as scalars. More than 16 URLs per side and
+duplicate entries are rejected.
 
-## How a pool plugs into Mihomo (the spike)
+Account routes (including direct accounts with post candidates) use the pool
+fields carried into core options: `RoutePrePool`, `RoutePostPool`, `NodePrePool`
+and `NodePostPool`, with old scalar fields kept for singleton legacy routes.
+`GlobalPost` remains scalar for connections without an account; a multi-entry global post list needed by those connections is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. A global pre field is not defined. This no-account limitation does not disable a global candidate list inherited by account routes.
 
-Mihomo resolves `dialer-proxy` **by name at every dial**
-(`third_party/mihomo/component/proxydialer/byname.go`: `tunnel.Proxies()[name]`,
-any `C.Proxy`). netivri already registers its own adapters under group names
-(`installStickyGroups` replaces the select group of a route with a
-`stickyGroup` through `tunnel.UpdateProxies`). So a pool is one more custom
-adapter, and **no Mihomo patch is needed**:
+## Weighted selection and health
 
-- **Pre pool.** One adapter `pre-pool` per route (or per distinct pool). The
-  node entries get `dialer-proxy: <pre-pool name>`. Mihomo calls the adapter's
-  `DialContext` with an inner metadata whose address is the node's
-  `host:port`; the adapter draws a live pre hop, dials the node address
-  through it (the pre hop is a plain `socks5`/`http` outbound entry) and
-  reports the outcome to that hop's health. The site is not visible to a pre
-  hop, so nothing is bound.
-- **Post pool.** A post hop must carry its traffic through the node that the
-  sticky group chose, so an entry exists per pair: for node *i* and post hop
-  *k* a small outbound entry with `dialer-proxy: node-i` (N x K cheap config
-  objects; 37 nodes and 3 posts are 111 entries, built once per generation).
-  The member of the sticky group for node *i* is a `post-pool-i` adapter: its
-  `DialContext` receives the connection's metadata (login, host), picks the
-  hop *k* (bound for this login and site if healthy, otherwise drawn) and dials
-  through entry `(i, k)`. Health is kept per hop *k*, not per entry, so the
-  verdict on a post hop is shared by all nodes.
-- **Hot reload** keeps working: adapters are swapped in `tunnel.Proxies()`
-  with the groups; health is carried by hop identity (a hash of the URL
-  without userinfo), not by entry name.
+Soft failures add one to a sand score capped at 8; the score halves every 30
+seconds, and success halves it. The weight is `exp(-ln(20) * sand / 8)`, with
+a floor of 0.05. Candidates are selected as a weighted random permutation;
+quarantined candidates are excluded while any candidate is healthy.
 
-The alternative, building every `pre x node x post` combination statically and
-letting `stickyGroup` choose among them, was rejected: hundreds of members,
-health per combination instead of per hop, and no place for the per-hop
-quarantine.
+Three consecutive hard failures quarantine a candidate for 30 seconds. Each
+re-trip doubles its backoff to the 600-second cap. A due candidate gets one
+25-second probe lease. Successful probing revives it; hard probe failure
+re-trips with doubled backoff. If every candidate is quarantined, pool order
+includes quarantined candidates and they are tried; in particular a post pool
+never falls back to a node-only/direct path. Pre dialing tries candidates in
+weighted order until one succeeds or all have been attempted; post dialing
+selects one and returns its result without retrying another or bypassing the
+post hop.
 
-## Blaming the right hop
+Soft/hard blame is stage-aware. Transport failure connecting to the current
+hop is hard against that hop; an explicit downstream-unreachable response is
+hard against the next hop; ambiguous handshake failures are soft against both
+neighbors; authentication/policy refusal is soft against the refusing hop;
+unattributable errors and local capacity/cancellation do not poison hop health.
+Post-hop probes attribute a failure only with recent evidence that the carrying
+VPN node answered.
 
-`hopSet.attribute` guesses the failing stage from the error text and can answer
-`unknown hop`. `resocks5` instead knows the stage (`Connect`, `Hop(i)`,
-`Target`). The pool adapters know it too, because they dial one hop at a time,
-so the rule is:
+## Site binding
 
-| Failure | Counts against |
-| --- | --- |
-| the hop itself cannot be reached (connect, timeout, reset before its handshake) | that hop, **hard** |
-| the hop says `host unreachable` for the next address (SOCKS5 REP 3-6, HTTP 502/503/504) | the **next** hop, hard |
-| ambiguous handshake failure between two hops | both neighbours, **soft** |
-| auth or policy refusal (407, 403, SOCKS5 REP 2) | inconclusive for the next hop; soft for the refusing hop |
-| the failure cannot be put on a stage (`unknown hop`) | **nobody** |
+Post pools bind on `(login, site)`. `site` is a lowercase registrable domain
+using Public Suffix List rules, or an IP literal; a healthy binding stays with
+its hop, even if the node below it changes. If its hop becomes unhealthy or
+quarantined, the binding is removed and a replacement is selected before
+trying the dial. The default sliding binding lifetime is 24 hours.
 
-A post hop is probed only through a live node, and its failure counts only when
-the carrying node answered a probe a moment ago; otherwise the verdict would
-land on the wrong hop. Capacity refusals of our own limits never count.
+## Persistence and logs
 
-## Differences from resocks5
+Pre and post quarantine state are stored separately in
+`{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health`. Records include
+only lowercase 64-character hexadecimal SHA-256 hop keys, trip counts and
+probe timestamps. The hop key is a canonical `scheme://host:port` digest
+without userinfo; unsupported roles, malformed keys and unknown pool entries
+are dropped. This state is quarantine-only: sand/weights and active leases are
+not persisted, and restored quarantines become probe-eligible immediately.
 
-- **The site binding is to the post hop**, keyed by the second-level domain
-  (`siteKey`, public-suffix aware), not to the whole chain keyed by
-  `host:port`. The site sees only the post hop's IP, so while the bound post is
-  healthy the site keeps it even when the node or the pre hop below it changes.
-  A bound post that is quarantined is replaced without spending an attempt, and
-  the binding does not flap back before its TTL (task Pool 4).
-- **No bypass fallback.** `resocks5` falls back to the ordinary exits around
-  the gates. An account with a post pool never leaves without a post hop (the
-  site would see the node's IP): when every post is quarantined the quarantined
-  ones are tried, the draw is never empty, and a failure is reported instead of
-  a bypass.
-- Tiers, node health, the hedged dials and the per-account affinity of
-  `stickyGroup` stay as they are; the pools add one level under them.
+Logs never contain proxy URLs or credentials. A hop quarantine/re-trip is
+WARN with role, the first eight characters of its opaque key, trip count and
+backoff. Revival is INFO with the downtime. A pool with all candidates down
+emits a rate-limited WARN: `all N hops are down, trying them anyway`.
 
-## Task order
+## Implementation boundaries
 
-1. Configuration: lists and the cascade, limited to one hop until the pool
-   lands (a list of several hops is rejected, never ignored silently).
-2. Per-hop health model (sand, quarantine, leased probes, blame rule).
-3. Route building and the dial path with the two adapters; the limit of one hop
-   is lifted.
-4. Site to post binding.
-5. The persisted dead-hop file.
-6. Logs, `status`, TUI, `doctor`, documentation.
+A pool is installed for account-route node hops by the native core lifecycle.
+Pre dialing carries the selected proxy to the VPN node; post dialing carries
+traffic through the already-selected VPN node (or directly for an explicit
+direct account). Each post candidate is a proxy entry behind that selected
+node; pool adapters own selection, health attribution, site binding and recovery.
+Single-candidate legacy chains retain the scalar adapter path. This is not a
+helper process or a statically expanded pre × node × post route matrix.

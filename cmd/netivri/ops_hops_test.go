@@ -19,11 +19,6 @@ func TestValidateCLIHopListPreservesConfigErrors(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name:        "unsupported pool",
-			hops:        config.HopList{"socks5://one.example:1080", "http://two.example:8080", "https://three.example:8443"},
-			wantMessage: "pre_socks5: pool of several hops is not supported yet; one per side for now",
-		},
-		{
 			name:        "duplicate",
 			hops:        config.HopList{"socks5://same.example:1080", "socks5://same.example:1080"},
 			wantMessage: "pre_socks5 must not contain duplicate hop URLs",

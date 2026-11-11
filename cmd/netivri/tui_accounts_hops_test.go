@@ -214,22 +214,25 @@ func TestAccountsHopPickerOperationSentinelsAndDirectPreSafety(t *testing.T) {
 	}
 }
 
-func TestAccountsHopPickerInvalidAndProductionLimitKeepSecretDialog(t *testing.T) {
+func TestAccountsHopPickerInvalidAndDuplicateKeepSecretDialog(t *testing.T) {
 	s, h := hopScreen(t, true)
 	a, _ := s.selectedAccount()
 	_ = s.openEdit(a, "pre")
 	_, _ = s.Update(accountsDialogResult{Values: map[string]string{"value": "add"}})
-	secret := "http://u:second-secret@second.example:3128"
+	secret := cloneHopURL
 	s.dialog.prompt.Value = secret
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{"value": secret}})
 	if cmd == nil {
-		t.Fatal("add at production cap did not attempt update")
+		t.Fatal("duplicate add did not attempt update")
 	}
 	runAccountCmd(s, cmd)
 	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Error == nil {
-		t.Fatal("production multi-hop limit did not retain the secret prompt with error")
+		t.Fatal("duplicate add did not retain the secret prompt with error")
 	}
-	if strings.Contains(s.View(100, 20), "second-secret") || strings.Contains(s.message, "second-secret") || strings.Contains(s.dialog.prompt.Error.Error(), "second-secret") {
+	if !strings.Contains(s.dialog.prompt.Error.Error(), "duplicate hop URLs") {
+		t.Fatalf("duplicate-hop error = %q", s.dialog.prompt.Error)
+	}
+	if strings.Contains(s.View(100, 20), "fake-hop") || strings.Contains(s.message, "fake-hop") || strings.Contains(s.dialog.prompt.Error.Error(), "fake-hop") {
 		t.Fatal("failed add leaked entered URL")
 	}
 	cfg, err := config.Load(config.ConfigPath(h))

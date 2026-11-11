@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -160,8 +161,8 @@ func TestBuildAccountRoutePoolProviderHopsMultiListReplacement(t *testing.T) {
 				t.Fatal(err)
 			}
 			changedKey := changed.accountRoutes["inherit"]
-			if changedKey == inherit {
-				t.Fatal("reordered provider list did not change route identity")
+			if changedKey != inherit {
+				t.Fatal("reordering provider pool changed logical route identity")
 			}
 			if tc.name == "provider pre order" {
 				if got := changed.nodePre[changedKey][1]; !reflect.DeepEqual(got, tc.want) {
@@ -175,7 +176,10 @@ func TestBuildAccountRoutePoolProviderHopsMultiListReplacement(t *testing.T) {
 }
 
 func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testing.T) {
-	invalid := config.HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
+	invalid := make(config.HopList, config.MaxHopsPerSide+1)
+	for i := range invalid {
+		invalid[i] = fmt.Sprintf("socks5://hop-%d.example:1080", i)
+	}
 	cases := []struct {
 		name                  string
 		field                 string
@@ -192,14 +196,68 @@ func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testin
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
+			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "at most 16 hops per side") {
 				t.Fatalf("invalid %s was not rejected with field %s and the unsupported-pool reason: %v", tc.name, tc.field, err)
 			}
 		})
 	}
 }
 
+func TestProviderSingletonRemovalKeepsMultiPoolRouteIdentity(t *testing.T) {
+	globalPre := config.HopList{"socks5://global-pre.example:1080"}
+	accountPost := config.HopList{"socks5://account-post-one.example:1080", "https://account-post-two.example:8443"}
+	account := config.Account{Login: "alice", Provider: "p", ExitCountry: "DE", PostSOCKS5: accountPost}
+	snapshots := map[string]*subscription.Snapshot{"p": snap(node("p1", "DE"))}
+	withProviderPre := hopsOf([]config.Subscription{{Name: "p", PreSOCKS5: config.HopList{hopProvPreA}}})
+	withoutProviderPre := hopsOf([]config.Subscription{{Name: "p"}})
+	before, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, globalPre, nil, withProviderPre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, globalPre, nil, withoutProviderPre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeKey, afterKey := before.accountRoutes["alice"], after.accountRoutes["alice"]
+	if beforeKey != afterKey {
+		t.Fatalf("removing provider singleton changed multi-pool route identity: %q != %q", beforeKey, afterKey)
+	}
+	if got := before.nodePre[beforeKey]; !reflect.DeepEqual(got, []config.HopList{{hopProvPreA}}) {
+		t.Fatalf("provider pre mapping = %v", got)
+	}
+	if got := after.nodePre[afterKey]; len(got) != 0 {
+		t.Fatalf("provider removal should use route-level fallback, got per-node pre mapping %v", got)
+	}
+	if !reflect.DeepEqual(before.routePost[beforeKey], accountPost) || !reflect.DeepEqual(after.routePost[afterKey], accountPost) {
+		t.Fatalf("account post pool mapping changed: before=%v after=%v", before.routePost[beforeKey], after.routePost[afterKey])
+	}
+	if !reflect.DeepEqual(after.routePre[afterKey], globalPre) {
+		t.Fatalf("cleared provider pre did not fall back to route-level global value: %v", after.routePre[afterKey])
+	}
+}
+
 // Without provider hops nothing changes: no per-node lists, the same route key.
+func TestProviderPoolRouteIdentityStableForMutableList(t *testing.T) {
+	snapshots := map[string]*subscription.Snapshot{"p": snap(node("1", "DE"))}
+	account := config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"}
+	firstHops := hopsOf([]config.Subscription{{Name: "p", PostSOCKS5: config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}}})
+	secondHops := hopsOf([]config.Subscription{{Name: "p", PostSOCKS5: config.HopList{"socks5://second.example:1080", "socks5://third.example:1080"}}})
+	first, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, nil, nil, firstHops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, nil, nil, secondHops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.accountRoutes["alice"] != second.accountRoutes["alice"] {
+		t.Fatalf("pool edit changed logical key: %q != %q", first.accountRoutes["alice"], second.accountRoutes["alice"])
+	}
+	if !reflect.DeepEqual(first.nodePost[first.accountRoutes["alice"]][0], config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}) || !reflect.DeepEqual(second.nodePost[second.accountRoutes["alice"]][0], config.HopList{"socks5://second.example:1080", "socks5://third.example:1080"}) {
+		t.Fatal("provider post pool order/content was not mapped to its node")
+	}
+}
+
 func TestBuildAccountRoutePoolWithoutProviderHopsIsUnchanged(t *testing.T) {
 	accounts := []config.Account{{Login: "u", Provider: "a,b"}}
 	plain, err := buildAccountRoutePool(accounts, hopSnapshots(), config.HopList{hopGlobalPre}, nil)
