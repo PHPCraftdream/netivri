@@ -320,7 +320,8 @@ vulnerability privately as described in [`SECURITY.md`](SECURITY.md).
 
 ## License
 
-SPDX: `GPL-3.0-only`. See [`LICENSE`](LICENSE).
+SPDX: `GPL-3.0-only`. See [`LICENSE`](LICENSE). The directory [`pkg/hopkit`](pkg/hopkit) (a standard-library-only
+proxy-hop pool library) is `MIT OR Apache-2.0`.
 
 The license is inherited from Mihomo and its dependencies (`sing`,
 `sing-tun`), which are GPL-3.0 and are linked into the `netivri` binary, so

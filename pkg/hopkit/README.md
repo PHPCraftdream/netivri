@@ -25,3 +25,7 @@ func main() {
 
 The vendored SOCKS client does not check or surface REP 2–6. The classifier recognizes explicit error text, including synthetic fixtures; a native `proxyclient` replacement is deferred.
 
+## License
+
+Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+This directory imports only the Go standard library and contains no code from GPL sources.

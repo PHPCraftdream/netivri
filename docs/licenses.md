@@ -18,9 +18,19 @@ are allowed), but a GPL-3.0 program cannot be handed out as MIT or Apache-2.0.
 Apache-2.0 is compatible with GPL-3.0 (not with GPL-2.0-only).
 
 Splitting the repository (our own files under MIT, `third_party/` under GPL)
-is not done. Our code is written against Mihomo's API and is useless without
-it, so the split would only suggest that the binary is permissive when it is
-not.
+is not done for the program itself. Our code is written against Mihomo's API
+and is useless without it, so the split would only suggest that the binary is
+permissive when it is not.
+
+One directory is the exception: `pkg/hopkit/` (pools of proxy hops: health,
+rotation, probes, native SOCKS5 and HTTP CONNECT clients) is dual-licensed
+`MIT OR Apache-2.0` (`pkg/hopkit/LICENSE-MIT`, `pkg/hopkit/LICENSE-APACHE`).
+It is a library of its own: it imports only the Go standard library and itself
+(`pkg/hopkit/imports_test.go` fails on any other import), it was written for
+this project and contains no code taken from Mihomo, `sing*` or any other GPL
+source, so it can be copied out and published separately. The netivri binary
+that links it is still `GPL-3.0-only`, as above. A change to `pkg/hopkit` must
+keep both rules: no foreign imports, no code copied from GPL sources.
 
 The way to a permissive license is to stop linking GPL code: run Mihomo as a
 separate process (or replace the core) and talk to it over a protocol. That is
