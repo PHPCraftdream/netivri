@@ -21,6 +21,7 @@ require (
 	github.com/metacubex/sing-shadowsocks v0.2.13
 	github.com/metacubex/sing-vmess v0.2.5
 	github.com/metacubex/tls v0.1.8
+	github.com/miekg/dns v1.1.63
 	github.com/sirupsen/logrus v1.10.2
 	go.yaml.in/yaml/v3 v3.0.5
 	golang.org/x/crypto v0.58.0
@@ -122,7 +123,6 @@ require (
 	github.com/metacubex/wireguard-go v0.0.0-20250820062549-a6cecdd7f57f // indirect
 	github.com/metacubex/yamux v0.0.0-20250918083631-dd5f17c0be49 // indirect
 	github.com/metacubex/zerotier-go v0.0.0-20260813124750-13fa6f45da5f // indirect
-	github.com/miekg/dns v1.1.63 // indirect
 	github.com/mitchellh/go-ps v1.0.0 // indirect
 	github.com/mroth/weightedrand/v2 v2.1.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
