@@ -860,7 +860,7 @@ func accountsHopLabel(source, value string) string {
 		return "provider varies"
 	}
 	if value == "" || value == "none" {
-		if source == "" || source == "none" {
+		if source == "" {
 			return "none"
 		}
 		return source + " none"

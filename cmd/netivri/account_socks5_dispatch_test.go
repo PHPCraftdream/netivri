@@ -101,7 +101,7 @@ func TestAccountSOCKS5DispatchRepeatedFlagsAndConflictErrors(t *testing.T) {
 		{"replacement with none", []string{"set-socks5", "alice", "--pre", "none", "--pre", "socks5://other.example:1080"}, "--pre: inherit and none must be supplied alone"},
 		{"replacement and addition", []string{"set-socks5", "alice", "--pre", "inherit", "--add-pre", "socks5://other.example:1080"}, "--pre and --add-pre/--remove-pre cannot be combined"},
 		{"addition and removal", []string{"set-socks5", "alice", "--add-pre", "socks5://one.example:1080", "--remove-pre", "1"}, "--pre: adding and removing hops cannot be combined"},
-		{"missing remove index", []string{"set-socks5", "alice", "--remove-pre"}, "--remove-pre: expected one or more one-based indices"},
+		{"missing remove index", []string{"set-socks5", "alice", "--remove-pre"}, "account set-socks5: flag needs an argument: -remove-pre"},
 		{"duplicate remove index", []string{"set-socks5", "alice", "--remove-pre", "1", "--remove-pre", "1"}, "--remove-pre: duplicate index"},
 		{"invalid remove index", []string{"set-socks5", "alice", "--remove-pre", "x"}, "--remove-pre: indices must be positive whole numbers"},
 	} {

@@ -318,7 +318,7 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
 	hop := "socks5://u:pw@h:1"
-	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "main", Country: "DE", Exit: "route", ExitGiven: true, PostSOCKS5: config.HopList{hop}}); e != nil {
+	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "main", Country: "DE", Exit: "route", ExitGiven: true, PreSOCKS5: config.HopList{"socks5://u:pw@pre:1"}, PostSOCKS5: config.HopList{hop}}); e != nil {
 		t.Fatal(e)
 	}
 	enter := func(s *accountsScreen) tea.Cmd {

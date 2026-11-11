@@ -409,6 +409,19 @@ func TestAccountsClearHopDisabledWithoutHop(t *testing.T) {
 // TestAccountsHopLinesShowStateOnly checks the card reports hop state without
 // exposing addresses or credentials, and the password line's state.
 func TestAccountsHopLinesShowStateOnly(t *testing.T) {
+	for _, tc := range []struct {
+		source, value, want string
+	}{
+		{"", "none", "none"},
+		{"none", "none", "none none"},
+		{"global", "none", "global none"},
+		{"direct", "none", "direct none"},
+		{"account", "set", "account set"},
+	} {
+		if got := accountsHopLabel(tc.source, tc.value); got != tc.want {
+			t.Errorf("accountsHopLabel(%q, %q) = %q, want %q", tc.source, tc.value, got, tc.want)
+		}
+	}
 	s, h := hopScreen(t, true)
 	line, _ := hopCardLine(s, "pre")
 	if line.Value != "account set" || strings.Contains(line.Value, "fake-hop") || strings.Contains(line.Value, "hop.example") || strings.Contains(line.Value, "socks5://") {
@@ -430,8 +443,8 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 		t.Fatal("rendered card did not show safe hop state")
 	}
 	post, _ := hopCardLine(s, "post")
-	if !strings.Contains(post.Value, "none") || !strings.Contains(post.Value, "global") {
-		t.Fatalf("post-hop line = %q, want none", post.Value)
+	if post.Value != "none none" {
+		t.Fatalf("post-hop line = %q, want none none", post.Value)
 	}
 	c, e := config.Load(config.ConfigPath(h))
 	if e != nil {
@@ -458,16 +471,16 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 	}
 	s2, _ := hopScreen(t, false)
 	line2, _ := hopCardLine(s2, "pre")
-	if !strings.Contains(line2.Value, "none") || !strings.Contains(line2.Value, "global") {
-		t.Fatal("unset pre-hop line did not show None")
+	if line2.Value != "none none" {
+		t.Fatalf("unset pre-hop line = %q, want none none", line2.Value)
 	}
 	pw2, _ := hopCardLine(s2, "password")
 	if pw2.Value != "waiting for the first login" {
 		t.Fatalf("password line = %q, want the waiting state", pw2.Value)
 	}
 	v2 := ansi.Strip(s2.View(120, 30))
-	if !strings.Contains(v2, "none") || !strings.Contains(v2, "global") {
-		t.Fatal("rendered card does not show the hop none label")
+	if !strings.Contains(v2, "none none") {
+		t.Fatal("rendered card does not show the none none hop label")
 	}
 	v1 := s.View(120, 30)
 	if strings.Contains(ansi.Strip(v1), "fake-hop") || strings.Contains(ansi.Strip(v1), "hop.example") || strings.Contains(ansi.Strip(v1), "socks5://") {

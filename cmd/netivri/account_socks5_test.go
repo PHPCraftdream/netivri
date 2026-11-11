@@ -34,8 +34,8 @@ func TestAccountShowChainOwnIsPresentWhenAbsent(t *testing.T) {
 		t.Fatalf("list output includes absent own: %s", list)
 	}
 	var listed accountChainInfo
-	if err := json.Unmarshal(list, &listed); err != nil || listed.Value == nil || len(listed.Value) != 0 {
-		t.Fatal("empty account list value is not a non-nil empty array")
+	if err := json.Unmarshal(list, &listed); err != nil || listed.Value == nil || !slices.Equal(listed.Value, []string{"none"}) || listed.Source != "none" || listed.Auth {
+		t.Fatal("absent account list value/source/auth is not the non-nil disabled marker")
 	}
 }
 
@@ -179,7 +179,7 @@ func TestAccountChainOutputSourceAndAuth(t *testing.T) {
 	if !slices.Equal(info.PreSOCKS5.Value, []string{"none"}) || info.PreSOCKS5.Source != "none" || info.PreSOCKS5.Auth {
 		t.Fatal("pre chain output has unexpected value, source, or auth metadata")
 	}
-	if !slices.Equal(info.PostSOCKS5.Value, []string{"socks5://exit.example"}) || info.PostSOCKS5.Source != "global" || info.PostSOCKS5.Auth {
+	if !slices.Equal(info.PostSOCKS5.Value, []string{"socks5://exit.example:1080"}) || info.PostSOCKS5.Source != "global" || info.PostSOCKS5.Auth {
 		t.Fatal("post chain output has unexpected value, source, or auth metadata")
 	}
 }
