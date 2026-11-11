@@ -194,12 +194,12 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 			if clearErr != nil {
 				operationContextErr = errors.Join(operationContextErr, clearErr)
 			}
-			return nil, proxyError(stage, 0, operationContextErr)
+			return nil, proxyErrorWithTarget(stage, 0, operationContextErr, errorTargetSent(sourceErr))
 		}
 		if clearErr != nil {
 			var pe *Error
 			if errors.As(sourceErr, &pe) {
-				return nil, proxyError(pe.Stage, pe.Code, errors.Join(pe.Err, clearErr))
+				return nil, proxyErrorWithTarget(pe.Stage, pe.Code, errors.Join(pe.Err, clearErr), pe.TargetSent)
 			}
 			return nil, proxyError(stage, 0, errors.Join(sourceErr, clearErr))
 		}
@@ -214,10 +214,10 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 		if clearErr != nil {
 			contextErr = errors.Join(contextErr, clearErr)
 		}
-		return nil, proxyError(stage, 0, contextErr)
+		return nil, proxyErrorWithTarget(stage, 0, contextErr, true)
 	}
 	if clearErr != nil {
-		return nil, proxyError(StageConnect, 0, clearErr)
+		return nil, proxyErrorWithTarget(StageConnect, 0, clearErr, true)
 	}
 	return result, nil
 }

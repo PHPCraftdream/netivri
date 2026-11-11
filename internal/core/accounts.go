@@ -239,21 +239,7 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 					post["dialer-proxy"] = "DIRECT"
 					proxies = append(proxies, post)
 				} else {
-					postPool.entryNames = nil
-					postMembers := make([]string, 0, len(postPool.keys))
-					for k, uri := range postPool.uris {
-						entryName := postName + "-hop-" + postPool.configIDs[k]
-						postPool.entryNames = append(postPool.entryNames, entryName)
-						mapping, err := chainProxy(uri, entryName)
-						if err != nil {
-							return nil, nil, nil, err
-						}
-						mapping["dialer-proxy"] = "DIRECT"
-						proxies = append(proxies, mapping)
-						proxyNames[entryName] = struct{}{}
-						postMembers = append(postMembers, entryName)
-					}
-					poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": postMembers})
+					poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": []string{"DIRECT"}})
 				}
 			}
 			continue
@@ -292,21 +278,7 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 			postPool := newHopPoolSpec(postHopPool, o.nodePostPool(key, index), gen)
 			if postPool != nil && len(postPool.keys) > 1 {
 				postName := helperProxyName(gen, keyIndex[key], index, "post")
-				postMembers := make([]string, 0, len(postPool.keys))
-				postPool.entryNames = nil
-				for k, uri := range postPool.uris {
-					entryName := nodePoolEntryName(name, postPool.configIDs[k])
-					postPool.entryNames = append(postPool.entryNames, entryName)
-					mapping, err := chainProxy(uri, entryName)
-					if err != nil {
-						return nil, nil, nil, err
-					}
-					mapping["dialer-proxy"] = name
-					proxies = append(proxies, mapping)
-					proxyNames[entryName] = struct{}{}
-					postMembers = append(postMembers, entryName)
-				}
-				poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": postMembers})
+				poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": []string{"DIRECT"}})
 				member = postName
 			} else if postPool != nil {
 				postName := helperProxyName(gen, keyIndex[key], index, "post")

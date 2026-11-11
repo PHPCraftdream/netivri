@@ -52,7 +52,8 @@ func (p prober) Probe(ctx context.Context, hop dial.Hop) pool.ProbeOutcome {
 		return pool.ProbeInconclusive
 	}
 	var staged *dial.StageError
-	if errors.As(err, &staged) && staged != nil && staged.Stage == dial.Connect {
+	if errors.As(err, &staged) && staged != nil &&
+		(staged.Stage == dial.Connect || staged.Stage == dial.Handshake && !staged.NextUnreachable) {
 		return pool.ProbeHardFailure
 	}
 	return pool.ProbeInconclusive

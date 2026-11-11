@@ -3,6 +3,7 @@ package check
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -66,11 +67,14 @@ func TestProberOutcomesAndClosesSuccessfulConnection(t *testing.T) {
 		want pool.ProbeOutcome
 	}{
 		{name: "connect hard", err: &dial.StageError{Stage: dial.Connect, Err: errors.New("unreachable")}, want: pool.ProbeHardFailure},
-		{name: "ambiguous handshake inconclusive", err: &dial.StageError{Stage: dial.Handshake}, want: pool.ProbeInconclusive},
+		{name: "handshake hard", err: &dial.StageError{Stage: dial.Handshake}, want: pool.ProbeHardFailure},
+		{name: "next unreachable handshake inconclusive", err: &dial.StageError{Stage: dial.Handshake, NextUnreachable: true}, want: pool.ProbeInconclusive},
 		{name: "target inconclusive", err: &dial.StageError{Stage: dial.Target, NextUnreachable: true}, want: pool.ProbeInconclusive},
 		{name: "refusal inconclusive", err: &dial.StageError{Stage: dial.Refusal}, want: pool.ProbeInconclusive},
-		{name: "unknown inconclusive", err: errors.New("network failure"), want: pool.ProbeInconclusive},
-		{name: "canceled stage inconclusive", err: &dial.StageError{Stage: dial.Connect, Err: context.Canceled}, want: pool.ProbeInconclusive},
+		{name: "unknown stage inconclusive", err: &dial.StageError{Stage: dial.Unknown}, want: pool.ProbeInconclusive},
+		{name: "raw error inconclusive", err: errors.New("network failure"), want: pool.ProbeInconclusive},
+		{name: "canceled stage inconclusive", err: &dial.StageError{Stage: dial.Handshake, Err: fmt.Errorf("wrapped: %w", context.Canceled)}, want: pool.ProbeInconclusive},
+		{name: "deadline stage inconclusive", err: &dial.StageError{Stage: dial.Handshake, Err: fmt.Errorf("wrapped: %w", context.DeadlineExceeded)}, want: pool.ProbeInconclusive},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if got := prober.Probe(context.Background(), &probeHop{err: test.err}); got != test.want {
@@ -92,7 +96,7 @@ func TestProberNilConnectionIsInconclusive(t *testing.T) {
 
 func TestProberClosesConnectionReturnedWithError(t *testing.T) {
 	conn := &probeConn{}
-	hop := &probeHop{conn: conn, err: &dial.StageError{Stage: dial.Handshake}}
+	hop := &probeHop{conn: conn, err: &dial.StageError{Stage: dial.Handshake, NextUnreachable: true}}
 	if got := New("tcp", "target:443").Probe(context.Background(), hop); got != pool.ProbeInconclusive {
 		t.Fatalf("outcome = %v, want inconclusive", got)
 	}

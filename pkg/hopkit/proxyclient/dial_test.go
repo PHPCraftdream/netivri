@@ -382,6 +382,9 @@ func TestHandshakeCancellationAndDeadlineAbortHTTP(t *testing.T) {
 			if !errors.Is(pe, wantCause) {
 				t.Fatal("HTTP cancellation cause was not preserved")
 			}
+			if !pe.TargetSent {
+				t.Fatal("HTTP cancellation lost target-sent marker")
+			}
 			if pe.Timeout() != tc.wantTimeout || (tc.name == "deadline" && !errors.Is(err, context.DeadlineExceeded)) {
 				t.Fatal("HTTP cancellation timeout classification mismatch")
 			}
@@ -646,6 +649,9 @@ func TestHandshakePreservesCompletedProtocolFailureWhenCleanupCancels(t *testing
 
 	_, err := Handshake(ctx, tracked, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
 	pe := checkProxyError(t, err, StageRefused, 407)
+	if !pe.TargetSent {
+		t.Fatal("refusal lost target-sent marker during cleanup wrapping")
+	}
 	if ctx.Err() != context.Canceled {
 		t.Fatal("cleanup did not cancel the context")
 	}

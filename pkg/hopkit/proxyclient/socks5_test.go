@@ -9,6 +9,45 @@ import (
 	"time"
 )
 
+func TestSOCKS5GreetingAndConnectWriteMarkers(t *testing.T) {
+	writeErr := errors.New("write failed")
+	for _, tc := range []struct {
+		name       string
+		failAt     int
+		count      int
+		wantTarget bool
+	}{
+		{"greeting failure", 1, 0, false},
+		{"CONNECT write failure", 2, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := rawPipePair(t)
+			defer func() { _ = client.Close(); _ = server.Close() }()
+			conn := &failedWriteConn{Conn: client, failAt: tc.failAt, count: tc.count, err: writeErr}
+			peer := peerResult()
+			if tc.failAt == 2 {
+				go func() {
+					_, err := readExact(server, 3)
+					if err == nil {
+						_, err = server.Write([]byte{5, 0})
+					}
+					peerDone(peer, err)
+				}()
+			}
+			ctx, cancel := testContext(t)
+			defer cancel()
+			_, err := Handshake(ctx, conn, Proxy{Scheme: "socks5", Host: "proxy", Port: 1080}, testTarget)
+			pe := checkProxyError(t, err, StageHandshake, 0)
+			if pe.TargetSent != tc.wantTarget || !errors.Is(pe, writeErr) {
+				t.Fatal("SOCKS write failure marker or cause mismatch")
+			}
+			if tc.failAt == 2 {
+				waitErr(t, peer)
+			}
+		})
+	}
+}
+
 func TestSOCKS5SuccessWireAndTunnel(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -278,7 +317,10 @@ func TestSOCKS5ReplyCodesAndConsumption(t *testing.T) {
 			ctx, cancel := testContext(t)
 			defer cancel()
 			_, err := Handshake(ctx, client, Proxy{Scheme: "socks5", Host: "proxy", Port: 1080}, testTarget)
-			_ = checkProxyError(t, err, tc.stage, int(tc.rep))
+			pe := checkProxyError(t, err, tc.stage, int(tc.rep))
+			if !pe.TargetSent {
+				t.Fatal("SOCKS CONNECT response did not retain target-sent marker")
+			}
 			waitErr(t, peer)
 			if client.readBytes != 13 {
 				t.Fatal("SOCKS reply address or port was not fully consumed")
@@ -381,6 +423,9 @@ func TestSOCKS5RejectedMethodsAndAuthentication(t *testing.T) {
 				t.Fatal("rejected SOCKS method took too long")
 			}
 			pe := checkProxyError(t, handshakeErr, tc.stage, 0)
+			if pe.TargetSent {
+				t.Fatal("SOCKS greeting or authentication failure marked target request as sent")
+			}
 			if pe.Timeout() || errors.Is(handshakeErr, context.DeadlineExceeded) {
 				t.Fatal("rejected SOCKS method was reported as a timeout")
 			}
@@ -416,18 +461,19 @@ func TestSOCKS5MalformedAndTruncatedReplies(t *testing.T) {
 	cases := []struct {
 		name            string
 		greeting, reply []byte
+		wantTargetSent  bool
 		wantTruncation  error
 	}{
-		{"truncated greeting", nil, nil, io.EOF},
-		{"short greeting reply", []byte{5}, nil, io.ErrUnexpectedEOF},
-		{"truncated response header", []byte{5, 0}, []byte{5, 0}, io.ErrUnexpectedEOF},
-		{"bad response version", []byte{5, 0}, []byte{4, 0, 0, 1, 192, 0, 2, 1, 0, 80}, nil},
-		{"bad reserved", []byte{5, 0}, []byte{5, 0, 1, 1, 192, 0, 2, 1, 0, 80}, nil},
-		{"bad address type", []byte{5, 0}, []byte{5, 0, 0, 9, 0, 80}, nil},
-		{"truncated domain length", []byte{5, 0}, []byte{5, 0, 0, 3}, io.EOF},
-		{"empty domain", []byte{5, 0}, []byte{5, 0, 0, 3, 0, 0, 80}, nil},
-		{"truncated address", []byte{5, 0}, []byte{5, 0, 0, 1, 192, 0}, io.EOF},
-		{"truncated port", []byte{5, 0}, []byte{5, 0, 0, 1, 192, 0, 2, 1, 0}, io.ErrUnexpectedEOF},
+		{"truncated greeting", nil, nil, false, io.EOF},
+		{"short greeting reply", []byte{5}, nil, false, io.ErrUnexpectedEOF},
+		{"truncated response header", []byte{5, 0}, []byte{5, 0}, true, io.ErrUnexpectedEOF},
+		{"bad response version", []byte{5, 0}, []byte{4, 0, 0, 1, 192, 0, 2, 1, 0, 80}, true, nil},
+		{"bad reserved", []byte{5, 0}, []byte{5, 0, 1, 1, 192, 0, 2, 1, 0, 80}, true, nil},
+		{"bad address type", []byte{5, 0}, []byte{5, 0, 0, 9, 0, 80}, true, nil},
+		{"truncated domain length", []byte{5, 0}, []byte{5, 0, 0, 3}, true, io.EOF},
+		{"empty domain", []byte{5, 0}, []byte{5, 0, 0, 3, 0, 0, 80}, true, nil},
+		{"truncated address", []byte{5, 0}, []byte{5, 0, 0, 1, 192, 0}, true, io.EOF},
+		{"truncated port", []byte{5, 0}, []byte{5, 0, 0, 1, 192, 0, 2, 1, 0}, true, io.ErrUnexpectedEOF},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -475,6 +521,9 @@ func TestSOCKS5MalformedAndTruncatedReplies(t *testing.T) {
 				t.Fatal("malformed SOCKS reply did not fail promptly")
 			}
 			pe := checkProxyError(t, err, StageHandshake, 0)
+			if pe.TargetSent != tc.wantTargetSent {
+				t.Fatal("SOCKS target-sent marker did not match whether CONNECT was attempted")
+			}
 			if pe.Timeout() || errors.Is(err, context.DeadlineExceeded) {
 				t.Fatal("malformed SOCKS reply was reported as a timeout")
 			}

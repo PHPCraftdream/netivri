@@ -45,14 +45,14 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int) 
 		return proxyError(StageOther, 0, err)
 	}
 	if err := writeAll(conn, request); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return targetSentError(StageHandshake, 0, err)
 	}
 	var header [4]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return targetSentError(StageHandshake, 0, err)
 	}
 	if header[0] != 5 || header[2] != 0 {
-		return proxyError(StageHandshake, 0, errInvalidProxy)
+		return targetSentError(StageHandshake, 0, errInvalidProxy)
 	}
 	var addrLen int
 	switch header[3] {
@@ -63,21 +63,21 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int) 
 	case 3:
 		var n [1]byte
 		if _, err := io.ReadFull(conn, n[:]); err != nil {
-			return proxyError(StageHandshake, 0, err)
+			return targetSentError(StageHandshake, 0, err)
 		}
 		if n[0] == 0 {
-			return proxyError(StageHandshake, 0, errInvalidProxy)
+			return targetSentError(StageHandshake, 0, errInvalidProxy)
 		}
 		addrLen = int(n[0])
 	default:
-		return proxyError(StageHandshake, 0, errInvalidProxy)
+		return targetSentError(StageHandshake, 0, errInvalidProxy)
 	}
 	var tail [2]byte
 	if _, err := io.CopyN(io.Discard, conn, int64(addrLen)); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return targetSentError(StageHandshake, 0, err)
 	}
 	if _, err := io.ReadFull(conn, tail[:]); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return targetSentError(StageHandshake, 0, err)
 	}
 	if header[1] != 0 {
 		stage := StageOther
@@ -87,7 +87,7 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int) 
 		case 3, 4, 5, 6:
 			stage = StageTarget
 		}
-		return proxyError(stage, int(header[1]), errInvalidProxy)
+		return targetSentError(stage, int(header[1]), errInvalidProxy)
 	}
 	return nil
 }

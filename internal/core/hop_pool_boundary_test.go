@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 	C "github.com/metacubex/mihomo/constant"
 )
@@ -56,54 +57,69 @@ func TestMemberProbeKeysSeparateBaseAndPostProbePaths(t *testing.T) {
 	}
 }
 
-func TestSameFamilyPostCarrierRefusalIsNotAttributedToEitherHop(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{"http://post.invalid:8080"}, 0)
+func TestNativePostRefusalIsSoftForTheRefusingHop(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "http")
+	proxy.status.Store(407)
+	spec := newHopPoolSpec(postHopPool, []string{proxy.uri}, 0)
 	now := time.Unix(100, 0)
+	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
 	carrier := &nodeHealth{now: func() time.Time { return now }}
 	carrier.recordProbe(true, time.Millisecond)
-	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
-	adapter := newHopPoolAdapter("post", postHopPool, spec, map[string]member{
-		spec.keys[0]: &fakeMember{name: "post", err: errors.New("post.invalid:8080 connect error: http need auth")},
-	}, p, nil, carrier, func() time.Time { return now })
-	adapter.hops[0].nextAddress = "node.invalid:443"
-	adapter.hops[0].nextProtocol = "http"
+	adapter := newHopPoolAdapter("post", postHopPool, spec, p, nil, carrier, func() time.Time { return now })
+	for _, hop := range adapter.hops {
+		hop.directCarrier = true
+	}
 	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) {
-		t.Fatalf("ambiguous refusal was not safely returned: %v", err)
+	var staged *dial.StageError
+	if !errors.As(err, &staged) || staged == nil {
+		t.Fatal("native HTTP refusal did not produce a staged error")
 	}
-	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 || got.Sand != 0 {
-		t.Fatalf("same-family refusal changed post-hop health: %#v", got)
+	if staged.Stage != dial.Refusal || !staged.TargetSent {
+		t.Fatalf("native HTTP refusal stage = %v, target sent = %t", staged.Stage, staged.TargetSent)
 	}
-}
-
-func TestPostProbeUsesCarrierAttributionBeforeGenericClassification(t *testing.T) {
-	target := hopProbeTarget{
-		role: postHopPool, hopAddress: "post.invalid:8080", protocol: "socks5",
-		nodeAddress: "node.invalid:443", nodeProtocol: "http",
-	}
-	if got := classifyProbe(target, errors.New("post.invalid:8080 connect error: 502 bad gateway")); got != pool.ProbeHardFailure {
-		t.Fatalf("HTTP failure from carrier was not a hard post failure: %v", got)
-	}
-	target.protocol, target.nodeProtocol = "http", "http"
-	if got := classifyProbe(target, errors.New("post.invalid:8080 connect error: http need auth")); got != pool.ProbeInconclusive {
-		t.Fatalf("same-family refusal was not inconclusive: %v", got)
-	}
-	target.protocol, target.nodeProtocol = "socks5", "http"
-	if got := classifyProbe(target, errors.New("node.invalid:443 connect error: socks error: 5")); got != pool.ProbeInconclusive {
-		t.Fatalf("node-inner failure was attributed to post hop: %v", got)
+	got := poolState(p, spec.keys[0])
+	if got.HardFailures != 0 || got.Sand != 1 || got.State != pool.Healthy {
+		t.Fatalf("HTTP refusal did not record only a soft current-hop failure: hard=%d soft=%v state=%s", got.HardFailures, got.Sand, got.State)
 	}
 }
 
-func TestPostCarrierFailureDoesNotTreatDirectCarrierAsNode(t *testing.T) {
+func TestPostProbeUsesTypedAttributionAndRequiresEvidence(t *testing.T) {
+	target := hopProbeTarget{role: postHopPool, uri: "http://post.invalid:8080", hopAddress: "post.invalid:8080", protocol: "http", nodeAddress: "node.invalid:443", nodeProtocol: "http"}
+	cases := []struct {
+		name string
+		err  error
+		want pool.ProbeOutcome
+	}{
+		{"connect", &dial.StageError{Stage: dial.Connect}, pool.ProbeHardFailure},
+		{"handshake", &dial.StageError{Stage: dial.Handshake}, pool.ProbeHardFailure},
+		{"target", &dial.StageError{Stage: dial.Target, NextUnreachable: true, TargetSent: true}, pool.ProbeInconclusive},
+		{"refusal", &dial.StageError{Stage: dial.Refusal, TargetSent: true}, pool.ProbeInconclusive},
+		{"unknown", errors.New("unclassified failure"), pool.ProbeInconclusive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyProbe(target, tc.err); got != tc.want {
+				t.Fatalf("typed post probe outcome = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDirectPostUsesNativeTunnelWithoutNodeEvidence(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "http")
+	spec := newHopPoolSpec(postHopPool, []string{proxy.uri}, 0)
 	now := time.Unix(200, 0)
-	spec := newHopPoolSpec(postHopPool, []string{"http://post.invalid:8080"}, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
-	a := newHopPoolAdapter("direct-post", postHopPool, spec, map[string]member{spec.keys[0]: &fakeMember{name: "post"}}, p, nil, nil, func() time.Time { return now })
-	a.hops[0].directCarrier = true
-	if _, err := a.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443}); err != nil {
+	a := newHopPoolAdapter("direct-post", postHopPool, spec, p, nil, nil, func() time.Time { return now })
+	for _, hop := range a.hops {
+		hop.directCarrier = true
+	}
+	conn, err := a.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443})
+	if err != nil {
 		t.Fatalf("direct carrier incorrectly required node evidence: %v", err)
 	}
-	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 {
-		t.Fatalf("successful direct carrier changed hop health: %#v", got)
+	_ = conn.Close()
+	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 || got.Sand != 0 {
+		t.Fatalf("successful direct carrier changed hop health: hard=%d soft=%v", got.HardFailures, got.Sand)
 	}
 }

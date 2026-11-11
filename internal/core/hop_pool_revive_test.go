@@ -36,9 +36,10 @@ type reviveTestWarmClock struct {
 func (c reviveTestWarmClock) Now() time.Time                     { return c.now }
 func (c reviveTestWarmClock) NewTicker(time.Duration) warmTicker { return c.ticker }
 
-func TestHopLifecycleReviverRoundUsesPoolProberForRecoveryAndRetrip(t *testing.T) {
+func TestHopLifecycleReviverRoundUsesNativePoolProberForRecoveryAndRetrip(t *testing.T) {
 	const route = "revive-route"
-	uriA, uriB := "socks5://a.invalid:1080", "socks5://b.invalid:1080"
+	proxyA, proxyB := newNativeLoopbackProxy(t, "socks5"), newNativeLoopbackProxy(t, "socks5")
+	uriA, uriB := proxyA.uri, proxyB.uri
 	o := Options{
 		AccountRoute: map[string]string{"alice": route},
 		RouteNodes:   map[string][]map[string]any{route: {{"type": "socks5", "server": "node.invalid", "port": 443}}},
@@ -53,18 +54,9 @@ func TestHopLifecycleReviverRoundUsesPoolProberForRecoveryAndRetrip(t *testing.T
 		t.Fatal(err)
 	}
 	proxies := make(map[string]C.Proxy, len(mappings))
-	var recoveryProxy *reviveTestProxy
 	for _, mapping := range mappings {
 		name := mapping["name"].(string)
-		proxy := &reviveTestProxy{testWarmProxy: testWarmProxy{name: name, typ: C.Socks5}}
-		proxy.dial = func(context.Context, *C.Metadata) (C.Conn, error) { return &fakeConn{}, nil }
-		proxies[name] = proxy
-		if name == newHopPoolSpec(preHopPool, []string{uriA, uriB}, 0).entryNames[0] {
-			recoveryProxy = proxy
-		}
-	}
-	if recoveryProxy == nil {
-		t.Fatal("raw pre-hop mapping did not provide the recovery proxy")
+		proxies[name] = testWarmProxy{name: name, typ: C.Socks5}
 	}
 	health := newHealthTable()
 	health.registerMembers(healthMembersForPlans(plans))
@@ -73,15 +65,14 @@ func TestHopLifecycleReviverRoundUsesPoolProberForRecoveryAndRetrip(t *testing.T
 	if _, _, err := m.installGen(o, plans, proxies, health, 0); err != nil {
 		t.Fatal(err)
 	}
-	logical := hopPoolLogicalKey{role: preHopPool, route: route, node: 0}
-	use := m.uses[logical]
+	use := m.uses[hopPoolLogicalKey{role: preHopPool, route: route, node: 0}]
 	if use == nil {
-		t.Fatal("pre-hop pool use was not installed")
+		t.Fatal("pre-hop native pool was not installed")
 	}
 	p := use.pool
 	key := hopPoolKey(uriA)
 	p.Restore([]hoppool.Entry{{Key: key, Trips: 1}}, now)
-	reviver, err := m.newReviver(WarmOptions{})
+	reviver, err := m.newReviver(WarmOptions{ProbeURL: "http://probe.invalid/"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,33 +80,19 @@ func TestHopLifecycleReviverRoundUsesPoolProberForRecoveryAndRetrip(t *testing.T
 		t.Fatalf("successful recovery round: %v", err)
 	}
 	if got := poolState(p, key); got.State != hoppool.Healthy || got.Trips != 0 {
-		t.Fatalf("successful lifecycle probe did not revive the hop: %#v", got)
+		t.Fatal("successful native lifecycle probe did not revive the hop")
 	}
-	ordered := p.Order(now)
-	found := false
-	for _, orderedKey := range ordered {
-		if orderedKey == key {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("recovered hop %q missing from pool order: %v", key, ordered)
-	}
-
+	proxyA.mode.Store(nativeProxyBadGreeting)
 	p.Restore([]hoppool.Entry{{Key: key, Trips: 1}}, now)
-	recoveryProxy.dial = func(context.Context, *C.Metadata) (C.Conn, error) {
-		return nil, errors.New("a.invalid:1080 connect error: connection refused")
-	}
 	if err := reviver.Round(context.Background()); err != nil {
 		t.Fatalf("hard-failure recovery round: %v", err)
 	}
 	got := poolState(p, key)
 	if got.State != hoppool.Quarantined || got.Trips != 2 {
-		t.Fatalf("failed lifecycle probe did not double the trip: %#v", got)
+		t.Fatal("failed native lifecycle probe did not double the quarantine trip")
 	}
 	if !got.NextProbe.Equal(now.Add(60 * time.Second)) {
-		t.Fatalf("second-trip backoff deadline = %s, want %s", got.NextProbe, now.Add(60*time.Second))
+		t.Fatalf("second-trip backoff deadline mismatch: got %s", got.NextProbe)
 	}
 }
 
@@ -125,7 +102,7 @@ func TestWarmerCloseWaitsForLifecycleRevivalRound(t *testing.T) {
 	o := Options{
 		AccountRoute: map[string]string{"alice": route},
 		RouteNodes:   map[string][]map[string]any{route: {{"type": "socks5", "server": "shutdown-node.invalid", "port": 443}}},
-		NodePrePool:  map[string][][]string{route: {{uriA, uriB}}},
+		NodePostPool: map[string][][]string{route: {{uriA, uriB}}},
 	}
 	plans, err := buildRoutePlansGen(o, 0)
 	if err != nil {
@@ -144,32 +121,43 @@ func TestWarmerCloseWaitsForLifecycleRevivalRound(t *testing.T) {
 		proxy := &reviveTestProxy{testWarmProxy: testWarmProxy{name: name, typ: C.Socks5}}
 		proxy.dial = func(context.Context, *C.Metadata) (C.Conn, error) { return &fakeConn{}, nil }
 		proxies[name] = proxy
-		if name == newHopPoolSpec(preHopPool, []string{uriA, uriB}, 0).entryNames[0] {
+		if name == memberProxyName(0, 0, 0) {
 			blockingProxy = proxy
 		}
 	}
 	if blockingProxy == nil {
-		t.Fatal("raw pre-hop mapping did not provide the blocking proxy")
+		t.Fatal("node carrier mapping did not provide the blocking proxy")
 	}
 	health := newHealthTable()
+	now := time.Unix(2000, 0)
+	health.now = func() time.Time { return now }
 	health.registerMembers(healthMembersForPlans(plans))
-	var now = time.Unix(2000, 0)
 	m := newHopPoolLifecycleWithClock(nil, func() time.Time { return now })
 	if _, _, err := m.installGen(o, plans, proxies, health, 0); err != nil {
 		t.Fatal(err)
 	}
-	use := m.uses[hopPoolLogicalKey{role: preHopPool, route: route, node: 0}]
+	use := m.uses[hopPoolLogicalKey{role: postHopPool, route: route, node: 0}]
 	if use == nil {
-		t.Fatal("pre-hop pool use was not installed")
+		t.Fatal("post-hop pool use was not installed")
 	}
+	use.carrier.recordProbe(true, time.Millisecond)
 	use.pool.Restore([]hoppool.Entry{{Key: hopPoolKey(uriA), Trips: 1}}, now)
-	reviver, err := m.newReviver(WarmOptions{})
+	reviver, err := m.newReviver(WarmOptions{ProbeURL: "http://probe.invalid/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	blockingProxy.dial = func(ctx context.Context, _ *C.Metadata) (C.Conn, error) {
+	carrierTarget := make(chan error, 1)
+	blockingProxy.dial = func(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 		active.Add(1)
 		defer active.Add(-1)
+		switch {
+		case metadata == nil:
+			carrierTarget <- errors.New("native post probe omitted carrier metadata")
+		case metadata.Type != C.INNER || metadata.NetWork != C.TCP || metadata.Host != "shutdown-a.invalid" || metadata.DstPort != 1080:
+			carrierTarget <- errors.New("native post probe used the wrong proxy carrier target")
+		default:
+			carrierTarget <- nil
+		}
 		close(entered)
 		<-ctx.Done()
 		close(exited)
@@ -189,6 +177,10 @@ func TestWarmerCloseWaitsForLifecycleRevivalRound(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		w.Close()
 		t.Fatal("warmer did not start its lifecycle revival round")
+	}
+	if err := <-carrierTarget; err != nil {
+		w.Close()
+		t.Fatal(err)
 	}
 	w.Close()
 	select {
