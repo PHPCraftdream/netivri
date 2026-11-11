@@ -68,6 +68,48 @@ func providerChooseHopOperation(t *testing.T, s *providersScreen, value string) 
 	return operation
 }
 
+func submitProviderPrompt(t *testing.T, s *providersScreen, want string) {
+	t.Helper()
+	if s.prompt == nil || s.prompt.Value != want {
+		t.Fatalf("prompt value before Enter = %q, want %q", promptValue(s), want)
+	}
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("prompt Enter returned no result command")
+	}
+	message := cmd()
+	result, ok := message.(tui.PromptResultMsg)
+	if !ok {
+		t.Fatalf("prompt result = %T, want tui.PromptResultMsg", message)
+	}
+	if result.Value != want {
+		t.Fatalf("submitted prompt value = %q, want %q", result.Value, want)
+	}
+	_, next := s.Update(result)
+	drainProvider(s, next)
+}
+
+func promptValue(s *providersScreen) string {
+	if s.prompt == nil {
+		return "<no prompt>"
+	}
+	return s.prompt.Value
+}
+
+func clearProviderPrompt(t *testing.T, s *providersScreen) {
+	t.Helper()
+	if s.prompt == nil {
+		t.Fatal("cannot clear a closed prompt")
+	}
+	remaining := len([]rune(s.prompt.Value))
+	for i := 0; i < remaining; i++ {
+		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	if s.prompt == nil || s.prompt.Value != "" {
+		t.Fatalf("prompt did not clear: value=%q", promptValue(s))
+	}
+}
+
 func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid/path"})
 	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
@@ -124,7 +166,10 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	_ = providerChooseHopOperation(t, s, "replace")
 	_, cmd = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	drainProvider(s, cmd)
-	cfg, _ = loadConfig(h)
+	cfg, err = loadConfig(h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if s.dialog != nil || !slices.Equal(cfg.Subscriptions[0].PreSOCKS5, config.HopList{secretURL}) {
 		t.Fatal("empty replacement did not leave the saved hop unchanged")
 	}
@@ -133,7 +178,10 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	_, _ = s.activateCard()
 	cmd = providerChooseHopOperation(t, s, "none")
 	drainProvider(s, cmd)
-	cfg, _ = loadConfig(h)
+	cfg, err = loadConfig(h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Equal(cfg.Subscriptions[0].PostSOCKS5, config.HopList{"none"}) || providerCardValue(s, "post") != "none" {
 		t.Fatalf("post-hop list count=%d, card %q", len(cfg.Subscriptions[0].PostSOCKS5), providerCardValue(s, "post"))
 	}
@@ -355,23 +403,11 @@ func TestProviderHopPickerCancelAndSentinelInputAreNoOps(t *testing.T) {
 	_, _ = s.activateCard()
 	_ = providerChooseHopOperation(t, s, "add")
 	for i, value := range []string{"none", "inherit", ""} {
-		if value == "" {
-			for j := 0; j < len("inherit"); j++ {
-				_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
-			}
-		} else {
-			for j := 0; j < len(s.prompt.Value); j++ {
-				_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
-			}
-			providerType(s, value)
-		}
-		_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		if cmd == nil {
-			t.Fatalf("Add Enter case %d returned no PromptResultMsg command", i)
-		}
-		drainProvider(s, cmd)
-		if s.prompt == nil || s.prompt.Error == nil || s.prompt.Saving {
-			t.Fatalf("Add invalid-input case %d did not retain the failed prompt", i)
+		clearProviderPrompt(t, s)
+		providerType(s, value)
+		submitProviderPrompt(t, s, value)
+		if s.prompt == nil || s.prompt.Value != value || s.prompt.Error == nil || s.prompt.Saving {
+			t.Fatalf("Add invalid-input case %d did not retain the submitted prompt value", i)
 		}
 		cfg, err := loadConfig(h)
 		if err != nil || !slices.Equal(cfg.Subscriptions[0].PreSOCKS5, config.HopList{oldPre}) {
@@ -516,7 +552,10 @@ func TestProviderHopRejectsInvalidURLAndKeepsPromptOpen(t *testing.T) {
 	if s.prompt == nil || s.dialog == nil {
 		t.Fatal("an invalid hop must keep the prompt open")
 	}
-	cfg, _ := loadConfig(h)
+	cfg, err := loadConfig(h)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(cfg.Subscriptions[0].PostSOCKS5) != 0 {
 		t.Fatalf("invalid hop list was saved (count=%d)", len(cfg.Subscriptions[0].PostSOCKS5))
 	}

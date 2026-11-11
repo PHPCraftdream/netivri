@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -126,7 +127,7 @@ func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 	if removeValue != "remove:1" {
 		t.Fatalf("remove option = %q, want remove:1", removeValue)
 	}
-	_, cmd = s.Update(accountsDialogResult{Values: map[string]string{"value": removeValue}})
+	cmd = submitAccountHopOption(t, s, removeValue)
 	if cmd == nil {
 		t.Fatal("remove selection did not start mutation")
 	}
@@ -287,18 +288,15 @@ func TestAccountsCardHopListsShowSafeStateAndAlternativesCount(t *testing.T) {
 func TestAccountsInheritPreHopEndToEnd(t *testing.T) {
 	s, h := hopScreen(t, true)
 	line, i := hopCardLine(s, "clear-pre")
-	if line.ID == "" {
-		t.Fatal("card has no inherit pre-hop action")
-	}
-	if line.Disabled {
-		t.Fatal("inherit pre-hop is disabled although the override is set")
+	if line.ID == "" || line.Disabled {
+		t.Fatal("clear pre-hop should be enabled for the configured override")
 	}
 	for n := 0; n < i; n++ {
 		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("Enter on inherit pre-hop did not start the update")
+		t.Fatal("Enter on clear pre-hop did not start the update")
 	}
 	runAccountCmd(s, cmd)
 	if s.dialog != nil {
@@ -324,6 +322,57 @@ func TestAccountsInheritPreHopEndToEnd(t *testing.T) {
 
 // TestAccountsClearHopDisabledWithoutHop checks that with no hop set the clear
 // action is grey and Enter on it does nothing.
+func TestAccountsListRetainsOwnConfiguredStateWithoutChangingJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		own     config.HopList
+		global  config.HopList
+		wantSet bool
+	}{
+		{"account URL", config.HopList{"socks5://hop-user:hop-secret@relay.example:1080"}, nil, true},
+		{"account none", config.HopList{"none"}, nil, true},
+		{"inherited none", nil, config.HopList{"none"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := accountProviderHome(t)
+			if _, err := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "p1", Country: "DE", Exit: "route", ExitGiven: true}); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(config.ConfigPath(h))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Chain.PreSOCKS5 = tc.global
+			cfg.Accounts[0].PreSOCKS5 = tc.own
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("invalid account fixture: %v", err)
+			}
+			if err := config.Save(config.ConfigPath(h), cfg); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := AccountList(h)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("AccountList rows=%d err=%v", len(rows), err)
+			}
+			chain := rows[0].PreSOCKS5
+			if chain.OwnSet != tc.wantSet || chain.Own != nil {
+				t.Fatalf("list metadata OwnSet=%t Own=%v", chain.OwnSet, chain.Own)
+			}
+			encoded, err := json.Marshal(rows[0])
+			if err != nil || strings.Contains(string(encoded), `"own_set"`) {
+				t.Fatalf("internal metadata changed JSON contract: %s err=%v", encoded, err)
+			}
+			s := newAccountsScreen(h, tui.Env{}).(*accountsScreen)
+			s.rows = rows
+			s.syncRows("alice")
+			line, _ := hopCardLine(s, "clear-pre")
+			if line.Disabled == tc.wantSet {
+				t.Fatalf("clear action disabled=%t, want %t", line.Disabled, !tc.wantSet)
+			}
+		})
+	}
+}
+
 func TestAccountsClearHopDisabledWithoutHop(t *testing.T) {
 	s, h := hopScreen(t, false)
 	prev := s.workspace.Card.Selected
@@ -362,7 +411,7 @@ func TestAccountsClearHopDisabledWithoutHop(t *testing.T) {
 func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 	s, h := hopScreen(t, true)
 	line, _ := hopCardLine(s, "pre")
-	if line.Value == "" || strings.Contains(line.Value, "fake-hop") || strings.Contains(line.Value, "hop.example") || strings.Contains(line.Value, "socks5://") {
+	if line.Value != "account set" || strings.Contains(line.Value, "fake-hop") || strings.Contains(line.Value, "hop.example") || strings.Contains(line.Value, "socks5://") {
 		t.Fatal("pre-hop line disclosed hop details")
 	}
 	pw, _ := hopCardLine(s, "password")
@@ -377,11 +426,11 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 		}
 	}
 	v := ansi.Strip(s.View(120, 30))
-	if !strings.Contains(v, "set") || strings.Contains(v, "hop.example") || strings.Contains(v, "fake-hop") || strings.Contains(v, "socks5://") || strings.Contains(v, "********") {
+	if !strings.Contains(v, "account set") || strings.Contains(v, "hop.example") || strings.Contains(v, "fake-hop") || strings.Contains(v, "socks5://") || strings.Contains(v, "********") {
 		t.Fatal("rendered card did not show safe hop state")
 	}
 	post, _ := hopCardLine(s, "post")
-	if !strings.Contains(post.Value, "none") {
+	if !strings.Contains(post.Value, "none") || !strings.Contains(post.Value, "global") {
 		t.Fatalf("post-hop line = %q, want none", post.Value)
 	}
 	c, e := config.Load(config.ConfigPath(h))
@@ -409,7 +458,7 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 	}
 	s2, _ := hopScreen(t, false)
 	line2, _ := hopCardLine(s2, "pre")
-	if !strings.Contains(line2.Value, "none") {
+	if !strings.Contains(line2.Value, "none") || !strings.Contains(line2.Value, "global") {
 		t.Fatal("unset pre-hop line did not show None")
 	}
 	pw2, _ := hopCardLine(s2, "password")
@@ -417,7 +466,7 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 		t.Fatalf("password line = %q, want the waiting state", pw2.Value)
 	}
 	v2 := ansi.Strip(s2.View(120, 30))
-	if !strings.Contains(v2, "none") {
+	if !strings.Contains(v2, "none") || !strings.Contains(v2, "global") {
 		t.Fatal("rendered card does not show the hop none label")
 	}
 	v1 := s.View(120, 30)

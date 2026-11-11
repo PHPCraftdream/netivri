@@ -26,22 +26,34 @@ func accountsSyncBackground(label string, work func() tea.Msg) tea.Cmd {
 	return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
 }
 func runAccountCmd(s *accountsScreen, c tea.Cmd) {
-	if c == nil {
-		return
-	}
-	m := c()
-	if b, ok := m.(tui.BackgroundMsg); ok {
-		s.Update(b)
-		return
-	}
-	if batch, ok := m.(tea.BatchMsg); ok {
-		for _, x := range batch {
-			if x != nil {
-				if b, ok := x().(tui.BackgroundMsg); ok {
-					s.Update(b)
-				}
+	queue := []tea.Cmd{c}
+	for steps := 0; len(queue) > 0 && steps < 200; steps++ {
+		next := queue[0]
+		queue = queue[1:]
+		if next == nil {
+			continue
+		}
+		msg := next()
+		if msg == nil {
+			continue
+		}
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+			continue
+		}
+		_, followup := s.Update(msg)
+		if wrapped, ok := msg.(tui.BackgroundMsg); ok {
+			switch wrapped.Value.(type) {
+			case accountsPollResult, accountsRateTick:
+				continue
 			}
 		}
+		if followup != nil {
+			queue = append(queue, followup)
+		}
+	}
+	if len(queue) != 0 {
+		panic("account commands did not settle")
 	}
 }
 func TestAccountsPollKeepsLiveCellsCardAndSelection(t *testing.T) {

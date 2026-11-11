@@ -30,7 +30,12 @@ func TestAccountResolverListShowStatusMatrix(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			own, global := legacyHopList(tc.own), legacyHopList(tc.global)
-			cfg := &config.Config{Chain: config.Chain{PreSOCKS5: global}, Accounts: []config.Account{{Login: "alice", PreSOCKS5: own}}}
+			cfg := config.Default()
+			cfg.Chain.PreSOCKS5 = global
+			cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: own}}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("resolver fixture failed validation: %v", err)
+			}
 			listed := accountList(cfg)
 			if len(listed) != 1 {
 				t.Fatalf("list length = %d", len(listed))

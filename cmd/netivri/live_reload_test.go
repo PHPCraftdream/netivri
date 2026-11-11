@@ -10,7 +10,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1041,7 +1040,11 @@ func TestReloadReconfiguresAccountChainsInPlace(t *testing.T) {
 		t.Fatalf("Reconfigure calls = %d, want 1", len(got))
 	}
 	key := got[0].AccountRoute["alice"]
-	if !reflect.DeepEqual(got[0].RoutePre[key], config.HopList{cfg.Accounts[0].PreSOCKS5[0]}) || !reflect.DeepEqual(got[0].RoutePost[key], config.HopList{cfg.Accounts[0].PostSOCKS5[0]}) {
+	wantKey := "p~DE~ad36dd3fed1abc790d3e786d22294e511f86b7603bc6828cebb8825471504e3d"
+	if key != wantKey {
+		t.Errorf("Reconfigure account route key = %q, want legacy singleton key %q", key, wantKey)
+	}
+	if got[0].RoutePre[key] != cfg.Accounts[0].PreSOCKS5[0] || got[0].RoutePost[key] != cfg.Accounts[0].PostSOCKS5[0] {
 		t.Errorf("Reconfigure chain options pre=%v post=%v, want the account's URLs under route key %q", got[0].RoutePre, got[0].RoutePost, key)
 	}
 }

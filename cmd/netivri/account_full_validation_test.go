@@ -161,7 +161,7 @@ func TestAccountProductionHasNoSaveOutsideBoundary(t *testing.T) {
 	}
 }
 
-func TestAccountSettersUseFullSaveValidation(t *testing.T) {
+func TestAccountSettersRejectInvalidFullConfigBeforeSave(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		run  func(*config.Config, func() error) error
@@ -202,8 +202,8 @@ func TestAccountSettersUseFullSaveValidation(t *testing.T) {
 			save := func() error { called = true; return saveAccountConfig(home, stored) }
 			err = tc.run(stored, save)
 			var ce *cli.Error
-			if tc.name != "set-exit" && !called {
-				t.Fatal("setter did not call save callback")
+			if called {
+				t.Fatal("setter called save for a candidate rejected by full validation")
 			}
 			if !errors.As(err, &ce) || ce.Code != config.CodeConfigInvalid || !strings.Contains(ce.Message, "listen.port") {
 				t.Fatalf("setter err=%v called=%v", err, called)

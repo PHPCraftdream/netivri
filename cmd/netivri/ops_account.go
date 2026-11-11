@@ -376,8 +376,6 @@ func updateAccountTargets(home string, c *config.Config, field string, targets [
 	if e != nil {
 		return nil, e
 	}
-	candidate := *c
-	candidate.Accounts = append([]config.Account(nil), c.Accounts...)
 	updates := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
 		n := *a
@@ -393,9 +391,8 @@ func updateAccountTargets(home string, c *config.Config, field string, targets [
 		}
 		_, i := c.Account(a.Login)
 		updates[i] = n
-		candidate.Accounts[i] = n
 	}
-	if err := candidate.Validate(); err != nil {
+	if err := validateAccountCandidate(c, updates); err != nil {
 		return nil, err
 	}
 	if field != "clients" {
@@ -497,8 +494,6 @@ func mutateAccountSOCKS5Edits(c *config.Config, targets []*config.Account, preGi
 	if len(targets) == 0 {
 		return nil, accountNotFound()
 	}
-	candidate := *c
-	candidate.Accounts = append([]config.Account(nil), c.Accounts...)
 	updates := make(map[int]config.Account, len(targets))
 	for _, a := range targets {
 		n := *a
@@ -520,9 +515,8 @@ func mutateAccountSOCKS5Edits(c *config.Config, targets []*config.Account, preGi
 		}
 		_, i := c.Account(a.Login)
 		updates[i] = n
-		candidate.Accounts[i] = n
 	}
-	if err := candidate.Validate(); err != nil {
+	if err := validateAccountCandidate(c, updates); err != nil {
 		return nil, err
 	}
 	originals := make(map[int]config.Account, len(targets))

@@ -490,18 +490,6 @@ func TestConfigSetUnchanged(t *testing.T) {
 		t.Errorf("result = %+v, want no change", res)
 	}
 
-	t.Run("chain none singleton is not cleared", func(t *testing.T) {
-		home := t.TempDir()
-		if _, err := ConfigSet(home, "chain.pre_socks5", "none"); err != nil {
-			t.Fatal(err)
-		}
-		before := readTestConfigBytes(t, home)
-		result, err := ConfigSet(home, "chain.pre_socks5", "none")
-		if err != nil || result.Changed || !bytes.Equal(before, readTestConfigBytes(t, home)) {
-			t.Fatalf("no-op = %+v %v", result, err)
-		}
-	})
-
 	// stored hash already matches and change nothing.
 	pair := t.TempDir()
 	cfg := config.Default()

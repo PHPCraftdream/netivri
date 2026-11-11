@@ -27,8 +27,8 @@ func TestAccountSOCKS5DispatchAddFlagsAndPersistence(t *testing.T) {
 	pre := "socks5://pre-user:pre-secret@pre.example:1080"
 	post := "socks5://post-user:post-secret@post.example:1080"
 	out := runAccountOKNoSecret(t, home, "add", "alice", "--pre-socks5", pre, "--post-socks5", post)
-	if strings.Contains(string(out), "pre-secret") || strings.Contains(string(out), "post-secret") {
-		t.Fatal("add output disclosed credentials")
+	if strings.Contains(string(out), "pre-user") || strings.Contains(string(out), "pre-secret") || strings.Contains(string(out), "post-user") || strings.Contains(string(out), "post-secret") {
+		t.Fatal("account add output disclosed credentials")
 	}
 	cfg, err := config.LoadOrDefault(config.ConfigPath(home))
 	if err != nil {
@@ -57,10 +57,10 @@ func TestAccountSOCKS5DispatchRepeatedReplacementRejectsOverCapWithoutWrite(t *t
 	var out bytes.Buffer
 	err = runAccount([]string{"set-socks5", "alice", "--pre", secret, "--pre", "socks5://other.example:1080", "--home", home}, &out)
 	var cliErr *cli.Error
-	if !errors.As(err, &cliErr) || cliErr.Code != "CONFIG_INVALID" {
-		t.Fatal("repeated replacement did not return CONFIG_INVALID")
+	if !errors.As(err, &cliErr) || cliErr.Code != "CONFIG_INVALID" || cliErr.Exit != cli.ExitUsage || cliErr.Message != "--pre: pool of several hops is not supported yet; one per side for now" {
+		t.Fatal("repeated replacement did not return the sanitized over-cap CONFIG_INVALID diagnostic")
 	}
-	if err != nil && strings.Contains(err.Error()+out.String(), "secret") {
+	if err != nil && (strings.Contains(err.Error()+out.String(), "user") || strings.Contains(err.Error()+out.String(), "secret")) {
 		t.Fatal("repeated replacement error leaked credentials")
 	}
 	after, err := os.ReadFile(path)
@@ -94,15 +94,16 @@ func TestAccountSOCKS5DispatchRepeatedFlagsAndConflictErrors(t *testing.T) {
 	home := t.TempDir()
 	runAccountOK(t, home, "add", "alice")
 	for i, tc := range []struct {
-		name string
-		args []string
+		name        string
+		args        []string
+		wantMessage string
 	}{
-		{"replacement with none", []string{"set-socks5", "alice", "--pre", "none", "--pre", "socks5://other.example:1080"}},
-		{"replacement and addition", []string{"set-socks5", "alice", "--pre", "inherit", "--add-pre", "socks5://other.example:1080"}},
-		{"addition and removal", []string{"set-socks5", "alice", "--add-pre", "socks5://one.example:1080", "--remove-pre", "1"}},
-		{"missing remove index", []string{"set-socks5", "alice", "--remove-pre"}},
-		{"duplicate remove index", []string{"set-socks5", "alice", "--remove-pre", "1", "--remove-pre", "1"}},
-		{"invalid remove index", []string{"set-socks5", "alice", "--remove-pre", "x"}},
+		{"replacement with none", []string{"set-socks5", "alice", "--pre", "none", "--pre", "socks5://other.example:1080"}, "--pre: inherit and none must be supplied alone"},
+		{"replacement and addition", []string{"set-socks5", "alice", "--pre", "inherit", "--add-pre", "socks5://other.example:1080"}, "--pre and --add-pre/--remove-pre cannot be combined"},
+		{"addition and removal", []string{"set-socks5", "alice", "--add-pre", "socks5://one.example:1080", "--remove-pre", "1"}, "--pre: adding and removing hops cannot be combined"},
+		{"missing remove index", []string{"set-socks5", "alice", "--remove-pre"}, "--remove-pre: expected one or more one-based indices"},
+		{"duplicate remove index", []string{"set-socks5", "alice", "--remove-pre", "1", "--remove-pre", "1"}, "--remove-pre: duplicate index"},
+		{"invalid remove index", []string{"set-socks5", "alice", "--remove-pre", "x"}, "--remove-pre: indices must be positive whole numbers"},
 	} {
 		before, err := os.ReadFile(config.ConfigPath(home))
 		if err != nil {
@@ -110,8 +111,9 @@ func TestAccountSOCKS5DispatchRepeatedFlagsAndConflictErrors(t *testing.T) {
 		}
 		var out bytes.Buffer
 		err = runAccount(append(tc.args, "--home", home), &out)
-		if err == nil {
-			t.Fatalf("case %d (%s) accepted invalid flags", i, tc.name)
+		var cliErr *cli.Error
+		if !errors.As(err, &cliErr) || cliErr.Code != "USAGE" || cliErr.Exit != cli.ExitUsage || cliErr.Message != tc.wantMessage {
+			t.Errorf("case %d (%s) returned an unexpected CLI diagnostic", i, tc.name)
 		}
 		after, err := os.ReadFile(config.ConfigPath(home))
 		if err != nil {
@@ -244,7 +246,7 @@ func TestAccountSOCKS5TopLevelErrorsAreRedactedAndDoNotWrite(t *testing.T) {
 			if envelope.OK || envelope.Error.Code != tc.code || envelope.Error.Message != tc.message || stdout.Len() != 0 {
 				t.Fatalf("case %q rendered an unexpected error envelope", tc.name)
 			}
-			if strings.Contains(stdout.String()+stderr.String()+ce.Error(), secret) {
+			if strings.Contains(stdout.String()+stderr.String()+ce.Error(), "user") || strings.Contains(stdout.String()+stderr.String()+ce.Error(), secret) {
 				t.Fatalf("case %q disclosed URL credentials", tc.name)
 			}
 			after, err := os.ReadFile(path)
@@ -263,8 +265,10 @@ func TestAccountSOCKS5DispatchClonePersistenceAndOutputRedaction(t *testing.T) {
 	post := "socks5://post-user:post-secret@post.example:1080"
 	runAccountOKNoSecret(t, home, "add", "alice", "--pre-socks5", pre, "--post-socks5", post)
 	clone := runAccountOK(t, home, "clone", "alice", "bob")
-	if strings.Contains(string(clone), "pre-secret") || strings.Contains(string(clone), "post-secret") {
-		t.Fatal("clone output disclosed credentials")
+	for _, secret := range []string{"pre-user", "pre-secret", "post-user", "post-secret"} {
+		if strings.Contains(string(clone), secret) {
+			t.Fatal("clone output disclosed credentials")
+		}
 	}
 	cfg, err := config.LoadOrDefault(config.ConfigPath(home))
 	if err != nil {

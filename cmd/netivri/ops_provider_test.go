@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -78,13 +79,15 @@ func TestProviderHopUpdateCandidateRollback(t *testing.T) {
 	cfg.Subscriptions = []config.Subscription{{Name: "p", URL: "https://provider.invalid", PreSOCKS5: config.HopList{"socks5://first.example:1080"}}}
 	before := *cfg
 	before.Subscriptions = append([]config.Subscription(nil), cfg.Subscriptions...)
+	before.Subscriptions[0].PreSOCKS5 = cloneHopList(cfg.Subscriptions[0].PreSOCKS5)
+	before.Subscriptions[0].PostSOCKS5 = cloneHopList(cfg.Subscriptions[0].PostSOCKS5)
 	called := false
 	replacement := config.HopList{"none"}
 	err := providerUpdateWith(cfg, "p", ProviderUpdateOptions{Pre: &replacement, PreEdit: &HopEdit{Remove: []int{1}}}, func(*config.Config) error {
 		called = true
 		return nil
 	})
-	if err == nil || called || !reflect.DeepEqual(cfg, before) {
+	if err == nil || called || !reflect.DeepEqual(*cfg, before) {
 		t.Fatal("conflicting provider edit mutated or saved configuration")
 	}
 
@@ -96,7 +99,7 @@ func TestProviderHopUpdateCandidateRollback(t *testing.T) {
 		}
 		return errors.New("injected save failure")
 	})
-	if err == nil || !called || !reflect.DeepEqual(cfg, before) {
+	if err == nil || !called || !reflect.DeepEqual(*cfg, before) {
 		t.Fatal("failed provider save changed source config")
 	}
 }
@@ -166,17 +169,40 @@ func TestProviderAddExistingURLIgnoresHopFlagsAndRefreshesSnapshot(t *testing.T)
 
 func TestProviderAddSaveFailureRemovesNewSnapshot(t *testing.T) {
 	home := providerSeed(t)
-	_, err := providerAddWith(home, ProviderAddOptions{URL: "https://provider.invalid", Name: "provider"}, providerFetcher([]byte(testBody)), func() time.Time { return testNow }, func(_ string, _ *config.Config) error {
+	configPath := config.ConfigPath(home)
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveCalls := 0
+	_, err = providerAddWith(home, ProviderAddOptions{URL: "https://provider.invalid", Name: "provider"}, providerFetcher([]byte(testBody)), func() time.Time { return testNow }, func(_ string, _ *config.Config) error {
+		saveCalls++
 		return errors.New("injected save failure")
 	})
+	if saveCalls != 1 {
+		t.Fatalf("injected save called %d times, want 1", saveCalls)
+	}
 	if err == nil {
 		t.Fatal("provider add reported success after injected config save failure")
 	}
-	if _, err := subscription.NewStore(filepath.Join(home, "subscriptions")).Load("provider"); !os.IsNotExist(err) {
-		t.Fatal("provider snapshot was not rolled back after config save failure")
+	store := subscription.NewStore(filepath.Join(home, "subscriptions"))
+	if _, err := store.Load("provider"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("provider snapshot load error = %v, want not-exist after rollback", err)
 	}
-	if _, err := os.Stat(config.ConfigPath(home)); !os.IsNotExist(err) {
-		t.Fatal("provider config was written despite injected save failure")
+	for _, path := range []string{
+		filepath.Join(home, "subscriptions", "provider.ktav"),
+		filepath.Join(home, "subscriptions", "provider.json"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("provider snapshot %s remains after rollback: stat error = %v", path, err)
+		}
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("provider save failure changed the existing config bytes")
 	}
 }
 

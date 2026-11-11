@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"io"
+	"net/url"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
@@ -42,10 +43,44 @@ func (a *subApp) add(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateSubAddVia(*via); err != nil {
+		return err
+	}
 	r, err := ProviderAdd(a.home, ProviderAddOptions{URL: pos[0], Name: *name, Via: *via, Pre: preList, Post: postList}, a.fetch, a.now)
 	if err != nil {
 		return err
 	}
 	cli.Success(a.stdout, map[string]any{"name": r.Name, "added": r.Added, "existing": r.Existing, "nodes": r.Nodes, "skipped": r.Skipped, "countries": r.Countries})
 	return nil
+}
+
+// validateSubAddVia validates only --via's proxy URL. Keep the fetch parser's
+// accepted schemes and static diagnostics here so validation never constructs
+// an HTTP client or issues a request.
+func validateSubAddVia(via string) error {
+	if via == "" {
+		return nil
+	}
+	u, err := url.Parse(via)
+	if err != nil {
+		return invalidSubAddVia("proxy URL could not be parsed")
+	}
+	switch u.Scheme {
+	case "socks5", "socks5h", "http", "https":
+	default:
+		return invalidSubAddVia("proxy scheme must be socks5, socks5h, http or https")
+	}
+	if u.Hostname() == "" {
+		return invalidSubAddVia("proxy URL must have a host")
+	}
+	return nil
+}
+
+func invalidSubAddVia(message string) *cli.Error {
+	return &cli.Error{
+		Code:    "FETCH_URL_INVALID",
+		Message: message,
+		Hint:    "use an absolute http(s) URL and a socks5(h)/http(s) proxy URL",
+		Exit:    cli.ExitUsage,
+	}
 }

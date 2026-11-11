@@ -29,6 +29,8 @@ func TestChainValidation(t *testing.T) {
 		c.Chain.PreSOCKS5 = HopList{value}
 		if err := c.Validate(); err == nil {
 			t.Error("accepted invalid hop")
+		} else if !strings.Contains(err.Error(), "chain.pre_socks5") {
+			t.Errorf("error lacks chain.pre_socks5 field prefix: %v", err)
 		} else if _, leak, _ := strings.Cut(value, "://"); leak != "" && strings.Contains(err.Error(), leak) {
 			t.Error("error leaked hop credentials")
 		}
@@ -37,21 +39,22 @@ func TestChainValidation(t *testing.T) {
 
 func TestConfigValidateHopLimits(t *testing.T) {
 	cases := []struct {
-		name string
-		set  func(*Config, HopList)
+		name  string
+		field string
+		set   func(*Config, HopList)
 	}{
-		{"chain pre", func(c *Config, hops HopList) { c.Chain.PreSOCKS5 = hops }},
-		{"chain post", func(c *Config, hops HopList) { c.Chain.PostSOCKS5 = hops }},
-		{"subscription pre", func(c *Config, hops HopList) {
+		{"chain pre", "chain.pre_socks5", func(c *Config, hops HopList) { c.Chain.PreSOCKS5 = hops }},
+		{"chain post", "chain.post_socks5", func(c *Config, hops HopList) { c.Chain.PostSOCKS5 = hops }},
+		{"subscription pre", "subscriptions[0].pre_socks5", func(c *Config, hops HopList) {
 			c.Subscriptions = []Subscription{{Name: "provider", URL: "https://provider.example/sub", PreSOCKS5: hops}}
 		}},
-		{"subscription post", func(c *Config, hops HopList) {
+		{"subscription post", "subscriptions[0].post_socks5", func(c *Config, hops HopList) {
 			c.Subscriptions = []Subscription{{Name: "provider", URL: "https://provider.example/sub", PostSOCKS5: hops}}
 		}},
-		{"account pre", func(c *Config, hops HopList) {
+		{"account pre", "accounts[0].pre_socks5", func(c *Config, hops HopList) {
 			c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, PreSOCKS5: hops}}
 		}},
-		{"account post", func(c *Config, hops HopList) {
+		{"account post", "accounts[0].post_socks5", func(c *Config, hops HopList) {
 			c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, PostSOCKS5: hops}}
 		}},
 	}
@@ -59,8 +62,8 @@ func TestConfigValidateHopLimits(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Default()
 			tc.set(cfg, HopList{"socks5://one.example:1080", "socks5://two.example:1080"})
-			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
-				t.Fatalf("validation error = %v", err)
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
+				t.Fatalf("validation error = %v, want field %s and unsupported-pool reason", err, tc.field)
 			}
 		})
 	}
@@ -82,8 +85,8 @@ func TestHopListValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := ValidateHopList("pre_socks5", tc.hops)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v, want %q", err, tc.want)
+			if err == nil || !strings.Contains(err.Error(), "pre_socks5") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want field pre_socks5 and %q", err, tc.want)
 			}
 		})
 	}
@@ -119,6 +122,9 @@ func TestSOCKS5ChainMarshalRoundTrip(t *testing.T) {
 	c.Chain = Chain{PreSOCKS5: HopList{"socks5://user:p%40ss@[::1]:1080"}, PostSOCKS5: HopList{"none"}}
 	c.Accounts = []Account{{Login: "alice", Password: "init", PreSOCKS5: HopList{"none"}, PostSOCKS5: HopList{"socks5://proxy.example:1080"}}}
 	c.Subscriptions = []Subscription{{Name: "provider", URL: "https://provider.example/sub", PreSOCKS5: HopList{"socks5://provider.example:1080"}, PostSOCKS5: HopList{"none"}}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("chain round-trip fixture failed validation: %v", err)
+	}
 	doc, err := Marshal(c)
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +155,9 @@ func TestHopListLegacyScalarAndListRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := emptyScalar.Validate(); err != nil {
+		t.Fatalf("empty/none scalar fixture failed validation: %v", err)
+	}
 	if len(emptyScalar.Chain.PreSOCKS5) != 0 || len(emptyScalar.Chain.PostSOCKS5) != 1 || !strings.EqualFold(emptyScalar.Chain.PostSOCKS5[0], "none") {
 		t.Fatal("empty scalar inheritance or case-insensitive none was not preserved")
 	}
@@ -156,6 +165,9 @@ func TestHopListLegacyScalarAndListRoundTrip(t *testing.T) {
 	cfg, err := ktavLoadsIntoConfig(legacy)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("legacy scalar fixture failed validation: %v", err)
 	}
 	want := []string{
 		"socks5://legacy-pre.example:1080", "http://legacy-post.example:8080",
@@ -277,6 +289,9 @@ func TestLoadHopListShapes(t *testing.T) {
 			if !tc.wantErr {
 				if err != nil {
 					t.Fatal("Load rejected a valid hop-list fixture")
+				}
+				if err := cfg.Validate(); err != nil {
+					t.Fatalf("loaded fixture failed config validation: %v", err)
 				}
 				if len(cfg.Chain.PreSOCKS5) != len(tc.want) {
 					t.Fatal("loaded hop list had the wrong length")

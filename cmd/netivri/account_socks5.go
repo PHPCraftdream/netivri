@@ -158,11 +158,11 @@ func infoForAccount(cfg *config.Config, a *config.Account) accountInfo {
 			v := redactChains(own)
 			ownValue = &v
 		}
-		return accountChainInfo{Value: redactChains(config.HopList(resolved.value)), Source: resolved.source, Auth: resolved.auth, Own: ownValue}
+		return accountChainInfo{Value: redactChains(config.HopList(resolved.value)), Source: resolved.source, Auth: resolved.auth, Own: ownValue, OwnSet: len(own) > 0}
 	}
 	preInfo := chainInfo(a.PreSOCKS5, false)
 	if effectiveExit(a) == "direct" {
-		preInfo = accountChainInfo{Value: []string{"none"}, Source: "direct"}
+		preInfo = accountChainInfo{Value: []string{"none"}, Source: "direct", OwnSet: len(a.PreSOCKS5) > 0}
 	}
 	return accountInfo{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, Exit: effectiveExit(a), AllowedClients: a.AllowedClients, PreSOCKS5: preInfo, PostSOCKS5: chainInfo(a.PostSOCKS5, true), PasswordSet: accountHasPassword(a)}
 }

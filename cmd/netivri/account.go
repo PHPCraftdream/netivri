@@ -15,6 +15,7 @@ type accountChainInfo struct {
 	Source string    `json:"source"`
 	Auth   bool      `json:"auth"`
 	Own    *[]string `json:"own,omitempty"`
+	OwnSet bool      `json:"-"`
 }
 
 type accountInfo struct {

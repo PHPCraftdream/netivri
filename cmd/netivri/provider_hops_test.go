@@ -178,21 +178,22 @@ func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testin
 	invalid := config.HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
 	cases := []struct {
 		name                  string
+		field                 string
 		globalPre, globalPost config.HopList
 		hops                  providerHops
 		accounts              []config.Account
 	}{
-		{name: "global pre", globalPre: invalid},
-		{name: "global post", globalPost: invalid},
-		{name: "provider pre", hops: hopsOf([]config.Subscription{{Name: "p", URL: "https://p.example/sub", PreSOCKS5: invalid}})},
-		{name: "provider post", hops: hopsOf([]config.Subscription{{Name: "p", URL: "https://p.example/sub", PostSOCKS5: invalid}})},
-		{name: "account pre", accounts: []config.Account{{PreSOCKS5: invalid}}},
-		{name: "account post", accounts: []config.Account{{PostSOCKS5: invalid}}},
+		{name: "global pre", field: "chain.pre_socks5", globalPre: invalid},
+		{name: "global post", field: "chain.post_socks5", globalPost: invalid},
+		{name: "provider pre", field: "subscriptions[0].pre_socks5", hops: hopsOf([]config.Subscription{{Name: "p", URL: "https://p.example/sub", PreSOCKS5: invalid}})},
+		{name: "provider post", field: "subscriptions[0].post_socks5", hops: hopsOf([]config.Subscription{{Name: "p", URL: "https://p.example/sub", PostSOCKS5: invalid}})},
+		{name: "account pre", field: "accounts[0].pre_socks5", accounts: []config.Account{{PreSOCKS5: invalid}}},
+		{name: "account post", field: "accounts[0].post_socks5", accounts: []config.Account{{PostSOCKS5: invalid}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || strings.Contains(err.Error(), "one.example") {
-				t.Fatalf("invalid %s was not safely rejected: %v", tc.name, err)
+			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
+				t.Fatalf("invalid %s was not rejected with field %s and the unsupported-pool reason: %v", tc.name, tc.field, err)
 			}
 		})
 	}
@@ -238,7 +239,9 @@ func TestBuildAccountRoutePoolDirectIgnoresProviderHops(t *testing.T) {
 }
 
 func TestResolveAccountChainCascade(t *testing.T) {
-	cfg := &config.Config{Chain: config.Chain{PreSOCKS5: config.HopList{hopGlobalPre}}, Subscriptions: hopSubs()}
+	cfg := config.Default()
+	cfg.Chain.PreSOCKS5 = config.HopList{hopGlobalPre}
+	cfg.Subscriptions = hopSubs()
 	cases := []struct {
 		name   string
 		acc    config.Account
@@ -257,7 +260,12 @@ func TestResolveAccountChainCascade(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := resolveAccountChain(cfg, &tc.acc, tc.post); !reflect.DeepEqual(got.value, config.HopList(tc.value)) || got.source != tc.source {
+			cfg.Accounts = []config.Account{tc.acc}
+			cfg.Accounts[0].Password = config.InitPlaceholder
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("resolver fixture failed validation: %v", err)
+			}
+			if got := resolveAccountChain(cfg, &cfg.Accounts[0], tc.post); !reflect.DeepEqual(got.value, config.HopList(tc.value)) || got.source != tc.source {
 				t.Fatalf("got %+v, want value=%q source=%q", got, tc.value, tc.source)
 			}
 		})
@@ -265,7 +273,12 @@ func TestResolveAccountChainCascade(t *testing.T) {
 }
 
 func TestAccountInfoShowsProviderSource(t *testing.T) {
-	cfg := &config.Config{Subscriptions: hopSubs(), Accounts: []config.Account{{Login: "alice", Provider: "a"}}}
+	cfg := config.Default()
+	cfg.Subscriptions = hopSubs()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, Provider: "a"}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("account-info fixture failed validation: %v", err)
+	}
 	info := infoForAccount(cfg, &cfg.Accounts[0])
 	if info.PreSOCKS5.Source != "provider" || !reflect.DeepEqual(info.PreSOCKS5.Value, []string{hopProvPreA}) {
 		t.Fatalf("pre = %+v", info.PreSOCKS5)

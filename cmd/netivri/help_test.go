@@ -616,7 +616,7 @@ func conceptText(tp *helpTopic) string {
 }
 
 func TestSOCKS5ChainHelpCoverage(t *testing.T) {
-	for _, name := range []string{"account set-socks5", "account show", "config", "routing"} {
+	for _, name := range []string{"account add", "account set-socks5", "account show", "config", "routing", "sub set-socks5", "interactive"} {
 		if findHelpTopic(name) == nil {
 			t.Errorf("no help topic for %q", name)
 		}

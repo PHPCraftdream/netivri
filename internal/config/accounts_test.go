@@ -40,6 +40,9 @@ func TestValidateDirectAccountExit(t *testing.T) {
 func TestDirectAccountKtavRoundTrip(t *testing.T) {
 	cfg := Default()
 	cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Exit: "direct", PostSOCKS5: HopList{"socks5://proxy.example:1080"}}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("direct account fixture failed validation: %v", err)
+	}
 	path := filepath.Join(t.TempDir(), "config.ktav")
 	if err := Save(path, cfg); err != nil {
 		t.Fatal(err)
@@ -90,6 +93,9 @@ func TestAccountExitSaveLoadRoundTrips(t *testing.T) {
 			if exit == "direct" {
 				cfg.Chain.PreSOCKS5 = HopList{"socks5://global.example:1080"}
 				cfg.Accounts[0].PreSOCKS5 = HopList{"none"}
+			}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("exit %q fixture failed validation: %v", exit, err)
 			}
 			path := filepath.Join(t.TempDir(), "config.ktav")
 			if err := Save(path, cfg); err != nil {

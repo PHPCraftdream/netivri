@@ -619,7 +619,7 @@ var helpTopics = []helpTopic{
 			"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
 			"netivri account add {ACCOUNT} [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]",
 		},
-		Description: "The production core currently accepts one URL per side. Future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection, without a selection-algorithm guarantee. `--exit` chooses route (default) or direct; direct requires empty provider/country, rejects an explicit pre URL, and may use an effective post list. Adding an account restarts its listener.",
+		Description: "The production core currently accepts one URL per side. Future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection, without a selection-algorithm guarantee. `--exit` chooses route (default) or direct; direct exposes this machine's address, requires empty provider/country, rejects an explicitly configured pre proxy, ignores inherited pre proxy, and may use an effective post proxy directly. Adding an account restarts its listener.",
 		Flags: []helpFlag{
 			{"--exit {route|direct}", "Account exit mode; default route. Direct requires empty provider/country; if changing another field while this account is still invalid, CONFIG_INVALID includes a hint to run 'netivri account set-exit {ACCOUNT} route' first."},
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
@@ -729,7 +729,7 @@ var helpTopics = []helpTopic{
 			"tries.\n\n" +
 			"Without a running angel the static part is still shown and live is false (the live fields are null). " +
 			"Direct accounts report exit direct and have no node tiers. " +
-			"SOCKS5 values are redacted arrays with source and auth metadata; `own` is the configured account list or null when inherited. This JSON array shape intentionally breaks the unreleased contract; schema_version is not bumped. Passwords, hashes and subscription URLs are never shown.",
+			"pre_socks5 and post_socks5 are redacted arrays with source and auth metadata; own is the configured account array or null when inherited. Passwords, hashes and subscription URLs are never shown.",
 		Examples: []helpExample{
 			{"Show alice and her route tiers", "netivri account show alice"},
 			{"While the angel runs: alive, delay and live connections per node", "netivri account show alice"},
@@ -1184,7 +1184,7 @@ var helpTopics = []helpTopic{
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
 			"chain.pre_socks5 and chain.post_socks5 are ordered arrays of proxy candidates at global, provider and account " +
-			"levels (subscriptions[].pre_socks5/post_socks5, accounts[].pre_socks5/post_socks5). Legacy scalar Ktav " +
+			"levels (subscriptions[].pre_socks5 and subscriptions[].post_socks5 for each subscriptions[] entry; accounts.pre_socks5 and accounts.post_socks5 for each accounts[] entry, also written accounts[].pre_socks5 and accounts[].post_socks5). Legacy scalar Ktav " +
 			"URLs load as singleton lists and singleton lists render as scalars. Lists cascade by complete nearest-level " +
 			"replacement, never merging; empty/absent inherits, `none` or `[none]` disables and must stand alone, and " +
 			"duplicates are invalid. The production core currently accepts at most one URL per side; future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection without a promised selection algorithm. URLs use socks5://, http:// or https:// with a required port; credentials are never printed. " +

@@ -483,8 +483,27 @@ func TestAccountUpdateCLIErrorParity(t *testing.T) {
 			if !errors.As(opErr, &a) || !errors.As(cliErr, &b) {
 				t.Fatalf("errors not cli.Error: update=%v cli=%v", opErr, cliErr)
 			}
-			if a.Code != tc.code || a.Code != b.Code || a.Message != b.Message || a.Hint != b.Hint || a.Exit != b.Exit {
+			messageA, messageB := a.Message, b.Message
+			switch tc.name {
+			case "invalid pre", "invalid post":
+				field, flag := "pre_socks5", "--pre"
+				if tc.name == "invalid post" {
+					field, flag = "post_socks5", "--post"
+				}
+				operationPrefix, cliPrefix := field+" ", flag+" "
+				if !strings.HasPrefix(messageA, operationPrefix) || !strings.HasPrefix(messageB, cliPrefix) {
+					t.Fatalf("unexpected hop error prefixes: update=%q cli=%q", messageA, messageB)
+				}
+				messageA = strings.TrimPrefix(messageA, operationPrefix)
+				messageB = strings.TrimPrefix(messageB, cliPrefix)
+			}
+			if a.Code != tc.code || a.Code != b.Code || messageA != messageB || a.Hint != b.Hint || a.Exit != b.Exit {
 				t.Fatalf("update=%+v cli=%+v", a, b)
+			}
+			if strings.HasPrefix(tc.name, "direct account ") {
+				if a.Hint == "" || !strings.Contains(a.Hint, "account set-exit alice route") || a.Hint != b.Hint {
+					t.Fatalf("direct-exit validation hints differ or lack repair guidance: update=%q cli=%q", a.Hint, b.Hint)
+				}
 			}
 			if out.Len() != 0 {
 				t.Fatalf("stdout=%q", out.String())

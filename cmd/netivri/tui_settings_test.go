@@ -189,7 +189,7 @@ func TestSettingsDisplaysOrderedHopArraysRedactedAndFetchProxyScalar(t *testing.
 	f.cfg.Fetch.Proxy = "http://fetch-user:fetch-secret@fetch.example:8080"
 	f.cfg.Chain.PreSOCKS5 = config.HopList{
 		"socks5://pre-user:pre-secret@pre.example:1080",
-		"https://post-user:post-secret@post.example:443",
+		"http://second-user:second-secret@second.example:3128",
 	}
 	f.cfg.Chain.PostSOCKS5 = config.HopList{"http://post-user:post-secret@post.example:3128"}
 	f.s.refresh()
@@ -198,7 +198,7 @@ func TestSettingsDisplaysOrderedHopArraysRedactedAndFetchProxyScalar(t *testing.
 		group, key, want string
 	}{
 		{"fetch", "fetch.proxy", "http://fetch.example:8080"},
-		{"chain", "chain.pre_socks5", "2 alternatives: [socks5://pre.example:1080, https://post.example:443]"},
+		{"chain", "chain.pre_socks5", "2 alternatives: [socks5://pre.example:1080, http://second.example:3128]"},
 		{"chain", "chain.post_socks5", "1 alternative: [http://post.example:3128]"},
 	} {
 		f.selectGroup(tc.group)

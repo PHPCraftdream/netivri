@@ -186,7 +186,7 @@ func TestSubSetSOCKS5IncrementalEditAndValidation(t *testing.T) {
 	app, out := testApp(t, fakeBody(testBody))
 	seedConfig(t, app, config.Subscription{Name: "p", URL: "https://provider.example", PreSOCKS5: config.HopList{"socks5://first.example:1080"}})
 	if err := app.setSOCKS5([]string{"--home", app.home, "p", "--remove-pre", "1"}); err != nil {
-		t.Fatalf("remove provider hop: %v", err)
+		t.Fatal("provider hop removal failed")
 	}
 	cfg, err := config.Load(app.configPath())
 	if err != nil || len(cfg.Subscriptions[0].PreSOCKS5) != 0 {
@@ -194,7 +194,7 @@ func TestSubSetSOCKS5IncrementalEditAndValidation(t *testing.T) {
 	}
 	out.Reset()
 	if err := app.setSOCKS5([]string{"--home", app.home, "p", "--add-post", "socks5://user:secret@second.example:1080"}); err != nil {
-		t.Fatalf("add provider hop: %v", err)
+		t.Fatal("provider hop addition failed")
 	}
 	if strings.Contains(out.String(), "user") || strings.Contains(out.String(), "secret") {
 		t.Fatal("provider set output disclosed credentials")
@@ -212,12 +212,13 @@ func TestSubSetSOCKS5IncrementalEditAndValidation(t *testing.T) {
 		{"--home", app.home, "p", "--remove-post", "0"},
 		{"--home", app.home, "p", "--remove-post", "1", "--remove-post", "1"},
 	} {
-		if err := app.setSOCKS5(args); err == nil {
-			t.Fatalf("accepted invalid provider edit: %q", args)
+		var cliErr *cli.Error
+		if err := app.setSOCKS5(args); !errors.As(err, &cliErr) || cliErr.Code != "USAGE" || cliErr.Exit != cli.ExitUsage {
+			t.Fatal("invalid provider edit did not return a USAGE diagnostic")
 		}
 		after, err := os.ReadFile(app.configPath())
 		if err != nil || !reflect.DeepEqual(after, before) {
-			t.Fatalf("invalid provider edit %q wrote config", args)
+			t.Fatal("invalid provider edit wrote configuration")
 		}
 	}
 }
@@ -356,12 +357,82 @@ func TestSubAddInvalidName(t *testing.T) {
 }
 
 func TestSubAddInvalidProxy(t *testing.T) {
-	// Real fetch.Get: an invalid --via fails before any network activity.
-	app, _ := testApp(t, fetch.Get)
-	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--via", "ftp://proxy.example:1080"})
+	fetchCalled := false
+	app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		fetchCalled = true
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	})
+	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--via", "ftp://proxy-user:proxy-secret@proxy.example:1080"})
 	assertCode(t, err, "FETCH_URL_INVALID", cli.ExitUsage)
+	if strings.Contains(err.Error(), "proxy-user") || strings.Contains(err.Error(), "proxy-secret") {
+		t.Fatal("invalid --via error disclosed proxy credentials")
+	}
+	if fetchCalled {
+		t.Fatal("invalid --via reached the provider fetch")
+	}
 	if _, statErr := os.Stat(app.configPath()); !os.IsNotExist(statErr) {
-		t.Errorf("config file must not be created on failure, stat err = %v", statErr)
+		t.Fatal("config file must not be created on failure")
+	}
+	if names, listErr := app.store().List(); listErr != nil || len(names) != 0 {
+		t.Fatalf("invalid --via persisted a snapshot: names=%v err=%v", names, listErr)
+	}
+}
+
+func TestValidateSubAddVia(t *testing.T) {
+	tests := []struct {
+		name        string
+		via         string
+		wantMessage string
+	}{
+		{name: "empty", via: ""},
+		{name: "socks5", via: "socks5://proxy.example:1080"},
+		{name: "socks5h", via: "socks5h://user:secret@proxy.example:1080"},
+		{name: "http", via: "http://proxy.example:8080"},
+		{name: "https", via: "https://proxy.example:8443"},
+		{name: "malformed", via: "http://proxy-user:proxy-secret@%zz", wantMessage: "proxy URL could not be parsed"},
+		{name: "unsupported scheme", via: "ftp://proxy.example:1080", wantMessage: "proxy scheme must be socks5, socks5h, http or https"},
+		{name: "missing host", via: "socks5://", wantMessage: "proxy URL must have a host"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSubAddVia(tc.via)
+			if tc.wantMessage == "" {
+				if err != nil {
+					t.Fatalf("validateSubAddVia returned error: %v", err)
+				}
+				return
+			}
+			var ce *cli.Error
+			if !errors.As(err, &ce) {
+				t.Fatalf("error = %v, want *cli.Error", err)
+			}
+			if ce.Code != "FETCH_URL_INVALID" || ce.Exit != cli.ExitUsage || ce.Message != tc.wantMessage ||
+				ce.Hint != "use an absolute http(s) URL and a socks5(h)/http(s) proxy URL" {
+				t.Errorf("diagnostic = %+v, want FETCH_URL_INVALID/ExitUsage and static proxy validation text", ce)
+			}
+			if strings.Contains(ce.Error(), "proxy-user") || strings.Contains(ce.Error(), "proxy-secret") {
+				t.Error("proxy validation error disclosed credentials")
+			}
+		})
+	}
+}
+
+func TestSubAddInvalidHopProxyRemainsConfigInvalid(t *testing.T) {
+	fetchCalled := false
+	app, _ := testApp(t, func(context.Context, string, fetch.Options) (*fetch.Result, error) {
+		fetchCalled = true
+		return &fetch.Result{Body: []byte(testBody)}, nil
+	})
+	err := app.add([]string{"--home", app.home, "https://provider.example/sub", "--pre-socks5", "ftp://proxy.example:1080"})
+	assertCode(t, err, config.CodeConfigInvalid, cli.ExitUsage)
+	if fetchCalled {
+		t.Fatal("invalid --pre-socks5 reached the provider fetch")
+	}
+	if _, statErr := os.Stat(app.configPath()); !os.IsNotExist(statErr) {
+		t.Fatal("config file must not be created on failure")
+	}
+	if names, listErr := app.store().List(); listErr != nil || len(names) != 0 {
+		t.Fatalf("invalid --pre-socks5 persisted a snapshot: names=%v err=%v", names, listErr)
 	}
 }
 

@@ -728,11 +728,12 @@ func (s *accountsScreen) refreshSelectedCard(force bool) {
 	if a.PasswordSet {
 		pw = "set"
 	}
-	preOwn, postOwn := a.PreSOCKS5.Own != nil, a.PostSOCKS5.Own != nil
+	preOwn := a.Exit != "direct" && (a.PreSOCKS5.OwnSet || a.PreSOCKS5.Own != nil || a.PreSOCKS5.Source == "account")
+	postOwn := a.PostSOCKS5.OwnSet || a.PostSOCKS5.Own != nil || a.PostSOCKS5.Source == "account"
 	pre, post := accountsHopListStateLabel(a.PreSOCKS5.Source, a.PreSOCKS5.Value), accountsHopListStateLabel(a.PostSOCKS5.Source, a.PostSOCKS5.Value)
 	lines := []tui.CardLine{{ID: "provider", Label: "Provider", Value: displayAny(a.Provider), Kind: tui.CardField}, {ID: "countries", Label: "Countries", Value: displayAny(a.ExitCountry), Kind: tui.CardField}, {ID: "exit", Label: "Exit", Value: displayAny(a.Exit), Kind: tui.CardField}, {ID: "clients", Label: "Allowed clients", Value: displayAny(a.AllowedClients), Kind: tui.CardField}, {ID: "pre", Label: "Pre-hop", Value: pre, Kind: tui.CardField, Secret: false}, // show only numbered hop state
-		{ID: "clear-pre", Label: "Inherit pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: !preOwn}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false},
-		{ID: "clear-post", Label: "Inherit post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: !postOwn}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}, {ID: "route", Label: "Route...", Kind: tui.CardAction, Action: true, Hotkey: "v"}, {ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: len(s.marked) == 0}}
+		{ID: "clear-pre", Label: "Clear pre-hop", Kind: tui.CardAction, Action: true, Hotkey: "P", Disabled: !preOwn}, {ID: "post", Label: "Post-hop", Value: post, Kind: tui.CardField, Secret: false},
+		{ID: "clear-post", Label: "Clear post-hop", Kind: tui.CardAction, Action: true, Hotkey: "O", Disabled: !postOwn}, {ID: "password", Label: "Password", Value: pw, Kind: tui.CardReadOnly}, {ID: "clone", Label: "Clone account", Kind: tui.CardAction, Action: true, Hotkey: "c"}, {ID: "remove", Label: "Remove account", Kind: tui.CardAction, Action: true, Hotkey: "d"}, {ID: "route", Label: "Route...", Kind: tui.CardAction, Action: true, Hotkey: "v"}, {ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: len(s.marked) == 0}}
 	if s.workspace.Card != nil {
 		s.workspace.Card.Focused = true
 	}
@@ -902,11 +903,7 @@ func accountsHopListStateLabel(source string, value []string) string {
 		return accountsHopLabel(source, "none")
 	}
 	if len(value) == 1 {
-		label := "1 alternative: set"
-		if source == "" || source == "none" {
-			return label
-		}
-		return source + " " + label
+		return accountsHopLabel(source, "set")
 	}
 	states := make([]string, len(value))
 	for i := range states {
