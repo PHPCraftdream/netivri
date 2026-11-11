@@ -94,8 +94,22 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		}
 		chain = append(C.Chain(nil), carrierConn.Chains()...)
 		providerChain = append(C.Chain(nil), carrierConn.ProviderChains()...)
+	} else if h.role == postHopPool && h.directCarrier {
+		directConn, directErr := directPostCarrier.DialContext(ctx, proxyCarrierMetadata(h.proxyConfig))
+		conn, err = directConn, directErr
+		if err != nil {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return nil, stageProxyError(ctx, proxyclient.StageConnect, err, false)
+		}
+		if directConn == nil {
+			return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: errors.New("proxy connection unavailable")}
+		}
+		chain = append(C.Chain(nil), directConn.Chains()...)
+		providerChain = append(C.Chain(nil), directConn.ProviderChains()...)
 	} else {
-		// The historical helper outbound used Base's default direct dial options.
+		// Pre-hop proxies intentionally use the bare dialer, without DIRECT policy.
 		conn, err = dialer.NewDialer().DialContext(ctx, "tcp", net.JoinHostPort(h.proxyConfig.Host, strconv.Itoa(h.proxyConfig.Port)))
 		if err != nil {
 			if conn != nil {
@@ -112,18 +126,29 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		_ = conn.Close()
 		var proxyErr *proxyclient.Error
 		if errors.As(err, &proxyErr) {
-			staged := stageProxyError(ctx, proxyErr.Stage, err, proxyErr.TargetSent)
-			if h.role == postHopPool && !h.directCarrier {
-				if !recentNodeEvidence(h.carrier, h.clockNow()) {
-					return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: err}
+			stagedErr := stageProxyError(ctx, proxyErr.Stage, err, proxyErr.TargetSent)
+			if h.role == postHopPool && !h.directCarrier && !recentNodeEvidence(h.carrier, h.clockNow()) {
+				var staged *hopdial.StageError
+				if errors.As(stagedErr, &staged) && staged != nil {
+					staged.SuppressBlame = true
 				}
 			}
-			return nil, staged
+			return nil, stagedErr
 		}
 		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: err}
 	}
 	return &nativePoolConn{ExtendedConn: N.NewDeadlineConn(tunnel), chain: chain, providerChain: providerChain}, nil
 }
+
+func proxyCarrierMetadata(proxy proxyclient.Proxy) *C.Metadata {
+	metadata := &C.Metadata{Type: C.INNER, NetWork: C.TCP}
+	_ = metadata.SetRemoteAddress(net.JoinHostPort(proxy.Host, strconv.Itoa(proxy.Port)))
+	return metadata
+}
+
+// A stable DIRECT adapter preserves its resolver and loopback-detector policy
+// across direct-post dials, as with Mihomo's built-in shared DIRECT outbound.
+var directPostCarrier = outbound.NewDirect()
 
 func stageProxyError(ctx context.Context, stage proxyclient.Stage, err error, targetSent bool) error {
 	if ctx != nil && ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isCapacityError(err) {
@@ -285,6 +310,9 @@ func (a *hopPoolAdapter) poolFailure(err error) error {
 	}
 	var carrier *poolCarrierError
 	if errors.As(err, &carrier) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isCapacityError(err) {
+			return &hopPoolDialError{cause: err}
+		}
 		return carrier
 	}
 	var staged *hopdial.StageError

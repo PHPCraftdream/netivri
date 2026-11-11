@@ -304,6 +304,56 @@ func TestPostDialRetriesConnectAndAmbiguousHandshake(t *testing.T) {
 	}
 }
 
+func TestPostDialSuppressBlameRetriesAndRebinds(t *testing.T) {
+	for _, stage := range []Stage{Connect, Handshake} {
+		t.Run(map[Stage]string{Connect: "connect", Handshake: "handshake"}[stage], func(t *testing.T) {
+			keys := []string{"first", "second", "third"}
+			order := deterministicOrder(keys, nil)
+			first, second := order[0], order[1]
+			p := newPool(keys...)
+			binder := &fakeBinder{values: map[string]string{binderKey("login", "site"): first}}
+			calls := []string{}
+			hops := make([]Hop, 0, len(keys))
+			for _, key := range keys {
+				key := key
+				hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+					calls = append(calls, key)
+					if key == first {
+						return nil, &StageError{Stage: stage, SuppressBlame: true, Err: errors.New("hop failure")}
+					}
+					return &fakeConn{}, nil
+				}})
+			}
+
+			conn, err := New(p, hops, Options{Post: true, Binder: binder}).DialSite(context.Background(), "tcp", "destination", "login", "site")
+			if err != nil || conn == nil {
+				t.Fatalf("post dial = (%v, %v), want retry success", conn, err)
+			}
+			if len(calls) != 2 || calls[0] != first || calls[1] != second {
+				t.Fatalf("post attempts = %v, want bound hop %q then %q", calls, first, second)
+			}
+			if len(binder.bound) != 1 || binder.bound[0] != second {
+				t.Fatalf("binding after retry = %v, want successful hop %q", binder.bound, second)
+			}
+			if got, ok := binder.Get("login", "site"); !ok || got != second {
+				t.Fatalf("site binding = (%q, %t), want successful hop %q", got, ok, second)
+			}
+			for _, snapshot := range p.Snapshot() {
+				switch snapshot.Key {
+				case first:
+					if snapshot.HardFailures != 0 || snapshot.Sand != 0 {
+						t.Errorf("suppressed hop health = hard %d sand %v, want unchanged", snapshot.HardFailures, snapshot.Sand)
+					}
+				case second:
+					if snapshot.State != pool.Healthy || snapshot.HardFailures != 0 || snapshot.Sand != 0 {
+						t.Errorf("successful hop health = %#v, want healthy with no failures", snapshot)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestPostDialDoesNotRetryUnsafeFailureClasses(t *testing.T) {
 	for _, test := range []struct {
 		name string

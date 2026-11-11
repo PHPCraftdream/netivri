@@ -183,15 +183,24 @@ func TestOverlappingProviderPrePoolsKeepCredentialsSeparate(t *testing.T) {
 	if len(proxies) != len(o.RouteNodes["provider-routes"]) {
 		t.Fatal("route mappings unexpectedly include native helper proxies")
 	}
-	members, err := parseMembers(proxies)
-	if err != nil {
-		t.Fatal("provider route members failed to parse")
+	wantURIs := [][]string{{preA, preBFirst}, {preBSecond, preC}}
+	if len(plans) != 1 || len(plans[0].prePools) != len(wantURIs) {
+		t.Fatal("provider-specific pre-pools were not retained in the route plan")
+	}
+	for node, want := range wantURIs {
+		if plans[0].prePools[node] == nil || !reflect.DeepEqual(plans[0].prePools[node].uris, want) {
+			t.Fatalf("provider %d planned pre-pool order/configuration changed", node)
+		}
+	}
+	if plans[0].prePools[0].keys[1] != plans[0].prePools[1].keys[0] {
+		t.Fatal("overlapping endpoint did not retain a shared health identity")
 	}
 	lifecycle := newHopPoolLifecycle(nil)
-	installed, _, err := lifecycle.installGen(o, plans, members, nil, 0)
+	installed, _, err := lifecycle.installGen(o, plans, nil, nil, 0)
 	if err != nil {
 		t.Fatal("provider-specific pools failed to install")
 	}
+	nativeAdapters := make([]*hopPoolAdapter, 2)
 	for _, provider := range []struct {
 		node     int
 		hopIndex int
@@ -210,10 +219,14 @@ func TestOverlappingProviderPrePoolsKeepCredentialsSeparate(t *testing.T) {
 		if !ok || len(adapter.hops) != 2 {
 			t.Fatal("provider-specific native adapter has unexpected type or members")
 		}
+		nativeAdapters[provider.node] = adapter
 		config := adapter.hops[provider.hopIndex].proxyConfig
 		if config.Username != provider.username || config.Password != provider.password {
 			t.Fatal("installed provider adapter did not preserve its own credentials")
 		}
+	}
+	if nativeAdapters[0] == nativeAdapters[1] || nativeAdapters[0].hops[1] == nativeAdapters[1].hops[0] {
+		t.Fatal("overlapping endpoint reused a provider adapter or hop instance")
 	}
 	first := newHopPoolSpec(preHopPool, []string{preA, preBFirst}, 0)
 	second := newHopPoolSpec(preHopPool, []string{"http://user-a:sentinel-a@a.invalid:8080", preBSecond}, 0)

@@ -39,7 +39,10 @@ type StageError struct {
 	NextUnreachable bool
 	// TargetSent is true if the target request may have been sent.
 	TargetSent bool
-	Err        error
+	// SuppressBlame retains the known stage for retry decisions without
+	// recording a health failure against the selected hop.
+	SuppressBlame bool
+	Err           error
 }
 
 // Error returns a fixed vocabulary and never exposes the underlying error text.
@@ -272,6 +275,9 @@ func (d *Dialer) recordFailure(ctx context.Context, key string, err error) {
 		return
 	}
 	if staged.Err != nil && (errors.Is(staged, context.Canceled) || errors.Is(staged, context.DeadlineExceeded)) {
+		return
+	}
+	if staged.SuppressBlame {
 		return
 	}
 	stage, kind := poolStage(staged.Stage), pool.UnknownKind

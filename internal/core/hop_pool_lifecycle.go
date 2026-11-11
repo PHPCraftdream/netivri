@@ -827,26 +827,6 @@ func validProbeURI(raw string) bool {
 	return err == nil
 }
 
-func classifyProbe(_ hopProbeTarget, err error) pool.ProbeOutcome {
-	if err == nil {
-		return pool.ProbeSuccess
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || isCapacityError(err) {
-		return pool.ProbeInconclusive
-	}
-	var staged *hopdial.StageError
-	if !errors.As(err, &staged) || staged == nil {
-		return pool.ProbeInconclusive
-	}
-	if staged.NextUnreachable || staged.Stage == hopdial.Target || staged.Stage == hopdial.Refusal || staged.Stage == hopdial.Unknown {
-		return pool.ProbeInconclusive
-	}
-	if staged.Stage == hopdial.Connect || staged.Stage == hopdial.Handshake {
-		return pool.ProbeHardFailure
-	}
-	return pool.ProbeInconclusive
-}
-
 func hopAddress(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {
