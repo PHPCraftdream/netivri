@@ -2,6 +2,8 @@ package proxyclient
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"io"
 	"net"
@@ -41,6 +43,34 @@ func (c *deadlineConn) deadlineSnapshot() []time.Time {
 	defer c.mu.Unlock()
 	return append([]time.Time(nil), c.deadlines...)
 }
+
+type cancelOnDeadlineClearConn struct {
+	net.Conn
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	clears int
+}
+
+func (c *cancelOnDeadlineClearConn) SetDeadline(deadline time.Time) error {
+	if deadline.IsZero() {
+		c.mu.Lock()
+		c.clears++
+		cancel := c.clears == 2
+		c.mu.Unlock()
+		if cancel {
+			c.cancel()
+		}
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+type tlsVerificationFailureConn struct {
+	net.Conn
+	readErr error
+}
+
+func (c *tlsVerificationFailureConn) Read([]byte) (int, error)    { return 0, c.readErr }
+func (c *tlsVerificationFailureConn) Write(p []byte) (int, error) { return len(p), nil }
 
 type callbackBlockingConn struct {
 	net.Conn
@@ -558,6 +588,72 @@ func TestDialSuccessfulConnectionSurvivesContextCancellation(t *testing.T) {
 	checkWire(t, echo, []byte("abc"))
 	waitErr(t, peer)
 	peerFinished = true
+}
+
+func TestHandshakePreservesTLSVerificationFailureWhenCleanupCancels(t *testing.T) {
+	clientRaw, serverRaw := rawPipePair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracked := &cancelOnDeadlineClearConn{Conn: clientRaw, cancel: cancel}
+	verificationErr := &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}
+	conn := &tlsVerificationFailureConn{Conn: tracked, readErr: verificationErr}
+	t.Cleanup(func() {
+		cancel()
+		_ = clientRaw.Close()
+		_ = serverRaw.Close()
+	})
+
+	_, err := Handshake(ctx, conn, Proxy{Scheme: "https", Host: "proxy.example", Port: 443}, testTarget)
+	pe := checkProxyError(t, err, StageConnect, 0)
+	var unknownAuthority x509.UnknownAuthorityError
+	if !errors.As(pe, &unknownAuthority) {
+		t.Fatal("TLS verification failure was replaced during cleanup")
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatal("cleanup did not cancel the context")
+	}
+	if pe.Timeout() || errors.Is(err, context.Canceled) {
+		t.Fatal("TLS verification failure was classified as a context failure")
+	}
+}
+
+func TestHandshakePreservesCompletedProtocolFailureWhenCleanupCancels(t *testing.T) {
+	clientRaw, server := rawPipePair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	tracked := &cancelOnDeadlineClearConn{Conn: clientRaw, cancel: cancel}
+	peer := peerResult()
+	peerJoined := false
+	go func() {
+		_ = server.SetDeadline(time.Now().Add(3 * time.Second))
+		request := "CONNECT " + testTarget + " HTTP/1.1\r\nHost: " + testTarget + "\r\n\r\n"
+		_, err := readExact(server, len(request))
+		if err == nil {
+			_, err = server.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n"))
+		}
+		peerDone(peer, err)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		_ = clientRaw.Close()
+		_ = server.Close()
+		if !peerJoined {
+			select {
+			case <-peer:
+			case <-time.After(2 * time.Second):
+				t.Error("HTTP protocol peer did not stop after cleanup")
+			}
+		}
+	})
+
+	_, err := Handshake(ctx, tracked, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
+	pe := checkProxyError(t, err, StageRefused, 407)
+	if ctx.Err() != context.Canceled {
+		t.Fatal("cleanup did not cancel the context")
+	}
+	if pe.Timeout() || errors.Is(err, context.Canceled) {
+		t.Fatal("completed HTTP refusal was replaced by a context failure")
+	}
+	waitErr(t, peer)
+	peerJoined = true
 }
 
 func TestDialTLSAndProtocolFailureCloseConnection(t *testing.T) {

@@ -144,6 +144,8 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 	stage := StageHandshake
 	var result net.Conn
 	var err error
+	var sourceErr error
+	var operationContextErr error
 	if strings.EqualFold(p.Scheme, "https") {
 		stage = StageConnect
 		config := &tls.Config{}
@@ -154,6 +156,10 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 		config.InsecureSkipVerify = false
 		tlsConn := tls.Client(conn, config)
 		err = tlsConn.HandshakeContext(ctx)
+		if err != nil {
+			sourceErr = err
+			operationContextErr = contextFailure(ctx)
+		}
 		if err == nil {
 			active = tlsConn
 			stage = StageHandshake
@@ -163,34 +169,45 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 		switch strings.ToLower(p.Scheme) {
 		case "socks5":
 			err = socks5Handshake(active, p, host, port)
+			if err != nil {
+				sourceErr = err
+				operationContextErr = contextFailure(ctx)
+			}
 			result = active
 		case "http", "https":
 			result, err = httpConnectHandshake(active, p, target)
+			if err != nil {
+				sourceErr = err
+				operationContextErr = contextFailure(ctx)
+			}
 		default:
 			err = errInvalidProxy
 			stage = StageOther
 		}
 	}
 	if err != nil {
-		contextErr, clearErr := finish()
-		if contextErr != nil {
+		if sourceErr == nil {
+			sourceErr = err
+		}
+		_, clearErr := finish()
+		if operationContextErr != nil {
 			if clearErr != nil {
-				contextErr = errors.Join(contextErr, clearErr)
+				operationContextErr = errors.Join(operationContextErr, clearErr)
 			}
-			return nil, proxyError(stage, 0, contextErr)
+			return nil, proxyError(stage, 0, operationContextErr)
 		}
 		if clearErr != nil {
 			var pe *Error
-			if errors.As(err, &pe) {
+			if errors.As(sourceErr, &pe) {
 				return nil, proxyError(pe.Stage, pe.Code, errors.Join(pe.Err, clearErr))
 			}
-			return nil, proxyError(stage, 0, errors.Join(err, clearErr))
+			return nil, proxyError(stage, 0, errors.Join(sourceErr, clearErr))
 		}
 		var pe *Error
-		if errors.As(err, &pe) {
+		if errors.As(sourceErr, &pe) {
 			return nil, pe
 		}
-		return nil, proxyError(stage, 0, err)
+		return nil, proxyError(stage, 0, sourceErr)
 	}
 	contextErr, clearErr := finish()
 	if contextErr != nil {
