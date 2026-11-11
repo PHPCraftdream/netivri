@@ -567,15 +567,45 @@ func TestNativePostTrafficAllowedWhenCarrierEvidenceIsStale(t *testing.T) {
 	now = now.Add(trafficAliveFor + time.Second)
 	carrier := nativeCarrierForLoopback(t, proxy)
 	binder := &testSiteBinder{values: map[string]string{"fixture-user\x00example.test": spec.keys[0]}}
-	p := pool.New(spec.keys, pool.Options{})
+	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
 	adapter := newHopPoolAdapter("native-post-stale", postHopPool, spec, p, binder, health, func() time.Time { return now })
 	setNativeCarrier(adapter, carrier, false)
-	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "fixture-user", Host: "example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) || proxy.requests.Load() == 0 {
-		t.Fatal("stale carrier evidence prevented post traffic")
+	before := make([]HopSnapshot, len(spec.keys))
+	for i, key := range spec.keys {
+		before[i] = poolState(p, key)
 	}
-	if state := poolState(p, spec.keys[0]); state.HardFailures != 0 || state.Sand != 0 {
-		t.Fatal("stale carrier evidence was attributed to post health")
+	conn, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "fixture-user", Host: "example.test", DstPort: 443})
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("stale carrier evidence unexpectedly produced a successful post dial")
+	}
+	if requests := proxy.requests.Load(); requests != 1 {
+		t.Fatalf("bound post hop request count = %d, want 1", requests)
+	}
+	fallbackHost, fallbackPort, _, _, _ := carrier.lastMetadata()
+	if fallbackHost != "unused.invalid" || fallbackPort != 1080 {
+		t.Fatal("safe post retry did not reach the configured fallback hop")
+	}
+	var carrierErr *poolCarrierError
+	if !errors.As(err, &carrierErr) {
+		t.Fatal("fallback carrier failure was not preserved")
+	}
+	for i, key := range spec.keys {
+		after := poolState(p, key)
+		if after.HardFailures != before[i].HardFailures {
+			t.Fatalf("post hop %d hard failures changed", i)
+		}
+		if after.Sand != before[i].Sand {
+			t.Fatalf("post hop %d sand changed", i)
+		}
+		if after.Trips != before[i].Trips {
+			t.Fatalf("post hop %d trips changed", i)
+		}
+		if after.State != before[i].State || after.State != pool.Healthy {
+			t.Fatalf("post hop %d state changed from healthy", i)
+		}
 	}
 }
 
