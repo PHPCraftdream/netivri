@@ -25,15 +25,20 @@ func memberProbeKeys(plans []routePlan, o Options) map[string]string {
 			if name == "DIRECT" || i >= len(nodes) {
 				continue
 			}
-			key := probeKey(nodes[i], o.nodePre(plan.key, i), o.nodePost(plan.key, i))
-			if key == "" {
-				continue
+			pre := strings.Join(o.nodePrePool(plan.key, i), "\x00")
+			post := strings.Join(o.nodePostPool(plan.key, i), "\x00")
+			baseKey := probeKey(nodes[i], pre, "")
+			if baseKey != "" {
+				base := name
+				if isRoutePostName(name) {
+					base = strings.TrimSuffix(name, "-post")
+				}
+				keys[base] = baseKey
 			}
-			base := name
-			if isRoutePostName(name) {
-				base = strings.TrimSuffix(name, "-post")
+			key := probeKey(nodes[i], pre, post)
+			if key != "" {
+				keys[name] = key
 			}
-			keys[name], keys[base] = key, key
 		}
 	}
 	return keys

@@ -119,6 +119,9 @@ func groupProxyName(gen, r int) string {
 // prepareRoutesGen is prepareRoutes with the proxy names of routing
 // generation gen.
 func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, []string, error) {
+	if err := validateOptionHopPools(o); err != nil {
+		return nil, nil, nil, err
+	}
 	if len(o.AccountRoute) == 0 {
 		if o.Node == nil && (o.GlobalPost == "" || isNoChain(o.GlobalPost)) {
 			return nil, nil, nil, nil
@@ -180,6 +183,8 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	}
 
 	var proxies []map[string]any
+	var poolGroups []map[string]any
+	builtPools := make(map[string]bool)
 	if defaultProxy != nil {
 		proxies = append(proxies, defaultProxy)
 	}
@@ -193,11 +198,19 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		}
 		proxies = append(proxies, post)
 	}
+	proxyNames := make(map[string]struct{}, len(proxies))
+	for _, proxy := range proxies {
+		if name, ok := proxy["name"].(string); ok {
+			proxyNames[name] = struct{}{}
+		}
+	}
 	groups := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
 		nodes := o.RouteNodes[key]
-		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
-		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
+		pre := o.routePrePool(key)
+		post := o.routePostPool(key)
+		directPost := len(nodes) == 0 && len(post) > 0 && len(pre) == 0
+		directRoute := len(nodes) == 0 && len(pre) == 0 && len(post) == 0 && (explicitNoChain(o.RoutePre, key) || explicitEmptyPool(o.RoutePrePool, key)) && (explicitNoChain(o.RoutePost, key) || explicitEmptyPool(o.RoutePostPool, key))
 		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, nil, nil, &cli.Error{
 				Code:    "NO_NODES_FOR_COUNTRY",
@@ -209,17 +222,46 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		members := make([]string, 0, len(nodes))
 		if directRoute || directPost {
 			if directPost {
+				routePost := o.routePostPool(key)
 				postName := helperProxyName(gen, keyIndex[key], 0, "post")
-				post, err := chainProxy(o.RoutePost[key], postName)
-				if err != nil {
-					return nil, nil, nil, err
+				postPool := newHopPoolSpec(postHopPool, routePost, gen)
+				if postPool == nil || len(postPool.keys) <= 1 {
+					// Keep the legacy scalar direct-post mapping unchanged when
+					// the effective pool has only one distinct hop.
+					uri := routePost[0]
+					if postPool != nil {
+						uri = postPool.uris[0]
+					}
+					post, err := chainProxy(uri, postName)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					post["dialer-proxy"] = "DIRECT"
+					proxies = append(proxies, post)
+				} else {
+					postPool.entryNames = nil
+					postMembers := make([]string, 0, len(postPool.keys))
+					for k, uri := range postPool.uris {
+						entryName := postName + "-hop-" + postPool.configIDs[k]
+						postPool.entryNames = append(postPool.entryNames, entryName)
+						mapping, err := chainProxy(uri, entryName)
+						if err != nil {
+							return nil, nil, nil, err
+						}
+						mapping["dialer-proxy"] = "DIRECT"
+						proxies = append(proxies, mapping)
+						proxyNames[entryName] = struct{}{}
+						postMembers = append(postMembers, entryName)
+					}
+					poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": postMembers})
 				}
-				post["dialer-proxy"] = "DIRECT"
-				proxies = append(proxies, post)
 			}
 			continue
 		}
 		if err := checkedNodeHops(o, key, len(nodes)); err != nil {
+			return nil, nil, nil, err
+		}
+		if err := checkedPoolNodeHops(o, key, len(nodes)); err != nil {
 			return nil, nil, nil, err
 		}
 		for index, node := range nodes {
@@ -228,27 +270,58 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 				return nil, nil, nil, err
 			}
 			name := memberProxyName(gen, keyIndex[key], index)
-			if uri := o.nodePre(key, index); uri != "" && !isNoChain(uri) {
-				pre, err := chainProxy(uri, helperProxyName(gen, keyIndex[key], index, "pre"))
+			prePool := newHopPoolSpec(preHopPool, o.nodePrePool(key, index), gen)
+			if prePool != nil && len(prePool.keys) > 1 {
+				if !builtPools[prePool.name] {
+					if err := addPoolPlaceholder(prePool, &proxies, &poolGroups, proxyNames); err != nil {
+						return nil, nil, nil, err
+					}
+					builtPools[prePool.name] = true
+				}
+				prepared[0]["dialer-proxy"] = prePool.name
+			} else if prePool != nil {
+				pre, err := chainProxy(prePool.uris[0], helperProxyName(gen, keyIndex[key], index, "pre"))
 				if err != nil {
 					return nil, nil, nil, err
 				}
 				prepared[0]["dialer-proxy"] = pre["name"]
 				proxies = append(proxies, pre)
+				proxyNames[pre["name"].(string)] = struct{}{}
 			}
 			member := name
-			if uri := o.nodePost(key, index); uri != "" && !isNoChain(uri) {
+			postPool := newHopPoolSpec(postHopPool, o.nodePostPool(key, index), gen)
+			if postPool != nil && len(postPool.keys) > 1 {
 				postName := helperProxyName(gen, keyIndex[key], index, "post")
-				post, err := chainProxy(uri, postName)
+				postMembers := make([]string, 0, len(postPool.keys))
+				postPool.entryNames = nil
+				for k, uri := range postPool.uris {
+					entryName := nodePoolEntryName(name, postPool.configIDs[k])
+					postPool.entryNames = append(postPool.entryNames, entryName)
+					mapping, err := chainProxy(uri, entryName)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					mapping["dialer-proxy"] = name
+					proxies = append(proxies, mapping)
+					proxyNames[entryName] = struct{}{}
+					postMembers = append(postMembers, entryName)
+				}
+				poolGroups = append(poolGroups, map[string]any{"name": postName, "type": "select", "proxies": postMembers})
+				member = postName
+			} else if postPool != nil {
+				postName := helperProxyName(gen, keyIndex[key], index, "post")
+				post, err := chainProxy(postPool.uris[0], postName)
 				if err != nil {
 					return nil, nil, nil, err
 				}
 				post["dialer-proxy"] = name
 				proxies = append(proxies, post)
+				proxyNames[postName] = struct{}{}
 				member = postName
 			}
 			prepared[0]["name"] = name
 			proxies = append(proxies, prepared[0])
+			proxyNames[name] = struct{}{}
 			members = append(members, member)
 		}
 		groups = append(groups, map[string]any{
@@ -257,13 +330,14 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 			"proxies": members,
 		})
 	}
+	groups = append(groups, poolGroups...)
 
 	rules := make([]string, 0, len(logins)+1)
 	for _, login := range logins {
 		key := o.AccountRoute[login]
 		nodes := o.RouteNodes[key]
-		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
-		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
+		directPost := len(nodes) == 0 && len(o.routePostPool(key)) > 0 && len(o.routePrePool(key)) == 0
+		directRoute := len(nodes) == 0 && len(o.routePrePool(key)) == 0 && len(o.routePostPool(key)) == 0 && (explicitNoChain(o.RoutePre, key) || explicitEmptyPool(o.RoutePrePool, key)) && (explicitNoChain(o.RoutePost, key) || explicitEmptyPool(o.RoutePostPool, key))
 		if directRoute {
 			rules = append(rules, "IN-USER,"+login+",DIRECT")
 			continue
@@ -283,6 +357,25 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	}
 	rules = append(rules, "MATCH,"+fallback)
 	return proxies, groups, rules, nil
+}
+
+func explicitEmptyPool(m map[string][]string, key string) bool {
+	values, ok := m[key]
+	return ok && len(effectivePool(values, true, "")) == 0
+}
+
+func (o Options) routePrePool(key string) []string {
+	if values, ok := o.RoutePrePool[key]; ok {
+		return effectivePool(values, true, "")
+	}
+	return effectivePool(nil, false, o.RoutePre[key])
+}
+
+func (o Options) routePostPool(key string) []string {
+	if values, ok := o.RoutePostPool[key]; ok {
+		return effectivePool(values, true, "")
+	}
+	return effectivePool(nil, false, o.RoutePost[key])
 }
 
 func validAccountLogin(login string) bool {

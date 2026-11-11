@@ -1,4 +1,4 @@
-package hopstate
+package hop
 
 import (
 	"strings"
@@ -23,8 +23,8 @@ func TestHopKeyCanonicalIdentity(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			first, ok1 := HopKey(tc.first)
-			second, ok2 := HopKey(tc.second)
+			first, ok1 := Key(tc.first)
+			second, ok2 := Key(tc.second)
 			if !ok1 || !ok2 || first != tc.firstWant || second != tc.secondWant || !validHashKey(first) || !validHashKey(second) || strings.Contains(first, "first-secret") || strings.Contains(second, "credential-two") {
 				t.Fatal("canonical identities did not match expected hashes")
 			}
@@ -40,14 +40,14 @@ func TestHopKeyRejectsInvalidURLs(t *testing.T) {
 		"http://[2001:db8::1", "http://[example.com]", "http://[192.0.2.1]", "http://2001:db8::1:80", "http://bad_host.example",
 	}
 	for _, raw := range invalid {
-		if _, ok := HopKey(raw); ok {
+		if _, ok := Key(raw); ok {
 			t.Fatal("invalid proxy URL was accepted")
 		}
 	}
 }
 
 func TestHopKeyAcceptsMappedIPv6(t *testing.T) {
-	key, ok := HopKey("http://[::ffff:192.0.2.1]")
+	key, ok := Key("http://[::ffff:192.0.2.1]")
 	if !ok || key != "7ca79746435286842b372320e29d143fe5b4505e7d618cbc2d2e9f9a768aaaac" {
 		t.Fatal("valid mapped IPv6 proxy address was rejected or miscanonicalized")
 	}

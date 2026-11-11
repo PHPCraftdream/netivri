@@ -1,4 +1,4 @@
-package hoppool
+package pool
 
 // Stage identifies the boundary at which an attempt failed.
 type Stage uint8

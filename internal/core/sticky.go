@@ -258,7 +258,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	started := g.clock()
 
 	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
-	if recorded {
+	if recorded && !isHopPoolDialError(err) {
 		g.health.recordDialAtKey(g.healthKeys[index], site, err, took)
 		if err != nil {
 			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: dialErrKind(err), Hop: g.health.hopOfKey(g.healthKeys[index], err)})
@@ -272,6 +272,8 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		if h != nil {
 			h.hedgeRefillDial()
 		}
+	} else if recorded && err != nil {
+		g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: label, Why: "error"})
 	}
 	if err == nil {
 		conn.AppendToChains(g)
@@ -289,7 +291,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	retryLabel := g.labels[retry]
 	retryStarted := g.clock()
 	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
-	if retryRecorded {
+	if retryRecorded && !isHopPoolDialError(retryErr) {
 		g.health.recordDialAtKey(g.healthKeys[retry], site, retryErr, retryTook)
 		if retryErr != nil {
 			g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: dialErrKind(retryErr), Hop: g.health.hopOfKey(g.healthKeys[retry], retryErr)})
@@ -299,6 +301,8 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 		if retryErr != nil && dialErrKind(retryErr) == "timeout" {
 			g.recordDialTimeout(login, site, retry, retryLabel, metadata, retryStarted, retryTook)
 		}
+	} else if retryRecorded && retryErr != nil {
+		g.emit(ConnEvent{Kind: ConnDialFailed, Login: login, Label: retryLabel, Why: "error"})
 	}
 	if retryErr != nil {
 		return nil, retryErr
@@ -371,15 +375,18 @@ var _ C.ProxyAdapter = (*stickyGroup)(nil)
 
 // routePlan is one account route prepared for sticky-group installation.
 type routePlan struct {
-	index      int
-	gen        int
-	key        string   // route key the plan was built from
-	group      string   // internal proxy name of the route's group
-	names      []string // internal proxy names, member order
-	labels     []string // statistics labels, member order
-	healthKeys []string
-	tiers      []int    // priority tier per member, lower first; nil = one tier
-	hops       []hopSet // the chain of every member, to say where a failure came from
+	index             int
+	gen               int
+	key               string   // route key the plan was built from
+	group             string   // internal proxy name of the route's group
+	names             []string // internal proxy names, member order
+	labels            []string // statistics labels, member order
+	healthKeys        []string
+	carrierHealthKeys []string
+	tiers             []int    // priority tier per member, lower first; nil = one tier
+	hops              []hopSet // the chain of every member, to say where a failure came from
+	prePools          []*hopPoolSpec
+	postPools         []*hopPoolSpec
 }
 
 // checkedTiers validates the tiers of a route of n nodes: none, or one
@@ -410,6 +417,9 @@ func buildRoutePlans(o Options) ([]routePlan, error) { return buildRoutePlansGen
 // buildRoutePlansGen is buildRoutePlans with the proxy names of routing
 // generation gen (see memberProxyName).
 func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
+	if err := validateOptionHopPools(o); err != nil {
+		return nil, err
+	}
 	// Validate every NodeLabels entry of a known route, referenced or not and
 	// whether or not any account has a route.
 	for key, labels := range o.NodeLabels {
@@ -442,10 +452,9 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 	plans := make([]routePlan, 0, len(keys))
 	for index, key := range keys {
 		nodes := o.RouteNodes[key]
-		directPost := len(nodes) == 0 && o.RoutePost[key] != "" && !isNoChain(o.RoutePost[key]) && (o.RoutePre[key] == "" || isNoChain(o.RoutePre[key]))
-		// A plain DIRECT route is explicit: both sides say none. A route with
-		// no nodes and no such marker is a missing route, not a direct one.
-		directRoute := len(nodes) == 0 && !directPost && explicitNoChain(o.RoutePre, key) && explicitNoChain(o.RoutePost, key)
+		preRoute, postRoute := o.routePrePool(key), o.routePostPool(key)
+		directPost := len(nodes) == 0 && len(postRoute) > 0 && len(preRoute) == 0
+		directRoute := len(nodes) == 0 && len(preRoute) == 0 && len(postRoute) == 0 && (explicitNoChain(o.RoutePre, key) || explicitEmptyPool(o.RoutePrePool, key)) && (explicitNoChain(o.RoutePost, key) || explicitEmptyPool(o.RoutePostPool, key))
 		if len(nodes) == 0 && !directPost && !directRoute {
 			return nil, &cli.Error{
 				Code:    "NO_NODES_FOR_COUNTRY",
@@ -460,10 +469,35 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 		if err := checkedNodeHops(o, key, len(nodes)); err != nil {
 			return nil, err
 		}
-		plan.hops = routeHopsOf(o, key, nodes)
+		if err := checkedPoolNodeHops(o, key, len(nodes)); err != nil {
+			return nil, err
+		}
+		plan.hops = make([]hopSet, len(nodes))
+		for node, mapping := range nodes {
+			plan.hops[node].node = nodeHop(mapping)
+			pre, post := o.nodePrePool(key, node), o.nodePostPool(key, node)
+			if len(pre) == 1 {
+				plan.hops[node].pre = chainHop(pre[0])
+			}
+			if len(post) == 1 {
+				plan.hops[node].post = chainHop(post[0])
+			}
+		}
 		for node := range nodes {
+			preValues, postValues := o.nodePrePool(key, node), o.nodePostPool(key, node)
+			prePool := newHopPoolSpec(preHopPool, preValues, gen)
+			postPool := newHopPoolSpec(postHopPool, postValues, gen)
+			if postPool != nil && len(postPool.keys) > 1 {
+				base := memberProxyName(gen, index, node)
+				postPool.entryNames = nil
+				for poolIndex := range postPool.keys {
+					postPool.entryNames = append(postPool.entryNames, nodePoolEntryName(base, postPool.configIDs[poolIndex]))
+				}
+			}
+			plan.prePools = append(plan.prePools, prePool)
+			plan.postPools = append(plan.postPools, postPool)
 			name := memberProxyName(gen, index, node)
-			if post := o.nodePost(key, node); post != "" && !isNoChain(post) {
+			if len(postValues) > 0 {
 				name = helperProxyNameFromMember(name, "post")
 			}
 			plan.names = append(plan.names, name)
@@ -482,7 +516,29 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 		}
 		plan.healthKeys = make([]string, len(plan.labels))
 		for i, label := range plan.labels {
-			plan.healthKeys[i] = healthMemberKey(label, o.nodePre(key, i), o.nodePost(key, i))
+			pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
+			if len(pre) <= 1 && len(post) <= 1 {
+				preURL, postURL := "", ""
+				if len(pre) == 1 {
+					preURL = pre[0]
+				}
+				if len(post) == 1 {
+					postURL = post[0]
+				}
+				plan.healthKeys[i] = healthMemberKey(label, preURL, postURL)
+			} else {
+				plan.healthKeys[i] = healthPoolMemberKey(label, pre, post)
+			}
+		}
+		plan.carrierHealthKeys = append([]string(nil), plan.healthKeys...)
+		for i := range plan.labels {
+			pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
+			prePooled := i < len(plan.prePools) && plan.prePools[i] != nil && len(plan.prePools[i].keys) >= 2
+			postPooled := i < len(plan.postPools) && plan.postPools[i] != nil && len(plan.postPools[i].keys) >= 2
+			if len(post) > 0 && (prePooled || postPooled) {
+				// Carrier probes maintain independent evidence and must not clear full-route failure streaks.
+				plan.carrierHealthKeys[i] = healthPoolMemberKey(plan.labels[i], pre, nil)
+			}
 		}
 		tiers, err := checkedTiers(o.NodeTiers[key], len(nodes))
 		if err != nil {
@@ -608,6 +664,9 @@ func probeErrorHookKeys(nameToLabel, nameToHealthKey map[string]string, health *
 
 func probeGroupHealthHook(nameToHealthKey map[string]string, health *healthTable) func([]string, bool, time.Duration, error) {
 	return func(names []string, alive bool, delay time.Duration, err error) {
+		if !alive && isHopPoolDialError(err) {
+			return
+		}
 		seen := make(map[*nodeHealth]struct{}, len(names))
 		for _, name := range names {
 			key := nameToHealthKey[name]
@@ -642,6 +701,10 @@ func memberNameHealthKeys(plans []routePlan) map[string]string {
 			if i < len(plan.healthKeys) && plan.healthKeys[i] != "" {
 				key = plan.healthKeys[i]
 			}
+			carrierKey := key
+			if i < len(plan.carrierHealthKeys) && plan.carrierHealthKeys[i] != "" {
+				carrierKey = plan.carrierHealthKeys[i]
+			}
 			if name == "DIRECT" {
 				if _, ok := keys[name]; !ok {
 					keys[name] = key
@@ -656,11 +719,11 @@ func memberNameHealthKeys(plans []routePlan) map[string]string {
 				keys[name] = key
 			}
 			if _, ok := keys[base]; !ok {
-				keys[base] = key
+				keys[base] = carrierKey
 			}
 			pre := helperProxyNameFromMember(base, "pre")
 			if _, ok := keys[pre]; !ok {
-				keys[pre] = key
+				keys[pre] = carrierKey
 			}
 			post := helperProxyNameFromMember(base, "post")
 			if _, ok := keys[post]; !ok {

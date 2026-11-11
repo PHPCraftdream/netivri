@@ -88,9 +88,11 @@ type WarmOptions struct {
 	// so the earlier generations still in Mihomo's proxy map are not probed,
 	// nodes that stay down keep their lengthened interval and the others are
 	// not probed again before their interval is up.
-	only         func(name string) bool
-	seed         map[string]probeSchedule
-	onProbeGroup func(names []string, alive bool, delay time.Duration, err error)
+	only           func(name string) bool
+	seed           map[string]probeSchedule
+	onProbeGroup   func(names []string, alive bool, delay time.Duration, err error)
+	hopRevive      func(context.Context) error
+	probeBaseNames []string
 }
 
 // NodeHealth is the most recent probe result for one proxy.
@@ -255,6 +257,13 @@ func startWarmWith(o WarmOptions, node map[string]any, clock warmClock, probe wa
 		w.pool.start()
 	}
 	w.proxies = warmLeaves(tunnel.Proxies(), o.only)
+	proxyMap := tunnel.Proxies()
+	for _, name := range o.probeBaseNames {
+		if p := proxyMap[name]; p != nil {
+			w.proxies = append(w.proxies, p)
+		}
+	}
+	w.proxies = uniqueWarmProxies(w.proxies)
 	w.backoff = seededBackoff(w.proxies, o.seed)
 	go w.run(ctx)
 	return w, nil
@@ -275,6 +284,20 @@ func warmLeaves(proxies map[string]C.Proxy, only func(name string) bool) []C.Pro
 			continue
 		}
 		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
+	return out
+}
+
+func uniqueWarmProxies(proxies []C.Proxy) []C.Proxy {
+	seen := make(map[string]bool, len(proxies))
+	out := proxies[:0]
+	for _, proxy := range proxies {
+		if proxy == nil || seen[proxy.Name()] {
+			continue
+		}
+		seen[proxy.Name()] = true
+		out = append(out, proxy)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name() < out[j].Name() })
 	return out
@@ -407,6 +430,9 @@ schedule:
 		}(group)
 	}
 	wg.Wait()
+	if parent.Err() == nil && w.options.hopRevive != nil {
+		_ = w.options.hopRevive(parent)
+	}
 }
 
 // scheduled is a proxy that is due in a round and its index in w.proxies.

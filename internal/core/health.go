@@ -553,6 +553,11 @@ func healthMembersForPlans(plans []routePlan) []healthMember {
 				hops = plan.hops[i]
 			}
 			members = append(members, healthMember{key: key, label: label, hops: hops})
+			if i < len(plan.carrierHealthKeys) && plan.carrierHealthKeys[i] != "" && plan.carrierHealthKeys[i] != key {
+				carrierHops := hops
+				carrierHops.post = hopInfo{}
+				members = append(members, healthMember{key: plan.carrierHealthKeys[i], label: label, hops: carrierHops})
+			}
 		}
 	}
 	return members

@@ -66,6 +66,10 @@ type Options struct {
 	// RoutePre and RoutePost map opaque route keys to one effective URI string.
 	RoutePre  map[string]string
 	RoutePost map[string]string
+	// RoutePrePool and RoutePostPool optionally provide ordered hop pools per
+	// route. An entry, including an empty one, replaces the scalar route value.
+	RoutePrePool  map[string][]string
+	RoutePostPool map[string][]string
 	// NodePre and NodePost optionally give each node of a route its own
 	// effective hop URI (route key -> one value per node, same order and
 	// length as RouteNodes[key]); a route without an entry uses RoutePre and
@@ -73,6 +77,17 @@ type Options struct {
 	// of one route take different hops.
 	NodePre  map[string][]string
 	NodePost map[string][]string
+	// NodePrePool and NodePostPool optionally provide an ordered hop pool for
+	// each node, indexed by opaque route key. An entry overrides route-level
+	// pools and scalar values, including when its slice is empty.
+	NodePrePool  map[string][][]string
+	NodePostPool map[string][][]string
+	// SiteBinder optionally preserves the chosen post hop for a login and site.
+	// The interface is intentionally package-private for sibling integration.
+	SiteBinder siteBinder
+	// OnHopEvent optionally hears a hop quarantine/revival transition. HopEvent
+	// contains opaque identifiers only. nil disables callback reporting.
+	OnHopEvent func(HopEvent)
 	// GlobalPost chains the MATCH route through one effective URI string.
 	GlobalPost string
 	// AccountRoute maps an authenticated login to the route key it uses.
@@ -150,6 +165,9 @@ type routingState struct {
 	gen           int
 	accountRoutes map[string]string
 	warm          *warmer // nil without Options.Warm
+	// Lifecycle is retained across routing generations so hop health follows
+	// logical route/node pools while adapters remain generation-local.
+	hopPools *hopPoolLifecycle
 	// Sticky-group state, nil without account routes.
 	table  *affinityTable
 	health *healthTable
@@ -262,6 +280,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	var table *affinityTable
 	var health *healthTable
 	var poller *throughputPoller
+	hopPools := newHopPoolLifecycle(o.OnHopEvent)
 	if len(plans) > 0 {
 		table = newAffinityTable(nil, o.AffinityTTL)
 		table.setReturnAfter(o.TierReturnAfter)
@@ -287,6 +306,21 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	inbound.SetAllowedIPs(allowed)
 
 	restored := 0
+	var poolNames []string
+	if health != nil {
+		health.registerMembers(healthMembersForPlans(plans))
+	}
+	parsedProxies := tunnel.Proxies()
+	updated, installedPoolNames, poolErr := hopPools.install(o, plans, parsedProxies, health)
+	poolNames = installedPoolNames
+	if poolErr != nil {
+		executor.Shutdown()
+		resetAllowedClients()
+		return nil, poolErr
+	}
+	if len(plans) > 0 || len(poolNames) > 0 {
+		tunnel.UpdateProxies(updated, tunnel.Providers())
+	}
 	if len(plans) > 0 {
 		// The replaced select groups become garbage; their finalizers are
 		// drained by the next Start through drainFinalizers.
@@ -296,8 +330,10 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			resetAllowedClients()
 			return nil, err
 		}
+		poolNames = append(poolNames, planProxyNames(plans)...)
 		restored = loadInitialBindings(table, plans, o.AccountRoute, o.InitialBindings)
 	}
+	hopPools.completeInstall(o.SiteBinder)
 
 	bind := o.Bind
 	if bind == "" {
@@ -353,6 +389,24 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			}
 			wo.only = func(name string) bool { return name == want }
 		}
+		wo.probeBaseNames = hopPools.baseProbeNames(plans)
+		if len(hopPools.uses) > 0 {
+			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
+			if normalizeErr != nil {
+				_ = ln.Close()
+				executor.Shutdown()
+				resetAllowedClients()
+				return nil, normalizeErr
+			}
+			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
+			if reviveErr != nil {
+				_ = ln.Close()
+				executor.Shutdown()
+				resetAllowedClients()
+				return nil, reviveErr
+			}
+			wo.hopRevive = reviver.Round
+		}
 		warm, err = startWarm(wo, o.Node)
 		if err != nil {
 			_ = ln.Close()
@@ -400,6 +454,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	inst.routing.Store(&routingState{
 		accountRoutes:    copyAccountRoutes(o.AccountRoute),
+		hopPools:         hopPools,
 		warm:             warm,
 		table:            table,
 		health:           health,
@@ -408,7 +463,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		memberHealthKeys: memberNameHealthKeys(plans),
 		connHealthKeys:   memberNameHealthKeys(plans),
 		routeLabels:      routeLabels(plans),
-		names:            append(planProxyNames(plans), proxyMappingNames(proxies)...),
+		names:            append(append(planProxyNames(plans), proxyMappingNames(proxies)...), poolNames...),
 	})
 	current = inst
 
