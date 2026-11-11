@@ -133,7 +133,7 @@ var helpTopics = []helpTopic{
 				"Settings: the global keys of config.ktav (Listen, Auth, Fetch, Chain) with the same validation as 'netivri config set'; secrets are set, never shown, and a change that needs an angel restart says so in the toast.",
 			"Providers: the list shows Name, Nodes and State. The card shows the Subscription (masked, " +
 				"never the URL), the Via proxy (editable; empty clears it), the Name and Nodes, Countries and " +
-				"Updated, and the Pre-hop and Post-hop of the provider (redacted list state/count only; Enter opens an operation picker to replace the list, add a URL, remove an entry by its original position, inherit or disable; URL prompts are masked, list order is not changed, and the production core rejects a second URL per side; Clear pre-hop (P) / Clear post-hop (O) return it to the global value). " +
+				"Updated, and the Pre-hop and Post-hop of the provider (redacted list state/count only; Enter opens an operation picker to replace the list, add a URL, remove an entry by its original position, inherit or disable; URL prompts are masked, list order is not changed and up to 16 candidates per side are supported; Clear pre-hop (P) / Clear post-hop (O) return it to the global value). " +
 				"Enter on the Subscription or Via field line opens its edit prompt. Actions: Refresh now (r reload of the selected provider), Refresh all (R), Countries... (c, a multi-choice picker with node counts), Rename... " +
 				"(renaming updates the accounts that use the provider and moves the stored snapshot; nothing is " +
 				"written when the name is not valid), Remove... (d; the confirm names dependent accounts), Nodes... (n; a read-only dialog of the provider's stored nodes, one row per node with its label, country and name; '/' filters by text, c cycles the country filter, Esc closes; no addresses, ports or credentials are shown; disabled without a stored snapshot) and Diagnose... (g; the dial diagnostics of 'netivri diag dial --node' for one node, through the same operation: a prompt picks the node and an optional one the samples count (default 5, 1..20); the run happens in the background, Esc cancels it; the result shows per phase p50/p90/max in ms and the failure counts, no idle test; errors by message and hint only). " +
@@ -143,7 +143,7 @@ var helpTopics = []helpTopic{
 				"cancel. Empty state: A provider is a subscription of proxy nodes. Add one to start.",
 			"Accounts: the list has a mark column: Space or m marks or unmarks the selected account, A marks all, M clears the marks; marks survive reloads and vanish with their account. " +
 				"The list shows Login, Provider and Exit. The card shows Provider, Countries, Exit, " +
-				"Allowed clients, Pre-hop and Post-hop (redacted list state/count without proxy addresses; Enter on either opens an operation picker to replace the list, add an entry, remove an entry by its original position, inherit or disable; URL prompts are masked, list order is not changed, and the production core rejects a second URL per side) and the Password state " +
+				"Allowed clients, Pre-hop and Post-hop (redacted list state/count without proxy addresses; Enter on either opens an operation picker to replace the list, add an entry, remove an entry by its original position, inherit or disable; `none` alone clears inherited candidates; list order is not changed and up to 16 candidates per side are supported) and the Password state " +
 				"(set or waiting for the first login). Actions: Route... (v; a read-only dialog of 'account show': the tiers with the providers of each country and every node with label and country, " +
 				"while the angel runs also the live state up/down/not probed, the connection count of every node and the total fallback connections; with the angel stopped it says so in one line; Esc closes), " +
 				"Apply to marked... (b; disabled while nothing is marked: pick provider, countries, exit, allowed clients, pre-hop or post-hop, answer the same prompt as the single edit " +
@@ -380,15 +380,15 @@ var helpTopics = []helpTopic{
 		Flags: []helpFlag{
 			{"--name {NAME}", "Name of the subscription (letters, digits, . _ -; at most 64). Default: derived from the host of the URL. A name used by a different URL is SUB_EXISTS_NAME."},
 			{"--via {PROXY}", "Fetch through this proxy: an http(s):// or socks5(h):// URL."},
-			{"--pre-socks5 {URL|none}", "Repeat to set ordered provider pre-list candidates; `none` must stand alone to disable. The production core accepts one URL per side today; future multi-entry support is a non-serial candidate pool and has no promised selection algorithm."},
-			{"--post-socks5 {URL|none}", "Repeat to set ordered provider post-list candidates; `none` must stand alone. Same core limit and future pool behavior as --pre-socks5."},
+			{"--pre-socks5 {URL|none}", "Repeat to set ordered provider pre-list candidates (up to 16); `none` must stand alone to clear inherited candidates. Candidates are alternatives, not serial hops."},
+			{"--post-socks5 {URL|none}", "Repeat to set ordered provider post-list candidates (up to 16); `none` must stand alone to clear inherited candidates. Candidates are alternatives, not serial hops."},
 		},
 		Examples: []helpExample{
 			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/{TOKEN}"},
 			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/{TOKEN} --name main"},
 			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
-			{"Set one current pre URL; a second is rejected today", "netivri sub add https://provider.example/sub/{TOKEN} --pre-socks5 http://proxy.example:8080"},
-			{"Show a two-URL list that the current core rejects", "netivri sub add https://provider.example/sub/{TOKEN} --pre-socks5 {URL} --pre-socks5 {OTHER_URL}"},
+			{"Set ordered pre candidates for main", "netivri sub add https://provider.example/sub/{TOKEN} --pre-socks5 http://proxy.example:8080 --pre-socks5 socks5://backup.example:1080"},
+			{"Set ordered post candidates for main", "netivri sub add https://provider.example/sub/{TOKEN} --post-socks5 socks5://exit.example:1080 --post-socks5 https://backup-exit.example:443"},
 		},
 		Errors: []helpError{
 			herr("FETCH_URL_INVALID", cli.ExitUsage, "the subscription or proxy URL is not valid"),
@@ -408,10 +408,10 @@ var helpTopics = []helpTopic{
 			"netivri sub set-socks5 {SUBSCRIPTION} [--pre {URL|none|inherit} ...] [--post {URL|none|inherit} ...]",
 			"netivri sub set-socks5 {SUBSCRIPTION} [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]",
 		},
-		Description: "Sets ordered pre and post proxy lists of one provider. Repeat --pre or --post to replace the complete side in order; a side not given is unchanged. The nearest configured list replaces the entire less-specific list (global, then provider, then account); lists are never merged. Use none alone to disable, or inherit alone to clear the provider's own list and use the global list. Repeatable --add-pre / --add-post append URLs; --remove-pre / --remove-post remove one-based indexes from the original list. Repeating an original index rejects the entire operation without saving the list. Do not mix replace/add/remove operations on one side. Removing the last entry clears the list to inherit. Repeating none or inherit, mixing none with URLs, duplicate entries, and invalid indexes are errors. The production core currently accepts at most one URL per side. Future multi-entry support uses a non-serial candidate pool to select one live proxy per side per connection, with no selection-algorithm guarantee. Output contains redacted pre_socks5 and post_socks5 arrays, including [] when unset and [\"none\"] when disabled. URLs are credentials and never printed. A running angel applies changes within a few seconds.",
+		Description: "Sets ordered pre and post proxy candidate lists of one provider (up to 16 URLs per side). Repeat --pre or --post to replace the complete side in order; a side not given is unchanged. The nearest configured list replaces the entire less-specific list (global, then provider, then account); lists are never merged. This is full replacement. Use none alone to clear inherited candidates, or inherit alone to clear the provider's own list and use the global list. Repeatable --add-pre / --add-post append URLs; --remove-pre / --remove-post remove one-based indexes from the original list. Repeating an original index rejects the entire operation without saving the list. Do not mix replacement/add/remove operations on one side. Removing the last entry clears the list to inherit. Repeating none or inherit, mixing none with URLs, duplicate entries, and invalid indexes are errors. Candidates are alternatives, not serial hops. URLs use socks5://, http:// or https:// with a required port. Output contains redacted pre_socks5 and post_socks5 arrays, including [] when unset and [\"none\"] when disabled. URLs are credentials and never printed. A running angel applies changes within a few seconds.",
 		Flags: []helpFlag{
-			{"--pre {URL|none|inherit}", "Repeat to replace the complete pre list; URLs use socks5://, http:// or https:// with a required port. none must stand alone to disable; inherit clears the provider list. The production core accepts one URL per side today; future multi-entry support is a non-serial candidate pool without a promised selection algorithm."},
-			{"--post {URL|none|inherit}", "Repeat to replace the complete post list; same schemes and core limit. none must stand alone; inherit clears the provider list."},
+			{"--pre {URL|none|inherit}", "Repeat to replace the complete pre list with up to 16 URLs; candidates are alternatives, not serial hops. none clears inherited candidates; inherit clears the provider list. URLs use socks5://, http:// or https:// with a required port."},
+			{"--post {URL|none|inherit}", "Repeat to replace the complete post list with up to 16 URLs; candidates are alternatives, not serial hops. none clears inherited candidates; inherit clears the provider list. URLs use socks5://, http:// or https:// with a required port."},
 			{"--add-pre {URL}", "Repeat to append URLs to the pre list; cannot combine with --pre or --remove-pre."},
 			{"--remove-pre {INDEX}", "Repeat to remove a one-based index from the original pre list; cannot combine with --pre or --add-pre."},
 			{"--add-post {URL}", "Repeat to append URLs to the post list; cannot combine with --post or --remove-post."},
@@ -421,9 +421,8 @@ var helpTopics = []helpTopic{
 			{"Set one pre proxy for all nodes of main", "netivri sub set-socks5 main --pre socks5://proxy.example:1080"},
 			{"Disable main's inherited post proxy", "netivri sub set-socks5 main --post none"},
 			{"Clear main's own pre list and inherit global", "netivri sub set-socks5 main --pre inherit"},
-			{"Append a pre entry (a second URL is currently rejected)", "netivri sub set-socks5 main --add-pre {URL}"},
-			{"Remove the first pre entry", "netivri sub set-socks5 main --remove-pre 1"},
-			{"A two-candidate list is rejected by the current core", "netivri sub set-socks5 main --pre {URL} --pre {OTHER_URL}"},
+			{"Set two alternative pre proxies", "netivri sub set-socks5 main --pre socks5://proxy.example:1080 --pre https://backup.example:443"},
+			{"Set two alternative post proxies", "netivri sub set-socks5 main --post http://exit.example:8080 --post socks5://backup-exit.example:1080"},
 		},
 		Errors: []helpError{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
@@ -619,14 +618,14 @@ var helpTopics = []helpTopic{
 			"netivri account add {ACCOUNT} [--provider {SUBSCRIPTION}[,...]] [--country {COUNTRY}[,...]]",
 			"netivri account add {ACCOUNT} [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]",
 		},
-		Description: "The production core currently accepts one URL per side. Future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection, without a selection-algorithm guarantee. `--exit` chooses route (default) or direct; direct exposes this machine's address, requires empty provider/country, rejects an explicitly configured pre proxy, ignores inherited pre proxy, and may use an effective post proxy directly. Adding an account restarts its listener.",
+		Description: "The pre_socks5 and post_socks5 flags each set an ordered candidate list of up to 16 URLs; repeat a flag to add candidates. Candidates are alternatives, not serial hops, and `none` alone clears inherited candidates. `--exit` chooses route (default) or direct; direct exposes this machine's address, requires empty provider/country, rejects an explicitly configured pre proxy, ignores inherited pre proxy, and may use an effective post proxy directly. Adding an account restarts its listener.",
 		Flags: []helpFlag{
 			{"--exit {route|direct}", "Account exit mode; default route. Direct requires empty provider/country; if changing another field while this account is still invalid, CONFIG_INVALID includes a hint to run 'netivri account set-exit {ACCOUNT} route' first."},
 			{"--provider {SUBSCRIPTION}[,{SUBSCRIPTION}...]", "Route only through the nodes of this subscription, or of several, separated by commas and in priority order. Each must be a configured subscription."},
 			{"--country {COUNTRY}[,{COUNTRY}...]", "Route only through nodes of this country: an ISO 3166-1 alpha-2 code such as DE, NL or FI, any case; or several codes, separated by commas and in priority order. * stands for every country not named in the list: DE,* is Germany first, then anywhere; * alone is any country. Quote it where the shell expands globs."},
 			{"--clients {RULES}", "Client addresses that may use this account: an allowed-clients rule list (e.g. 10.0.0.0/8, 192.168.1.*, loopback, *). Default: no account restriction."},
-			{"--pre-socks5 {URL|none}", "Repeat to set ordered account pre-list candidates. The production core currently accepts one URL per side; future multi-entry support is a non-serial candidate pool without a promised selection algorithm. `none` must stand alone."},
-			{"--post-socks5 {URL|none}", "Repeat for ordered account post-list candidates; same current core limit and future non-serial behavior as --pre-socks5. `none` must stand alone."},
+			{"--pre-socks5 {URL|none}", "Repeat to set up to 16 ordered account pre-list candidates. Candidates are alternatives, not serial hops; `none` alone clears inherited candidates."},
+			{"--post-socks5 {URL|none}", "Repeat to set up to 16 ordered account post-list candidates. Candidates are alternatives, not serial hops; `none` alone clears inherited candidates."},
 		},
 		Examples: []helpExample{
 			{"Add an account with the default route explicitly selected", "netivri account add alice --exit route"},
@@ -638,9 +637,7 @@ var helpTopics = []helpTopic{
 			{"Germany first, then the Netherlands; main first, then backup", "netivri account add dave --provider main,backup --country DE,NL"},
 			{"Connect: the first password you send for alice becomes her password", "curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org"},
 			{"Only clients from 10.0.0.0/8 may use alice", "netivri account add alice --provider main --clients 10.0.0.0/8"},
-			{"Set one current pre URL; a second is rejected today", "netivri account add alice --provider main --pre-socks5 socks5://pre.example:1080"},
-			{"Disable a post list explicitly", "netivri account add {ACCOUNT} --post-socks5 none"},
-			{"Show a two-URL list rejected by the current core", "netivri account add {ACCOUNT} --pre-socks5 {URL} --pre-socks5 {OTHER_URL}"},
+			{"Add an account with alternative pre and post proxies", "netivri account add {ACCOUNT} --provider {SUBSCRIPTION} --pre-socks5 socks5://pre.example:1080 --pre-socks5 https://backup-pre.example:443 --post-socks5 http://exit.example:8080 --post-socks5 socks5://backup-exit.example:1080"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_INVALID", cli.ExitUsage, "the login is not valid"),
@@ -841,22 +838,18 @@ var helpTopics = []helpTopic{
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] [--pre {URL|none|inherit} ...] [--post {URL|none|inherit} ...]",
 			"netivri account set-socks5 {ACCOUNT}[,{ACCOUNT}...] [--add-pre {URL} ...] [--remove-pre {INDEX} ...] [--add-post {URL} ...] [--remove-post {INDEX} ...]",
 		},
-		Description: "Replaces or edits complete ordered proxy lists for one or more accounts. Repeat --pre or --post to replace the entire side; a side not given is unchanged. The nearest configured list replaces the entire less-specific list (global, provider, account), never merges. Use none alone to disable; inherit alone clears the account list to use the provider list, or global list. Repeatable --add-pre / --add-post append URLs; --remove-pre / --remove-post remove one-based indexes referring to the original list. Repeating an original index rejects the entire operation without saving the list. Do not combine replacement/add/remove on the same side. Removing the last entry clears the list to inherit. Repeated none/inherit, mixing none with URLs, duplicates or invalid indexes are errors. The production core currently accepts at most one URL per side. Future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection, without a selection-algorithm guarantee. URLs are credentials and never printed. A running angel applies changes within a few seconds.",
+		Description: "Replaces or edits complete ordered proxy candidate lists for one or more accounts (up to 16 URLs per side). Repeat --pre or --post to replace the entire side; a side not given is unchanged. The nearest configured list replaces the entire less-specific list (global, provider, account), never merges. Use none alone to clear inherited candidates; inherit alone clears the account list to use the provider list, or global list. Repeatable --add-pre / --add-post append URLs; --remove-pre / --remove-post remove one-based indexes referring to the original list. Repeating an original index rejects the entire operation without saving the list. Do not combine replacement/add/remove on the same side. Removing the last entry clears the list to inherit. Repeated none/inherit, mixing none with URLs, duplicates or invalid indexes are errors. Candidates are alternatives, not serial hops. URLs are credentials and never printed. A running angel applies changes within a few seconds.",
 		Flags: []helpFlag{
-			{"--pre {URL|none|inherit}", "Repeat to replace the complete pre list; URLs use socks5://, http:// or https:// with a required port. none must stand alone to disable; inherit clears the account list. The core accepts one URL per side today; future multi-entry support is a non-serial candidate pool without a promised selection algorithm."},
-			{"--post {URL|none|inherit}", "Repeat to replace the complete post list; same schemes and core limit. none must stand alone; inherit clears the account list."},
+			{"--pre {URL|none|inherit}", "Repeat to replace the complete pre list with up to 16 URLs; candidates are alternatives, not serial hops. none clears inherited candidates; inherit clears the account list. URLs use socks5://, http:// or https:// with a required port."},
+			{"--post {URL|none|inherit}", "Repeat to replace the complete post list with up to 16 URLs; candidates are alternatives, not serial hops. none clears inherited candidates; inherit clears the account list. URLs use socks5://, http:// or https:// with a required port."},
 			{"--add-pre {URL}", "Repeat to append URLs to the pre list; cannot combine with --pre or --remove-pre."},
 			{"--remove-pre {INDEX}", "Repeat to remove a one-based index from the original pre list; cannot combine with --pre or --add-pre."},
 			{"--add-post {URL}", "Repeat to append URLs to the post list; cannot combine with --post or --remove-post."},
 			{"--remove-post {INDEX}", "Repeat to remove a one-based index from the original post list; cannot combine with --post or --add-post."},
 		},
 		Examples: []helpExample{
-			{"Set a current one-hop pre list", "netivri account set-socks5 {ACCOUNT} --pre socks5://proxy.example:1080"},
-			{"Disable the inherited post list", "netivri account set-socks5 {ACCOUNT} --post none"},
-			{"Clear the account pre list to inherit", "netivri account set-socks5 {ACCOUNT} --pre inherit"},
-			{"Append a pre URL (a second URL is currently rejected)", "netivri account set-socks5 {ACCOUNT} --add-pre {URL}"},
-			{"Remove the first original post entry", "netivri account set-socks5 {ACCOUNT} --remove-post 1"},
-			{"Two URLs are rejected by the current core", "netivri account set-socks5 {ACCOUNT} --pre {URL} --pre {OTHER_URL}"},
+			{"Set two alternative pre proxies", "netivri account set-socks5 {ACCOUNT} --pre socks5://proxy.example:1080 --pre https://backup.example:443"},
+			{"Set two alternative post proxies", "netivri account set-socks5 {ACCOUNT} --post http://exit.example:8080 --post socks5://backup-exit.example:1080"},
 		},
 		Errors: []helpError{
 			herr("ACCOUNT_NOT_FOUND", cli.ExitNotFound, "an account in the list does not exist"),
@@ -1106,7 +1099,7 @@ var helpTopics = []helpTopic{
 		Group:       groupConfig,
 		Summary:     "Change one global setting",
 		Usage:       []string{"netivri config set {KEY} {VALUE}"},
-		Description: "Changes one global setting and validates the entire candidate config before writing. The error names the key, never the value. auth.password is stored as an argon2id hash and never echoed; init stores the placeholder. none or empty clears keys that allow it. For chain.pre_socks5 / chain.post_socks5, VALUE is one URL, none or empty; edit config.ktav for ordered arrays with multiple entries. Legacy scalar Ktav URLs load as singleton lists and render back as scalars; none/[none] disables a side and must stand alone. The production core rejects a second URL per side. The result carries restart_needed; an angel applies changes within a few seconds.",
+		Description: "Changes one global setting and validates the entire candidate config before writing. The error names the key, never the value. auth.password is stored as an argon2id hash and never echoed; init stores the placeholder. none or empty clears keys that allow it. For chain.pre_socks5 / chain.post_socks5, VALUE is one URL, none or empty; edit config.ktav for ordered lists of up to 16 URLs per side. Legacy scalar Ktav URLs load as singleton lists and render back as scalars; `none/[none]` clears inherited candidates. A multi-entry global post list works for account routes that inherit it, but connections without an account still use scalar `GlobalPost`; those connections reject a multi-entry global post with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. The result carries restart_needed; account-route pool changes apply in place when supported, while scalar global-post changes affecting no-account MATCH traffic require restart. A direct-post-only change may also restart if the core reports reconfiguration unsupported.",
 		Examples: []helpExample{
 			{"Move the proxy port", "netivri config set listen.port 8080"},
 			{"The plain password is hashed and never echoed", "netivri config set auth.password {PASSWORD}"},
@@ -1183,12 +1176,7 @@ var helpTopics = []helpTopic{
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
-			"chain.pre_socks5 and chain.post_socks5 are ordered arrays of proxy candidates at global, provider and account " +
-			"levels (subscriptions[].pre_socks5 and subscriptions[].post_socks5 for each subscriptions[] entry; accounts.pre_socks5 and accounts.post_socks5 for each accounts[] entry, also written accounts[].pre_socks5 and accounts[].post_socks5). Legacy scalar Ktav " +
-			"URLs load as singleton lists and singleton lists render as scalars. Lists cascade by complete nearest-level " +
-			"replacement, never merging; empty/absent inherits, `none` or `[none]` disables and must stand alone, and " +
-			"duplicates are invalid. The production core currently accepts at most one URL per side; future multi-entry support is a non-serial candidate pool selecting one live proxy per side per connection without a promised selection algorithm. URLs use socks5://, http:// or https:// with a required port; credentials are never printed. " +
-			"See 'netivri help routing'.\n\n" +
+			"`chain.pre_socks5` and `chain.post_socks5` are ordered candidate arrays at global, provider and account levels; `accounts[].pre_socks5`, `accounts[].post_socks5`, `subscriptions[].pre_socks5` and `subscriptions[].post_socks5` configure per-account and per-subscription chains. Each side supports up to 16 candidates. Legacy scalar Ktav URLs remain singleton lists. The nearest configured list replaces the less-specific list; empty/absent inherits and `none` clears inherited candidates. Candidates are alternatives, not serial hops. Weighted health quarantines failures and probes recovery. The no-account `MATCH` post remains scalar-only; see 'netivri help routing' for its interim error and scope. URLs use socks5://, http:// or https:// with required ports, and credentials are never printed.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
 			"around a comma are ignored. The rules: * (every address), loopback (127.0.0.0/8 and ::1), an exact " +
 			"IPv4 or IPv6 address, an IPv4 whole-octet mask (trailing * octets only: 192.168.1.*, 10.*; a * " +
@@ -1251,9 +1239,8 @@ var helpTopics = []helpTopic{
 			"may use an effective post proxy directly. It exposes this machine's address and is never an automatic " +
 			"fallback. Direct accounts have no node tiers; `account show` reports effective pre_socks5 with source " +
 			"`direct`, value `[\"none\"]`, and own value null. The post proxy is the hop after netivri's exit.\n\n" +
-			"Each ordered pre/post list is a set of alternatives per side. Future multi-entry support will select one live proxy per side per connection; list order does not promise a selection algorithm, and entries are not serial hops. The path is client -> selected pre proxy (if any) -> selected VPN exit -> selected post proxy (if any) -> target. Global, provider and account lists cascade by complete nearest-level replacement, never merging; absent/empty inherits, inherit clears a scoped list, and none alone disables it. Each node takes its own provider value. The production core currently accepts at most one URL per side. Each URL entry using socks5://, http:// or https:// requires a host and port. Credentials are redacted in help " +
-			"output and account show. Use 'netivri help config' for configuration keys and 'netivri help account " +
-			"set-socks5' and 'netivri help sub set-socks5' to change account and provider hops.\n\n" +
+			"The pool supports at most 16 hops per side. " +
+			"Each URL requires a host and port. Each ordered pre/post list is a set of alternatives per side; weighted hop health selects one live proxy per side per connection, not serial hops. Empty lists inherit; none disables a side, and status shows redacted effective lists. Three hard failures quarantine a hop for 30 seconds with doubling backoff to 600 seconds; probes test recovery. All-down pools still try candidates and never bypass a post proxy. Post hops bind per login and registrable site domain for 24 hours by default. Separate `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health` files persist lowercase 64-hex SHA-256 keys, never URLs. Logs omit URLs: quarantine/re-trip is WARN, recovery INFO, and a rate-limited all-down warning says `all N hops are down, trying them anyway`. No-account `MATCH` still uses scalar global post; its exact multi-entry error is documented in 'netivri help config'. See 'netivri help config' and account/provider set-socks5 topics.\n\n" +
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +

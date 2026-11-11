@@ -85,21 +85,23 @@ func TestAccountAddDifferingHopRepeatConflicts(t *testing.T) {
 	}
 }
 
-func TestAccountUpdateIncrementalHopEdit(t *testing.T) {
+func TestAccountUpdateIncrementalHopEditAcceptsPools(t *testing.T) {
 	home := accountProviderHome(t)
+	pre := config.HopList{"socks5://first.example:1080"}
 	cfg := config.Default()
-	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: config.HopList{"socks5://first.example:1080"}}}
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder, PreSOCKS5: pre}}
 	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
 		t.Fatal(err)
 	}
 	edit := HopEdit{Add: config.HopList{"socks5://second.example:1080"}}
 	_, err := AccountUpdate(home, AccountUpdateOptions{Login: "alice", PreEdit: &edit})
-	if err == nil || !strings.Contains(err.Error(), "pre_socks5: pool of several hops is not supported yet; one per side for now") {
-		t.Fatal("cap-one incremental edit returned an unexpected error")
+	if err != nil {
+		t.Fatalf("two-hop incremental edit rejected: %v", err)
 	}
 	got, err := config.Load(config.ConfigPath(home))
-	if err != nil || !slices.Equal(got.Accounts[0].PreSOCKS5, config.HopList{"socks5://first.example:1080"}) {
-		t.Fatal("failed incremental account edit changed persisted config")
+	want := config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}
+	if err != nil || !slices.Equal(got.Accounts[0].PreSOCKS5, want) {
+		t.Fatalf("incremental edit list = %v, err=%v", got.Accounts[0].PreSOCKS5, err)
 	}
 }
 

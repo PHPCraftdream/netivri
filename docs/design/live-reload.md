@@ -110,14 +110,11 @@ angel tells the statistics store about the nodes and calls
 4. Open connections finish on the node they use; `status` keeps showing them
    under that node, and their traffic still counts for it.
 
-The core refuses a change it cannot take in place (an instance that was
-started without account routes, or routing through a single default node)
-with `core.ErrReconfigureUnsupported`, and the angel restarts it instead. The
-angel also restarts without trying when `chain.post_socks5` changed (the
-global post is built into the default route when the core starts) or when
-account routes appear or disappear entirely. Any
-other `Reconfigure` error is logged (`routes not updated in place, restarting
-the listener: ...`) and also ends in a restart.
+The core refuses changes unsupported in place (including no-account/default
+routes and single direct-post-only updates where unsupported); the angel
+restarts. Global post remains scalar for no-account `MATCH`; account-route
+pool candidates, including inherited global/provider lists, are route changes
+when account routes exist.
 
 ## Restarting the core
 

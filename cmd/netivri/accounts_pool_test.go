@@ -45,23 +45,60 @@ func TestRouteHopListIdentityIncludesOrderAndEveryEntry(t *testing.T) {
 	}
 }
 
-func TestScalarCoreAdaptersRejectMultipleHops(t *testing.T) {
-	if _, err := scalarHopMap("routePre", map[string]config.HopList{"route": {"one", "two"}}); err == nil {
-		t.Fatal("route hop list was truncated for scalar core options")
+func TestPoolCoreAdaptersPreserveListsAndSingletonScalars(t *testing.T) {
+	pre := config.HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
+	route := scalarHopMap(map[string]config.HopList{"single": {"socks5://single.example:1080"}, "pool": pre})
+	if route["single"] != "socks5://single.example:1080" || route["pool"] != "" {
+		t.Fatalf("scalar route mapping = %v", route)
 	}
-	if _, err := scalarNodeHopMap("nodePost", map[string][]config.HopList{"route": {{"one", "two"}}}); err == nil {
-		t.Fatal("node hop list was truncated for scalar core options")
+	pools := poolHopMap(map[string]config.HopList{"single": {"socks5://single.example:1080"}, "pool": pre})
+	if !reflect.DeepEqual(pools, map[string][]string{"pool": pre}) {
+		t.Fatalf("route pool mapping = %v", pools)
 	}
-	if _, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{
-		cfg:  config.Default(),
-		pool: routePool{routePre: map[string]config.HopList{"route": {"one", "two"}}},
-	}, nil, nil); err == nil {
-		t.Fatal("multiple route hops reached core.Options")
+	nodes := scalarNodeHopMap(map[string][]config.HopList{"r": {{"socks5://single.example:1080"}, pre}})
+	if !reflect.DeepEqual(nodes, map[string][]string{"r": {"socks5://single.example:1080", ""}}) {
+		t.Fatalf("scalar node mapping = %v", nodes)
 	}
+	nodePools := nodePoolHopMap(map[string][]config.HopList{"r": {{"socks5://single.example:1080"}, pre}})
+	if !reflect.DeepEqual(nodePools, map[string][][]string{"r": {{"socks5://single.example:1080"}, pre}}) {
+		t.Fatalf("node pool mapping = %v", nodePools)
+	}
+}
+
+func TestRouteOptionsAcceptsGlobalPostPoolOnlyForAccountRoutes(t *testing.T) {
+	multi := config.HopList{"socks5://first.example:1080", "http://second.example:8080"}
 	cfg := config.Default()
-	cfg.Chain.PostSOCKS5 = config.HopList{"one", "two"}
-	if _, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg}, nil, nil); err == nil {
-		t.Fatal("multiple GlobalPost hops reached core.Options")
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
+	cfg.Chain.PostSOCKS5 = multi
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("account-only global pool rejected: %v", err)
+	}
+	options, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg, pool: routePool{accountRoutes: map[string]string{"alice": "direct"}, routePost: map[string]config.HopList{"direct": multi}}}, nil, nil)
+	if err != nil {
+		t.Fatalf("account route with global pool: %v", err)
+	}
+	if options.GlobalPost != "" || !reflect.DeepEqual(options.RoutePostPool["direct"], multi) || options.AccountRoute["alice"] != "direct" {
+		t.Fatalf("options lost the account pool or exposed MATCH fallback: %+v", options)
+	}
+	cfg.Accounts = nil
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead") {
+		t.Fatalf("unauthenticated global pool error = %v", err)
+	}
+}
+
+func TestScalarCoreAdaptersPreserveOrderedPoolWithoutScalarTruncation(t *testing.T) {
+	want := []string{"socks5://one.example:1080", "http://two.example:8080"}
+	options, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{
+		cfg: config.Default(), pool: routePool{routePre: map[string]config.HopList{"route": config.HopList(want)}},
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("pool route options: %v", err)
+	}
+	if options.RoutePre["route"] != "" {
+		t.Fatalf("scalar route mapping truncated a pool to %q", options.RoutePre["route"])
+	}
+	if !reflect.DeepEqual(options.RoutePrePool["route"], want) {
+		t.Fatalf("ordered route pool = %v, want %v", options.RoutePrePool["route"], want)
 	}
 }
 

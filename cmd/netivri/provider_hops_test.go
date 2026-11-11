@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -175,7 +176,10 @@ func TestBuildAccountRoutePoolProviderHopsMultiListReplacement(t *testing.T) {
 }
 
 func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testing.T) {
-	invalid := config.HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
+	invalid := make(config.HopList, config.MaxHopsPerSide+1)
+	for i := range invalid {
+		invalid[i] = fmt.Sprintf("socks5://hop-%d.example:1080", i)
+	}
 	cases := []struct {
 		name                  string
 		field                 string
@@ -192,7 +196,7 @@ func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testin
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "pool of several hops is not supported yet") {
+			if _, err := buildAccountRoutePoolHops(tc.accounts, nil, tc.globalPre, tc.globalPost, tc.hops); err == nil || !strings.Contains(err.Error(), tc.field) || !strings.Contains(err.Error(), "at most 16 hops per side") {
 				t.Fatalf("invalid %s was not rejected with field %s and the unsupported-pool reason: %v", tc.name, tc.field, err)
 			}
 		})
@@ -200,6 +204,27 @@ func TestBuildAccountRoutePoolHopsProductionValidationCoversEveryLevel(t *testin
 }
 
 // Without provider hops nothing changes: no per-node lists, the same route key.
+func TestProviderPoolRouteIdentityStableForMutableList(t *testing.T) {
+	snapshots := map[string]*subscription.Snapshot{"p": snap(node("1", "DE"))}
+	account := config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"}
+	firstHops := hopsOf([]config.Subscription{{Name: "p", PostSOCKS5: config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}}})
+	secondHops := hopsOf([]config.Subscription{{Name: "p", PostSOCKS5: config.HopList{"socks5://second.example:1080", "socks5://third.example:1080"}}})
+	first, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, nil, nil, firstHops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := buildAccountRoutePoolHops([]config.Account{account}, snapshots, nil, nil, secondHops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.accountRoutes["alice"] != second.accountRoutes["alice"] {
+		t.Fatalf("pool edit changed logical key: %q != %q", first.accountRoutes["alice"], second.accountRoutes["alice"])
+	}
+	if !reflect.DeepEqual(first.nodePost[first.accountRoutes["alice"]][0], config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}) || !reflect.DeepEqual(second.nodePost[second.accountRoutes["alice"]][0], config.HopList{"socks5://second.example:1080", "socks5://third.example:1080"}) {
+		t.Fatal("provider post pool order/content was not mapped to its node")
+	}
+}
+
 func TestBuildAccountRoutePoolWithoutProviderHopsIsUnchanged(t *testing.T) {
 	accounts := []config.Account{{Login: "u", Provider: "a,b"}}
 	plain, err := buildAccountRoutePool(accounts, hopSnapshots(), config.HopList{hopGlobalPre}, nil)

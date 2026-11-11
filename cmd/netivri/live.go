@@ -10,7 +10,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 	"github.com/PHPCraftdream/netivri/internal/stats"
+	hoppool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 )
 
 // watchEvery is how often the angel looks at the configuration files.
@@ -153,6 +153,12 @@ type liveAngel struct {
 	bindingsGen      atomic.Uint64
 	writeBindings    func(*stats.Store, []stats.Binding) error
 
+	hopBinderOnce sync.Once
+	hopBinder     *hoppool.Binder
+	hopHealthOnce sync.Once
+	hopMu         sync.Mutex
+	hopHealth     *hopHealth
+
 	serverTickerC   <-chan time.Time
 	serverLogMu     sync.Mutex
 	serverPrevDrops map[string]uint64
@@ -188,32 +194,74 @@ func portOf(addr string) int {
 	return n
 }
 
-func scalarHopMap(field string, in map[string]config.HopList) (map[string]string, error) {
+func scalarHopMap(in map[string]config.HopList) map[string]string {
 	out := make(map[string]string, len(in))
 	for key, hops := range in {
-		value, err := config.SingleHop(hops)
-		if err != nil {
-			return nil, fmt.Errorf("%s: multiple hops cannot be passed to core.Options", field)
+		value := ""
+		if len(hops) == 1 {
+			value = hops[0]
 		}
 		out[key] = value
 	}
-	return out, nil
+	return out
 }
 
-func scalarNodeHopMap(field string, in map[string][]config.HopList) (map[string][]string, error) {
+func poolHopMap(in map[string]config.HopList) map[string][]string {
+	out := make(map[string][]string)
+	for key, hops := range in {
+		if len(hops) > 1 {
+			out[key] = append([]string(nil), hops...)
+		}
+	}
+	return out
+}
+
+func scalarNodeHopMap(in map[string][]config.HopList) map[string][]string {
 	out := make(map[string][]string, len(in))
 	for key, lists := range in {
-		values := make([]string, 0, len(lists))
+		values := make([]string, len(lists))
 		for i, hops := range lists {
-			value, err := config.SingleHop(hops)
-			if err != nil {
-				return nil, fmt.Errorf("%s[%d]: multiple hops cannot be passed to core.Options", field, i)
+			if len(hops) == 1 {
+				values[i] = hops[0]
 			}
-			values = append(values, value)
 		}
 		out[key] = values
 	}
-	return out, nil
+	return out
+}
+
+func nodePoolHopMap(in map[string][]config.HopList) map[string][][]string {
+	out := make(map[string][][]string)
+	for key, lists := range in {
+		needsPool := false
+		for _, hops := range lists {
+			if len(hops) > 1 {
+				needsPool = true
+				break
+			}
+		}
+		if !needsPool {
+			continue
+		}
+		values := make([][]string, len(lists))
+		for i, hops := range lists {
+			values[i] = append([]string(nil), hops...)
+		}
+		out[key] = values
+	}
+	return out
+}
+
+func warmOptionsForPool(pool routePool) *core.WarmOptions {
+	if options := warmOptions(pool.nodes); options != nil {
+		return options
+	}
+	for _, route := range pool.accountRoutes {
+		if len(pool.nodes[route]) == 0 && len(pool.routePost[route]) > 1 {
+			return &core.WarmOptions{ConfirmProbe: true}
+		}
+	}
+	return nil
 }
 
 func (l *liveAngel) coreOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
@@ -251,25 +299,25 @@ func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticat
 }
 
 func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
-	pre, err := scalarHopMap("routePre", d.pool.routePre)
-	if err != nil {
+	pre := scalarHopMap(d.pool.routePre)
+	post := scalarHopMap(d.pool.routePost)
+	routePrePool := poolHopMap(d.pool.routePre)
+	routePostPool := poolHopMap(d.pool.routePost)
+	nodePre := scalarNodeHopMap(d.pool.nodePre)
+	nodePost := scalarNodeHopMap(d.pool.nodePost)
+	nodePrePool := nodePoolHopMap(d.pool.nodePre)
+	nodePostPool := nodePoolHopMap(d.pool.nodePost)
+	globalPost := ""
+	// GlobalPost feeds only MATCH traffic; with account-only authentication it is unreachable.
+	if len(d.cfg.Chain.PostSOCKS5) <= 1 {
+		if len(d.cfg.Chain.PostSOCKS5) == 1 {
+			globalPost = d.cfg.Chain.PostSOCKS5[0]
+		}
+	} else if err := config.ValidateGlobalPostFallback(d.cfg); err == nil {
+		// Keep account inheritance in RoutePost/NodePost, but don't configure an unused fallback pool.
+		globalPost = ""
+	} else {
 		return core.Options{}, nil, err
-	}
-	post, err := scalarHopMap("routePost", d.pool.routePost)
-	if err != nil {
-		return core.Options{}, nil, err
-	}
-	nodePre, err := scalarNodeHopMap("nodePre", d.pool.nodePre)
-	if err != nil {
-		return core.Options{}, nil, err
-	}
-	nodePost, err := scalarNodeHopMap("nodePost", d.pool.nodePost)
-	if err != nil {
-		return core.Options{}, nil, err
-	}
-	globalPost, err := config.SingleHop(d.cfg.Chain.PostSOCKS5)
-	if err != nil {
-		return core.Options{}, nil, fmt.Errorf("globalPost: multiple hops cannot be passed to core.Options")
 	}
 	var observer core.Observer
 	if store != nil {
@@ -286,7 +334,7 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 	if logged, ok := a.(*loggedAuth); !ok || logged.log != l.connLog() {
 		optionAuth = l.connLog().wrapAuth(a)
 	}
-	return core.Options{
+	o := core.Options{
 		HomeDir:               l.opts.Home,
 		Bind:                  d.bind,
 		Port:                  d.port,
@@ -296,8 +344,12 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 		AccountRoute:          d.pool.accountRoutes,
 		RoutePre:              pre,
 		RoutePost:             post,
+		RoutePrePool:          routePrePool,
+		RoutePostPool:         routePostPool,
 		NodePre:               nodePre,
 		NodePost:              nodePost,
+		NodePrePool:           nodePrePool,
+		NodePostPool:          nodePostPool,
 		GlobalPost:            globalPost,
 		Servers:               cloneServerSpecs(d.servers),
 		AccountAllowedClients: accountAllowedClients(d.cfg),
@@ -306,9 +358,11 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 		OnConnEvent:           l.connLog().event,
 		OnNodeHealth:          nodeHook,
 		Observer:              observer,
-		Warm:                  warmOptions(d.pool.nodes),
+		Warm:                  warmOptionsForPool(d.pool),
 		AffinityTTL:           stats.BindingTTL,
-	}, nodesLog, nil
+	}
+	l.configureHopOptions(&o)
+	return o, nodesLog, nil
 }
 
 func (l *liveAngel) activeNodeLogger() *nodeLog {
@@ -340,8 +394,11 @@ func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authent
 	if err != nil {
 		return err
 	}
+	health := l.prepareHopStart(&o, false)
 	inst, err := coreStart(ctx, o)
 	if err != nil {
+		health.RejectPending()
+		health.Close()
 		return err
 	}
 	// A random port (0) becomes the real one, so that a later restart and the
@@ -353,6 +410,7 @@ func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authent
 	l.actualPort = port
 	l.noteBindingsRestored(inst)
 	l.mu.Unlock()
+	l.attachHopHealth(inst)
 	l.installNodeLogger(nodesLog)
 	l.logServerDelta(nil, d.servers)
 	return nil
@@ -497,10 +555,22 @@ func updateAccountPolicy(a mihauth.Authenticator, cfg *config.Config) {
 	}
 }
 
+func scalarGlobalPost(hops config.HopList) string {
+	if len(hops) == 1 {
+		return hops[0]
+	}
+	return ""
+}
+
+func globalPostFallbackReachable(cfg *config.Config) bool {
+	return cfg == nil || len(cfg.Accounts) == 0 || cfg.Auth.Login != "" || cfg.Auth.Password != ""
+}
+
 func reloadComparison(a mihauth.Authenticator, applied, candidate desiredState, since uint64) (desiredState, bool, bool) {
 	applied.cfg, candidate.cfg = snapshotReloadCredentials(a, applied.cfg, candidate.cfg, since)
 	same := fingerprint(applied) == fingerprint(candidate)
-	globalPostChanged := !slices.Equal(applied.cfg.Chain.PostSOCKS5, candidate.cfg.Chain.PostSOCKS5)
+	globalPostChanged := scalarGlobalPost(applied.cfg.Chain.PostSOCKS5) != scalarGlobalPost(candidate.cfg.Chain.PostSOCKS5) &&
+		(globalPostFallbackReachable(applied.cfg) || globalPostFallbackReachable(candidate.cfg))
 	inPlace := !same && !globalPostChanged && listenerFingerprint(applied) == listenerFingerprint(candidate) &&
 		(((len(applied.pool.accountRoutes) > 0) == (len(candidate.pool.accountRoutes) > 0)) || routesFingerprint(applied) == routesFingerprint(candidate) || (accountClientsFingerprint(applied.cfg) != accountClientsFingerprint(candidate.cfg)))
 	return candidate, same, inPlace
@@ -681,6 +751,7 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 		}
 	}
 	if err := inst.Reconfigure(o); err != nil {
+		l.rejectHopHealth()
 		if queuedEvents != nil {
 			queuedEvents.discard()
 		}
@@ -696,6 +767,7 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	l.mu.Lock()
 	if l.closed || l.inst != inst {
 		l.mu.Unlock()
+		l.rejectHopHealth()
 		if queuedEvents != nil {
 			queuedEvents.discard()
 		}
@@ -709,6 +781,7 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.activateHopHealth()
 	if activeNodeLog != nil {
 		activeNodeLog.refresh(d.pool.infos, d.pool.firstTierLabels())
 		if len(d.pool.infos) == 0 {
@@ -782,6 +855,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	l.inst = nil
 	l.mu.Unlock()
 	if old != nil {
+		l.detachHopHealth()
 		_ = old.Close()
 	}
 	if len(d.pool.infos) > 0 {
@@ -799,8 +873,10 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	l.mu.Lock()
 	l.store = store
 	l.mu.Unlock()
+	l.prepareHopStart(&o, true)
 	inst, err := startCore(ctx, o)
 	if err != nil {
+		l.rejectHopHealth()
 		text := errText(err)
 		if wasDown {
 			l.mu.Lock()
@@ -818,8 +894,10 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 		l.warnf("new configuration not applied, restoring the previous one: %s", text)
 		back := prev
 		back.InitialBindings = initialBindings(store, l.warnf)
+		l.prepareHopStart(&back, true)
 		backInst, err2 := startCore(ctx, back)
 		if err2 != nil {
+			l.rejectHopHealth()
 			l.mu.Lock()
 			l.retryTarget, l.retryOpts, l.retryNodeLog = cloneDesired(&l.applied), &back, oldNodeLog
 			l.retryFailures = 0
@@ -832,12 +910,14 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 		l.mu.Lock()
 		if l.closed {
 			l.mu.Unlock()
+			l.rejectHopHealth()
 			_ = backInst.Close()
 			return reloadHandled
 		}
 		l.inst, l.startOpts = backInst, back
 		l.noteBindingsRestored(backInst)
 		l.mu.Unlock()
+		l.attachHopHealth(backInst)
 		l.installNodeLogger(oldNodeLog)
 		var ce *cli.Error
 		if errors.As(err, &ce) && ce.Code == "PORT_IN_USE" {
@@ -848,6 +928,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	l.mu.Lock()
 	if l.closed {
 		l.mu.Unlock()
+		l.rejectHopHealth()
 		_ = inst.Close()
 		return reloadHandled
 	}
@@ -860,6 +941,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.attachHopHealth(inst)
 	l.installNodeLogger(nodesLog)
 	l.logf("configuration applied: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
 	l.logServerDelta(oldServers, d.servers)
@@ -917,7 +999,11 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 			o = *l.retryOpts
 		}
 		l.mu.Unlock()
+		l.prepareHopStart(&o, true)
 		inst, err := startCore(ctx, o)
+		if err != nil {
+			l.rejectHopHealth()
+		}
 		l.mu.Lock()
 		success := err == nil && !l.closed && l.inst == nil && l.retryTarget != nil && fingerprint(*l.retryTarget) == fingerprint(*d)
 		var failures int
@@ -940,6 +1026,7 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 		closed := l.closed
 		l.mu.Unlock()
 		if success {
+			l.attachHopHealth(inst)
 			l.installNodeLogger(nodesLog)
 			l.reloadMu.Unlock()
 			l.logf("previous configuration restored")
@@ -954,11 +1041,13 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 		l.reloadMu.Unlock()
 		if closed {
 			if err == nil {
+				l.rejectHopHealth()
 				_ = inst.Close()
 			}
 			return
 		}
 		if err == nil {
+			l.rejectHopHealth()
 			_ = inst.Close()
 			continue
 		}
@@ -1163,6 +1252,7 @@ func (l *liveAngel) close() {
 	// disk before the store is closed (the shutdown order in up.go).
 	l.writeBindingsFinal(inst, store)
 	l.logServerDelta(oldServers, nil)
+	l.closeHopHealth()
 	if inst != nil {
 		_ = inst.Close()
 	}

@@ -37,20 +37,23 @@ credentials. This output shape applies to singleton values too. An empty
 `netivri config set {KEY} {VALUE}` changes one global setting. The whole
 candidate configuration is validated exactly like this file, and it is
 written only when valid. For `chain.pre_socks5` / `chain.post_socks5`, this
-command accepts one URL, `none`, or empty to clear. To configure multiple
-URLs, edit the Ktav field as an array. A legacy scalar URL loads as a
-singleton list and singleton lists render back as scalars. `none` or `[none]`
-disables a side and must stand alone. Empty or absent scoped lists inherit.
-A plain `auth.password` is stored as an argon2id hash and never echoed; the
-literal value `init` stores the placeholder that waits for the first client.
+command accepts one URL, `none`, or empty to clear; edit the Ktav field as an
+array to configure multiple URLs. Up to 16 URLs per side are accepted. A
+legacy scalar URL loads as a singleton list and singleton lists render back as
+scalars. `none` or `[none]` disables a side and must stand alone. Empty or
+absent scoped lists inherit. A plain `auth.password` is stored as an argon2id
+hash and never echoed; the literal value `init` stores the placeholder that
+waits for the first client.
 
 The answer reports `restart_needed` per the live-reload rules
 ([design/live-reload.md](design/live-reload.md)): `listen.*`,
 `auth.login`/`auth.password` and `chain.post_socks5` restart the
 listener; `auth.allow_init_remote`, `fetch.proxy`,
-`fetch.update_interval` and `chain.pre_socks5` apply without one. A
-running angel notices the written file within a few seconds and applies
-it; the command itself never restarts anything.
+`fetch.update_interval` and `chain.pre_socks5` apply without one. A change to a
+single direct-post-only chain may still require a restart when the core reports
+in-place reconfiguration unsupported; do not assume the listener is retained
+for that case. A running angel notices the written file within a few seconds
+and applies it; the command itself never restarts anything.
 
 ## Fields
 
@@ -149,16 +152,19 @@ entry is `none`. Schemes are `socks5`, `http` (HTTP CONNECT) or `https` (HTTP
 CONNECT over TLS, certificate checked). Hosts may be names, IPv4 or `[IPv6]`;
 ports are required (1..65535). User name and password are percent-encoded;
 paths, queries and fragments are not allowed. Legacy scalar Ktav URLs load as
-singleton lists and one-entry lists render back as scalar values. Absent or
-empty lists inherit; `none` or `[none]` explicitly disables a side and must
-stand alone. Duplicate URLs are invalid. The production core currently accepts
-at most one URL per side. Future multi-entry support will select one live proxy
-per side per connection; it will not chain entries serially and does not promise
-a selection algorithm. Parse or validation errors are `CONFIG_INVALID`, name
-the key (`chain.pre_socks5`, `accounts[2].post_socks5`) and never echo the value.
-Write a URL with the raw marker, for example
-`chain.pre_socks5:: socks5://user:secret@pre.example:1080`. The Ktav renderer
-writes a singleton scalar for one URL and an array for multiple entries.
+singleton lists and one-entry lists render back as scalar values. Each side
+accepts up to 16 URLs. Absent or empty scoped lists inherit; `none` or `[none]`
+explicitly clears inherited candidates and must stand alone. Duplicate URLs
+are invalid. Candidates are alternatives, not serial hops. Weighted health
+reduces selection weight after soft failures (30-second score half-life); three
+hard failures quarantine a hop for 30 seconds, doubling to 600 seconds.
+Quarantined hops are probed for revival. When all candidates are down, netivri
+still tries them rather than bypassing a post proxy. Post-hop bindings are per
+login and public-suffix-aware site domain, with a default 24-hour lifetime.
+Parse/validation errors are `CONFIG_INVALID`, name the key (such as
+`chain.pre_socks5` or `accounts[2].post_socks5`) and never echo values. Ktav
+scalar strings use the `::` raw marker; a legacy scalar loads as a singleton
+and the renderer writes singleton scalars or multi-entry arrays.
 
 - `pre_socks5` is how netivri reaches the VPN node: the node's own connection
   uses the configured pre proxy, if any. It applies to accounts with a route (a provider
@@ -170,12 +176,12 @@ writes a singleton scalar for one URL and an array for multiple entries.
   goes to the post list directly) and to unauthenticated traffic (the global
   value).
 
-**Cascade.** Each side is resolved independently. At every level, a non-empty
-list replaces the entire list from the less-specific level; entries are never
-merged or appended across levels. Resolution is account, then the provider of
-the node, then global. An empty or absent value (or `inherit` in a setter)
-passes the decision up. `inherit` is setter-only, not a valid Ktav list entry. A URL list or `none` settles it at that level; `none`
-means no proxy and overrides a list set above.
+**Cascade.** Each side resolves independently: a configured provider list
+replaces the global list, and a configured account list replaces the provider
+list; a node uses its provider's own list when the account has no override.
+Lists are always full replacements, never merged. Empty or absent scoped lists
+inherit. `none` or `[none]` explicitly clears inherited candidates; `inherit`
+is setter-only and clears a scoped list. It is not a Ktav list entry.
 
 | Global list | Provider list | Account list | Effective |
 | --- | --- | --- | --- |
@@ -186,49 +192,46 @@ means no proxy and overrides a list set above.
 | `[socks5://g.example:1080]` | *(absent)* | `[none]` | no proxy (source `none`) |
 | `[none]` | *(absent)* | *(absent)* | no proxy |
 
-The production core currently accepts at most one URL per side. Future
-multi-entry support is a candidate pool selecting one live proxy per side per
-connection, with no selection-algorithm guarantee and no serial chaining.
+The node's provider supplies the fallback list for each side. When providers
+resolve differently for an account, `account show` and `status` report
+`varies` with source `provider`. An account's configured list overrides the
+provider list for every node.
 
-A node takes its provider's configured value, so an account route over several
-providers can resolve differently per node. `account show` and `status` report
-`varies` (source `provider`) when an account's providers resolve differently.
-An account's configured value overrides provider values for every node.
+`none` clears inherited candidates; setter-only `inherit` clears a scoped list. Duplicate URLs, more than 16 URLs per side, repeated/mixed `none` or `inherit`, invalid indexes, and replacement/add/remove combinations on one side are rejected. Add/remove operations use one-based indexes into the original list; duplicate indexes reject the update. Removing the final scoped entry restores inheritance. The Accounts and Providers pickers support replacement, add, remove, inherit and none without reordering. Effective and configured JSON values remain redacted arrays with source/auth metadata; `account show` and `status` report `varies` with source `provider` when providers differ.
 
-`netivri account set-socks5 {ACCOUNT} --pre {URL}` and `--post {URL}` replace
-the full account list for that side; the corresponding `sub set-socks5`
-options replace the provider list. Repeat a replacement flag to give multiple
-entries in order. `none` must be the only entry to explicitly disable a side;
-`inherit` is setter-only and clears the target list so the next level applies.
-The Accounts and Providers shell screens use their existing pre/post picker for
-list replacement, add, remove, inherit and none; no reorder step is needed.
-Lists with more than one URL per side are currently rejected by the production
-core. Both set-socks5 commands also support repeatable incremental `--add-pre {URL}` /
-`--remove-pre {INDEX}` and `--add-post {URL}` / `--remove-post {INDEX}`
-operations: indices are one-based and refer to the original list for that
-command. Duplicate original indexes reject the entire operation; no list is
-saved. Do not combine replacement, add or remove operations on the same side.
-Removing the last entry clears the scoped list to inherit; use `--pre none` or
-`--post none` to explicitly disable instead. Repeated `none` or `inherit`, a
-`none` mixed with URLs, duplicate entries, or multiple URLs per side are invalid;
-the production core currently accepts one proxy per side. JSON pre/post fields
-are redacted arrays; in account objects their `value` and configured `own`
-fields are arrays, while `source` and `auth` metadata remain. When the providers
-of one account resolve differently, `account show` and `status` report `varies`
-with source `provider`.
 
-Credentials are secrets, like subscription URLs: no output, log or error
-shows them. `account list`, `account show` and `status` print the URL as
-`socks5://host:port` with `"auth": true` when it had a user name, and the
-`source` of the value (`account`, `provider`, `global` or `none`).
+## Health and bindings
 
-Routes of accounts with different effective chains are separate, but the
-health and statistics of a node are kept per node, so two accounts that use
-the same node through different proxies share its health. A change of
-`chain.pre_socks5` or of an account's `pre_socks5` or `post_socks5` is applied
-by the running angel in place and keeps the open connections; a change of
-`chain.post_socks5` restarts the listener (see
-[`design/socks5-chain.md`](design/socks5-chain.md)).
+Pools select candidates by weighted health. A soft failure adds to a score
+capped at 8; its half-life is 30 seconds, and success halves the score. The
+weight is exponentially lower as the score rises (minimum 0.05), but a
+weighted choice still gives a non-quarantined candidate a chance. Three hard
+failures in a row quarantine a hop for 30 seconds; each re-trip doubles the
+backoff to a 600-second cap. Once due, a quarantined hop is probed under a
+single 25-second lease. A successful probe revives it; a failed probe re-trips
+it with the longer backoff. If every candidate is quarantined, the pool tries
+the quarantined hops anyway: a post pool never bypasses its post proxy.
+
+Post-hop bindings use `(login, site)`, where `site` is the registrable domain
+from the Public Suffix List (or the IP literal), and last 24 hours by default.
+A healthy binding is retained even when a new weighted draw would differ; an
+unhealthy/quarantined binding is removed and replaced before dialing.
+
+Quarantine state is stored separately by role in
+`{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health`. The records
+contain only lowercase 64-character hexadecimal SHA-256 keys, trip counts and
+probe times; unsupported roles, keys and records are ignored. The hash identity
+is canonical `scheme://host:port` and excludes URL credentials. Logs likewise
+omit URLs and credentials: quarantine/re-trip is WARN with role and the first
+eight key characters plus trips/backoff; recovery is INFO with downtime; an
+all-down pool warns `all N hops are down, trying them anyway` (rate-limited per
+pool state).
+
+## Direct and post-only scope
+
+A direct account can use its effective post candidates directly. A pre list
+only applies with a VPN node. The global post remains scalar for no-account
+`MATCH` traffic; see the interim scope note above.
 
 ## Allowed clients
 
@@ -359,24 +362,27 @@ accounts: [
 ]
 ```
 
-Direct exits require empty provider and exit_country. An explicitly configured account pre-proxy is rejected, inherited pre-proxy is ignored, and effective post-proxy may be used directly. `set-exit` does not clear provider/country; clear them first. Direct accounts have no node tiers; `account show` reports effective `pre_socks5` as `{"value":["none"],"source":"direct","auth":false,"own":null}`. If changing another account field while an account's direct exit remains invalid, `CONFIG_INVALID` includes a hint to run `netivri account set-exit {ACCOUNT} route` first. An account route-mode toggle applies in place only when at least one route has stored nodes both before and after; first node-backed route appearing, last disappearing, and direct-only changes restart. Another node-backed account route preserves connections through flips. Adding an account always restarts.
+Direct exits require empty provider and exit_country. An explicitly configured account pre-proxy is rejected, inherited pre-proxy is ignored, and an effective post-proxy may be used directly (including a candidate list). Direct accounts have no node tiers; `account show` reports effective `pre_socks5` as `{"value":["none"],"source":"direct","auth":false,"own":null}`. If changing another account field while an account's direct exit remains invalid, `CONFIG_INVALID` includes a hint to run `netivri account set-exit {ACCOUNT} route` first. An account route-mode toggle applies in place only when at least one route has stored nodes both before and after; first node-backed route appearing, last disappearing, and direct-only changes restart. Another node-backed account route preserves connections through flips. Adding an account always restarts.
 
 Chain settings in a file (global in dotted form, per account inside the
 object):
 
-The Ktav keys `chain.pre_socks5` and `chain.post_socks5` are ordered arrays.
-`none` or `[none]` disables a side, and an empty array or absent key inherits
-at scoped levels. Ktav scalar values are accepted as legacy singleton lists;
-one-item lists render as scalars on disk. Duplicate entries are invalid, and
-`none` must stand alone. Lists with more than one URL are currently rejected
-by the production core.
+The Ktav fields are ordered arrays, up to 16 candidate URLs on each side.
+Legacy scalar URLs remain accepted and singleton lists render as scalars.
+Candidates are alternatives, not serial hops. See [SOCKS5 chain](#socks5-chain)
+for weighted selection, quarantine/revival, bindings and the global-post scope
+gap.
 
 ```ktav
 chain: {
     pre_socks5: [
-        socks5://user:secret@pre.example:1080
+        socks5://pre.example:1080
+        http://backup-pre.example:8080
     ]
-    post_socks5: none
+    post_socks5: [
+        socks5://post.example:1080
+        https://backup-post.example:443
+    ]
 }
 
 subscriptions: [
@@ -385,6 +391,7 @@ subscriptions: [
         url:: https://provider.example/sub/TOKEN
         pre_socks5: [
             http://proxy.example:8080
+            socks5://backup-proxy.example:1080
         ]
     }
 ]
@@ -396,7 +403,10 @@ accounts: [
         provider: main
         exit_country: NL
         pre_socks5: none
-        post_socks5:: socks5://carol-exit.example:1080
+        post_socks5: [
+            socks5://carol-exit.example:1080
+            https://carol-backup.example:443
+        ]
     }
 ]
 ```

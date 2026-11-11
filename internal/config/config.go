@@ -351,6 +351,9 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if err := ValidateGlobalPostFallback(c); err != nil {
+		return err
+	}
 	if err := validateServers(c); err != nil {
 		return err
 	}
@@ -358,6 +361,20 @@ func (c *Config) Validate() error {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
 	}
 	return nil
+}
+
+// ValidateGlobalPostFallback rejects a global post pool when traffic can reach
+// the unauthenticated/default MATCH route. All configured account rows have
+// AccountRoute mappings and may safely inherit the global list.
+func ValidateGlobalPostFallback(c *Config) error {
+	if c == nil || len(c.Chain.PostSOCKS5) <= 1 {
+		return nil
+	}
+	if len(c.Accounts) > 0 && c.Auth.Login == "" && c.Auth.Password == "" {
+		return nil
+	}
+	// The interim guard exists only until core supports a global post pool.
+	return invalid("the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead")
 }
 
 // ValidateAccountExit validates only the account exit policy. index is the

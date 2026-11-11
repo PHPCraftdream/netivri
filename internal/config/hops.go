@@ -7,7 +7,8 @@ import (
 	"strings"
 )
 
-const maxHopsUntilPool = 1
+// MaxHopsPerSide is the maximum number of configured hops on either side of a route.
+const MaxHopsPerSide = 16
 
 // HopList is an ordered list of proxy hops. Ktav scalars are accepted for
 // compatibility; a singleton is rendered as the legacy scalar form.
@@ -51,11 +52,11 @@ func (h HopList) MarshalJSON() ([]byte, error) {
 // ValidateHopList applies the production limit and validates every hop. Its
 // errors include field names and positions, never hop URLs or credentials.
 func ValidateHopList(field string, hops HopList) error {
-	return validateHopListLimit(field, hops, maxHopsUntilPool)
+	return validateHopListLimit(field, hops, MaxHopsPerSide)
 }
 
 // validateHopListLimit accepts a per-call limit for tests; production callers
-// use ValidateHopList and the immutable maxHopsUntilPool constant.
+// use ValidateHopList and the exported MaxHopsPerSide constant.
 func validateHopListLimit(field string, hops HopList, maxHops int) error {
 	if len(hops) == 0 {
 		return nil
@@ -89,7 +90,7 @@ func validateHopListLimit(field string, hops HopList, maxHops int) error {
 		return invalid("%s: none must stand alone (must not mix none with hop URLs)", field)
 	}
 	if len(hops) > maxHops {
-		return invalid("%s: pool of several hops is not supported yet; one per side for now", field)
+		return invalid("%s: must contain at most %d hops per side", field, maxHops)
 	}
 	return nil
 }
@@ -100,15 +101,4 @@ func InheritHops(own, parent HopList) HopList {
 		return own
 	}
 	return parent
-}
-
-// SingleHop adapts a validated hop list to consumers that accept one URL.
-func SingleHop(hops HopList) (string, error) {
-	if len(hops) > maxHopsUntilPool {
-		return "", invalid("pool of several hops is not supported yet; one per side for now")
-	}
-	if len(hops) == 0 {
-		return "", nil
-	}
-	return hops[0], nil
 }
