@@ -100,6 +100,8 @@ type doctorContext struct {
 	cfgIssue string // why the configuration could not be used, "" when fine
 	now      time.Time
 	angelUp  bool
+	// angelOld is the probe error of a running angel of another build.
+	angelOld string
 	status   angel.Status
 	health   map[string]angel.NodeHealth // live node health by label, when the angel runs
 }
@@ -136,6 +138,10 @@ func (d *doctorContext) probeAngel() {
 	ctx, cancel := context.WithTimeout(context.Background(), angel.ProbeTimeout)
 	defer cancel()
 	_, st, err := angelProbeLive(ctx, d.home)
+	if errors.Is(err, angel.ErrStatusShape) {
+		d.angelOld = err.Error()
+		return
+	}
 	if err != nil {
 		return
 	}
@@ -208,6 +214,9 @@ func (d *doctorContext) checkAngel() doctorCheck {
 		}
 		return doctorCheck{"angel", doctorOK, fmt.Sprintf("running, pid %d, uptime %ds", d.status.PID, uptimeSeconds(d.status.StartedAt))}
 	}
+	if d.angelOld != "" {
+		return doctorCheck{"angel", doctorFail, d.angelOld}
+	}
 	return doctorCheck{"angel", doctorWarn, "angel is not running"}
 }
 
@@ -219,6 +228,9 @@ func (d *doctorContext) checkListen() doctorCheck {
 			return doctorCheck{"listen", doctorFail, "angel core is down"}
 		}
 		return doctorCheck{"listen", doctorOK, "listen " + d.status.Listen + ", allowed_clients " + allowedClientsLabel(d.status.AllowedClients)}
+	}
+	if d.angelOld != "" {
+		return doctorCheck{"listen", doctorWarn, "not checked: the running angel is another netivri build"}
 	}
 	if d.cfgIssue != "" {
 		return doctorCheck{"listen", doctorWarn, "not checked: the configuration is invalid"}

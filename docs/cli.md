@@ -1016,7 +1016,10 @@ inconclusive control errors; the control response is capped at 4 MiB.
 `foreground` is `true` for `up --foreground`, `false` for the angel. The
 foreground mode applies the same control-probe rules: a control timeout returns
 `ANGEL_NOT_RESPONDING` before the core or proxy listener starts, and an
-inconclusive non-timeout failure returns `INTERNAL`.
+inconclusive non-timeout failure returns `INTERNAL`. An angel of another netivri version whose
+status answer does not decode in full counts as running when its pid matches the state file:
+`up` answers `already_running` (or `ALREADY_RUNNING` for conflicting settings), `--foreground`
+refuses with `ALREADY_RUNNING`, and `down` stops it.
 `already_running` is `true` when the command found and reused a running
 angel (idempotent success, exit 0); these keys are additive and do not
 bump `schema_version`. When an angel is already running and the caller
@@ -1401,7 +1404,9 @@ When no angel is running: error `ANGEL_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control
 answer: connection refused, another pid) counts as not running and is removed. An angel that
 only answers too slowly (busy reloading) is not gone: `ANGEL_NOT_RESPONDING`, exit 1, and its
-state file stays.
+state file stays. An angel started by another netivri version whose status this version cannot
+decode is running too: `ANGEL_OUTDATED`, exit 1, with its pid and version in the message; `doctor`
+fails its `angel` check with the same text. Restart it with `netivri down`, then `netivri up`.
 
 Planned shape once node selection and subscriptions are wired in (additive
 to the fields above):
@@ -1664,6 +1669,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ANGEL_START_TIMEOUT` | 1 | The angel did not report startup within 15 s |
 | `ANGEL_STOP_TIMEOUT` | 1 | The angel did not stop within 15 s after `down` |
 | `ANGEL_NOT_RESPONDING` | 1 | `status`, `down` or `up`: the state file names an angel whose control endpoint did not answer within 2 s (busy, for example reloading); retry in a moment. Nothing is removed, stopped or spawned |
+| `ANGEL_OUTDATED` | 1 | `status`: the angel runs another netivri version and its status answer does not decode in this one; the message names its pid and version. Restart it with `netivri down`, then `netivri up`. `down` stops such an angel and `up` reports it as already running |
 | `PORT_IN_USE` | 6 | Listen port is taken |
 | `SERVER_PORT_AMBIGUOUS` | 6 | A shared TCP port cannot be classified: TLS match keys overlap, or a member that is not the default has no explicit SNI that its link sends (an IP literal is never sent as SNI). Set or change `sni`, or mark one member as the default; a default does not resolve overlapping keys. |
 | `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |
