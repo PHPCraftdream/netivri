@@ -55,11 +55,11 @@ The cascade resolves each side independently, nearest level first: account,
 then the node's provider, then global. A non-empty list replaces the complete
 less-specific value; levels are never merged. Empty or absent inherits;
 `[none]` explicitly disables. Up to 16 URLs per side are accepted; entries are
-alternatives, not serial hops. The no-account `MATCH` path still uses scalar
-`GlobalPost` and rejects multi-entry global post lists needed there with
-`the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`.
-Account routes can inherit global/provider/account pools; no `GlobalPre` field
-is defined.
+alternatives, not serial hops. A global post list of several hops also serves the
+no-account `MATCH` path through the global post pool (`GlobalPostPool`); a
+one-hop list keeps the scalar `GlobalPost` mapping. Account routes can inherit
+global/provider/account pools; no `GlobalPre` field is defined, the default
+route has no pre side.
 
 | Account list | Provider list | Global list | Effective |
 | --- | --- | --- | --- |
@@ -89,8 +89,9 @@ account-route pools use native core pool adapters. A pre adapter carries the
 VPN-node dial through a selected pre candidate. A post candidate dials through
 the selected node; the post adapter selects and attributes the hop. Direct
 accounts use a direct carrier. This requires no helper process or static
-pre × node × post matrix. The no-account `MATCH` route continues to use scalar
-`GlobalPost`. See [hop-pools.md](hop-pools.md) for health and persistence.
+pre × node × post matrix. The no-account `MATCH` route uses a post pool for a
+global list of several hops and the scalar `GlobalPost` for one hop. See
+[hop-pools.md](hop-pools.md) for health and persistence.
 
 ```text
 pre helper   socks5 to the pre proxy                    (no dialer)
@@ -110,7 +111,8 @@ netivri -> pre -> node -> post -> destination.
   fall to `MATCH` and use the global post, which contradicts `none`.
 - **`MATCH`.** Unauthenticated traffic and accounts without own settings that
   have no route use `MATCH`; with a global post the rule points at a post
-  proxy (`netivri-global-post`, behind the default node when there is one),
+  proxy (`netivri-global-post`, behind the default node when there is one; for a
+  list of several hops the pool adapter of that name, without a default node),
   else at DIRECT or the default node as before.
 - **Names.** Helpers are named from the member name of their generation
   (`netivri-r{R}-{I}` with `-pre` / `-post`, `netivri-g{N}-r{R}-{I}-post`, ...,
@@ -151,15 +153,17 @@ file watcher like any other. How it is applied:
 | Change | Applied |
 | --- | --- |
 | new nodes, a new account pre/post list for a routed account or a `chain.pre_socks5` list change | in place (`core.Instance.Reconfigure`): the listener stays, open connections go on, health, probe schedule and site bindings of nodes that stay are kept |
-| `chain.post_socks5` changed | restart of the listener on the same port, open connections end |
+| `chain.post_socks5` changed | in place while the core routes in rule mode (account routes or a global post) before and after; otherwise (the first global post of a core without routes, removing the last) restart of the listener on the same port, open connections end |
 | a route appears or disappears entirely (the first account gets a provider or country, the last one loses it) | restart |
 | an account is added or removed, a password or `allowed_clients` changes, bind or port changes | restart (as before) |
 
-Reconfigure refuses an instance that was started without account routes or
-with a default node (`ErrReconfigureUnsupported`); the global post is built
-into the default route when the core starts, which is why a change of it
-restarts the core instead of replacing it in place. If the restart fails, the
-previous configuration is started again. See [live-reload.md](live-reload.md).
+Reconfigure refuses an instance that runs in direct mode (no account routes and
+no global post) or has a default node (`ErrReconfigureUnsupported`), and new
+options that would need a node-backed route on an instance without one. An
+instance in rule mode without node-backed routes (direct routes, direct-post
+pools, the global post pool) is replaced in place without a node table. If the
+restart fails, the previous configuration is started again. See
+[live-reload.md](live-reload.md).
 
 ## Secrets
 
@@ -178,7 +182,7 @@ output of the commands for the credentials they feed in.
   same node through different proxies share its health: a dead post proxy
   of one account can mark the node down for the other.
 - A pre has no effect for an account without a route.
-- A change of the global post restarts the listener.
+- A default node together with a global post of several hops is refused.
 
 ## Tests
 

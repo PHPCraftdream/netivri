@@ -725,8 +725,7 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	}
 	for _, want := range []string{
 		"accepted account field keys",
-		"named accounts and no legacy auth",
-		"the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead",
+		"the default route has no pre side",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the config topic lacks %q", want)
@@ -857,7 +856,7 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 	if strings.Contains(routing, "at most one URL per side") || strings.Contains(routing, "future multi-entry support") {
 		t.Error("routing topic retains obsolete one-hop/future wording")
 	}
-	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "weighted hop health", "alternatives", "serial hops", "scalar global post", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "weighted hop health", "alternatives", "serial hops", "connections without an account", "the default route has no pre side", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
 		if !strings.Contains(routing, want) {
 			t.Errorf("routing topic lacks %q", want)
 		}

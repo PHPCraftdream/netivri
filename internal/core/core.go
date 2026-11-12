@@ -88,6 +88,12 @@ type Options struct {
 	// OnHopEvent optionally hears a hop quarantine/revival transition. HopEvent
 	// contains opaque identifiers only. nil disables callback reporting.
 	OnHopEvent func(HopEvent)
+	// GlobalPostPool optionally gives the MATCH route (connections without an
+	// account route) an ordered pool of post hops. A non-nil value, even an
+	// empty one, replaces GlobalPost; a one-hop list behaves exactly like the
+	// scalar. A pool of several hops is refused together with Node. Connections
+	// without a login bind their sites under one fixed anonymous key.
+	GlobalPostPool []string
 	// GlobalPost chains the MATCH route through one effective URI string.
 	GlobalPost string
 	// AccountRoute maps an authenticated login to the route key it uses.
@@ -168,7 +174,9 @@ type routingState struct {
 	// Lifecycle is retained across routing generations so hop health follows
 	// logical route/node pools while adapters remain generation-local.
 	hopPools *hopPoolLifecycle
-	// Sticky-group state, nil without account routes.
+	// rule is set when Mihomo runs in rule mode without a default node.
+	rule bool
+	// Sticky-group state, nil without node-backed account routes.
 	table  *affinityTable
 	health *healthTable
 	// memberLabels maps this generation's member proxy names to node labels;
@@ -252,7 +260,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	if o.Node != nil || len(o.AccountRoute) != 0 || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
+	if o.Node != nil || len(o.AccountRoute) != 0 || o.globalPostActive() {
 		raw.Mode = tunnel.Rule
 		raw.Proxy = proxies
 		raw.ProxyGroup = groups
@@ -380,14 +388,10 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 			wo.Idle = fallbackIdle(plans, health)
 			keys := memberProbeKeys(plans, o)
 			wo.Same = func(name string) string { return keys[name] }
-		} else if o.Node != nil || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
+		} else if o.Node != nil || o.globalPostActive() {
 			// MATCH traffic leaves through the global post when there is one
 			// (behind the default node, if any): probe that whole chain.
-			want := nodeName
-			if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
-				want = globalPostProxyName(0)
-			}
-			wo.only = func(name string) bool { return name == want }
+			wo.only = matchProbeFilter(o, 0)
 		}
 		wo.probeBaseNames = hopPools.baseProbeNames(plans)
 		if len(hopPools.uses) > 0 {
@@ -453,6 +457,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		restoredBindings: restored,
 	}
 	inst.routing.Store(&routingState{
+		rule:             raw.Mode == tunnel.Rule && o.Node == nil,
 		accountRoutes:    copyAccountRoutes(o.AccountRoute),
 		hopPools:         hopPools,
 		warm:             warm,

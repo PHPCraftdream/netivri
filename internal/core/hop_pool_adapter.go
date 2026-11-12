@@ -278,6 +278,18 @@ func (a *hopPoolAdapter) MarshalJSON() ([]byte, error) {
 }
 func (a *hopPoolAdapter) SupportUDP() bool { return false }
 
+// anonymousBindLogin keys the site bindings of connections without a login
+// (the global default route): one shared namespace by site only. Account
+// logins cannot contain NUL, so it never collides with a real one.
+const anonymousBindLogin = "\x00anonymous"
+
+func bindLogin(login string) string {
+	if login == "" {
+		return anonymousBindLogin
+	}
+	return login
+}
+
 func (a *hopPoolAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -291,7 +303,7 @@ func (a *hopPoolAdapter) DialContext(ctx context.Context, metadata *C.Metadata) 
 	var conn net.Conn
 	var err error
 	if a.role == postHopPool {
-		conn, err = a.dialer.DialSite(ctx, metadata.NetWork.String(), metadata.RemoteAddress(), metadata.InUser, siteKey(metadata.Host, metadata.DstIP))
+		conn, err = a.dialer.DialSite(ctx, metadata.NetWork.String(), metadata.RemoteAddress(), bindLogin(metadata.InUser), siteKey(metadata.Host, metadata.DstIP))
 	} else {
 		conn, err = a.dialer.DialContext(ctx, metadata.NetWork.String(), metadata.RemoteAddress())
 	}
