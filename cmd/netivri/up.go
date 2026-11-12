@@ -513,6 +513,10 @@ func runUpAngel(opts upOptions, args []string, stdout io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), angel.DefaultSpawnTimeout+angel.ProbeTimeout)
 	defer cancel()
 	_, live, probeErr := angelProbeLive(ctx, opts.Home)
+	if errors.Is(probeErr, angel.ErrStatusShape) {
+		// An angel of another build runs: its header answers idempotency.
+		probeErr = nil
+	}
 	if errors.Is(probeErr, angel.ErrControlTimeout) {
 		return angelNotResponding()
 	}

@@ -26,6 +26,12 @@ func angelNotResponding() *cli.Error {
 	}
 }
 
+// angelOutdated is the answer when the running angel is another build whose
+// status does not decode; the message names its pid, version and the restart.
+func angelOutdated(err error) *cli.Error {
+	return &cli.Error{Code: "ANGEL_OUTDATED", Message: err.Error(), Exit: cli.ExitInternal}
+}
+
 // Seams over internal/angel: the cmd-level decisions (idempotency,
 // ALREADY_RUNNING rules, not-running outputs) are unit-tested without
 // sockets or processes, following the subFetch pattern.

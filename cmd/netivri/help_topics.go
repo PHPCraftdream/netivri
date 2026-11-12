@@ -306,10 +306,12 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri down [--home {DIR}]"},
 		Description: "Stops the angel through its control channel and waits until it is gone, up to 15 seconds. " +
 			"It is safe to repeat: with nothing running it succeeds and reports was_running false. It never kills a " +
-			"process by pid.",
+			"process by pid. It also stops an angel started by another netivri version, so after an update " +
+			"'netivri down' and 'netivri up' move the angel onto the new version.",
 		Examples: []helpExample{
 			{"Stop the angel", "netivri down"},
 			{"Stop the angel of another profile", "netivri down --home ./work-profile"},
+			{"After installing a new version, move the angel onto it", "netivri down && netivri up"},
 		},
 		Errors: []helpError{
 			herr("ANGEL_STOP_TIMEOUT", cli.ExitInternal, "the angel did not stop within 15 seconds"),
@@ -359,6 +361,7 @@ var helpTopics = []helpTopic{
 		Errors: []helpError{
 			herr("ANGEL_NOT_RUNNING", cli.ExitNoAngel, "nothing is running; start it with 'netivri up'"),
 			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "the angel is running but did not answer in time (busy reloading); retry in a moment"),
+			herr("ANGEL_OUTDATED", cli.ExitInternal, "the angel runs another netivri version whose status this one cannot read; restart it: 'netivri down', then 'netivri up'"),
 		},
 		SeeAlso: []string{"up", "stats"},
 	},

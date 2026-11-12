@@ -117,6 +117,10 @@ func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
 		return State{}, Status{}, err
 	}
 	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
+	shapeErr := statusShapeErr(err)
+	if shapeErr != nil {
+		err = nil
+	}
 	if err != nil {
 		if isConnRefused(err) {
 			// Nothing listens on the recorded control port: the angel
@@ -130,12 +134,24 @@ func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
 		return st, Status{}, fmt.Errorf("%w: control answers for pid %d, the state file names pid %d",
 			ErrNotRunning, status.PID, st.PID)
 	}
-	return st, status, nil
+	return st, status, shapeErr
 }
 
-// Probe reports the state file of a running angel, or ErrNotRunning.
+// statusShapeErr returns err when it is an ErrStatusShape answer, else nil.
+func statusShapeErr(err error) error {
+	if errors.Is(err, ErrStatusShape) {
+		return err
+	}
+	return nil
+}
+
+// Probe reports the state file of a running angel, or ErrNotRunning. An angel
+// of another build (ErrStatusShape) is running: it needs only a live pid.
 func Probe(ctx context.Context, home string) (State, error) {
 	st, _, err := ProbeLive(ctx, home)
+	if errors.Is(err, ErrStatusShape) {
+		err = nil
+	}
 	return st, err
 }
 
@@ -157,6 +173,8 @@ func isTimeout(err error) bool {
 // best-effort. Control errors without positive evidence that the angel is gone
 // leave the state file in place. A control request that merely times out wraps
 // ErrControlTimeout. It returns the state file content and the live status.
+// An angel of another build returns the state file and its status header with
+// a wrapped ErrStatusShape.
 func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 	st, err := ReadState(home)
 	if err != nil {
@@ -169,6 +187,10 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 		return State{}, Status{}, ErrNotRunning
 	}
 	status, err := (Client{Addr: st.Control, Token: st.Token}).Status(ctx)
+	shapeErr := statusShapeErr(err)
+	if shapeErr != nil {
+		err = nil
+	}
 	if err != nil {
 		if isConnRefused(err) {
 			RemoveStateIf(home, st.PID, st.Token)
@@ -183,5 +205,5 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 		RemoveStateIf(home, st.PID, st.Token)
 		return State{}, Status{}, ErrNotRunning
 	}
-	return st, status, nil
+	return st, status, shapeErr
 }
