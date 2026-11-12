@@ -229,6 +229,29 @@ eight key characters plus trips/backoff; recovery is INFO with downtime; an
 all-down pool warns `all N hops are down, trying them anyway` (rate-limited per
 pool state).
 
+## Seeing the pools
+
+A running angel reports every pool (a role with more than one hop on an account
+route) in `netivri status`: per account, `hop_pools` lists for each role the
+hop count, how many hops are active and how many quarantined, and per hop its
+short id, state (`active`, `quarantined` or `probing`), trips and the seconds
+until the next revival probe. The short id is the first eight characters of the
+opaque key that the quarantine log lines print; URLs, hosts and credentials are
+never shown. Single-hop routes show nothing. `netivri doctor` adds the checks
+`hop state` (the two `.health` files are readable), `hop pools` (a warning when
+every hop of a pool is down) and `hop persistence` (an `info` for hops whose
+state cannot be stored). The Service tab of the shell shows one line per pool
+under the account, e.g. `post 3 hops: 2 up, 1 down`. See
+[`docs/cli.md`](cli.md#status) for the JSON fields.
+
+To read the state of a pool:
+
+```
+netivri status --json    # accounts[].hop_pools[].hops[].state / next_revival_seconds
+netivri doctor           # "hop pools": warn when every hop of a pool is down
+netivri logs --level warn
+```
+
 ## Direct and post-only scope
 
 A direct account can use its effective post candidates directly. A pre list

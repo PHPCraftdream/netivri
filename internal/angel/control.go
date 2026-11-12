@@ -31,6 +31,25 @@ type AccountInfo struct {
 	Exit           string        `json:"exit,omitempty"`
 	AllowedClients string        `json:"allowed_clients"`
 	Chain          *AccountChain `json:"chain,omitempty"`
+	HopPools       []HopPoolInfo `json:"hop_pools,omitempty"`
+}
+
+// HopPoolInfo reports counts and safe identifiers for a multi-hop route role.
+type HopPoolInfo struct {
+	Role               string    `json:"role"`
+	HopCount           int       `json:"hop_count"`
+	ActiveCount        int       `json:"active_count"`
+	QuarantinedCount   int       `json:"quarantined_count"`
+	UnpersistableCount int       `json:"unpersistable_count,omitempty"`
+	Hops               []HopInfo `json:"hops"`
+}
+
+// HopInfo reports one hop using only its short opaque key prefix.
+type HopInfo struct {
+	ID                 string `json:"id,omitempty"`
+	State              string `json:"state"`
+	Trips              int    `json:"trips"`
+	NextRevivalSeconds *int64 `json:"next_revival_seconds,omitempty"`
 }
 
 // AccountChain is the effective, redacted SOCKS5 chain configuration for an account.
