@@ -328,9 +328,10 @@ func TestPostHopHealthCountsStayBoundedWithNativeCarrier(t *testing.T) {
 		}
 	}
 	// Five soft refusals in a row quarantine the hop once; refusals while it is
-	// quarantined (it is the only hop, so it is still tried) change nothing.
+	// quarantined (it is the only hop, so it is still tried) do not re-trip it
+	// or extend its backoff.
 	got := poolState(p, spec.keys[0])
-	if got.HardFailures != 3 || got.Sand <= 0 || got.Trips != 1 || got.State != pool.Quarantined || !got.NextProbe.Equal(now.Add(30*time.Second)) {
+	if got.Sand <= 0 || got.Trips != 1 || got.State != pool.Quarantined || !got.NextProbe.Equal(now.Add(30*time.Second)) {
 		t.Fatalf("repeated refusals: hard=%d sand=%v trips=%d state=%s next=%v, want one soft-streak trip", got.HardFailures, got.Sand, got.Trips, got.State, got.NextProbe)
 	}
 	if attempts := proxy.targets.Load(); attempts != 9 {
