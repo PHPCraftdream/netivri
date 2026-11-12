@@ -1275,7 +1275,7 @@ var helpTopics = []helpTopic{
 			"other sites stay where they are. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
 			"answer through the node ends it at once, and a site that was answered through the node is not blocked by " +
 			"a few stray dead connections. A lossy path is blocked too: when 20 or more connections to the site in 10 minutes " +
-			"got no answer and they are at least 90 percent of those that got none or an answer at their first bytes, the " +
+			"got no answer after at least 2 seconds (a client such as Telegram gives up after 2-3 seconds and retries) and they are at least 90 percent of those that got none or an answer at their first bytes, the " +
 			"node is blocked for the site for the same time, and an answer does not lift that block (it ends with its time). Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
 			"one ('netivri logs', the destination itself at DEBUG). A site whose server never answers on purpose (a " +
 			"long poll that is always closed first) can be moved too; it keeps working through the next node.\n\n" +

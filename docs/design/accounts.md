@@ -90,7 +90,9 @@ Rules:
   node is blocked for the site the choice is the one for "every node is down".
   A lossy path is blocked too, though it answers now and then: within 10 minutes,
   20 or more connections of the account to the site that were silent (or timed out
-  at dial), at least 90 percent of the connections that were silent or answered at
+  at dial) after at least 2 seconds (a client such as Telegram gives up after 2-3
+  seconds and retries, so the 5 seconds of the plain rule would never count it),
+  at least 90 percent of the connections that were silent or answered at
   their first bytes since the first silent one, block the node for the site
   whatever answered recently, with the same two probe conditions. An answer does
   not lift such a block (it ends with its time), neither one of a connection that
