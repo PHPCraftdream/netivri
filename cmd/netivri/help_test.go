@@ -856,7 +856,7 @@ func TestConceptTopicsKeepCorrectedFacts(t *testing.T) {
 	if strings.Contains(routing, "at most one URL per side") || strings.Contains(routing, "future multi-entry support") {
 		t.Error("routing topic retains obsolete one-hop/future wording")
 	}
-	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "weighted hop health", "alternatives", "serial hops", "scalar global post", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
+	for _, want := range []string{"2 consecutive failed probes", "3 consecutive failed dials", "weighted hop health", "alternatives", "serial hops", "connections without an account", "the default route has no pre side", "requires a host and port", "inherit", "none", "redacted", "netivri help"} {
 		if !strings.Contains(routing, want) {
 			t.Errorf("routing topic lacks %q", want)
 		}
