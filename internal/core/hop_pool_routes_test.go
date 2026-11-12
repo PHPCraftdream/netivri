@@ -172,44 +172,66 @@ func TestOverlappingProviderPrePoolsKeepCredentialsSeparate(t *testing.T) {
 			{preBSecond, preC},
 		}},
 	}
+	plans, err := buildRoutePlansGen(o, 0)
+	if err != nil {
+		t.Fatal("provider-specific pools failed to plan")
+	}
 	proxies, _, _, err := prepareRoutesGen(o, 0)
 	if err != nil {
 		t.Fatal("provider-specific pools failed to prepare")
 	}
-	seen := make(map[string]bool)
-	var shared []map[string]any
-	for _, proxy := range proxies {
-		name, _ := proxy["name"].(string)
-		if seen[name] {
-			t.Fatal("duplicate proxy mapping name")
-		}
-		seen[name] = true
-		if proxy["server"] == "b.invalid" {
-			shared = append(shared, proxy)
-		}
+	if len(proxies) != len(o.RouteNodes["provider-routes"]) {
+		t.Fatal("route mappings unexpectedly include native helper proxies")
 	}
-	if len(shared) != 2 {
-		t.Fatal("same health key with different credentials did not produce separate mappings")
+	wantURIs := [][]string{{preA, preBFirst}, {preBSecond, preC}}
+	if len(plans) != 1 || len(plans[0].prePools) != len(wantURIs) {
+		t.Fatal("provider-specific pre-pools were not retained in the route plan")
 	}
-	credentials := map[string][2]string{}
-	for _, mapping := range shared {
-		username, _ := mapping["username"].(string)
-		password, _ := mapping["password"].(string)
-		credentials[username] = [2]string{username, password}
-		name, _ := mapping["name"].(string)
-		for _, forbidden := range []string{"first-b", "second-b", "sentinel-first", "sentinel-second", "b.invalid"} {
-			if strings.Contains(name, forbidden) {
-				t.Fatal("credential or endpoint text leaked into helper name")
-			}
+	for node, want := range wantURIs {
+		if plans[0].prePools[node] == nil || !reflect.DeepEqual(plans[0].prePools[node].uris, want) {
+			t.Fatalf("provider %d planned pre-pool order/configuration changed", node)
 		}
 	}
-	if credentials["first-b"] != [2]string{"first-b", "sentinel-first"} || credentials["second-b"] != [2]string{"second-b", "sentinel-second"} {
-		t.Fatal("provider-specific helper mappings did not preserve their own credentials")
+	if plans[0].prePools[0].keys[1] != plans[0].prePools[1].keys[0] {
+		t.Fatal("overlapping endpoint did not retain a shared health identity")
+	}
+	lifecycle := newHopPoolLifecycle(nil)
+	installed, _, err := lifecycle.installGen(o, plans, nil, nil, 0)
+	if err != nil {
+		t.Fatal("provider-specific pools failed to install")
+	}
+	nativeAdapters := make([]*hopPoolAdapter, 2)
+	for _, provider := range []struct {
+		node     int
+		hopIndex int
+		username string
+		password string
+	}{
+		{node: 0, hopIndex: 1, username: "first-b", password: "sentinel-first"},
+		{node: 1, hopIndex: 0, username: "second-b", password: "sentinel-second"},
+	} {
+		name := plans[0].prePools[provider.node].name
+		proxy := installed[name]
+		if proxy == nil {
+			t.Fatal("provider-specific native adapter was not installed")
+		}
+		adapter, ok := proxy.Adapter().(*hopPoolAdapter)
+		if !ok || len(adapter.hops) != 2 {
+			t.Fatal("provider-specific native adapter has unexpected type or members")
+		}
+		nativeAdapters[provider.node] = adapter
+		config := adapter.hops[provider.hopIndex].proxyConfig
+		if config.Username != provider.username || config.Password != provider.password {
+			t.Fatal("installed provider adapter did not preserve its own credentials")
+		}
+	}
+	if nativeAdapters[0] == nativeAdapters[1] || nativeAdapters[0].hops[1] == nativeAdapters[1].hops[0] {
+		t.Fatal("overlapping endpoint reused a provider adapter or hop instance")
 	}
 	first := newHopPoolSpec(preHopPool, []string{preA, preBFirst}, 0)
 	second := newHopPoolSpec(preHopPool, []string{"http://user-a:sentinel-a@a.invalid:8080", preBSecond}, 0)
 	if first.id != second.id || first.configID == second.configID || first.name == second.name {
-		t.Fatal("health identity and config identity were not separated")
+		t.Fatal("health identity and native configuration identity were not separated")
 	}
 	for _, forbidden := range []string{"user-a", "sentinel-a", "first-b", "sentinel-first", "second-b", "sentinel-second", "a.invalid", "b.invalid", "c.invalid"} {
 		if strings.Contains(first.name+second.name, forbidden) {

@@ -30,6 +30,10 @@ type Error struct {
 	Code int
 	// Err is the underlying cause and may contain sensitive details.
 	Err error
+	// TargetSent reports whether the target request may have been sent to the proxy.
+	// It becomes true from the first attempted CONNECT write onward, and remains
+	// false for earlier protocol negotiation and TLS setup failures.
+	TargetSent bool
 }
 
 // Error returns a fixed, non-sensitive description of the failure stage.
@@ -78,4 +82,17 @@ func (e *Error) NextUnreachable() bool {
 
 func proxyError(stage Stage, code int, err error) error {
 	return &Error{Stage: stage, Code: code, Err: err}
+}
+
+func targetSentError(stage Stage, code int, err error) error {
+	return proxyErrorWithTarget(stage, code, err, true)
+}
+
+func proxyErrorWithTarget(stage Stage, code int, err error, targetSent bool) error {
+	return &Error{Stage: stage, Code: code, Err: err, TargetSent: targetSent}
+}
+
+func errorTargetSent(err error) bool {
+	var pe *Error
+	return errors.As(err, &pe) && pe.TargetSent
 }

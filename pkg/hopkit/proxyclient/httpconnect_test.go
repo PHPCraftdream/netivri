@@ -12,6 +12,51 @@ import (
 	"time"
 )
 
+type failedWriteConn struct {
+	net.Conn
+	count  int
+	failAt int
+	writes int
+	err    error
+}
+
+func (c *failedWriteConn) Write(p []byte) (int, error) {
+	c.writes++
+	if c.writes != c.failAt {
+		return c.Conn.Write(p)
+	}
+	if c.count > len(p) {
+		return len(p), c.err
+	}
+	return c.count, c.err
+}
+
+type deadlineClearFailureConn struct {
+	net.Conn
+	err error
+}
+
+func (c *deadlineClearFailureConn) SetDeadline(deadline time.Time) error {
+	if deadline.IsZero() {
+		return c.err
+	}
+	return c.Conn.SetDeadline(deadline)
+}
+
+type cancelDuringReadConn struct {
+	net.Conn
+	cancel context.CancelFunc
+}
+
+func (c *cancelDuringReadConn) Read(p []byte) (int, error) {
+	c.cancel()
+	return copy(p, []byte("bad status\r\n")), nil
+}
+
+func (c *cancelDuringReadConn) Write(p []byte) (int, error) { return len(p), nil }
+
+func (c *cancelDuringReadConn) SetDeadline(time.Time) error { return nil }
+
 type simultaneousReadConn struct {
 	net.Conn
 	mu       sync.Mutex
@@ -62,6 +107,78 @@ func (c *simultaneousReadConn) overlapped() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.overlap
+}
+
+func TestHTTPConnectWriteFailuresMarkTargetSent(t *testing.T) {
+	writeErr := errors.New("write failed")
+	for _, tc := range []struct {
+		name  string
+		count int
+	}{
+		{"zero-byte write", 0},
+		{"partial write", 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, server := rawPipePair(t)
+			defer func() { _ = client.Close(); _ = server.Close() }()
+			conn := &failedWriteConn{Conn: client, count: tc.count, failAt: 1, err: writeErr}
+			ctx, cancel := testContext(t)
+			defer cancel()
+			_, err := Handshake(ctx, conn, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
+			pe := checkProxyError(t, err, StageHandshake, 0)
+			if !pe.TargetSent || !errors.Is(pe, writeErr) {
+				t.Fatal("failed HTTP CONNECT write lost target-sent marker or cause")
+			}
+		})
+	}
+}
+
+func TestHTTPConnectDeadlineCleanupFailurePreservesTargetSent(t *testing.T) {
+	cleanupErr := errors.New("deadline cleanup failed")
+	cases := []struct {
+		name     string
+		response string
+		stage    Stage
+		code     int
+	}{
+		{"success", "HTTP/1.1 200 OK\r\n\r\n", StageConnect, 0},
+		{"refused", "HTTP/1.1 407 Proxy Authentication Required\r\n\r\n", StageRefused, 407},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clientRaw, server := rawPipePair(t)
+			client := &deadlineClearFailureConn{Conn: clientRaw, err: cleanupErr}
+			peer := peerResult()
+			go func() {
+				request := "CONNECT " + testTarget + " HTTP/1.1\r\nHost: " + testTarget + "\r\n\r\n"
+				_, err := readExact(server, len(request))
+				if err == nil {
+					_, err = server.Write([]byte(tc.response))
+				}
+				peerDone(peer, err)
+			}()
+			ctx, cancel := testContext(t)
+			defer cancel()
+			_, err := Handshake(ctx, client, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
+			pe := checkProxyError(t, err, tc.stage, tc.code)
+			if !pe.TargetSent || !errors.Is(pe, cleanupErr) {
+				t.Fatal("deadline cleanup failure lost target-sent marker or cause")
+			}
+			_ = client.Close()
+			waitErr(t, peer)
+		})
+	}
+}
+
+func TestHTTPConnectContextFailureWrappingPreservesTargetSent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	conn := &cancelDuringReadConn{cancel: cancel}
+	defer cancel()
+	_, err := Handshake(ctx, conn, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
+	pe := checkProxyError(t, err, StageHandshake, 0)
+	if !pe.TargetSent || !errors.Is(err, context.Canceled) {
+		t.Fatal("context wrapping lost target-sent marker or cause")
+	}
 }
 
 func TestHTTPConnectExactRequestAndTunnel(t *testing.T) {
@@ -225,7 +342,10 @@ func TestHTTPConnectResponseClassifications(t *testing.T) {
 			ctx, cancel := testContext(t)
 			defer cancel()
 			_, err := Handshake(ctx, client, Proxy{Scheme: "http", Host: "proxy", Port: 8080}, testTarget)
-			_ = checkProxyError(t, err, tc.stage, tc.status)
+			pe := checkProxyError(t, err, tc.stage, tc.status)
+			if !pe.TargetSent {
+				t.Fatal("HTTP status response did not retain target-sent marker")
+			}
 			waitErr(t, peer)
 		})
 	}
@@ -426,6 +546,9 @@ func TestHTTPConnectMalformedAndOversizedResponses(t *testing.T) {
 			started := time.Now()
 			_, err := Handshake(ctx, client, Proxy{Scheme: "http", Host: "proxy", Port: 8080}, testTarget)
 			pe := checkProxyError(t, err, StageHandshake, 0)
+			if !pe.TargetSent {
+				t.Fatal("malformed HTTP response did not retain target-sent marker")
+			}
 			if tc.wantEOF {
 				if !errors.Is(pe, io.EOF) && !errors.Is(pe, io.ErrUnexpectedEOF) {
 					t.Fatal("truncated response did not preserve an EOF cause")
@@ -463,6 +586,9 @@ func TestHTTPConnectTruncatedAtStart(t *testing.T) {
 	defer cancel()
 	_, err := Handshake(ctx, client, Proxy{Scheme: "http", Host: "proxy", Port: 8080}, testTarget)
 	pe := checkProxyError(t, err, StageHandshake, 0)
+	if !pe.TargetSent {
+		t.Fatal("truncated HTTP response did not retain target-sent marker")
+	}
 	if !errors.Is(pe, io.EOF) && !errors.Is(pe, io.ErrUnexpectedEOF) {
 		t.Fatal("empty response did not preserve an EOF cause")
 	}

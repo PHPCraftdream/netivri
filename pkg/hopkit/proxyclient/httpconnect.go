@@ -26,29 +26,29 @@ func httpConnectHandshake(conn net.Conn, p Proxy, authority string) (net.Conn, e
 	}
 	request.WriteString("\r\n")
 	if err := writeAll(conn, []byte(request.String())); err != nil {
-		return nil, proxyError(StageHandshake, 0, err)
+		return nil, targetSentError(StageHandshake, 0, err)
 	}
 
 	reader := bufio.NewReaderSize(conn, maxHTTPHeaders)
 	used := 0
 	line, err := readHTTPLine(reader, &used)
 	if err != nil {
-		return nil, proxyError(StageHandshake, 0, err)
+		return nil, targetSentError(StageHandshake, 0, err)
 	}
 	status, ok := parseHTTPStatus(line)
 	if !ok {
-		return nil, proxyError(StageHandshake, 0, errInvalidProxy)
+		return nil, targetSentError(StageHandshake, 0, errInvalidProxy)
 	}
 	for {
 		line, err = readHTTPLine(reader, &used)
 		if err != nil {
-			return nil, proxyError(StageHandshake, 0, err)
+			return nil, targetSentError(StageHandshake, 0, err)
 		}
 		if line == "\r\n" {
 			break
 		}
 		if !validHTTPHeader(line) {
-			return nil, proxyError(StageHandshake, 0, errInvalidProxy)
+			return nil, targetSentError(StageHandshake, 0, errInvalidProxy)
 		}
 	}
 	if status < 200 || status > 299 {
@@ -59,7 +59,7 @@ func httpConnectHandshake(conn net.Conn, p Proxy, authority string) (net.Conn, e
 		case 502, 503, 504:
 			stage = StageTarget
 		}
-		return nil, proxyError(stage, status, errInvalidProxy)
+		return nil, targetSentError(stage, status, errInvalidProxy)
 	}
 	buffered := reader.Buffered()
 	if buffered == 0 {
@@ -67,7 +67,7 @@ func httpConnectHandshake(conn net.Conn, p Proxy, authority string) (net.Conn, e
 	}
 	prefix, err := reader.Peek(buffered)
 	if err != nil {
-		return nil, proxyError(StageHandshake, 0, err)
+		return nil, targetSentError(StageHandshake, 0, err)
 	}
 	return &bufferedConn{Conn: conn, prefix: append([]byte(nil), prefix...)}, nil
 }

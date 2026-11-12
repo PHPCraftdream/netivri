@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	hopdial "github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
 	pool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
+	"github.com/PHPCraftdream/netivri/pkg/hopkit/proxyclient"
 	C "github.com/metacubex/mihomo/constant"
 )
 
@@ -38,82 +40,90 @@ func TestPoolPrecedenceAndOpaquePoolKeys(t *testing.T) {
 	}
 }
 
-func TestPoolFailureClassificationUsesStageEvidence(t *testing.T) {
+func TestNativeStageMappingDoesNotAttributeUnknownOrCapacityFailures(t *testing.T) {
 	cases := []struct {
-		name, err, next, addr, proto, carrier string
-		stage                                 pool.Stage
-		kind                                  pool.Kind
-		known                                 bool
+		name       string
+		stage      proxyclient.Stage
+		targetSent bool
+		capacity   error
+		want       hopdial.Stage
+		wantTarget bool
+		wantSent   bool
 	}{
-		{"current connect", "hop.invalid:1080 connect error: connection refused", "", "hop.invalid:1080", "socks5", "vless", pool.Connect, pool.Unreachable, true},
-		{"HTTP auth", "HTTP need auth", "node.invalid:443", "hop.invalid:80", "http", "vless", pool.Refusal, pool.AuthPolicy, true},
-		{"HTTP target", "502 Bad Gateway", "node.invalid:443", "hop.invalid:80", "http", "vless", pool.Target, pool.NextUnreachable, true},
-		{"HTTP target error code", "err code: 503", "node.invalid:443", "hop.invalid:80", "http", "vless", pool.Target, pool.NextUnreachable, true},
-		{"HTTP port digits", "dial host:5023: connection refused", "", "hop.invalid:80", "http", "vless", pool.UnknownStage, pool.UnknownKind, false},
-		{"SOCKS target", "SOCKS error: 4", "", "hop.invalid:1080", "socks5", "vless", pool.Target, pool.NextUnreachable, true},
-		{"unknown EOF", "unexpected EOF", "", "hop.invalid:1080", "socks5", "vless", pool.UnknownStage, pool.UnknownKind, false},
-		{"capacity", "max connections reached", "", "hop.invalid:1080", "socks5", "vless", pool.UnknownStage, pool.Capacity, false},
+		{"connect", proxyclient.StageConnect, false, nil, hopdial.Connect, false, false},
+		{"handshake-before-target", proxyclient.StageHandshake, false, nil, hopdial.Handshake, false, false},
+		{"handshake-after-target", proxyclient.StageHandshake, true, nil, hopdial.Handshake, false, true},
+		{"refusal", proxyclient.StageRefused, true, nil, hopdial.Refusal, false, true},
+		{"target", proxyclient.StageTarget, true, nil, hopdial.Target, true, true},
+		{"other", proxyclient.StageOther, true, nil, hopdial.Unknown, false, true},
+		{"capacity-through-wrapper", proxyclient.StageConnect, false, errors.New("too many open files"), hopdial.Unknown, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stage, kind, known := classifyPoolFailureAt(errors.New(tc.err), tc.next, tc.addr, tc.proto, tc.carrier)
-			if stage != tc.stage || kind != tc.kind || known != tc.known {
-				t.Fatalf("classification=(%v,%v,%v), want (%v,%v,%v)", stage, kind, known, tc.stage, tc.kind, tc.known)
+			cause := errors.New("native proxy failure")
+			if tc.capacity != nil {
+				cause = fmt.Errorf("wrapped proxy error: %w", tc.capacity)
+			}
+			err := stageProxyError(context.Background(), tc.stage, cause, tc.targetSent)
+			var staged *hopdial.StageError
+			if !errors.As(err, &staged) || staged.Stage != tc.want || staged.NextUnreachable != tc.wantTarget || staged.TargetSent != tc.wantSent {
+				t.Fatalf("mapped failure did not preserve its typed stage and target-sent evidence")
 			}
 		})
 	}
-	if _, _, known := classifyPoolFailureAt(fmt.Errorf("wrapped: %w", context.Canceled), "", "hop.invalid:1080", "socks5", "vless"); known {
-		t.Fatal("canceled dial was attributed")
+	if err := stageProxyError(context.Background(), proxyclient.StageConnect, context.Canceled, false); func() bool {
+		var staged *hopdial.StageError
+		return !errors.As(err, &staged) || staged.Stage != hopdial.Unknown
+	}() {
+		t.Fatal("cancellation was classified as a hop failure")
 	}
 }
 
-func TestPrePoolUsesLibraryFailoverAndTypedHopFailure(t *testing.T) {
-	spec := newHopPoolSpec(preHopPool, []string{"socks5://a.invalid:1080", "socks5://b.invalid:1080"}, 0)
+func TestPrePoolUsesNativeFailoverAndTypedHopFailure(t *testing.T) {
+	first := newNativeLoopbackProxy(t, "socks5")
+	second := newNativeLoopbackProxy(t, "socks5")
+	spec := newHopPoolSpec(preHopPool, []string{first.uri, second.uri}, 0)
 	now := time.Unix(100, 0)
 	seed := [2]uint64{3, 4}
-	order := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(seed[0], seed[1])}).Order(now)
+	chooser := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(seed[0], seed[1])})
+	order := chooser.Order(now)
 	if len(order) != 2 {
-		t.Fatalf("pool order=%v, want two hops", order)
+		t.Fatalf("pool order has %d candidates, want two", len(order))
 	}
-	failedAddress := ""
-	for i, key := range spec.keys {
-		if key == order[0] {
-			failedAddress = hopAddress(spec.uris[i])
-			break
-		}
+	firstIndex := 0
+	if spec.keys[1] == order[0] {
+		firstIndex = 1
 	}
+	servers := []*nativeLoopbackProxy{first, second}
+	servers[firstIndex].mode.Store(nativeProxyBadGreeting)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(seed[0], seed[1])})
-	members := map[string]member{
-		order[0]: &fakeMember{name: "failed", err: fmt.Errorf("%s connect error: connection refused", failedAddress)},
-		order[1]: &fakeMember{name: "success"},
-	}
-	a := newHopPoolAdapter("pre", preHopPool, spec, members, p, nil, nil, func() time.Time { return now })
+	a := newHopPoolAdapter("pre", preHopPool, spec, p, nil, nil, func() time.Time { return now })
 	var mutations int
 	a.mutate = func(_ string, change func()) { mutations++; change() }
 	conn, err := a.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443})
 	if err != nil || conn == nil {
-		t.Fatalf("library failover failed: %v", err)
+		t.Fatalf("native pre failover failed: %v", err)
 	}
 	if len(conn.Chains()) != 1 || conn.Chains()[0] != "pre" {
 		t.Fatalf("connection chain = %v", conn.Chains())
 	}
+	_ = conn.Close()
 	if mutations != 2 {
-		t.Fatalf("health mutations=%d, want one failure and one success", mutations)
+		t.Fatalf("health mutations=%d, want one handshake failure and one success", mutations)
 	}
-	for _, key := range spec.keys {
-		if got := members[key].(*fakeMember).dials.Load(); got != 1 {
-			t.Fatalf("hop %s attempts=%d, want one", key, got)
-		}
+	if servers[0].requests.Load() != 1 || servers[1].requests.Load() != 1 {
+		t.Fatalf("native proxy attempts = %d/%d, want one each", servers[0].requests.Load(), servers[1].requests.Load())
 	}
 
-	unknown := newHopPoolAdapter("unknown", preHopPool, spec, map[string]member{
-		spec.keys[0]: &fakeMember{name: "a", err: errors.New("unexpected EOF")},
-		spec.keys[1]: &fakeMember{name: "b", err: errors.New("unexpected EOF")},
-	}, pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(1, 2)}), nil, nil, func() time.Time { return now })
-	unknown.mutate = func(_ string, change func()) { t.Fatal("unknown failure mutated health") }
+	broken := newNativeLoopbackProxy(t, "socks5")
+	other := newNativeLoopbackProxy(t, "socks5")
+	broken.mode.Store(nativeProxyBadGreeting)
+	other.mode.Store(nativeProxyBadGreeting)
+	unknownSpec := newHopPoolSpec(preHopPool, []string{broken.uri, other.uri}, 0)
+	unknown := newHopPoolAdapter("typed-failure", preHopPool, unknownSpec, pool.New(unknownSpec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(1, 2)}), nil, nil, func() time.Time { return now })
 	_, err = unknown.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, Host: "example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) || errors.Is(err, errors.New("unexpected EOF")) {
-		t.Fatalf("unknown failure was not safely wrapped: %v", err)
+	if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "bad greeting") {
+		t.Fatalf("native handshake failure was not safely sanitized: %v", err)
 	}
 }
 
@@ -136,95 +146,98 @@ func (b *testSiteBinder) Forget(key string) int {
 	return n
 }
 
-func TestPostPoolBindsAndReusesTheLibrarySiteChoice(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{"http://a.invalid:8080", "http://b.invalid:8080"}, 0)
+func TestPostPoolBindsAndReusesTheNativeSiteChoice(t *testing.T) {
+	firstProxy, secondProxy := newNativeLoopbackProxy(t, "http"), newNativeLoopbackProxy(t, "http")
+	spec := newHopPoolSpec(postHopPool, []string{firstProxy.uri, secondProxy.uri}, 0)
 	now := time.Unix(200, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(3, 4)})
 	binder := &testSiteBinder{values: make(map[string]string)}
-	members := map[string]member{spec.keys[0]: &fakeMember{name: "a"}, spec.keys[1]: &fakeMember{name: "b"}}
 	carrier := &nodeHealth{now: func() time.Time { return now }}
 	carrier.recordProbe(true, time.Millisecond)
-	first := newHopPoolAdapter("post-1", postHopPool, spec, members, p, binder, carrier, func() time.Time { return now })
+	first := newHopPoolAdapter("post-1", postHopPool, spec, p, binder, carrier, func() time.Time { return now })
+	setNativeCarrier(first, nil, true)
 	metadata := &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443}
-	if _, err := first.DialContext(context.Background(), metadata); err != nil {
-		t.Fatalf("post pool dial: %v", err)
+	conn, err := first.DialContext(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("native post pool dial: %v", err)
 	}
+	_ = conn.Close()
 	bound, ok := binder.Get("alice", "example.test")
 	if !ok {
 		t.Fatal("successful post dial did not bind site")
 	}
-	before0, before1 := members[spec.keys[0]].(*fakeMember).dials.Load(), members[spec.keys[1]].(*fakeMember).dials.Load()
-	second := newHopPoolAdapter("post-2", postHopPool, spec, members, p, binder, carrier, func() time.Time { return now })
-	if _, err := second.DialContext(context.Background(), metadata); err != nil {
-		t.Fatalf("bound post dial: %v", err)
-	}
-	if members[bound].(*fakeMember).dials.Load() != map[string]int32{spec.keys[0]: before0 + 1, spec.keys[1]: before1 + 1}[bound] {
-		t.Fatal("bound hop was not reused across node adapters")
-	}
+	servers := map[string]*nativeLoopbackProxy{hopPoolKey(firstProxy.uri): firstProxy, hopPoolKey(secondProxy.uri): secondProxy}
+	beforeBound, beforeOther := servers[bound].requests.Load(), int32(0)
 	other := spec.keys[0]
 	if other == bound {
 		other = spec.keys[1]
 	}
-	if members[other].(*fakeMember).dials.Load() != map[string]int32{spec.keys[0]: before0, spec.keys[1]: before1}[other] {
+	beforeOther = servers[other].requests.Load()
+	second := newHopPoolAdapter("post-2", postHopPool, spec, p, binder, carrier, func() time.Time { return now })
+	setNativeCarrier(second, nil, true)
+	conn, err = second.DialContext(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("bound native post dial: %v", err)
+	}
+	_ = conn.Close()
+	if got := servers[bound].requests.Load(); got != beforeBound+1 {
+		t.Fatal("bound post hop was not reused across node adapters")
+	}
+	if got := servers[other].requests.Load(); got != beforeOther {
 		t.Fatal("post binding changed to another hop")
 	}
 }
 
-type metadataTestMember struct {
-	*fakeMember
-	dial func(context.Context, *C.Metadata) (C.Conn, error)
-}
-
-func (m *metadataTestMember) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
-	m.dials.Add(1)
-	return m.dial(ctx, metadata)
-}
-
 func TestPostHopQuarantineRebindsAcrossNodeAdapters(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{
-		"http://user:password@one.invalid:8080",
-		"http://user:password@two.invalid:8080",
-	}, 0)
+	firstProxy, secondProxy := newNativeLoopbackProxy(t, "http"), newNativeLoopbackProxy(t, "http")
+	spec := newHopPoolSpec(postHopPool, []string{"http://first-user:private-secret@" + firstProxy.listener.Addr().String(), "http://second-user:other-secret@" + secondProxy.listener.Addr().String()}, 0)
 	now := time.Unix(400, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(7, 11)})
 	for range 3 {
 		p.RecordHard(spec.keys[0])
 	}
 	binder := &testSiteBinder{values: map[string]string{"alice\x00example.test": spec.keys[0]}}
-	members := map[string]member{
-		spec.keys[0]: &fakeMember{name: "credentialed-hop"},
-		spec.keys[1]: &fakeMember{name: "credentialed-hop"},
-	}
 	carrier := &nodeHealth{now: func() time.Time { return now }}
-	first := newHopPoolAdapter("post-node-one", postHopPool, spec, members, p, binder, carrier, func() time.Time { return now })
+	carrier.recordProbe(true, time.Millisecond)
+	first := newHopPoolAdapter("post-node-one", postHopPool, spec, p, binder, carrier, func() time.Time { return now })
+	setNativeCarrier(first, nil, true)
 	metadata := &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443}
-	if _, err := first.DialContext(context.Background(), metadata); err != nil {
-		t.Fatalf("healthy replacement dial failed: %v", err)
+	conn, err := first.DialContext(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("healthy native replacement dial failed: %v", err)
 	}
+	_ = conn.Close()
 	bound, ok := binder.Get("alice", "example.test")
 	if !ok || bound != spec.keys[1] {
 		t.Fatal("first adapter did not replace the quarantined binding with the healthy hop")
 	}
-	before := members[bound].(*fakeMember).dials.Load()
-	second := newHopPoolAdapter("post-node-two", postHopPool, spec, members, p, binder, carrier, func() time.Time { return now })
-	if _, err := second.DialContext(context.Background(), metadata); err != nil {
-		t.Fatalf("rebound dial failed: %v", err)
+	servers := map[string]*nativeLoopbackProxy{spec.keys[0]: firstProxy, spec.keys[1]: secondProxy}
+	before := servers[bound].requests.Load()
+	second := newHopPoolAdapter("post-node-two", postHopPool, spec, p, binder, carrier, func() time.Time { return now })
+	setNativeCarrier(second, nil, true)
+	conn, err = second.DialContext(context.Background(), metadata)
+	if err != nil {
+		t.Fatalf("rebound native dial failed: %v", err)
 	}
-	if got := members[bound].(*fakeMember).dials.Load(); got != before+1 {
+	_ = conn.Close()
+	if got := servers[bound].requests.Load(); got != before+1 {
 		t.Fatal("second node adapter did not reuse the shared site binding")
 	}
-	if got := members[spec.keys[0]].(*fakeMember).dials.Load(); got != 0 {
-		t.Fatalf("quarantined hop was dialed %d times", got)
+	if got := servers[spec.keys[0]].requests.Load(); got != 0 {
+		t.Fatalf("quarantined post endpoint received %d requests", got)
 	}
 	if got := poolState(p, spec.keys[0]); got.State != pool.Quarantined || got.Trips != 1 {
-		t.Fatalf("shared quarantine state changed: %#v", got)
+		t.Fatal("shared quarantine state changed")
 	}
 }
 
-func TestPostHopAllQuarantinedTriesOneMemberAndDoesNotBypass(t *testing.T) {
+func TestPostHopAllQuarantinedTriesOneNativeMemberAndDoesNotBypass(t *testing.T) {
+	first, second := newNativeLoopbackProxy(t, "http"), newNativeLoopbackProxy(t, "http")
+	first.status.Store(407)
+	second.status.Store(407)
 	spec := newHopPoolSpec(postHopPool, []string{
-		"http://user:password@one.invalid:8080",
-		"http://user:password@two.invalid:8080",
+		"http://private-user:private-secret@" + first.listener.Addr().String(),
+		"http://other-user:other-secret@" + second.listener.Addr().String(),
 	}, 0)
 	now := time.Unix(500, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(17, 19)})
@@ -233,49 +246,31 @@ func TestPostHopAllQuarantinedTriesOneMemberAndDoesNotBypass(t *testing.T) {
 			p.RecordHard(key)
 		}
 	}
-	members := make(map[string]member, len(spec.keys))
-	for i, key := range spec.keys {
-		members[key] = &fakeMember{
-			name: "credentialed-hop",
-			err:  fmt.Errorf("%s connect error: connection refused", hopAddress(spec.uris[i])),
-		}
-	}
-	adapter := newHopPoolAdapter("post-all-quarantined", postHopPool, spec, members, p, nil, nil, func() time.Time { return now })
+	adapter := newHopPoolAdapter("post-all-quarantined", postHopPool, spec, p, nil, nil, func() time.Time { return now })
+	setNativeCarrier(adapter, nil, true)
 	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "password") {
-		t.Fatal("all-quarantined post dial did not return a sanitized hop-pool failure")
+	if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "private-secret") || strings.Contains(err.Error(), "other-secret") {
+		t.Fatal("all-quarantined native post dial did not return a sanitized hop-pool failure")
 	}
-	var attempts int32
-	for _, member := range members {
-		attempts += member.(*fakeMember).dials.Load()
-	}
+	attempts := first.requests.Load() + second.requests.Load()
 	if attempts != 1 {
-		t.Fatalf("post pool attempted %d members, want exactly one", attempts)
+		t.Fatalf("all-quarantined native post pool attempted %d endpoints, want exactly one", attempts)
 	}
 }
 
 func TestPostHopDeadCarrierFailureDoesNotChangeHopHealth(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{
-		"http://user:password@one.invalid:8080",
-		"http://user:password@two.invalid:8080",
-	}, 0)
+	first, second := newNativeLoopbackProxy(t, "http"), newNativeLoopbackProxy(t, "http")
+	spec := newHopPoolSpec(postHopPool, []string{first.uri, second.uri}, 0)
 	now := time.Unix(600, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(23, 29)})
-	members := make(map[string]member, len(spec.keys))
-	for i, key := range spec.keys {
-		members[key] = &fakeMember{
-			name: "credentialed-hop",
-			err:  fmt.Errorf("%s connect error: connection refused", hopAddress(spec.uris[i])),
-		}
-	}
-	adapter := newHopPoolAdapter("post-dead-carrier", postHopPool, spec, members, p, nil, nil, func() time.Time { return now })
+	adapter := newHopPoolAdapter("post-dead-carrier", postHopPool, spec, p, nil, nil, func() time.Time { return now })
 	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "password") {
-		t.Fatal("dead-carrier post failure was not safely wrapped")
+	if err == nil || !errors.As(err, new(*poolCarrierError)) {
+		t.Fatal("missing carrier was not preserved as a native carrier failure")
 	}
 	for _, key := range spec.keys {
 		if got := poolState(p, key); got.HardFailures != 0 || got.Sand != 0 || got.State != pool.Healthy {
-			t.Fatalf("dead carrier changed hop health: %#v", got)
+			t.Fatal("missing carrier changed post-hop health")
 		}
 	}
 }
@@ -288,20 +283,22 @@ func TestPostHopCarrierConnectErrorSurvivesPoolFailure(t *testing.T) {
 	now := time.Unix(700, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(31, 37)})
 	carrierErr := errors.New("carrier sentinel")
-	members := map[string]member{
-		spec.keys[0]: &fakeMember{name: "credentialed-hop", err: fmt.Errorf("node.invalid:443 connect error: %w", carrierErr)},
-		spec.keys[1]: &fakeMember{name: "credentialed-hop", err: fmt.Errorf("node.invalid:443 connect error: %w", carrierErr)},
-	}
-	adapter := newHopPoolAdapter("post-carrier-error", postHopPool, spec, members, p, nil, nil, func() time.Time { return now })
+	groupHealth := newHealthTable()
+	groupHealth.register([]string{"node"})
+	carrierHealth := groupHealth.health("node")
+	carrierHealth.recordProbe(true, time.Millisecond)
+	adapter := newHopPoolAdapter("post-carrier-error", postHopPool, spec, p, nil, carrierHealth, func() time.Time { return now })
+	carrier := &nativeFailingCarrier{name: "node", err: carrierErr}
+	setNativeCarrier(adapter, carrier, false)
 	for _, hop := range adapter.hops {
-		hop.nextAddress = "node.invalid:443"
+		hop.nodeAddress = "node.invalid:443"
 	}
 	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443})
-	if err == nil || isHopPoolDialError(err) || !errors.Is(err, carrierErr) {
+	if err == nil || !errors.Is(err, carrierErr) {
 		t.Fatal("carrier connect error was not preserved outside hop-pool classification")
 	}
-	var carrier *poolCarrierError
-	if !errors.As(err, &carrier) {
+	var carrierError *poolCarrierError
+	if !errors.As(err, &carrierError) {
 		t.Fatal("carrier connect error lost its carrier classification")
 	}
 	if strings.Contains(err.Error(), "password") {
@@ -314,85 +311,50 @@ func TestPostHopCarrierConnectErrorSurvivesPoolFailure(t *testing.T) {
 	}
 }
 
-func TestPostHopHealthCountsStayBoundedWithFakeMember(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{"http://user:password@one.invalid:8080"}, 0)
+func TestPostHopHealthCountsStayBoundedWithNativeCarrier(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "http")
+	proxy.status.Store(407)
+	spec := newHopPoolSpec(postHopPool, []string{proxy.uri}, 0)
 	now := time.Unix(800, 0)
-	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(41, 43)})
-	fake := &fakeMember{name: "credentialed-hop", err: fmt.Errorf("%s connect error: connection refused", hopAddress(spec.uris[0]))}
+	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
 	carrier := &nodeHealth{now: func() time.Time { return now }}
 	carrier.recordProbe(true, time.Millisecond)
-	adapter := newHopPoolAdapter("post-bounded-health", postHopPool, spec, map[string]member{spec.keys[0]: fake}, p, nil, carrier, func() time.Time { return now })
+	adapter := newHopPoolAdapter("post-bounded-health", postHopPool, spec, p, nil, carrier, func() time.Time { return now })
+	setNativeCarrier(adapter, nil, true)
 	for range 9 {
 		_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443})
-		if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "password") {
-			t.Fatal("post failure did not remain sanitized")
+		if err == nil || !isHopPoolDialError(err) || strings.Contains(err.Error(), "private-secret") {
+			t.Fatal("native post failure did not remain sanitized")
 		}
 	}
 	got := poolState(p, spec.keys[0])
-	if got.HardFailures != 3 || got.Trips != 1 || got.State != pool.Quarantined {
-		t.Fatalf("post health count exceeded or missed quarantine bound: %#v", got)
+	if got.HardFailures != 0 || got.Sand <= 0 || got.Trips != 0 || got.State != pool.Healthy {
+		t.Fatal("proxy auth refusals were not recorded as soft refusing-hop failures")
 	}
-	if attempts := fake.dials.Load(); attempts != 9 {
-		t.Fatalf("fake member dial count = %d, want one per post request", attempts)
+	if attempts := proxy.targets.Load(); attempts != 9 {
+		t.Fatalf("native proxy attempts = %d, want one per request", attempts)
 	}
 }
 
-func TestHopPoolMetadataIsClonedPerAttempt(t *testing.T) {
-	spec := newHopPoolSpec(preHopPool, []string{
-		"socks5://user:password@one.invalid:1080",
-		"socks5://user:password@two.invalid:1080",
-	}, 0)
-	now := time.Unix(300, 0)
-	seed := [2]uint64{13, 21}
+func TestNativePrePoolSendsOriginalTargetWithoutMutatingCallerMetadata(t *testing.T) {
+	first, second := newNativeLoopbackProxy(t, "socks5"), newNativeLoopbackProxy(t, "socks5")
+	now, seed := time.Unix(300, 0), [2]uint64{13, 21}
+	spec := newHopPoolSpec(preHopPool, []string{first.uri, second.uri}, 0)
+	index := nativeFirstIndex(spec, now, seed)
+	servers := []*nativeLoopbackProxy{first, second}
+	servers[index].mode.Store(nativeProxyBadGreeting)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(seed[0], seed[1])})
-	order := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }, RNG: rand.NewPCG(seed[0], seed[1])}).Order(now)
-	if len(order) != 2 {
-		t.Fatalf("pool order has %d keys, want two", len(order))
-	}
-	addresses := make(map[string]string, len(spec.keys))
-	for i, key := range spec.keys {
-		addresses[key] = hopAddress(spec.uris[i])
-	}
-	original := &C.Metadata{
-		NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443,
-		SrcGeoIP: []string{"original-source"}, DstGeoIP: []string{"original-destination"},
-	}
-	var calls []string
-	var received []*C.Metadata
-	members := make(map[string]member, len(spec.keys))
-	for _, key := range spec.keys {
-		key := key
-		members[key] = &metadataTestMember{
-			fakeMember: &fakeMember{name: "metadata-member"},
-			dial: func(_ context.Context, metadata *C.Metadata) (C.Conn, error) {
-				calls = append(calls, key)
-				received = append(received, metadata)
-				if metadata.Host != original.Host || metadata.DstPort != original.DstPort ||
-					metadata.SrcGeoIP[0] != "original-source" || metadata.DstGeoIP[0] != "original-destination" {
-					t.Errorf("attempt %q received metadata changed by an earlier attempt", key)
-				}
-				metadata.Host = "mutated.example.test"
-				metadata.SrcGeoIP[0] = "mutated-source"
-				metadata.DstGeoIP[0] = "mutated-destination"
-				if key == order[0] {
-					return nil, fmt.Errorf("%s connect error: connection refused", addresses[key])
-				}
-				return &fakeConn{}, nil
-			},
-		}
-	}
-	adapter := newHopPoolAdapter("metadata-test", preHopPool, spec, members, p, nil, nil, func() time.Time { return now })
+	adapter := newHopPoolAdapter("metadata-test", preHopPool, spec, p, nil, nil, func() time.Time { return now })
+	original := &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "www.example.test", DstPort: 443}
 	conn, err := adapter.DialContext(context.Background(), original)
 	if err != nil || conn == nil {
-		t.Fatal("pool did not fail over after the first metadata-mutating attempt")
+		t.Fatalf("native pre pool did not fail over safely: %v", err)
 	}
-	if len(calls) != 2 || calls[0] != order[0] || calls[1] != order[1] {
-		t.Fatalf("attempt order = %v, want %v", calls, order)
+	_ = conn.Close()
+	if original.Host != "www.example.test" || original.DstPort != 443 {
+		t.Fatal("native hop dialing mutated caller metadata")
 	}
-	if len(received) != 2 || received[0] == received[1] {
-		t.Fatal("attempts did not receive independent metadata clones")
-	}
-	if original.Host != "www.example.test" || original.SrcGeoIP[0] != "original-source" || original.DstGeoIP[0] != "original-destination" {
-		t.Fatal("hop attempts mutated caller metadata")
+	if servers[index].targets.Load() != 0 || servers[1-index].targets.Load() != 1 {
+		t.Fatal("native pre handshake retry sent unexpected target requests")
 	}
 }

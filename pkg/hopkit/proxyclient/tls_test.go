@@ -315,6 +315,9 @@ func TestHTTPSConnectRejectsWrongCAAndIgnoresInsecureOverride(t *testing.T) {
 	if !errors.As(pe, &unknownAuthority) {
 		t.Fatal("TLS verification error was not an unknown-authority error")
 	}
+	if pe.TargetSent {
+		t.Fatal("TLS verification failure marked target request as sent")
+	}
 	if pe.Timeout() {
 		t.Fatal("TLS verification failure was classified as a timeout")
 	}

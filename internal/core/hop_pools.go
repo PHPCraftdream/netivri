@@ -26,14 +26,12 @@ type siteBinder interface {
 }
 
 type hopPoolSpec struct {
-	role       hopPoolRole
-	keys       []string
-	uris       []string
-	name       string
-	id         string
-	configID   string
-	configIDs  []string
-	entryNames []string
+	role     hopPoolRole
+	keys     []string
+	uris     []string
+	name     string
+	id       string
+	configID string
 }
 
 // poolIdentity scopes the ordered health keys to their pre/post pool role.
@@ -111,11 +109,7 @@ func newHopPoolSpec(role hopPoolRole, uris []string, gen int) *hopPoolSpec {
 	}
 	spec := &hopPoolSpec{
 		role: role, keys: keys, uris: unique, id: id, configID: configID,
-		name:      prefix + side + "-pool-" + id + "-" + configID,
-		configIDs: entryConfigs,
-	}
-	for _, config := range entryConfigs {
-		spec.entryNames = append(spec.entryNames, poolConfigEntryName(role, config, gen))
+		name: prefix + side + "-pool-" + id + "-" + configID,
 	}
 	return spec
 }
@@ -133,21 +127,6 @@ func invalidHopPoolKey(raw string) string {
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return "invalid-" + hex.EncodeToString(sum[:])
-}
-
-func poolConfigEntryName(role hopPoolRole, configID string, gen int) string {
-	prefix, side := "hop-entry-", "pre"
-	if gen > 0 {
-		prefix = fmt.Sprintf("hop-entry-g%d-", gen)
-	}
-	if role == postHopPool {
-		side = "post"
-	}
-	return prefix + side + "-" + configID
-}
-
-func nodePoolEntryName(memberName, configID string) string {
-	return "hop-entry-" + memberName + "-" + configID
 }
 
 func effectivePool(pool []string, exists bool, scalar string) []string {
@@ -267,24 +246,11 @@ func checkedPoolNodeHops(o Options, key string, n int) error {
 	return nil
 }
 
-func addPoolPlaceholder(spec *hopPoolSpec, proxies *[]map[string]any, groups *[]map[string]any, proxyNames map[string]struct{}) error {
+func addPoolPlaceholder(spec *hopPoolSpec, _ *[]map[string]any, groups *[]map[string]any, _ map[string]struct{}) error {
 	if spec == nil || len(spec.keys) < 2 {
 		return nil
 	}
-	members := make([]string, 0, len(spec.keys))
-	for i, uri := range spec.uris {
-		mapping, err := chainProxy(uri, spec.entryNames[i])
-		if err != nil {
-			return err
-		}
-		name := mapping["name"].(string)
-		if _, exists := proxyNames[name]; !exists {
-			*proxies = append(*proxies, mapping)
-			proxyNames[name] = struct{}{}
-		}
-		members = append(members, name)
-	}
-	*groups = append(*groups, map[string]any{"name": spec.name, "type": "select", "proxies": members})
+	*groups = append(*groups, map[string]any{"name": spec.name, "type": "select", "proxies": []string{"DIRECT"}})
 	return nil
 }
 

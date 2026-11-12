@@ -31,7 +31,7 @@ func TestErrorFormattingUnwrapAndClassification(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pe := &Error{Stage: tc.stage, Code: 503, Err: wrappedCause}
+			pe := &Error{Stage: tc.stage, Code: 503, Err: wrappedCause, TargetSent: true}
 			if pe.Error() != tc.text {
 				t.Fatal("proxy error formatting mismatch")
 			}

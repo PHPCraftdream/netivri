@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 	C "github.com/metacubex/mihomo/constant"
 )
@@ -56,54 +58,143 @@ func TestMemberProbeKeysSeparateBaseAndPostProbePaths(t *testing.T) {
 	}
 }
 
-func TestSameFamilyPostCarrierRefusalIsNotAttributedToEitherHop(t *testing.T) {
-	spec := newHopPoolSpec(postHopPool, []string{"http://post.invalid:8080"}, 0)
+func TestNativePostRefusalIsSoftForTheRefusingHop(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "http")
+	proxy.status.Store(407)
+	spec := newHopPoolSpec(postHopPool, []string{proxy.uri}, 0)
 	now := time.Unix(100, 0)
+	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
 	carrier := &nodeHealth{now: func() time.Time { return now }}
 	carrier.recordProbe(true, time.Millisecond)
-	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
-	adapter := newHopPoolAdapter("post", postHopPool, spec, map[string]member{
-		spec.keys[0]: &fakeMember{name: "post", err: errors.New("post.invalid:8080 connect error: http need auth")},
-	}, p, nil, carrier, func() time.Time { return now })
-	adapter.hops[0].nextAddress = "node.invalid:443"
-	adapter.hops[0].nextProtocol = "http"
+	adapter := newHopPoolAdapter("post", postHopPool, spec, p, nil, carrier, func() time.Time { return now })
+	for _, hop := range adapter.hops {
+		hop.directCarrier = true
+	}
 	_, err := adapter.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443})
-	if err == nil || !isHopPoolDialError(err) {
-		t.Fatalf("ambiguous refusal was not safely returned: %v", err)
+	var staged *dial.StageError
+	if !errors.As(err, &staged) || staged == nil {
+		t.Fatal("native HTTP refusal did not produce a staged error")
 	}
-	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 || got.Sand != 0 {
-		t.Fatalf("same-family refusal changed post-hop health: %#v", got)
+	if staged.Stage != dial.Refusal || !staged.TargetSent {
+		t.Fatalf("native HTTP refusal stage = %v, target sent = %t", staged.Stage, staged.TargetSent)
 	}
-}
-
-func TestPostProbeUsesCarrierAttributionBeforeGenericClassification(t *testing.T) {
-	target := hopProbeTarget{
-		role: postHopPool, hopAddress: "post.invalid:8080", protocol: "socks5",
-		nodeAddress: "node.invalid:443", nodeProtocol: "http",
-	}
-	if got := classifyProbe(target, errors.New("post.invalid:8080 connect error: 502 bad gateway")); got != pool.ProbeHardFailure {
-		t.Fatalf("HTTP failure from carrier was not a hard post failure: %v", got)
-	}
-	target.protocol, target.nodeProtocol = "http", "http"
-	if got := classifyProbe(target, errors.New("post.invalid:8080 connect error: http need auth")); got != pool.ProbeInconclusive {
-		t.Fatalf("same-family refusal was not inconclusive: %v", got)
-	}
-	target.protocol, target.nodeProtocol = "socks5", "http"
-	if got := classifyProbe(target, errors.New("node.invalid:443 connect error: socks error: 5")); got != pool.ProbeInconclusive {
-		t.Fatalf("node-inner failure was attributed to post hop: %v", got)
+	got := poolState(p, spec.keys[0])
+	if got.HardFailures != 0 || got.Sand != 1 || got.State != pool.Healthy {
+		t.Fatalf("HTTP refusal did not record only a soft current-hop failure: hard=%d soft=%v state=%s", got.HardFailures, got.Sand, got.State)
 	}
 }
 
-func TestPostCarrierFailureDoesNotTreatDirectCarrierAsNode(t *testing.T) {
+func TestPostProbeUsesLifecycleAndRequiresFreshCarrierEvidence(t *testing.T) {
+	t.Run("fresh carrier probes configured URL and succeeds", func(t *testing.T) {
+		proxy := newNativeLoopbackProxy(t, "socks5")
+		now := time.Unix(1000, 0)
+		health := &nodeHealth{now: func() time.Time { return now }}
+		health.recordProbe(true, time.Millisecond)
+		carrier := &countedNativeCarrier{nativeMemberCarrier: *nativeCarrierForLoopback(t, proxy)}
+		target := hopProbeTarget{role: postHopPool, uri: proxy.uri, hopAddress: hopAddress(proxy.uri), protocol: "socks5", carrier: health, carrierMember: carrier, nodeAddress: "127.0.0.1:1"}
+		outcome := runNativeLifecyclePostProbe(t, &now, target, "http://probe.example.test:7777/path")
+		if outcome != pool.ProbeSuccess || proxy.requests.Load() != 1 || carrier.calls.Load() != 1 {
+			t.Fatalf("fresh-evidence post probe outcome=%v proxy requests=%d carrier attempts=%d", outcome, proxy.requests.Load(), carrier.calls.Load())
+		}
+		if got := proxy.requestedTarget(); got != "probe.example.test:7777" {
+			t.Fatalf("post probe target=%q, want configured ProbeURL host and port", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		name        string
+		evidence    string
+		rep         int32
+		advance     bool
+		wantCalls   int32
+		wantOutcome pool.ProbeOutcome
+	}{
+		{name: "stale evidence", evidence: "stale", wantCalls: 0, wantOutcome: pool.ProbeInconclusive},
+		{name: "down carrier", evidence: "down", wantCalls: 0, wantOutcome: pool.ProbeInconclusive},
+		{name: "evidence expires during dial", evidence: "fresh", advance: true, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
+		{name: "handshake failure", evidence: "fresh", wantCalls: 1, wantOutcome: pool.ProbeHardFailure},
+		{name: "refusal", evidence: "fresh", rep: 2, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
+		{name: "target", evidence: "fresh", rep: 3, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
+		{name: "other", evidence: "fresh", rep: 7, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proxy := newNativeLoopbackProxy(t, "socks5")
+			if tc.rep != 0 {
+				proxy.mode.Store(nativeProxyREP)
+				proxy.rep.Store(tc.rep)
+			} else {
+				proxy.mode.Store(nativeProxyBadGreeting)
+			}
+			now := time.Unix(2000, 0)
+			health := &nodeHealth{now: func() time.Time { return now }}
+			health.recordProbe(true, time.Millisecond)
+			switch tc.evidence {
+			case "stale":
+				now = now.Add(trafficAliveFor + time.Second)
+			case "down":
+				health.downFlag.Store(true)
+			}
+			carrier := &countedNativeCarrier{nativeMemberCarrier: *nativeCarrierForLoopback(t, proxy), clock: &now}
+			if tc.advance {
+				carrier.advance = trafficAliveFor + time.Second
+			}
+			target := hopProbeTarget{role: postHopPool, uri: proxy.uri, hopAddress: hopAddress(proxy.uri), protocol: "socks5", carrier: health, carrierMember: carrier, nodeAddress: "127.0.0.1:1"}
+			outcome := runNativeLifecyclePostProbe(t, &now, target, "http://probe.invalid:8080/")
+			if outcome != tc.wantOutcome {
+				t.Fatalf("post probe outcome=%v, want %v", outcome, tc.wantOutcome)
+			}
+			if got := carrier.calls.Load(); got != tc.wantCalls {
+				t.Fatalf("carrier attempts=%d, want %d", got, tc.wantCalls)
+			}
+			if got := proxy.requests.Load(); got != tc.wantCalls {
+				t.Fatalf("post proxy requests=%d, want %d", got, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func runNativeLifecyclePostProbe(t *testing.T, now *time.Time, target hopProbeTarget, probeURL string) pool.ProbeOutcome {
+	t.Helper()
+	lifecycle := newHopPoolLifecycleWithClock(nil, func() time.Time { return *now })
+	spec := newHopPoolSpec(postHopPool, []string{target.uri}, 0)
+	key := spec.keys[0]
+	target.key = key
+	p := pool.New([]string{key}, pool.Options{Clock: func() time.Time { return *now }})
+	lifecycle.targets[p] = map[string][]hopProbeTarget{key: {target}}
+	prober := lifecyclePoolProber{lifecycle: lifecycle, pool: p, options: WarmOptions{ProbeTimeout: time.Second, ProbeURL: probeURL}}
+	return prober.Probe(context.Background(), &mihomoPoolHop{key: key})
+}
+
+type countedNativeCarrier struct {
+	nativeMemberCarrier
+	calls   atomic.Int32
+	clock   *time.Time
+	advance time.Duration
+}
+
+func (m *countedNativeCarrier) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+	m.calls.Add(1)
+	if m.clock != nil && m.advance != 0 {
+		*m.clock = m.clock.Add(m.advance)
+	}
+	return m.nativeMemberCarrier.DialContext(ctx, metadata)
+}
+
+func TestDirectPostUsesNativeTunnelWithoutNodeEvidence(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "http")
+	spec := newHopPoolSpec(postHopPool, []string{proxy.uri}, 0)
 	now := time.Unix(200, 0)
-	spec := newHopPoolSpec(postHopPool, []string{"http://post.invalid:8080"}, 0)
 	p := pool.New(spec.keys, pool.Options{Clock: func() time.Time { return now }})
-	a := newHopPoolAdapter("direct-post", postHopPool, spec, map[string]member{spec.keys[0]: &fakeMember{name: "post"}}, p, nil, nil, func() time.Time { return now })
-	a.hops[0].directCarrier = true
-	if _, err := a.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443}); err != nil {
+	a := newHopPoolAdapter("direct-post", postHopPool, spec, p, nil, nil, func() time.Time { return now })
+	for _, hop := range a.hops {
+		hop.directCarrier = true
+	}
+	conn, err := a.DialContext(context.Background(), &C.Metadata{NetWork: C.TCP, InUser: "alice", Host: "example.test", DstPort: 443})
+	if err != nil {
 		t.Fatalf("direct carrier incorrectly required node evidence: %v", err)
 	}
-	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 {
-		t.Fatalf("successful direct carrier changed hop health: %#v", got)
+	_ = conn.Close()
+	if got := poolState(p, spec.keys[0]); got.HardFailures != 0 || got.Sand != 0 {
+		t.Fatalf("successful direct carrier changed hop health: hard=%d soft=%v", got.HardFailures, got.Sand)
 	}
 }

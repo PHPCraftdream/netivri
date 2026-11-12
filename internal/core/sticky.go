@@ -487,13 +487,6 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 			preValues, postValues := o.nodePrePool(key, node), o.nodePostPool(key, node)
 			prePool := newHopPoolSpec(preHopPool, preValues, gen)
 			postPool := newHopPoolSpec(postHopPool, postValues, gen)
-			if postPool != nil && len(postPool.keys) > 1 {
-				base := memberProxyName(gen, index, node)
-				postPool.entryNames = nil
-				for poolIndex := range postPool.keys {
-					postPool.entryNames = append(postPool.entryNames, nodePoolEntryName(base, postPool.configIDs[poolIndex]))
-				}
-			}
 			plan.prePools = append(plan.prePools, prePool)
 			plan.postPools = append(plan.postPools, postPool)
 			name := memberProxyName(gen, index, node)

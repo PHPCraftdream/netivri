@@ -233,7 +233,7 @@ func TestPostDialUnbindsQuarantinedBindingAndRebindsHealthyChoice(t *testing.T) 
 	}
 }
 
-func TestPostDialAllDeadNeverRetriesOrBypasses(t *testing.T) {
+func TestPostDialAllQuarantinedRetriesConfiguredPoolAndReturnsLastError(t *testing.T) {
 	keys := []string{"a", "b", "c"}
 	p := newPool(keys...)
 	for _, key := range keys {
@@ -247,23 +247,203 @@ func TestPostDialAllDeadNeverRetriesOrBypasses(t *testing.T) {
 				mirror.RecordHard(key)
 			}
 		}
-	})[0]
+	})
 	calls := []string{}
-	final := &StageError{Stage: Connect, Err: errors.New("not available")}
-	hops := make([]Hop, 0, 3)
+	last := &StageError{Stage: Connect, Err: errors.New("final failure")}
+	hops := make([]Hop, 0, len(keys))
 	for _, key := range keys {
 		key := key
 		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
 			calls = append(calls, key)
-			return nil, final
+			if key == want[len(want)-1] {
+				return nil, last
+			}
+			return nil, &StageError{Stage: Connect, Err: errors.New("hop unavailable")}
 		}})
 	}
 	conn, err := New(p, hops, Options{Post: true}).DialSite(context.Background(), "tcp", "target:443", "login", "site")
-	if conn != nil || err != final {
-		t.Fatalf("post dial = (%v, %v), want original failure", conn, err)
+	if conn != nil || err != last {
+		t.Fatalf("post dial = (%v, %v), want final candidate error", conn, err)
+	}
+	if len(calls) != len(keys) {
+		t.Fatalf("calls = %v, want each quarantined configured hop once", calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Fatalf("calls = %v, want pool order %v", calls, want)
+		}
+	}
+}
+
+func TestPostDialRetriesConnectAndAmbiguousHandshake(t *testing.T) {
+	for _, stage := range []Stage{Connect, Handshake} {
+		t.Run(map[Stage]string{Connect: "connect", Handshake: "handshake"}[stage], func(t *testing.T) {
+			keys := []string{"a", "b", "c"}
+			want := deterministicOrder(keys, nil)
+			p := newPool(keys...)
+			calls := []string{}
+			hops := make([]Hop, 0, len(keys))
+			for _, key := range keys {
+				key := key
+				hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+					calls = append(calls, key)
+					if key == want[0] {
+						return nil, &StageError{Stage: stage, Err: errors.New("retryable failure")}
+					}
+					return &fakeConn{}, nil
+				}})
+			}
+			conn, err := New(p, hops, Options{Post: true}).DialSite(context.Background(), "tcp", "target:443", "login", "site")
+			if err != nil || conn == nil {
+				t.Fatalf("post dial = (%v, %v), want later candidate success", conn, err)
+			}
+			if len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
+				t.Fatalf("post attempts = %v, want first two pool candidates %v", calls, want[:2])
+			}
+		})
+	}
+}
+
+func TestPostDialSuppressBlameRetriesAndRebinds(t *testing.T) {
+	for _, stage := range []Stage{Connect, Handshake} {
+		t.Run(map[Stage]string{Connect: "connect", Handshake: "handshake"}[stage], func(t *testing.T) {
+			keys := []string{"first", "second", "third"}
+			order := deterministicOrder(keys, nil)
+			first, second := order[0], order[1]
+			p := newPool(keys...)
+			binder := &fakeBinder{values: map[string]string{binderKey("login", "site"): first}}
+			calls := []string{}
+			hops := make([]Hop, 0, len(keys))
+			for _, key := range keys {
+				key := key
+				hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+					calls = append(calls, key)
+					if key == first {
+						return nil, &StageError{Stage: stage, SuppressBlame: true, Err: errors.New("hop failure")}
+					}
+					return &fakeConn{}, nil
+				}})
+			}
+
+			conn, err := New(p, hops, Options{Post: true, Binder: binder}).DialSite(context.Background(), "tcp", "destination", "login", "site")
+			if err != nil || conn == nil {
+				t.Fatalf("post dial = (%v, %v), want retry success", conn, err)
+			}
+			if len(calls) != 2 || calls[0] != first || calls[1] != second {
+				t.Fatalf("post attempts = %v, want bound hop %q then %q", calls, first, second)
+			}
+			if len(binder.bound) != 1 || binder.bound[0] != second {
+				t.Fatalf("binding after retry = %v, want successful hop %q", binder.bound, second)
+			}
+			if got, ok := binder.Get("login", "site"); !ok || got != second {
+				t.Fatalf("site binding = (%q, %t), want successful hop %q", got, ok, second)
+			}
+			for _, snapshot := range p.Snapshot() {
+				switch snapshot.Key {
+				case first:
+					if snapshot.HardFailures != 0 || snapshot.Sand != 0 {
+						t.Errorf("suppressed hop health = hard %d sand %v, want unchanged", snapshot.HardFailures, snapshot.Sand)
+					}
+				case second:
+					if snapshot.State != pool.Healthy || snapshot.HardFailures != 0 || snapshot.Sand != 0 {
+						t.Errorf("successful hop health = %#v, want healthy with no failures", snapshot)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPostDialDoesNotRetryUnsafeFailureClasses(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "target", err: &StageError{Stage: Target}},
+		{name: "refusal", err: &StageError{Stage: Refusal}},
+		{name: "unknown", err: &StageError{Stage: Unknown}},
+		{name: "raw", err: errors.New("unstructured failure")},
+		{name: "handshake next unreachable", err: &StageError{Stage: Handshake, NextUnreachable: true}},
+		{name: "connect target sent", err: &StageError{Stage: Connect, TargetSent: true}},
+		{name: "handshake target sent", err: &StageError{Stage: Handshake, TargetSent: true}},
+		{name: "connect canceled", err: &StageError{Stage: Connect, Err: context.Canceled}},
+		{name: "handshake deadline", err: &StageError{Stage: Handshake, Err: context.DeadlineExceeded}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			keys := []string{"a", "b", "c"}
+			want := deterministicOrder(keys, nil)[0]
+			calls := []string{}
+			hops := make([]Hop, 0, len(keys))
+			for _, key := range keys {
+				key := key
+				hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+					calls = append(calls, key)
+					return nil, test.err
+				}})
+			}
+			conn, err := New(newPool(keys...), hops, Options{Post: true}).DialSite(context.Background(), "tcp", "target:443", "login", "site")
+			if conn != nil || err != test.err {
+				t.Fatalf("post dial = (%v, %v), want original error", conn, err)
+			}
+			if len(calls) != 1 || calls[0] != want {
+				t.Fatalf("post attempts = %v, want selected candidate %q only", calls, want)
+			}
+		})
+	}
+}
+
+func TestPostDialHealthyBindingStaysFirstAndRebindsAfterRetry(t *testing.T) {
+	keys := []string{"a", "b", "c"}
+	p := newPool(keys...)
+	binder := &fakeBinder{values: map[string]string{binderKey("login", "site"): "c"}}
+	calls := []string{}
+	hops := make([]Hop, 0, len(keys))
+	for _, key := range keys {
+		key := key
+		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+			calls = append(calls, key)
+			if key == "c" {
+				return nil, &StageError{Stage: Connect}
+			}
+			return &fakeConn{}, nil
+		}})
+	}
+	conn, err := New(p, hops, Options{Post: true, Binder: binder}).DialSite(context.Background(), "tcp", "target:443", "login", "site")
+	if err != nil || conn == nil {
+		t.Fatalf("post dial = (%v, %v), want retry success", conn, err)
+	}
+	if len(calls) != 2 || calls[0] != "c" {
+		t.Fatalf("post attempts = %v, want healthy binding first then one fallback", calls)
+	}
+	if len(binder.bound) != 1 || binder.bound[0] != calls[1] {
+		t.Fatalf("binding after retry = %v, want successful hop %q", binder.bound, calls[1])
+	}
+	if got, ok := binder.Get("login", "site"); !ok || got != calls[1] {
+		t.Fatalf("site binding = (%q, %t), want successful hop %q", got, ok, calls[1])
+	}
+}
+
+func TestPostDialContextCancellationStopsRetries(t *testing.T) {
+	keys := []string{"a", "b", "c"}
+	want := deterministicOrder(keys, nil)[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := []string{}
+	hops := make([]Hop, 0, len(keys))
+	for _, key := range keys {
+		key := key
+		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+			calls = append(calls, key)
+			cancel()
+			return nil, &StageError{Stage: Connect}
+		}})
+	}
+	conn, err := New(newPool(keys...), hops, Options{Post: true}).DialSite(ctx, "tcp", "target:443", "login", "site")
+	if conn != nil || err == nil {
+		t.Fatalf("post dial = (%v, %v), want canceled failure", conn, err)
 	}
 	if len(calls) != 1 || calls[0] != want {
-		t.Fatalf("calls = %v, want exactly selected quarantined hop %q", calls, want)
+		t.Fatalf("post attempts = %v, want selected candidate %q only", calls, want)
 	}
 }
 
@@ -329,9 +509,9 @@ func TestNilConnectionRetriesPreButDoesNotBindPost(t *testing.T) {
 }
 
 func TestStageErrorsAreSanitizedUnwrappedAndAttributedOnlyWhenKnown(t *testing.T) {
-	secret := errors.New("secret user:password@proxy.invalid")
-	staged := &StageError{Stage: Connect, Err: secret}
-	if got := staged.Error(); got == "" || contains(got, "secret") || contains(got, "password") || !errors.Is(staged, secret) {
+	secret := errors.New("sensitive sentinel")
+	staged := &StageError{Stage: Connect, TargetSent: true, Err: secret}
+	if got := staged.Error(); got == "" || contains(got, "sensitive") || !errors.Is(staged, secret) || got != (&StageError{Stage: Connect, Err: secret}).Error() {
 		t.Fatalf("sanitized error = %q; unwrap=%v", got, errors.Is(staged, secret))
 	}
 	for _, test := range []struct {

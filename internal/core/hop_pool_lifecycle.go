@@ -14,12 +14,13 @@ import (
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/check"
 	hopdial "github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
+	"github.com/PHPCraftdream/netivri/pkg/hopkit/proxyclient"
 	hoprevive "github.com/PHPCraftdream/netivri/pkg/hopkit/revive"
 	"github.com/metacubex/mihomo/adapter"
 	C "github.com/metacubex/mihomo/constant"
 )
 
-// HopEventKind identifies a health transition, never an individual dial error.
+// HopEventKind identifies a pool health transition.
 type HopEventKind string
 
 const (
@@ -27,7 +28,7 @@ const (
 	HopEventRevived     HopEventKind = "revived"
 )
 
-// HopEvent contains only opaque route and hop identities.
+// HopEvent contains opaque route and hop identities.
 type HopEvent struct {
 	Role     string
 	RouteKey string
@@ -62,30 +63,32 @@ type hopPoolLogicalKey struct {
 	node  int
 }
 type hopPoolUse struct {
-	logical     hopPoolLogicalKey
-	route       string
-	role        hopPoolRole
-	node        int
-	spec        *hopPoolSpec
-	pool        *pool.Pool
-	adapterName string
-	members     map[string]member
-	carrier     *nodeHealth
-	direct      bool
-	nodeAddress string
-	nodeProto   string
+	logical       hopPoolLogicalKey
+	route         string
+	role          hopPoolRole
+	node          int
+	spec          *hopPoolSpec
+	pool          *pool.Pool
+	adapterName   string
+	members       map[string]member
+	carrier       *nodeHealth
+	carrierMember member
+	direct        bool
+	nodeAddress   string
+	nodeProto     string
 }
 type hopProbeTarget struct {
-	role         hopPoolRole
-	route        string
-	key          string
-	proxy        member
-	carrier      *nodeHealth
-	direct       bool
-	nodeAddress  string
-	nodeProtocol string
-	hopAddress   string
-	protocol     string
+	role          hopPoolRole
+	route         string
+	key           string
+	carrierMember member
+	carrier       *nodeHealth
+	direct        bool
+	nodeAddress   string
+	nodeProtocol  string
+	hopAddress    string
+	protocol      string
+	uri           string
 }
 type hopPoolLifecycle struct {
 	mu            sync.Mutex
@@ -102,18 +105,14 @@ type hopPoolLifecycle struct {
 	pendingForget []string
 }
 
-type hopReviveClock struct {
-	now func() time.Time
-}
+type hopReviveClock struct{ now func() time.Time }
 
 func (c hopReviveClock) Now() time.Time { return c.now() }
 func (hopReviveClock) NewTicker(d time.Duration) hoprevive.Ticker {
 	return hopReviveTicker{ticker: time.NewTicker(d)}
 }
 
-type hopReviveTicker struct {
-	ticker *time.Ticker
-}
+type hopReviveTicker struct{ ticker *time.Ticker }
 
 func (t hopReviveTicker) Chan() <-chan time.Time { return t.ticker.C }
 func (t hopReviveTicker) Stop()                  { t.ticker.Stop() }
@@ -164,15 +163,15 @@ func poolState(p *pool.Pool, key string) HopSnapshot {
 	}
 	return HopSnapshot{Key: key, State: pool.Healthy}
 }
-func (m *hopPoolLifecycle) mutate(pool *pool.Pool, role hopPoolRole, route, key string, change func()) {
-	if pool == nil || change == nil {
+func (m *hopPoolLifecycle) mutate(p *pool.Pool, role hopPoolRole, route, key string, change func()) {
+	if p == nil || change == nil {
 		return
 	}
-	lock := m.poolLock(pool)
+	lock := m.poolLock(p)
 	lock.Lock()
-	before := poolState(pool, key)
+	before := poolState(p, key)
 	change()
-	after := poolState(pool, key)
+	after := poolState(p, key)
 	lock.Unlock()
 	if (string(before.State) == "healthy") == (string(after.State) == "healthy") {
 		return
@@ -184,7 +183,7 @@ func (m *hopPoolLifecycle) mutate(pool *pool.Pool, role hopPoolRole, route, key 
 	m.mu.Lock()
 	routes := make(map[string]struct{})
 	for _, use := range m.uses {
-		if use.pool == pool && use.role == role {
+		if use.pool == p && use.role == role {
 			if _, ok := use.members[key]; ok {
 				routes[use.route] = struct{}{}
 			}
@@ -223,13 +222,12 @@ func (m *hopPoolLifecycle) prepareUses(o Options, plans []routePlan, proxies map
 		for node := range o.RouteNodes[plan.key] {
 			for _, role := range []hopPoolRole{preHopPool, postHopPool} {
 				spec := planPool(o, plan, node, role)
-				// Preserve Mihomo's historical scalar proxy path for one hop.
 				if spec == nil || len(spec.keys) < 2 {
 					continue
 				}
-				members := poolProxyMap(spec, proxies)
-				if len(members) != len(spec.keys) {
-					return nil, errors.New("core: missing hop pool helper proxy")
+				members := make(map[string]member, len(spec.keys))
+				for _, key := range spec.keys {
+					members[key] = nil
 				}
 				adapterName := spec.name
 				if role == postHopPool && node < len(plan.names) {
@@ -250,8 +248,17 @@ func (m *hopPoolLifecycle) prepareUses(o Options, plans []routePlan, proxies map
 				if node < len(plan.hops) {
 					nodeAddress, nodeProto = plan.hops[node].node.addr, plan.hops[node].node.proto
 				}
+				baseName := memberProxyName(plan.gen, plan.index, node)
+				var carrierMember member
+				if role == postHopPool {
+					carrierMember = proxies[baseName]
+				}
 				logical := hopPoolLogicalKey{role: role, route: plan.key, node: node}
-				uses = append(uses, &hopPoolUse{logical: logical, route: plan.key, role: role, node: node, spec: spec, adapterName: adapterName, members: members, carrier: carrier, nodeAddress: nodeAddress, nodeProto: nodeProto})
+				uses = append(uses, &hopPoolUse{
+					logical: logical, route: plan.key, role: role, node: node, spec: spec,
+					adapterName: adapterName, members: members, carrier: carrier,
+					carrierMember: carrierMember, nodeAddress: nodeAddress, nodeProto: nodeProto,
+				})
 			}
 		}
 	}
@@ -316,30 +323,20 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 				hopAddr = hopAddress(use.spec.uris[index])
 			}
 			targets[use.pool][key] = append(targets[use.pool][key], hopProbeTarget{
-				role: use.role, route: use.route, key: key, proxy: use.members[key], carrier: use.carrier, direct: use.direct,
-				nodeAddress: use.nodeAddress, nodeProtocol: use.nodeProto, hopAddress: hopAddr, protocol: use.specProtocol(index),
+				role: use.role, route: use.route, key: key, carrierMember: use.carrierMember, carrier: use.carrier,
+				direct: use.direct, nodeAddress: use.nodeAddress, nodeProtocol: use.nodeProto,
+				hopAddress: hopAddr, protocol: use.specProtocol(index), uri: use.spec.uris[index],
 			})
 		}
-		if use.role == preHopPool {
-			if preAdapters[use.spec.name] == nil {
-				preAdapters[use.spec.name] = use
-			}
+		if use.role == preHopPool && preAdapters[use.spec.name] == nil {
+			preAdapters[use.spec.name] = use
 		}
 	}
-	for name, use := range preAdapters {
-		pool := assigned[poolIdentity(use.role, use.spec.keys)]
+	for _, use := range preAdapters {
+		p := assigned[poolIdentity(use.role, use.spec.keys)]
 		use := use
-		pa := newHopPoolAdapter(use.adapterName, preHopPool, use.spec, use.members, pool, binder, nil, m.now)
-		for _, candidate := range uses {
-			if candidate.role != preHopPool || candidate.spec.name != name {
-				continue
-			}
-			pa.nextProtocols[strings.ToLower(candidate.nodeAddress)] = candidate.nodeProto
-			if pa.preNextProtocol == "" {
-				pa.preNextProtocol = candidate.nodeProto
-			}
-		}
-		pa.mutate = func(key string, change func()) { m.mutate(pool, preHopPool, use.route, key, change) }
+		pa := newHopPoolAdapter(use.adapterName, preHopPool, use.spec, p, binder, nil, m.now)
+		pa.mutate = func(key string, change func()) { m.mutate(p, preHopPool, use.route, key, change) }
 		updated[use.adapterName] = adapter.NewProxy(pa)
 		names = append(names, use.adapterName)
 	}
@@ -347,20 +344,17 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 		if use.role != postHopPool {
 			continue
 		}
-		pool := use.pool
+		p := use.pool
 		use := use
-		pa := newHopPoolAdapter(use.adapterName, postHopPool, use.spec, use.members, pool, binder, use.carrier, m.now)
+		pa := newHopPoolAdapter(use.adapterName, postHopPool, use.spec, p, binder, use.carrier, m.now)
 		for _, hop := range pa.hops {
-			hop.nextAddress = use.nodeAddress
-			hop.nextProtocol = use.nodeProto
-			hop.directCarrier = use.direct
+			hop.nodeAddress, hop.directCarrier, hop.carrierMember = use.nodeAddress, use.direct, use.carrierMember
 		}
-		pa.mutate = func(key string, change func()) { m.mutate(pool, postHopPool, use.route, key, change) }
+		pa.mutate = func(key string, change func()) { m.mutate(p, postHopPool, use.route, key, change) }
 		updated[use.adapterName] = adapter.NewProxy(pa)
 		names = append(names, use.adapterName)
 	}
-	oldPost := m.postKeys
-	newPost := postHopKeys(o)
+	oldPost, newPost := m.postKeys, postHopKeys(o)
 	for key := range oldPost {
 		if !newPost[key] {
 			m.pendingForget = append(m.pendingForget, key)
@@ -411,11 +405,8 @@ func (m *hopPoolLifecycle) completeInstall(binder siteBinder) {
 	}
 }
 
-// assignPoolsLocked reuses exact ordered identities. A changed pool merges
-// health from its deterministic predecessors into an independent pool.
 func (m *hopPoolLifecycle) assignPoolsLocked(uses []*hopPoolUse) map[string]*pool.Pool {
-	keysByID := make(map[string][]string)
-	predecessor := make(map[string][]string)
+	keysByID, predecessor := make(map[string][]string), make(map[string][]string)
 	for _, use := range uses {
 		id := poolIdentity(use.role, use.spec.keys)
 		keysByID[id] = append([]string(nil), use.spec.keys...)
@@ -451,15 +442,16 @@ func (m *hopPoolLifecycle) assignPoolsLocked(uses []*hopPoolUse) map[string]*poo
 			assigned[id] = pool.New(keysByID[id], pool.Options{Clock: m.now})
 		}
 	}
-	for id, pool := range assigned {
-		pool.Reconcile(keysByID[id])
+	for id, p := range assigned {
+		p.Reconcile(keysByID[id])
 	}
 	clear(m.pools)
-	for id, pool := range assigned {
-		m.pools[id] = pool
+	for id, p := range assigned {
+		m.pools[id] = p
 	}
 	return assigned
 }
+
 func uniqueSorted(values []string) []string {
 	set := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -617,8 +609,7 @@ func (m *hopPoolLifecycle) baseProbeNames(plans []routePlan) []string {
 			pre := i < len(plan.prePools) && plan.prePools[i] != nil && len(plan.prePools[i].keys) > 1
 			post := i < len(plan.postPools) && plan.postPools[i] != nil && len(plan.postPools[i].keys) > 1
 			if pre || post {
-				name := strings.TrimSuffix(plan.names[i], "-post")
-				names = append(names, name)
+				names = append(names, strings.TrimSuffix(plan.names[i], "-post"))
 			}
 		}
 	}
@@ -647,47 +638,50 @@ func (m *hopPoolLifecycle) newReviver(options WarmOptions) (*hoprevive.Reviver, 
 		uses = append(uses, use)
 	}
 	targets := make(map[*pool.Pool]map[string][]hopProbeTarget, len(m.targets))
-	for pool, keyed := range m.targets {
+	for p, keyed := range m.targets {
 		copyKeyed := make(map[string][]hopProbeTarget, len(keyed))
 		for key, list := range keyed {
 			copyKeyed[key] = append([]hopProbeTarget(nil), list...)
 		}
-		targets[pool] = copyKeyed
+		targets[p] = copyKeyed
 	}
 	m.mu.Unlock()
 	registrations := make([]hoprevive.Registration, 0, len(m.pools))
 	seen := make(map[*pool.Pool]bool)
 	for _, use := range uses {
-		pool := use.pool
-		if pool == nil || seen[pool] {
+		p := use.pool
+		if p == nil || seen[p] {
 			continue
 		}
-		seen[pool] = true
-		hops := make([]hopdial.Hop, 0, len(use.spec.keys))
+		seen[p] = true
+		var hops []hopdial.Hop
 		for _, key := range use.spec.keys {
-			var hopForKey *mihomoPoolHop
-			for _, candidate := range targets[pool][key] {
-				proxy, ok := candidate.proxy.(C.Proxy)
-				if ok && proxy != nil {
-					hopForKey = &mihomoPoolHop{key: key, member: candidate.proxy, proxy: proxy, role: use.role, address: candidate.hopAddress, protocol: candidate.protocol, nextAddress: candidate.nodeAddress, nextProtocol: candidate.nodeProtocol, carrier: candidate.carrier, directCarrier: candidate.direct, now: m.now}
-					break
+			candidates := targets[p][key]
+			var selected *mihomoPoolHop
+			if target, ok := availableProbeTarget(candidates, m.now()); ok {
+				selected, _ = nativeProbeHop(target, m.now)
+			}
+			if selected == nil {
+				for _, candidate := range candidates {
+					if native, ok := nativeProbeHop(candidate, m.now); ok {
+						selected = native
+						break
+					}
 				}
 			}
-			if hopForKey == nil {
-				hopForKey = &mihomoPoolHop{key: key, role: use.role, now: m.now}
+			if selected == nil {
+				return nil, errors.New("core: missing native hop probe target")
 			}
-			hops = append(hops, hopForKey)
+			hops = append(hops, selected)
 		}
-		role := use.role
-		route := use.route
+		role, route := use.role, use.route
 		registrations = append(registrations, hoprevive.Registration{
-			Pool: pool, Hops: hops,
-			Prober: lifecyclePoolProber{lifecycle: m, pool: pool, options: options},
+			Pool: p, Hops: hops, Prober: lifecyclePoolProber{lifecycle: m, pool: p, options: options},
 			Eligible: func(key string) bool {
-				_, ok := availableProbeTarget(targets[pool][key], m.now())
+				_, ok := availableProbeTarget(targets[p][key], m.now())
 				return ok && !m.isAtCapacity()
 			},
-			Mutate: func(key string, change func()) { m.mutate(pool, role, route, key, change) },
+			Mutate: func(key string, change func()) { m.mutate(p, role, route, key, change) },
 		})
 	}
 	return hoprevive.New(registrations, hoprevive.Options{Interval: options.ProbeInterval, Timeout: options.ProbeTimeout, Concurrency: options.ProbeConcurrency, Clock: hopReviveClock{now: m.now}})
@@ -712,105 +706,127 @@ func (p lifecyclePoolProber) Probe(ctx context.Context, hop hopdial.Hop) pool.Pr
 	}
 	p.lifecycle.mu.Lock()
 	var candidates []hopProbeTarget
-	for pool, keyed := range p.lifecycle.targets {
-		if pool == p.pool {
+	for current, keyed := range p.lifecycle.targets {
+		if current == p.pool {
 			candidates = append(candidates, keyed[hop.Key()]...)
 		}
 	}
 	p.lifecycle.mu.Unlock()
 	target, ok := availableProbeTarget(candidates, p.lifecycle.now())
-	if !ok || p.lifecycle.isAtCapacity() {
+	if !ok || p.lifecycle.isAtCapacity() || ctx.Err() != nil {
 		return pool.ProbeInconclusive
 	}
-	if target.role == preHopPool {
-		host, rawPort, err := net.SplitHostPort(target.nodeAddress)
-		if err != nil {
-			return pool.ProbeInconclusive
-		}
-		port, err := strconv.Atoi(rawPort)
-		if err != nil || port < 1 || port > 65535 {
-			return pool.ProbeInconclusive
-		}
-		proxy, ok := target.proxy.(C.Proxy)
-		if !ok || proxy == nil {
-			return pool.ProbeInconclusive
-		}
-		probeHop := &mihomoPoolHop{key: target.key, member: target.proxy, proxy: proxy, metadata: &C.Metadata{NetWork: C.TCP, Host: host, DstPort: uint16(port)}, role: preHopPool, address: target.hopAddress, protocol: target.protocol, nextAddress: target.nodeAddress, nextProtocol: target.nodeProtocol, now: p.lifecycle.now}
-		return check.New("tcp", target.nodeAddress).Probe(ctx, probeHop)
+	probeHop, ok := nativeProbeHop(target, p.lifecycle.now)
+	if !ok {
+		return pool.ProbeInconclusive
 	}
-	proxy, ok := target.proxy.(C.Proxy)
-	if !ok || proxy == nil {
+	if target.role == postHopPool && !target.direct && !recentNodeEvidence(target.carrier, p.lifecycle.now()) {
+		return pool.ProbeInconclusive
+	}
+	address := target.nodeAddress
+	if target.role == postHopPool {
+		address, ok = probeURLAddress(p.options.ProbeURL)
+		if !ok {
+			return pool.ProbeInconclusive
+		}
+	}
+	if validateNativeAddress(address) != nil {
+		return pool.ProbeInconclusive
+	}
+	timeout := p.options.ProbeTimeout
+	if timeout <= 0 || timeout > 20*time.Second {
+		timeout = 20 * time.Second
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if probeCtx.Err() != nil {
 		return pool.ProbeInconclusive
 	}
 	started := p.lifecycle.now()
-	probeCtx, cancel := context.WithTimeout(ctx, p.options.ProbeTimeout)
-	_, err := proxy.URLTest(probeCtx, p.options.ProbeURL, nil)
-	cancel()
-	if ctx.Err() != nil {
+	outcome := check.New("tcp", address).Probe(probeCtx, probeHop)
+	if ctx.Err() != nil || probeCtx.Err() != nil || p.lifecycle.now().Before(started) || p.lifecycle.isAtCapacity() {
 		return pool.ProbeInconclusive
 	}
-	if !target.direct && !recentNodeEvidence(target.carrier, p.lifecycle.now()) {
+	if target.role == postHopPool && !target.direct && !recentNodeEvidence(target.carrier, p.lifecycle.now()) {
 		return pool.ProbeInconclusive
 	}
-	if err == nil {
-		return pool.ProbeSuccess
+	return outcome
+}
+
+func nativeProbeHop(target hopProbeTarget, now func() time.Time) (*mihomoPoolHop, bool) {
+	config, err := proxyclient.Parse(target.uri)
+	if err != nil {
+		return nil, false
 	}
-	if p.lifecycle.now().Before(started) {
-		return pool.ProbeInconclusive
+	return &mihomoPoolHop{key: target.key, role: target.role, address: target.hopAddress, protocol: target.protocol, proxyConfig: config, carrier: target.carrier, carrierMember: target.carrierMember, directCarrier: target.direct, nodeAddress: target.nodeAddress, now: now}, true
+}
+
+func probeURLAddress(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Hostname() == "" {
+		return "", false
 	}
-	return classifyProbe(target, err)
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		default:
+			return "", false
+		}
+	}
+	return net.JoinHostPort(parsed.Hostname(), port), true
+}
+
+func validateNativeAddress(address string) error {
+	host, portText, err := net.SplitHostPort(address)
+	if err != nil || host == "" {
+		return errors.New("invalid probe address")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("invalid probe port")
+	}
+	return nil
 }
 
 func availableProbeTarget(targets []hopProbeTarget, now time.Time) (hopProbeTarget, bool) {
 	for _, target := range targets {
-		if target.direct && target.proxy != nil {
+		if !validProbeURI(target.uri) {
+			continue
+		}
+		if target.direct {
 			return target, true
 		}
-		if target.proxy != nil && target.nodeAddress != "" && recentNodeEvidence(target.carrier, now) {
+		if target.nodeAddress == "" || !recentNodeEvidence(target.carrier, now) {
+			continue
+		}
+		if target.role == preHopPool || target.role == postHopPool && target.carrierMember != nil {
 			return target, true
 		}
 	}
 	for _, target := range targets {
-		if target.role == preHopPool && target.proxy != nil && target.nodeAddress != "" {
-			// Pre-hop probes only produce inconclusive target failures, so an
-			// all-dead node set can safely use the configured node as recovery evidence.
-			return target, true
+		if target.role != preHopPool || !validProbeURI(target.uri) || target.nodeAddress == "" {
+			continue
 		}
+		if target.carrier != nil && target.carrier.Down() {
+			continue
+		}
+		return target, true
 	}
 	return hopProbeTarget{}, false
 }
-func classifyProbe(target hopProbeTarget, err error) pool.ProbeOutcome {
-	if err == nil {
-		return pool.ProbeSuccess
+
+func validProbeURI(raw string) bool {
+	if raw == "" {
+		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return pool.ProbeInconclusive
-	}
-	if isCapacityFailure(strings.ToLower(err.Error())) {
-		return pool.ProbeInconclusive
-	}
-	if target.role == postHopPool && !target.direct {
-		stage, _, matched := postCarrierFailure(err, target.hopAddress, target.protocol, target.nodeProtocol)
-		if matched {
-			if stage == hopdial.Connect {
-				return pool.ProbeHardFailure
-			}
-			// Ambiguous same-family refusals or carrying-node errors cannot
-			// safely trip the post hop.
-			return pool.ProbeInconclusive
-		}
-	}
-	stage, kind, known := classifyPoolFailureAt(err, target.nodeAddress, target.hopAddress, target.protocol, target.nodeProtocol)
-	if !known {
-		return pool.ProbeInconclusive
-	}
-	for _, verdict := range pool.Blame(stage, kind) {
-		if verdict.Role == pool.CurrentHop && verdict.Strength == pool.Hard {
-			return pool.ProbeHardFailure
-		}
-	}
-	return pool.ProbeInconclusive
+	_, err := proxyclient.Parse(raw)
+	return err == nil
 }
+
 func hopAddress(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" {

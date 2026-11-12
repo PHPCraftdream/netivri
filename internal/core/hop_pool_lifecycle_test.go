@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -314,28 +315,71 @@ func TestHopLifecycleReviverNormalizesOptionsAndClampsTimeout(t *testing.T) {
 	}
 }
 
-func TestAvailableProbeTargetPrefersEvidenceThenPreFallback(t *testing.T) {
+func TestAvailableProbeTargetPrefersFreshPreAndExcludesStaleOrDownNodes(t *testing.T) {
 	now := time.Unix(1500, 0)
-	candidates := []hopProbeTarget{
-		{role: preHopPool, key: "pre", proxy: &fakeMember{name: "pre"}, nodeAddress: "127.0.0.1:1"},
-		{role: postHopPool, key: "post", proxy: &fakeMember{name: "post"}, nodeAddress: "127.0.0.1:2", carrier: &nodeHealth{lastOK: now}},
+	pre := hopProbeTarget{
+		role: preHopPool, key: "pre", uri: "socks5://pre.invalid:1080",
+		nodeAddress: "127.0.0.1:1", carrier: &nodeHealth{lastOK: now},
 	}
-	got, ok := availableProbeTarget(candidates, now)
-	if !ok || got.key != "post" {
-		t.Fatalf("recent evidence did not take priority over pre fallback: target=%#v ok=%v", got, ok)
+	post := hopProbeTarget{
+		role: postHopPool, key: "post", uri: "http://post.invalid:8080",
+		nodeAddress: "127.0.0.1:2", carrierMember: &fakeMember{name: "node"},
+		carrier: &nodeHealth{lastOK: now},
 	}
-	candidates[0].carrier = &nodeHealth{lastOK: now}
-	got, ok = availableProbeTarget(candidates, now)
+
+	got, ok := availableProbeTarget([]hopProbeTarget{pre, post}, now)
 	if !ok || got.key != "pre" {
-		t.Fatalf("recent pre-hop evidence not preferred: target=%#v ok=%v", got, ok)
+		t.Fatalf("fresh pre carrier was not preferred in candidate order: key=%q available=%v", got.key, ok)
 	}
-	candidates[0].carrier = nil
-	got, ok = availableProbeTarget(candidates[:1], now)
-	if !ok || got.role != preHopPool {
-		t.Fatalf("pre-hop fallback not available: target=%#v ok=%v", got, ok)
+	if _, ok := availableProbeTarget([]hopProbeTarget{post}, now.Add(time.Hour)); ok {
+		t.Fatal("stale post carrier evidence made a probe target available")
 	}
-	if _, ok := availableProbeTarget(candidates[1:], now.Add(time.Hour)); ok {
-		t.Fatal("post-hop target fell back without recent evidence")
+
+	downPost := post
+	downPost.carrier = &nodeHealth{lastOK: now}
+	downPost.carrier.downFlag.Store(true)
+	if _, ok := availableProbeTarget([]hopProbeTarget{downPost}, now); ok {
+		t.Fatal("down post node was selected as a live probe target")
+	}
+
+	fallback := pre
+	fallback.carrier = nil
+	got, ok = availableProbeTarget([]hopProbeTarget{fallback, post}, now)
+	if !ok || got.key != "post" {
+		t.Fatalf("pre fallback displaced a live post target: key=%q available=%v", got.key, ok)
+	}
+	got, ok = availableProbeTarget([]hopProbeTarget{fallback}, now)
+	if !ok || got.key != "pre" {
+		t.Fatalf("pre fallback was not available when no live carrier existed: key=%q available=%v", got.key, ok)
+	}
+}
+
+func TestLifecyclePoolProbeUsesFreshPreCarrierBeforeLivePost(t *testing.T) {
+	proxy := newNativeLoopbackProxy(t, "socks5")
+	now := time.Unix(1600, 0)
+	carrierHealth := &nodeHealth{lastOK: now}
+	key := "shared-hop-key"
+	p := pool.New([]string{key}, pool.Options{})
+	lifecycle := newHopPoolLifecycleWithClock(nil, func() time.Time { return now })
+	lifecycle.targets[p] = map[string][]hopProbeTarget{
+		key: {
+			{
+				role: preHopPool, key: key, uri: proxy.uri, nodeAddress: "127.0.0.1:1",
+				carrier: &nodeHealth{lastOK: now}, hopAddress: hopAddress(proxy.uri), protocol: "socks5",
+			},
+			{
+				role: postHopPool, key: key, uri: "socks5://unused.invalid:1080", nodeAddress: "127.0.0.1:2",
+				carrier: carrierHealth, carrierMember: &nativeFailingCarrier{name: "live-node"},
+			},
+		},
+	}
+	prober := lifecyclePoolProber{
+		lifecycle: lifecycle, pool: p,
+		options: WarmOptions{ProbeTimeout: time.Second, ProbeURL: "http://probe.invalid/"},
+	}
+	outcome := prober.Probe(context.Background(), &mihomoPoolHop{key: key})
+	if outcome != pool.ProbeSuccess || proxy.requests.Load() != 1 {
+		t.Fatalf("probe did not use the live pre target: outcome=%v requests=%d", outcome, proxy.requests.Load())
 	}
 }
 
