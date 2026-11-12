@@ -282,7 +282,9 @@ func failKind(err error) string {
 	var netErr net.Error
 	msg := strings.ToLower(err.Error())
 	switch {
-	case errors.As(err, &netErr) && netErr.Timeout(), strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"):
+	case errors.As(err, &netErr) && netErr.Timeout(), strings.Contains(msg, "timeout"), strings.Contains(msg, "deadline exceeded"),
+		// Windows WSAETIMEDOUT: its text has no "timeout" and Timeout() is false.
+		strings.Contains(msg, "did not properly respond"), strings.Contains(msg, "failed to respond"):
 		return "timeout"
 	case strings.Contains(msg, "refused"):
 		return "connection refused"

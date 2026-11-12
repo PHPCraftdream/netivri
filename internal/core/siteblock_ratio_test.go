@@ -234,3 +234,127 @@ func TestStickyGroupMostlyAnsweredSiteStays(t *testing.T) {
 		t.Fatalf("the site chose %d, want to stay on 0", got)
 	}
 }
+
+// A client that gives up after about 3 s without an answer and retries at once
+// (Telegram does) never reached silentMinLife: its dead path stayed in use for
+// many minutes. The ratio rule counts such connections.
+func TestSiteBlocksRatioCountsClientsThatGiveUpEarly(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	b := newSiteBlocks(now)
+	early := 3 * time.Second
+	if early >= silentMinLife || early < silentRatioMinLife {
+		t.Fatalf("test wait %s must lie in [%s, %s)", early, silentRatioMinLife, silentMinLife)
+	}
+	for i := 0; i < silentRatioMin; i++ {
+		ttl, blocked := b.silentEnd("a", "s", 0, early, true, now().Add(time.Second))
+		if i < silentRatioMin-1 {
+			if blocked {
+				t.Fatalf("blocked at silent connection %d, want the %dth", i+1, silentRatioMin)
+			}
+			continue
+		}
+		if !blocked || ttl != siteBlockFirst {
+			t.Fatalf("ttl, blocked = %s, %v at silent connection %d, want %s, true", ttl, blocked, i+1, siteBlockFirst)
+		}
+	}
+	if ratio, silent, answered := b.blockInfo("a", "s", 0); !ratio || silent != silentRatioMin || answered != 0 {
+		t.Fatalf("blockInfo = %v, %d, %d; want the ratio rule over %d silent", ratio, silent, answered, silentRatioMin)
+	}
+}
+
+// Under silentRatioMinLife a connection is a client that left: no rule counts it.
+func TestSiteBlocksWaitsUnderTheRatioMinimumLeaveNoEvidence(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	b := newSiteBlocks(now)
+	for i := 0; i < 2*silentRatioMin; i++ {
+		if _, blocked := b.silentEnd("a", "s", 0, silentRatioMinLife-time.Millisecond, true, now().Add(time.Second)); blocked {
+			t.Fatalf("blocked by a connection that waited under %s", silentRatioMinLife)
+		}
+	}
+	if b.any() {
+		t.Fatal("waits under the ratio minimum were recorded")
+	}
+	if _, blocked := b.silentEnd("a", "s", 0, silentRatioMinLife, true, now().Add(time.Second)); blocked || !b.any() {
+		t.Fatalf("a wait of exactly %s was not recorded (or blocked at once)", silentRatioMinLife)
+	}
+}
+
+// The plain rule keeps its bound: short waits count for the ratio only.
+func TestSiteBlocksPlainRuleIgnoresWaitsUnderTheMinimumLife(t *testing.T) {
+	_, now := fakeClock(time.Unix(1_000_000, 0))
+	b := newSiteBlocks(now)
+	short := silentMinLife - time.Second
+	for i := 0; i < silentNeeded+2; i++ {
+		if _, blocked := b.silentEnd("a", "s", 0, short, false, now().Add(time.Second)); blocked {
+			t.Fatalf("the plain rule blocked after %d connections that waited %s", i+1, short)
+		}
+	}
+	for i := 0; i < silentNeeded; i++ {
+		ttl, blocked := b.silentEnd("a", "s", 0, silentMinLife, false, now().Add(time.Second))
+		if i < silentNeeded-1 && blocked {
+			t.Fatalf("plain block after %d long waits, want %d", i+1, silentNeeded)
+		}
+		if i == silentNeeded-1 && (!blocked || ttl != siteBlockFirst) {
+			t.Fatalf("ttl, blocked = %s, %v after %d long waits, want %s, true", ttl, blocked, silentNeeded, siteBlockFirst)
+		}
+	}
+	if ratio, _, _ := b.blockInfo("a", "s", 0); ratio {
+		t.Fatal("the block came from the ratio rule, want the plain one")
+	}
+}
+
+// The ratio bound never exceeds the plain one: a test (or a caller) that
+// shortens minLife shortens both.
+func TestSiteBlocksShortestLifeIsTheLowerBound(t *testing.T) {
+	b := newSiteBlocks(nil)
+	if got := b.shortestLife(); got != silentRatioMinLife {
+		t.Fatalf("shortestLife = %s, want %s", got, silentRatioMinLife)
+	}
+	b.minLife = time.Millisecond
+	if got := b.shortestLife(); got != time.Millisecond {
+		t.Fatalf("shortestLife with minLife 1ms = %s, want 1ms", got)
+	}
+}
+
+func TestStickyGroupSiteWhoseClientGivesUpEarlyLeavesTheNode(t *testing.T) {
+	g, health, clock, sink := blockGroup(t, []int{0, 1})
+	answered := connEnd{answer: true, wait: time.Second}
+	early := connEnd{wait: 3 * time.Second}
+	endConn(t, g, health, clock, blackholed, answered) // the plain rule is out of play
+	for i := 0; i < silentRatioMin; i++ {
+		if n := g.blocks.blockedCount(); n != 0 {
+			t.Fatalf("%d blocks after %d silent connections, want none yet", n, i)
+		}
+		endConn(t, g, health, clock, blackholed, early)
+	}
+	blocks := ofKind(sink, ConnSiteBlocked)
+	if len(blocks) != 1 {
+		t.Fatalf("block events = %+v, want one", blocks)
+	}
+	if ev := blocks[0]; ev.Label != "n0" || ev.Silent != silentRatioMin || ev.Answered != 0 {
+		t.Fatalf("block event = %+v, want n0, %d silent, 0 answered", ev, silentRatioMin)
+	}
+	if got := chosen(t, g, blackholed); got != 1 {
+		t.Fatalf("the site chose %d, want the next node 1", got)
+	}
+}
+
+// A dial that timed out after the ratio minimum but under the plain one is
+// evidence for the ratio rule only.
+func TestDialTimeoutUnderTheMinimumLifeCountsForTheRatioOnly(t *testing.T) {
+	g, _, clock, sink := blockGroup(t, []int{0, 1})
+	md := dialMetadata("alice", "early.example")
+	took := silentMinLife - time.Second
+	for i := 0; i < silentNeeded+1; i++ {
+		start := clock.now
+		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
+		g.recordDialTimeout("alice", "early.example", 0, "n0", md, start, took)
+		clock.advance(time.Second)
+	}
+	if !g.blocks.any() {
+		t.Fatal("a dial timeout over the ratio minimum left no evidence")
+	}
+	if got := ofKind(sink, ConnSiteBlocked); len(got) != 0 {
+		t.Fatalf("the plain rule blocked on dial timeouts under %s: %+v", silentMinLife, got)
+	}
+}
