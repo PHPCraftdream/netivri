@@ -295,7 +295,10 @@ netivri account set-socks5 {ACCOUNT} --post inherit
 
 These are candidate alternatives: weighted health lowers a hop's selection
 weight after soft failures (score half-life 30 seconds); three hard failures
-quarantine it for 30 seconds, doubling on re-trip to 600 seconds. Quarantined
+in a row, or five soft failures without a success in between, quarantine it
+for 30 seconds, doubling on re-trip to 600 seconds. A hop that does not
+answer within 3 seconds (connect, TLS, SOCKS5 negotiation) fails at once so
+another hop is tried in the same connection. Quarantined
 hops are probed for revival. All-down pools still try candidates, never
 bypassing a post proxy. Post hops bind per login and public-suffix-aware site
 domain for the default 24-hour lifetime. Role-separated health files are
@@ -311,8 +314,10 @@ per role the hop count, active and quarantined counts and, per hop, its short
 opaque id, state (`active`, `quarantined`, `probing`), trips and the seconds until
 the next revival probe. `netivri doctor` warns when every hop of a pool is down
 and checks that the two `.health` files are readable; the Service tab of the
-shell shows a line such as `post 3 hops: 2 up, 1 down` under the account. Hops
-are never shown by URL or credentials.
+shell shows a line such as `post 3 hops: 2 up, 1 down` under the account. The
+pool of the default route (a global post list of several hops) is the top-level
+`hop_pools` of the status and is named `default route` in `doctor` and the
+Service tab. Hops are never shown by URL or credentials.
 
 ```
 netivri status --json

@@ -207,8 +207,20 @@ Pools select candidates by weighted health. A soft failure adds to a score
 capped at 8; its half-life is 30 seconds, and success halves the score. The
 weight is exponentially lower as the score rises (minimum 0.05), but a
 weighted choice still gives a non-quarantined candidate a chance. Three hard
-failures in a row quarantine a hop for 30 seconds; each re-trip doubles the
-backoff to a 600-second cap. Once due, a quarantined hop is probed under a
+failures in a row quarantine a hop for 30 seconds; so do five soft failures
+without a success in between (a hop behind a VPN node often fails only
+ambiguously, because the node reports nothing until the hop answers). Each
+re-trip doubles the backoff to a 600-second cap.
+
+One attempt through a hop has 3 seconds to get as far as sending the target:
+connecting to the hop, TLS setup of an `https://` hop and the SOCKS5 method and
+password exchange. A hop that stays silent fails at once (a connect or TLS
+timeout is a hard failure, a silent SOCKS5 negotiation a soft one) and the
+connection tries another hop with the time it has left. A post hop is also
+retried after it refuses the password before the target was sent; the target
+request of an `http://` hop is its first message, so such a hop is not
+retried once it was sent. Hop host names may contain `_`; an international
+name must be written in its punycode (`xn--`) form. Once due, a quarantined hop is probed under a
 single 25-second lease. A successful probe revives it; a failed probe re-trips
 it with the longer backoff. If every candidate is quarantined, the pool tries
 the quarantined hops anyway: a post pool never bypasses its post proxy.
@@ -240,7 +252,10 @@ never shown. Single-hop routes show nothing. `netivri doctor` adds the checks
 `hop state` (the two `.health` files are readable), `hop pools` (a warning when
 every hop of a pool is down) and `hop persistence` (an `info` for hops whose
 state cannot be stored). The Service tab of the shell shows one line per pool
-under the account, e.g. `post 3 hops: 2 up, 1 down`. See
+under the account, e.g. `post 3 hops: 2 up, 1 down`. The pool of the global
+default route (a `chain.post_socks5` list of several hops serving connections
+without an account route) is the top-level `hop_pools` of the status and is
+named `default route` in `doctor` and on the Service tab. See
 [`docs/cli.md`](cli.md#status) for the JSON fields.
 
 To read the state of a pool:

@@ -191,7 +191,10 @@ type Status struct {
 	StartedAt      string        `json:"started_at"`
 	Version        string        `json:"version"`
 	Accounts       []AccountInfo `json:"accounts,omitempty"`
-	Servers        []ServerInfo  `json:"servers,omitempty"`
+	// HopPools are the hop pools of the global default route (connections
+	// without an account route); omitted when it has no pool of several hops.
+	HopPools []HopPoolInfo `json:"hop_pools,omitempty"`
+	Servers  []ServerInfo  `json:"servers,omitempty"`
 	// Activity has one entry per account while the core runs.
 	Activity []AccountActivity `json:"activity,omitempty"`
 	Warm     *WarmInfo         `json:"warm,omitempty"`

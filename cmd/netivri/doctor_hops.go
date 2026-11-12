@@ -67,6 +67,15 @@ func (d *doctorContext) checkHopPools() []doctorCheck {
 	}
 	var order []string
 	pools := make(map[string]*doctorHopPool)
+	// The default route's pools are keyed apart: they never merge with an
+	// account pool of the same shape.
+	for _, info := range d.status.HopPools {
+		sig := "default|" + hopPoolSignature(info)
+		if pools[sig] == nil {
+			pools[sig] = &doctorHopPool{info: info, logins: []string{defaultRouteLabel}}
+			order = append(order, sig)
+		}
+	}
 	for _, account := range d.status.Accounts {
 		for _, info := range account.HopPools {
 			sig := hopPoolSignature(info)

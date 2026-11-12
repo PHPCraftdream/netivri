@@ -95,7 +95,8 @@ func readHTTPLine(r *bufio.Reader, used *int) (string, error) {
 
 func parseHTTPStatus(line string) (int, bool) {
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-	if len(line) < 13 || (line[:8] != "HTTP/1.0" && line[:8] != "HTTP/1.1") || line[8] != ' ' || line[12] != ' ' {
+	// The reason phrase may be absent, and then so may the space before it.
+	if len(line) < 12 || (line[:8] != "HTTP/1.0" && line[:8] != "HTTP/1.1") || line[8] != ' ' || len(line) > 12 && line[12] != ' ' {
 		return 0, false
 	}
 	if line[9] < '0' || line[9] > '9' || line[10] < '0' || line[10] > '9' || line[11] < '0' || line[11] > '9' {

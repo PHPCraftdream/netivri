@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	hopdial "github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
@@ -63,13 +64,16 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: err}
 	}
 	if h.proxyParseErr != nil {
-		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: h.proxyParseErr}
+		// A hop the native client cannot use is out of service: count it as a
+		// connect failure so the pool quarantines it and tries another hop.
+		return nil, &hopdial.StageError{Stage: hopdial.Connect, Err: errUnusableHop}
 	}
 
 	var conn net.Conn
 	var err error
 	var chain C.Chain
 	var providerChain C.Chain
+	negotiationEnds := time.Now().Add(hopNegotiationBudget)
 	if h.role == postHopPool && !h.directCarrier {
 		if h.carrierMember == nil {
 			return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: &poolCarrierError{cause: errors.New("carrier unavailable")}}
@@ -95,13 +99,16 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		chain = append(C.Chain(nil), carrierConn.Chains()...)
 		providerChain = append(C.Chain(nil), carrierConn.ProviderChains()...)
 	} else if h.role == postHopPool && h.directCarrier {
-		directConn, directErr := directPostCarrier.DialContext(ctx, proxyCarrierMetadata(h.proxyConfig))
+		connectCtx, cancel := context.WithDeadline(ctx, negotiationEnds)
+		directConn, directErr := directPostCarrier.DialContext(connectCtx, proxyCarrierMetadata(h.proxyConfig))
+		expired := connectCtx.Err() != nil
+		cancel()
 		conn, err = directConn, directErr
 		if err != nil {
 			if conn != nil {
 				_ = conn.Close()
 			}
-			return nil, stageProxyError(ctx, proxyclient.StageConnect, err, false)
+			return nil, connectFailure(ctx, expired, err)
 		}
 		if directConn == nil {
 			return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: errors.New("proxy connection unavailable")}
@@ -110,18 +117,25 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		providerChain = append(C.Chain(nil), directConn.ProviderChains()...)
 	} else {
 		// Pre-hop proxies intentionally use the bare dialer, without DIRECT policy.
-		conn, err = dialer.NewDialer().DialContext(ctx, "tcp", net.JoinHostPort(h.proxyConfig.Host, strconv.Itoa(h.proxyConfig.Port)))
+		connectCtx, cancel := context.WithDeadline(ctx, negotiationEnds)
+		conn, err = dialer.NewDialer().DialContext(connectCtx, "tcp", net.JoinHostPort(h.proxyConfig.Host, strconv.Itoa(h.proxyConfig.Port)))
+		expired := connectCtx.Err() != nil
+		cancel()
 		if err != nil {
 			if conn != nil {
 				_ = conn.Close()
 			}
-			return nil, stageProxyError(ctx, proxyclient.StageConnect, err, false)
+			return nil, connectFailure(ctx, expired, err)
 		}
 	}
 	if conn == nil {
 		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: errors.New("proxy connection unavailable")}
 	}
-	tunnel, err := proxyclient.Handshake(ctx, conn, h.proxyConfig, target)
+	// A connect that used the whole budget leaves the negotiation a token
+	// moment, not an unbounded one.
+	negotiation := max(time.Until(negotiationEnds), time.Millisecond)
+	tunnel, err := proxyclient.Handshake(ctx, conn, h.proxyConfig, target,
+		proxyclient.WithNegotiationTimeout(negotiation))
 	if err != nil {
 		_ = conn.Close()
 		var proxyErr *proxyclient.Error
@@ -138,6 +152,28 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: err}
 	}
 	return &nativePoolConn{ExtendedConn: N.NewDeadlineConn(tunnel), chain: chain, providerChain: providerChain}, nil
+}
+
+// hopNegotiationBudget bounds one hop attempt up to the moment the target
+// request is sent: connecting to the hop, TLS setup and SOCKS5 negotiation. A
+// silent hop then fails while the connection's own deadline (Mihomo's 5 s)
+// still leaves time to try another hop, and the failure counts against the
+// hop instead of being lost as a context timeout.
+var hopNegotiationBudget = 3 * time.Second
+
+// errUnusableHop reports a hop URL the native proxy client rejects.
+var errUnusableHop = errors.New("hop URL is not usable by the native proxy client")
+
+// errHopConnectTimeout replaces the context error of a connect that ran out of
+// the negotiation budget, so the dialer does not mistake it for cancellation.
+var errHopConnectTimeout = errors.New("hop connect timed out")
+
+// connectFailure classifies a failed connect to the hop itself.
+func connectFailure(ctx context.Context, budgetExpired bool, err error) error {
+	if budgetExpired && ctx.Err() == nil {
+		return &hopdial.StageError{Stage: hopdial.Connect, Err: errHopConnectTimeout}
+	}
+	return stageProxyError(ctx, proxyclient.StageConnect, err, false)
 }
 
 func proxyCarrierMetadata(proxy proxyclient.Proxy) *C.Metadata {
@@ -349,9 +385,14 @@ func recentNodeEvidence(health *nodeHealth, now time.Time) bool {
 	return lastTraffic != 0 && now.UnixNano() >= lastTraffic && now.Sub(time.Unix(0, lastTraffic)) <= trafficAliveFor
 }
 
+// isCapacityError recognizes local resource exhaustion: typed errnos first,
+// then the texts of Mihomo errors that carry no type.
 func isCapacityError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, syscall.EMFILE) || errors.Is(err, syscall.ENFILE) || errors.Is(err, syscall.ENOBUFS) {
+		return true
 	}
 	if isCapacityFailure(strings.ToLower(err.Error())) {
 		return true

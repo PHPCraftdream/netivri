@@ -8,6 +8,12 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dead hops of a pool are found.** A hop that does not answer used to hold each connection for the whole 5-second dial deadline and was never blamed, so it stayed in rotation; a dead post hop behind a VPN node failed only ambiguously and was never quarantined. One attempt now has 3 seconds to get as far as sending the target (a connect or TLS timeout is a hard failure, a silent SOCKS5 negotiation a soft one) and the connection moves to another hop; five soft failures without a success quarantine a hop like three hard ones; a post hop that refuses the password before the target was sent is retried on another hop, and a refusing hop fails its revival probe. A pre pool stops after two hops report the VPN node unreachable instead of trying every hop.
+- **Hop host names with `_`** work in pools (the native proxy client rejected them, and also sites with `_` in their name), and their quarantine is stored. A hop host with non-ASCII letters is rejected by the config check with a hint to use the punycode (`xn--`) form, instead of breaking the start of a pool.
+- **The pool of the default route is visible.** `status` has a top-level `hop_pools` for a global post list of several hops; `doctor` and the Service tab show it as `default route`.
+
 ### Added
 
 - **The hop pools are visible.** `status` (short, `--full`, Ktav and `--json`) adds `hop_pools` to every account whose route has a role with several hops: per role the hop count, the active and quarantined counts and, per hop, its short opaque id (the eight characters the quarantine log lines print), state (`active`, `quarantined`, `probing`), trips and `next_revival_seconds`; the fields are additive and single-hop routes show nothing new. `doctor` adds `hop state` (the `hops-pre.health` and `hops-post.health` files are readable), `hop pools` (a warning when every hop of a pool is down, in the wording of the log line) and `hop persistence` (an `info` for hops the state files cannot hold), each only when there is something to report. The Service tab shows a line such as `post 3 hops: 2 up, 1 down` under the account. Hops are never shown by URL, host or credentials. The README, `docs/cli.md`, `docs/config.md` and the help topics describe how to read the pool state.

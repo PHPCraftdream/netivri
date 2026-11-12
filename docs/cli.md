@@ -1207,6 +1207,11 @@ hops. Accounts that share a route report the same pools; two pools with differen
 route stay separate items. A hop is never shown by URL, host or credentials. Both the short and the
 full view carry these fields.
 
+The top level of the status data has `hop_pools` of the same shape for the global default route
+(connections without an account route, the `MATCH` rule) when its post list has more than one hop;
+it is omitted otherwise. `doctor` names that pool `default route` where an account pool shows its
+logins, and the Service tab lists it as a `default route` line under the accounts.
+
 Example of one account record (`chain` left out) with a post pool of three hops, one of them quarantined:
 
 ```json

@@ -374,3 +374,19 @@ func TestServiceAccountsCardWithoutPoolsIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceAccountsCardShowsDefaultRoutePool(t *testing.T) {
+	f := newServiceFixture(t, true)
+	f.s.status.Accounts = []angel.AccountInfo{{Login: "alice"}, {Login: "bob"}}
+	f.s.status.HopPools = []angel.HopPoolInfo{{Role: "post", HopCount: 2, ActiveCount: 1, QuarantinedCount: 1}}
+	f.s.selected = "accounts"
+	f.s.refresh()
+	c := f.s.workspace.Card
+	l, ok := cardLine(c, "pool-default-0")
+	if !ok || l.Label != "default route" || l.Value != "post 2 hops: 1 up, 1 down" || l.Kind != tui.CardReadOnly {
+		t.Fatalf("default route pool line = %+v (found %t)", l, ok)
+	}
+	if last := c.Lines[len(c.Lines)-1]; last.ID != "pool-default-0" {
+		t.Fatalf("default route pool is not after the accounts: %+v", c.Lines)
+	}
+}

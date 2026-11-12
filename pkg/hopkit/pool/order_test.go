@@ -116,7 +116,9 @@ func TestWeightedOrderFavorsLowSandButStillDrawsHighSandFirst(t *testing.T) {
 	clock := newTestClock()
 	const draws = 6000
 	p := newTestPoolWithSeed(clock, 1001, 2002, "low", "high")
-	for i := 0; i < 8; i++ {
+	// Four soft failures stay below the soft-streak quarantine: weight 20^-0.5,
+	// so low wins first place with probability 1/(1+0.2236) = 0.817.
+	for i := 0; i < 4; i++ {
 		p.RecordSoft("high")
 	}
 	lowFirst, highFirst := 0, 0
@@ -134,8 +136,8 @@ func TestWeightedOrderFavorsLowSandButStillDrawsHighSandFirst(t *testing.T) {
 			t.Fatalf("unexpected first key %q", order[0])
 		}
 	}
-	if lowFirst < draws*90/100 || lowFirst > draws*99/100 {
-		t.Fatalf("low-sand first count %d/%d outside deterministic 90-99%% bound", lowFirst, draws)
+	if lowFirst < draws*78/100 || lowFirst > draws*86/100 {
+		t.Fatalf("low-sand first count %d/%d outside deterministic 78-86%% bound", lowFirst, draws)
 	}
 	if highFirst == 0 {
 		t.Fatal("higher-sand hop was never selected first; ordering may be deterministic")
@@ -180,4 +182,22 @@ func TestEmptyPoolOrderAndSnapshotAreSafe(t *testing.T) {
 	}
 	p.Reconcile(nil)
 	p.Restore(nil, clock.Now())
+}
+
+func TestStateMatchesSnapshotAndReportsUnknownKeys(t *testing.T) {
+	clock := newTestClock()
+	p := newTestPool(clock, "a", "b")
+	p.RecordSoft("a")
+	for range 3 {
+		p.RecordHard("b")
+	}
+	for _, snapshot := range p.Snapshot() {
+		got, ok := p.State(snapshot.Key)
+		if !ok || got != snapshot {
+			t.Fatalf("State(%q) = (%#v, %t), want %#v", snapshot.Key, got, ok, snapshot)
+		}
+	}
+	if got, ok := p.State("missing"); ok || got != (HopSnapshot{}) {
+		t.Fatalf("State(missing) = (%#v, %t), want zero and false", got, ok)
+	}
 }

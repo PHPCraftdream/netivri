@@ -25,7 +25,7 @@ func TestHopKeyCanonicalIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			first, ok1 := Key(tc.first)
 			second, ok2 := Key(tc.second)
-			if !ok1 || !ok2 || first != tc.firstWant || second != tc.secondWant || !validHashKey(first) || !validHashKey(second) || strings.Contains(first, "first-secret") || strings.Contains(second, "credential-two") {
+			if !ok1 || !ok2 || first != tc.firstWant || second != tc.secondWant || !ValidKey(first) || !ValidKey(second) || strings.Contains(first, "first-secret") || strings.Contains(second, "credential-two") {
 				t.Fatal("canonical identities did not match expected hashes")
 			}
 		})
@@ -37,7 +37,7 @@ func TestHopKeyRejectsInvalidURLs(t *testing.T) {
 		"", "none", "garbage", "ftp://proxy.example", "socks5:proxy.example",
 		"http:///missing", "https://", "http://:80", "http://proxy.example:",
 		"http://proxy.example:0", "http://proxy.example:65536", "http://proxy.example:-1",
-		"http://[2001:db8::1", "http://[example.com]", "http://[192.0.2.1]", "http://2001:db8::1:80", "http://bad_host.example",
+		"http://[2001:db8::1", "http://[example.com]", "http://[192.0.2.1]", "http://2001:db8::1:80", "http://bücher.example",
 	}
 	for _, raw := range invalid {
 		if _, ok := Key(raw); ok {
@@ -50,5 +50,17 @@ func TestHopKeyAcceptsMappedIPv6(t *testing.T) {
 	key, ok := Key("http://[::ffff:192.0.2.1]")
 	if !ok || key != "7ca79746435286842b372320e29d143fe5b4505e7d618cbc2d2e9f9a768aaaac" {
 		t.Fatal("valid mapped IPv6 proxy address was rejected or miscanonicalized")
+	}
+}
+
+func TestHopKeyAcceptsUnderscoreHosts(t *testing.T) {
+	first, ok1 := Key("socks5://user:secret@my_proxy.example:1080")
+	second, ok2 := Key("SOCKS5://MY_PROXY.EXAMPLE:1080")
+	if !ok1 || !ok2 || first != second || !ValidKey(first) {
+		t.Fatalf("underscore host keys = (%q, %t) and (%q, %t), want one valid key", first, ok1, second, ok2)
+	}
+	other, ok := Key("socks5://my-proxy.example:1080")
+	if !ok || other == first {
+		t.Fatal("underscore and hyphen hosts share a key")
 	}
 }

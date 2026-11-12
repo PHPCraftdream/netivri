@@ -33,6 +33,7 @@ func (p *Pool) Restore(entries []Entry, now time.Time) {
 	for _, h := range p.members {
 		h.quarantined = false
 		h.hard = 0
+		h.soft = 0
 		h.trips = 0
 		h.nextProbe = time.Time{}
 		h.lease = nil

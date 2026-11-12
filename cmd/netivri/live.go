@@ -1331,7 +1331,7 @@ func (l *liveAngel) status(startedAt string) angel.Status {
 	st.Listen = l.inst.Addr()
 	st.Route = l.inst.Route()
 	st.Accounts = accountStatus(l.applied.cfg, l.inst.AccountRoutes())
-	addLiveHopPoolStatus(st.Accounts, l.applied.pool, l.inst)
+	addLiveHopPoolStatus(&st, l.applied.pool, l.inst)
 	st.Activity = activityInfo(st.Accounts, l.inst.Activity(), l.applied.pool.infos)
 	st.Warm = warmInfo(l.inst, l.applied.pool.infos)
 	st.Affinity = affinityInfo(l.inst, len(l.applied.pool.accountRoutes) > 0)

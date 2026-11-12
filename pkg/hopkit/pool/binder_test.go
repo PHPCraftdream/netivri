@@ -319,3 +319,44 @@ func TestBinderConcurrentOperations(t *testing.T) {
 		t.Fatalf("Len after concurrent operations = %d, exceeds capacity 8", got)
 	}
 }
+
+func TestBinderExpiryFollowsTouchOrder(t *testing.T) {
+	clock := newTestClock()
+	b := NewBinder(BinderOptions{TTL: 10 * time.Second, Clock: clock.Now})
+	b.Bind("alice", "a.example", "hop-a")
+	b.Bind("alice", "b.example", "hop-b")
+	b.Bind("alice", "c.example", "hop-c")
+	clock.Set(testEpoch.Add(5 * time.Second))
+	if _, ok := b.Get("alice", "a.example"); !ok {
+		t.Fatal("binding a expired early")
+	}
+	clock.Set(testEpoch.Add(10 * time.Second))
+	if got := b.Len(); got != 1 {
+		t.Fatalf("Len after b and c expired = %d, want 1 (the refreshed a)", got)
+	}
+	if got, ok := b.Get("alice", "a.example"); !ok || got != "hop-a" {
+		t.Fatalf("refreshed binding = (%q, %t), want hop-a", got, ok)
+	}
+	if b.Forget("hop-b") != 0 || b.Forget("hop-c") != 0 {
+		t.Fatal("expired bindings stayed in the reverse index")
+	}
+}
+
+func TestBinderCapacityEvictionStopsAtTheFirstLiveEntry(t *testing.T) {
+	clock := newTestClock()
+	b := NewBinder(BinderOptions{TTL: 10 * time.Second, MaxEntries: 3, Clock: clock.Now})
+	b.Bind("", "old", "hop")
+	clock.Set(testEpoch.Add(5 * time.Second))
+	b.Bind("", "mid", "hop")
+	b.Bind("", "new", "hop")
+	clock.Set(testEpoch.Add(10 * time.Second))
+	b.Bind("", "next", "hop")
+	for _, site := range []string{"mid", "new", "next"} {
+		if _, ok := b.Get("", site); !ok {
+			t.Fatalf("live binding %q was evicted", site)
+		}
+	}
+	if _, ok := b.Get("", "old"); ok {
+		t.Fatal("the expired binding survived the insert at capacity")
+	}
+}

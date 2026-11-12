@@ -119,7 +119,7 @@ func canonicalHost(host string) (string, bool) {
 			return "", false
 		}
 		for _, r := range label {
-			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
 				return "", false
 			}
 		}
@@ -127,7 +127,8 @@ func canonicalHost(host string) (string, bool) {
 	return host, true
 }
 
-func validHashKey(key string) bool {
+// ValidKey reports whether key has the shape Key returns: 64 lowercase hex digits.
+func ValidKey(key string) bool {
 	if len(key) != sha256.Size*2 {
 		return false
 	}

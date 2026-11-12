@@ -336,7 +336,8 @@ var helpTopics = []helpTopic{
 			"'hop_pools': per role the hop count, how many hops are active and how many quarantined and, per " +
 			"hop, its short id (the 8 characters the quarantine log lines print), its state (active, " +
 			"quarantined or probing), trips and next_revival_seconds, the wait until the next revival probe " +
-			"of a quarantined hop. Routes with single hops show nothing; hops are never shown by URL.\n\n" +
+			"of a quarantined hop. Routes with single hops show nothing; hops are never shown by URL. The pool of " +
+			"the global default route (connections without an account route) is the top-level 'hop_pools'.\n\n" +
 			"It exits with 4 when no angel is running, so it works as a check in scripts. By default the answer is " +
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
 			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
@@ -350,7 +351,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Show the angel and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
-			{"Read the hop pools of the accounts (accounts[].hop_pools)", "netivri status --json"},
+			{"Read the hop pools (accounts[].hop_pools; default route: hop_pools)", "netivri status --json"},
 			{"Watch who is active, refreshed every two seconds", "netivri status --watch"},
 			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
 			{"Start the angel only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
@@ -1252,7 +1253,7 @@ var helpTopics = []helpTopic{
 			"fallback. Direct accounts have no node tiers; `account show` reports effective pre_socks5 with source " +
 			"`direct`, value `[\"none\"]`, and own value null. The post proxy is the hop after netivri's exit.\n\n" +
 			"The pool supports at most 16 hops per side. " +
-			"Each URL requires a host and port. Each ordered pre/post list is a set of alternatives per side; weighted hop health selects one live proxy per side per connection, not serial hops. Empty lists inherit; none disables a side, and status shows redacted effective lists. Three hard failures quarantine a hop for 30 seconds with doubling backoff to 600 seconds; probes test recovery. All-down pools still try candidates and never bypass a post proxy. Post hops bind per login and registrable site domain for 24 hours by default. Separate `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health` files persist lowercase 64-hex SHA-256 keys, never URLs. Logs omit URLs: quarantine/re-trip is WARN, recovery INFO, and a rate-limited all-down warning says `all N hops are down, trying them anyway`. Connections without a login share one anonymous site binding namespace. A multi-entry global post is also a pool for connections without an account (the default route and legacy auth); the default route has no pre side. See 'netivri help config' and account/provider set-socks5 topics.\n\n" +
+			"Each URL requires a host and port. Each ordered pre/post list is a set of alternatives per side; weighted hop health selects one live proxy per side per connection, not serial hops. Empty lists inherit; none disables a side, and status shows redacted effective lists. Three hard failures, or five soft failures without a success, quarantine a hop for 30 seconds with doubling backoff to 600 seconds; probes test recovery. A hop that does not get as far as sending the target within 3 seconds fails and another hop is tried; a post hop that refuses the password before the target was sent is retried on another hop. Host names may contain _; write international names in punycode (xn--). All-down pools still try candidates and never bypass a post proxy. Post hops bind per login and registrable site domain for 24 hours by default. Separate `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health` files persist lowercase 64-hex SHA-256 keys, never URLs. Logs omit URLs: quarantine/re-trip is WARN, recovery INFO, and a rate-limited all-down warning says `all N hops are down, trying them anyway`. Connections without a login share one anonymous site binding namespace. A multi-entry global post is also a pool for connections without an account (the default route and legacy auth); the default route has no pre side. See 'netivri help config' and account/provider set-socks5 topics.\n\n" +
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
