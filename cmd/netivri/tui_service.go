@@ -470,12 +470,20 @@ func (s *serviceScreen) checksCard() *tui.Card {
 
 func (s *serviceScreen) accountsCard() *tui.Card {
 	var lines []tui.CardLine
+	pools := make(map[string][]angel.HopPoolInfo, len(s.status.Accounts))
+	for _, a := range s.status.Accounts {
+		pools[a.Login] = a.HopPools
+	}
 	for _, a := range s.status.Activity {
 		state := "idle"
 		if a.Active {
 			state = fmt.Sprintf("%d conn · ↓%s ↑%s", a.Connections, humanBytes(a.DownloadBytes), humanBytes(a.UploadBytes))
 		}
 		lines = append(lines, tui.CardLine{ID: "account-" + a.Login, Label: a.Login, Value: state, Kind: tui.CardReadOnly})
+		// One compact line per hop pool of the route, under its account.
+		for i, p := range pools[a.Login] {
+			lines = append(lines, tui.CardLine{ID: fmt.Sprintf("pool-%s-%d", a.Login, i), Value: hopPoolLine(p), Kind: tui.CardReadOnly})
+		}
 	}
 	c := tui.NewCard("Accounts", lines)
 	switch {

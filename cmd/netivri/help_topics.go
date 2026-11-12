@@ -126,7 +126,8 @@ var helpTopics = []helpTopic{
 			"Service: the list has Angel, Checks and Accounts. The Angel card shows the state, listen address, process, " +
 				"uptime and version and has Start (s), Stop... (x) and Restart... (t); Stop and Restart ask first and " +
 				"name the open connections that will drop. Checks runs the checks of 'netivri doctor' (c) and lists " +
-				"each with its status and detail; Accounts shows the live activity of every account. It is the shell side " +
+				"each with its status and detail; Accounts shows the live activity of every account and, under an " +
+				"account whose route has a hop pool, one line per pool such as 'post 3 hops: 2 up, 1 down'. It is the shell side " +
 				"of up, down, status and doctor.",
 			"Logs: the list shows the angel log, one line per entry with time, level and message, oldest first, the newest 200 lines by default. Follow is on (f): new lines appear as the angel writes them and the view stays at the bottom; scrolling up reads in the past, f or End returns to the live tail. l cycles the level filter (debug, info, warn, error: the level and above), / searches the shown lines (Esc clears), s sets a since window (30m, 2h, 7d; empty clears) and n the number of newest lines. It is the shell side of 'netivri logs', through the same reader.",
 			"Stats: the table of 'netivri stats' (per node or per account, b toggles) with the window (since) and the subscription, country, node and account filters as prompts, and r to reload; read-only. " +
@@ -331,6 +332,11 @@ var helpTopics = []helpTopic{
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
 			"'active_accounts' counts the active ones.\n\n" +
+			"When an account's route has a role (pre or post) with more than one hop, its record carries " +
+			"'hop_pools': per role the hop count, how many hops are active and how many quarantined and, per " +
+			"hop, its short id (the 8 characters the quarantine log lines print), its state (active, " +
+			"quarantined or probing), trips and next_revival_seconds, the wait until the next revival probe " +
+			"of a quarantined hop. Routes with single hops show nothing; hops are never shown by URL.\n\n" +
 			"It exits with 4 when no angel is running, so it works as a check in scripts. By default the answer is " +
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
 			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
@@ -344,6 +350,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Show the angel and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
+			{"Read the hop pools of the accounts (accounts[].hop_pools)", "netivri status --json"},
 			{"Watch who is active, refreshed every two seconds", "netivri status --watch"},
 			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
 			{"Start the angel only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
@@ -1063,6 +1070,11 @@ var helpTopics = []helpTopic{
 			"the angel log; reports of nodes going down (bursts and flapping nodes included) are only counted, since the account " +
 			"checks cover the routes; the log is read even when the angel is down, and a missing " +
 			"log file is fine).\n\n" +
+			"Hop pools add checks only when there is something to report: hop state (the " +
+			"hops-pre.health and hops-post.health files in the run directory are readable), hop pools " +
+			"(warn when every hop of a pool is quarantined, as in the log line 'all N hops are down, " +
+			"trying them anyway') and hop persistence (an info for hops whose state cannot be stored). " +
+			"Hops are named by role only.\n\n" +
 			"A check that cannot run is a warn with the reason, never a failure of the whole " +
 			"command. No check contacts anything but the local angel and the local port; " +
 			"subscription URLs, passwords and hashes are never printed.",
@@ -1303,7 +1315,9 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"status: angel, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
-				"provider, exit_country, exit, allowed_clients), route, started_at, uptime_seconds, version, " +
+				"provider, exit_country, exit, allowed_clients, and hop_pools[] when a role has several hops: role, " +
+				"hop_count, active_count, quarantined_count, unpersistable_count and hops[] with id, state, trips, " +
+				"next_revival_seconds), route, started_at, uptime_seconds, version, " +
 				"active_accounts, activity[] (login, active, connections, upload_bytes, download_bytes - byte counts -, " +
 				"providers[], countries[], nodes[] with node, name, provider, country, connections and the byte " +
 				"counters), warm (alive = nodes whose last probe succeeded, total = the number of nodes, " +

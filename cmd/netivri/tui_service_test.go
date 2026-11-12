@@ -322,3 +322,55 @@ func TestServiceParityRefs(t *testing.T) {
 		}
 	}
 }
+
+func TestServiceAccountsCardShowsHopPools(t *testing.T) {
+	f := newServiceFixture(t, true)
+	f.s.status.Accounts = []angel.AccountInfo{
+		{Login: "alice", HopPools: []angel.HopPoolInfo{
+			{Role: "pre", HopCount: 2, ActiveCount: 2},
+			{Role: "post", HopCount: 3, ActiveCount: 2, QuarantinedCount: 1},
+		}},
+		{Login: "bob"},
+	}
+	f.s.list.Selected = 2
+	f.s.selected = "accounts"
+	f.s.refresh()
+	c := f.s.workspace.Card
+	var ids []string
+	for _, l := range c.Lines {
+		ids = append(ids, l.ID)
+	}
+	if got := strings.Join(ids, ","); got != "account-alice,pool-alice-0,pool-alice-1,account-bob" {
+		t.Fatalf("card lines = %s", got)
+	}
+	if l, _ := cardLine(c, "pool-alice-0"); l.Value != "pre 2 hops: 2 up" || l.Kind != tui.CardReadOnly {
+		t.Fatalf("pre pool line = %+v", l)
+	}
+	if l, _ := cardLine(c, "pool-alice-1"); l.Value != "post 3 hops: 2 up, 1 down" {
+		t.Fatalf("post pool line = %+v", l)
+	}
+	for _, size := range [][2]int{{60, 16}, {80, 24}, {120, 30}} {
+		f.s.workspace.Drilled = true
+		v := ansi.Strip(f.s.View(size[0], size[1]))
+		if size[0] >= 100 && !strings.Contains(v, "post 3 hops: 2 up, 1 down") {
+			t.Fatalf("%dx%d: pool line missing:\n%s", size[0], size[1], v)
+		}
+		for _, l := range strings.Split(v, "\n") {
+			if ansi.StringWidth(l) > size[0] {
+				t.Fatalf("%dx%d: line wider than the screen: %q", size[0], size[1], l)
+			}
+		}
+	}
+}
+
+func TestServiceAccountsCardWithoutPoolsIsUnchanged(t *testing.T) {
+	f := newServiceFixture(t, true)
+	f.s.status.Accounts = []angel.AccountInfo{{Login: "alice"}, {Login: "bob"}}
+	f.s.selected = "accounts"
+	f.s.refresh()
+	for _, l := range f.s.workspace.Card.Lines {
+		if strings.HasPrefix(l.ID, "pool-") {
+			t.Fatalf("unexpected pool line %+v", l)
+		}
+	}
+}

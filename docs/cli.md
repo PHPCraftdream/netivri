@@ -45,7 +45,7 @@ Full management in the shell. The list shows Name, Protocol, Port and State. `a`
 
 ### Service
 
-The angel and its checks, the shell side of `up`, `down`, `status` and `doctor` (the same operations, not copies). The list has three rows: Angel, Checks and Accounts. The Angel card shows the state, listen address, process id, uptime and version of the running angel (re-read every 3 seconds, including while another tab is selected) and the actions Start (`s`), Stop... (`x`) and Restart... (`t`); Stop and Restart ask first and the confirmation names the open connections that will drop, Cancel is the default. Start of a running angel and Stop of a stopped one only say so; Restart of a stopped angel just starts it. The Checks card runs the checks of `netivri doctor` on demand (`c`) and lists each with its status and, for warnings and failures, the detail. The Accounts card shows the live activity of every account (connections and bytes, as in `status`). Errors are shown by message and hint only.
+The angel and its checks, the shell side of `up`, `down`, `status` and `doctor` (the same operations, not copies). The list has three rows: Angel, Checks and Accounts. The Angel card shows the state, listen address, process id, uptime and version of the running angel (re-read every 3 seconds, including while another tab is selected) and the actions Start (`s`), Stop... (`x`) and Restart... (`t`); Stop and Restart ask first and the confirmation names the open connections that will drop, Cancel is the default. Start of a running angel and Stop of a stopped one only say so; Restart of a stopped angel just starts it. The Checks card runs the checks of `netivri doctor` on demand (`c`) and lists each with its status and, for warnings and failures, the detail. The Accounts card shows the live activity of every account (connections and bytes, as in `status`). Under an account whose route has a pool of several hops, one line per pool shows it compactly, for example `post 3 hops: 2 up, 1 down` (a hop being probed counts as down). Errors are shown by message and hint only.
 
 ### Logs
 
@@ -637,6 +637,9 @@ The checks:
 | `listen` | The address the running angel reports and its `allowed_clients` rule; `fail` when its core is down; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An explicit direct exit reports `exit: direct`; doctor warns if served by a non-loopback server. An account with neither provider nor exit country uses the default route. |
+| `hop state` | Only when `{HOME}/run/hops-pre.health` or `hops-post.health` exists: each file is readable and how many dead hops it holds (`warn` for an unreadable file; the angel then starts without that stored state and rewrites it). The hops are never named. |
+| `hop pools` | Only with a running angel that reports a pool (a role with more than one hop on an account route): `ok` with the count of up hops, `warn` when every hop of a pool is quarantined, in the wording of the log line: `hop pre pool (alice, eve): all 3 hops are down, trying them anyway`. The accounts sharing the pool are listed. |
+| `hop persistence` | Only when some pool hop cannot be written to the hop state files (a key the store rejects): `ok` with an `info:` detail; such a hop works normally, its quarantine is only forgotten when the angel restarts. |
 | `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
@@ -1186,6 +1189,31 @@ packets), plus shared-endpoint `members`, `default`, `unclassified` and
 `slow_first_byte`. The selection
 fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+Each account record also has `hop_pools` when the route of the account has a role with more than
+one hop (the field is omitted otherwise, so single-hop routes show nothing new): an array with one
+item per pool, `pre` pools before `post` pools, each
+`{"role", "hop_count", "active_count", "quarantined_count", "unpersistable_count", "hops"}`.
+`quarantined_count` also counts the hops being probed; `unpersistable_count` is omitted when zero.
+`hops` is sorted by the hop's opaque key and each item is
+`{"id", "state", "trips", "next_revival_seconds"}`: `id` is the first eight characters of the
+hop's opaque key (the one the `hop pre 1a2b3c4d quarantined` log lines show; omitted for a hop the
+hop state files cannot hold), `state` is `active`, `quarantined` or `probing`, `trips` how often the
+hop was quarantined in a row, and `next_revival_seconds` the whole seconds (rounded up, `0` when
+due) until the next revival probe of a quarantined hop; it is omitted for active and probing
+hops. Accounts that share a route report the same pools; two pools with different providers or lists on one
+route stay separate items. A hop is never shown by URL, host or credentials. Both the short and the
+full view carry these fields.
+
+Example of one account record (`chain` left out) with a post pool of three hops, one of them quarantined:
+
+```json
+{"login": "alice", "provider": "main", "exit_country": "DE", "exit": "route", "allowed_clients": "*",
+ "hop_pools": [{"role": "post", "hop_count": 3, "active_count": 2, "quarantined_count": 1,
+                "hops": [{"id": "1a2b3c4d", "state": "active", "trips": 0},
+                         {"id": "5e6f7a8b", "state": "quarantined", "trips": 2, "next_revival_seconds": 42},
+                         {"id": "c0ffee00", "state": "active", "trips": 0}]}]}
+```
 
 `status` reports effective account exit modes (`route` or `direct`); `account show` reports the configured mode and direct accounts have no node tiers.
 

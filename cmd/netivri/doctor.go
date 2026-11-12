@@ -118,6 +118,7 @@ func doctorRun(home string) []doctorCheck {
 		checks = append(checks, d.checkAccount(&d.cfg.Accounts[i]))
 	}
 	checks = append(checks, d.checkServers()...)
+	checks = append(checks, d.checkHops()...)
 	return append(checks, d.checkLog())
 }
 
