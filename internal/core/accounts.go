@@ -123,28 +123,33 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		return nil, nil, nil, err
 	}
 	if len(o.AccountRoute) == 0 {
-		if o.Node == nil && (o.GlobalPost == "" || isNoChain(o.GlobalPost)) {
+		globalPost := o.globalPostPool()
+		if o.Node == nil && len(globalPost) == 0 {
 			return nil, nil, nil, nil
 		}
 		if o.Node == nil {
-			post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+			post, err := globalPostMapping(globalPost, gen, false)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			return []map[string]any{post}, nil, []string{"MATCH," + globalPostProxyName(gen)}, nil
+			rules := []string{"MATCH," + globalPostProxyName(gen)}
+			if post["type"] == "select" {
+				return nil, []map[string]any{post}, rules, nil
+			}
+			return []map[string]any{post}, nil, rules, nil
 		}
 		proxies, rules, err := prepareNode(o.Node)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
-			post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+		if len(globalPost) != 0 {
+			// A pool of several hops is refused with a default node (see
+			// validateOptionHopPools), so this is the legacy scalar chain.
+			post, err := globalPostMapping(globalPost, gen, true)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			post["dialer-proxy"] = nodeName
-			proxies = append(proxies, post)
-			return proxies, nil, []string{"MATCH," + globalPostProxyName(gen)}, nil
+			return append(proxies, post), nil, []string{"MATCH," + globalPostProxyName(gen)}, nil
 		}
 		return proxies, nil, rules, nil
 	}
@@ -188,15 +193,17 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	if defaultProxy != nil {
 		proxies = append(proxies, defaultProxy)
 	}
-	if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
-		post, err := chainProxy(o.GlobalPost, globalPostProxyName(gen))
+	globalPost := o.globalPostPool()
+	if len(globalPost) != 0 {
+		post, err := globalPostMapping(globalPost, gen, o.Node != nil)
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		if o.Node != nil {
-			post["dialer-proxy"] = nodeName
+		if post["type"] == "select" {
+			poolGroups = append(poolGroups, post)
+		} else {
+			proxies = append(proxies, post)
 		}
-		proxies = append(proxies, post)
 	}
 	proxyNames := make(map[string]struct{}, len(proxies))
 	for _, proxy := range proxies {
@@ -322,7 +329,7 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 		rules = append(rules, "IN-USER,"+login+","+group)
 	}
 	fallback := "DIRECT"
-	if o.GlobalPost != "" && !isNoChain(o.GlobalPost) {
+	if o.globalPostActive() {
 		fallback = globalPostProxyName(gen)
 	} else if o.Node != nil {
 		fallback = nodeName
@@ -331,10 +338,37 @@ func prepareRoutesGen(o Options, gen int) ([]map[string]any, []map[string]any, [
 	return proxies, groups, rules, nil
 }
 
+// globalPostMapping builds the MATCH post: the legacy chain proxy for one
+// distinct hop, a placeholder select group for several (the lifecycle replaces
+// it with the pool adapter). uris is the non-empty effective list.
+func globalPostMapping(uris []string, gen int, throughNode bool) (map[string]any, error) {
+	spec := newHopPoolSpec(postHopPool, uris, gen)
+	if spec != nil && len(spec.keys) > 1 {
+		return map[string]any{"name": globalPostProxyName(gen), "type": "select", "proxies": []string{"DIRECT"}}, nil
+	}
+	post, err := chainProxy(uris[0], globalPostProxyName(gen))
+	if err != nil {
+		return nil, err
+	}
+	if throughNode {
+		post["dialer-proxy"] = nodeName
+	}
+	return post, nil
+}
+
 func explicitEmptyPool(m map[string][]string, key string) bool {
 	values, ok := m[key]
 	return ok && len(effectivePool(values, true, "")) == 0
 }
+
+func (o Options) globalPostPool() []string {
+	if o.GlobalPostPool != nil {
+		return effectivePool(o.GlobalPostPool, true, "")
+	}
+	return effectivePool(nil, false, o.GlobalPost)
+}
+
+func (o Options) globalPostActive() bool { return len(o.globalPostPool()) != 0 }
 
 func (o Options) routePrePool(key string) []string {
 	if values, ok := o.RoutePrePool[key]; ok {

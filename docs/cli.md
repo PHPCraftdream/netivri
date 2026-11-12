@@ -718,7 +718,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` `own` is the configured account list as a redacted
-  array, or null when no own list is configured. For this account's alternate providers, `account show` / `status` can report `varies` with source `provider`; an account list overrides that provider candidate list. See [config.md](config.md#socks5-chain) for the full cascade and scalar-only no-account global post scope.
+  array, or null when no own list is configured. For this account's alternate providers, `account show` / `status` can report `varies` with source `provider`; an account list overrides that provider candidate list. See [config.md](config.md#socks5-chain) for the full cascade and the global post pool for connections without an account.
   ```json
   {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
    "pre_socks5": {"value": ["socks5://pre.example:1080"], "source": "global", "auth": true},
@@ -768,8 +768,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   operation. Replacement/add/remove cannot be mixed on a side; removing the
   last entry restores inheritance. Legacy scalar URLs remain valid. A post
   list on an account without a VPN route is used directly. A running angel
-  applies account-route list changes in place when supported; direct-post-only
-  changes may restart if the core reports in-place reconfiguration unsupported.
+  applies account-route list changes in place, including edits of an account
+  pool whose route has no nodes (reorder, add, remove).
   See [design/hop-pools.md](design/hop-pools.md) for exact health, binding, state-file and log semantics, including role-separated files `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health`.
 - `set-exit` takes one login or comma-separated logins, or `--all`, followed by
   `route` or `direct`. Direct requires empty provider and country; no
@@ -784,8 +784,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   (including the first explicit direct route on a default-only instance),
   direct-only changes, and changes after the last node-backed route restart the
   listener. Keeping another account's node-backed route through a flip preserves
-  connections. Adding an account always restarts, as with `account add`; default/
-  default-node/global-post changes retain their usual restart behavior.
+  connections. Adding an account always restarts, as with `account add`;
+  default-node changes retain their usual restart behavior.
   Direct exits bypass the VPN and expose this machine's address. They may be
   served by the mixed proxy or a server; `doctor` warns for a direct account on a
   non-loopback server bind or mixed proxy bind, without failing the check. When
@@ -882,8 +882,11 @@ running listener and the open connections go on. Account-only `allowed_clients`
 changes are applied hot to servers and mixed-proxy authentication; existing
 connections stay open. Adding or removing an account, changing its credentials,
 or changing the bind or port restarts the listener and ends open connections.
-Changes to `listen.allowed_clients` or global `chain.post_socks5` also require a
-restart. Route changes are applied in place when supported; existing
+Changes to `listen.allowed_clients` also require a restart. A change of the
+global `chain.post_socks5` applies in place while the listener routes in rule
+mode (account routes or a global post) before and after the change; the first
+global post of a listener without routes, or removing the last one, restarts it.
+Route changes are applied in place when supported; existing
 connections stay open. Server changes are transactional: unchanged listeners
 and their connections are kept, except changed UDP listeners, whose connections
 end when their sockets are restarted. A change it cannot apply, such as a route
@@ -896,8 +899,8 @@ existing connections. The first node-backed route appearing or last disappearing
 (including the first explicit direct route on a default-only instance), direct-
 only changes, and changes after the last node-backed route restart the listener.
 Keeping another node-backed account route through a flip preserves connections.
-Adding an account always restarts, as with `account add`; default/default-node/
-global-post changes retain their usual restart behavior.
+Adding an account always restarts, as with `account add`; default-node changes
+retain their usual restart behavior.
 
 See [design/live-reload.md](design/live-reload.md)
 and [design/socks5-chain.md](design/socks5-chain.md).
@@ -961,19 +964,18 @@ when the validation fails. The valid keys and their values are listed by
 scalar URL, `none`, or empty to clear; edit `config.ktav` for candidate arrays).
 The fields accept up to 16 URLs per side; legacy scalar URLs remain accepted and
 singleton lists render as scalars. `none` stands alone to clear inherited
-candidates. Entries are alternatives, not serial hops. Multi-entry global post
-is supported for account routes that inherit it, but the no-account `MATCH`
-path still uses scalar `GlobalPost`; a multi-entry global post needed by a
-connection without an account is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. A plain `auth.password` is stored as an argon2id hash and is never echoed; the literal value `init` stores the placeholder that waits for the first client.
+candidates. Entries are alternatives, not serial hops. A multi-entry global post
+serves the account routes that inherit it and connections without an account
+(the default route and legacy auth) through one pool. A plain `auth.password` is stored as an argon2id hash and is never echoed; the literal value `init` stores the placeholder that waits for the first client.
 
 The answer reports `restart_needed`: `true` when the running angel has to
 restart its listener for the change to apply (`listen.bind`, `listen.port`,
 `listen.allowed_clients`, `auth.login`, `auth.password`), `false` when it
 applies without a listener restart (`auth.allow_init_remote`, `fetch.*`,
 route changes including account-route pre/post pools and global/provider list
-changes used by account routes). A global post change affecting only the
-no-account `MATCH` path restarts the listener; direct-post-only changes may
-also restart if the core reports in-place reconfiguration unsupported. See
+changes used by account routes, and global post changes while the listener
+routes in rule mode before and after). Adding the first global post to a
+listener without routes, or removing the last, restarts the listener. See
 [design/live-reload.md](design/live-reload.md). The command itself never
 restarts anything: a running angel notices the written file within a few
 seconds and applies it.

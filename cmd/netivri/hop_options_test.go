@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
@@ -50,14 +51,12 @@ func TestHopOptionsGlobalMultiPoolsRetainPerNodeSingletonAndNoneOverrides(t *tes
 		wantScalarPre, wantScalarPost []string
 	}{
 		{
-			name: "provider singleton then none",
-			pPre: pPre, pPost: pPost, qPre: config.HopList{"none"}, qPost: config.HopList{"none"},
+			name: "provider singleton then none", pPre: pPre, pPost: pPost, qPre: config.HopList{"none"}, qPost: config.HopList{"none"},
 			wantPre: [][]string{pPre, {"none"}}, wantPost: [][]string{pPost, {"none"}},
 			wantScalarPre: []string{pPre[0], "none"}, wantScalarPost: []string{pPost[0], "none"},
 		},
 		{
-			name: "none then provider singleton",
-			pPre: config.HopList{"none"}, pPost: config.HopList{"none"}, qPre: qPre, qPost: qPost,
+			name: "none then provider singleton", pPre: config.HopList{"none"}, pPost: config.HopList{"none"}, qPre: qPre, qPost: qPost,
 			wantPre: [][]string{{"none"}, qPre}, wantPost: [][]string{{"none"}, qPost},
 			wantScalarPre: []string{"none", qPre[0]}, wantScalarPost: []string{"none", qPost[0]},
 		},
@@ -144,6 +143,39 @@ func TestHopOptionsProviderPoolsFollowRouteNodeOrder(t *testing.T) {
 	}
 }
 
+func TestHopOptionsGlobalPostPoolPreservesNilEmptySingletonAndClones(t *testing.T) {
+	makeOptions := func(hops config.HopList) core.Options {
+		t.Helper()
+		cfg := config.Default()
+		cfg.Chain.PostSOCKS5 = hops
+		options, _, err := (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return options
+	}
+	if options := makeOptions(nil); options.GlobalPostPool != nil || options.GlobalPost != "" {
+		t.Fatalf("unset global post = %#v/%q, want nil/empty", options.GlobalPostPool, options.GlobalPost)
+	}
+	empty := makeOptions(config.HopList{})
+	if empty.GlobalPostPool == nil || len(empty.GlobalPostPool) != 0 || empty.GlobalPost != "" {
+		t.Fatalf("explicit empty global post = %#v/%q, want non-nil empty/empty", empty.GlobalPostPool, empty.GlobalPost)
+	}
+	hops := config.HopList{"socks5://one.example:1080", "http://two.example:8080"}
+	multi := makeOptions(hops)
+	if !reflect.DeepEqual(multi.GlobalPostPool, []string(hops)) || multi.GlobalPost != "" {
+		t.Fatalf("multi global post = %v/%q, want %v/empty", multi.GlobalPostPool, multi.GlobalPost, hops)
+	}
+	hops[0] = "socks5://changed.example:1080"
+	if multi.GlobalPostPool[0] != "socks5://one.example:1080" {
+		t.Fatal("GlobalPostPool aliases the config slice")
+	}
+	singleton := makeOptions(config.HopList{"socks5://single.example:1080"})
+	if !reflect.DeepEqual(singleton.GlobalPostPool, []string{"socks5://single.example:1080"}) || singleton.GlobalPost != "socks5://single.example:1080" {
+		t.Fatalf("singleton global post = %v/%q", singleton.GlobalPostPool, singleton.GlobalPost)
+	}
+}
+
 func TestHopOptionsGlobalPostPoolMapsEveryAccountAndKeepsScalarCompatibility(t *testing.T) {
 	globalPost := config.HopList{"socks5://global-one.example:1080", "http://global-two.example:8080"}
 	cfg := config.Default()
@@ -163,8 +195,9 @@ func TestHopOptionsGlobalPostPoolMapsEveryAccountAndKeepsScalarCompatibility(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.GlobalPost != "" {
-		t.Fatalf("multi-hop global fallback = %q, want empty", options.GlobalPost)
+	// Account-only authentication never reaches MATCH: no fallback pool.
+	if options.GlobalPost != "" || options.GlobalPostPool != nil {
+		t.Fatalf("global post scalar/pool = %q/%v", options.GlobalPost, options.GlobalPostPool)
 	}
 	wantRoutes := make(map[string][]string, len(cfg.Accounts))
 	for _, account := range cfg.Accounts {
@@ -178,8 +211,6 @@ func TestHopOptionsGlobalPostPoolMapsEveryAccountAndKeepsScalarCompatibility(t *
 		t.Fatalf("global inheritance route pools = %v, want %v", options.RoutePostPool, wantRoutes)
 	}
 
-	// A single global hop retains the legacy scalar option and route keys;
-	// the additive pool maps may be present but remain empty.
 	legacy := config.Default()
 	legacy.Chain.PreSOCKS5 = config.HopList{"socks5://global-pre.example:1080"}
 	legacy.Chain.PostSOCKS5 = config.HopList{"socks5://global-post.example:1080"}
@@ -193,7 +224,7 @@ func TestHopOptionsGlobalPostPoolMapsEveryAccountAndKeepsScalarCompatibility(t *
 		t.Fatal(err)
 	}
 	legacyKey := legacyOptions.AccountRoute["carol"]
-	if legacyOptions.GlobalPost != legacy.Chain.PostSOCKS5[0] || legacyOptions.RoutePre[legacyKey] != legacy.Chain.PreSOCKS5[0] || legacyOptions.RoutePost[legacyKey] != legacy.Chain.PostSOCKS5[0] {
+	if legacyOptions.GlobalPost != legacy.Chain.PostSOCKS5[0] || !reflect.DeepEqual(legacyOptions.GlobalPostPool, []string(legacy.Chain.PostSOCKS5)) || legacyOptions.RoutePre[legacyKey] != legacy.Chain.PreSOCKS5[0] || legacyOptions.RoutePost[legacyKey] != legacy.Chain.PostSOCKS5[0] {
 		t.Fatalf("legacy scalar values changed: global=%q pre=%q post=%q", legacyOptions.GlobalPost, legacyOptions.RoutePre[legacyKey], legacyOptions.RoutePost[legacyKey])
 	}
 	if wantKey := credentialRouteKey("p", "DE", legacy.Chain.PreSOCKS5[0], legacy.Chain.PostSOCKS5[0]); legacyKey != wantKey {

@@ -167,9 +167,6 @@ var persistMu sync.Mutex
 // refused: the angel applies the new file and the client tries again.
 func saveClaim(path string, mem *config.Config, apply func(*config.Config) error) error {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := config.ValidateGlobalPostFallback(mem); err != nil {
-			return err
-		}
 		return config.Save(path, mem)
 	}
 	disk, err := config.Load(path)
@@ -177,9 +174,6 @@ func saveClaim(path string, mem *config.Config, apply func(*config.Config) error
 		return err
 	}
 	if err := apply(disk); err != nil {
-		return err
-	}
-	if err := config.ValidateGlobalPostFallback(disk); err != nil {
 		return err
 	}
 	return config.Save(path, disk)

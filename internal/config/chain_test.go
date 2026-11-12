@@ -76,10 +76,8 @@ func TestConfigValidateHopLimits(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Default()
-			// A 17-entry global post list is rejected by the separate MATCH
-			// fallback guard before the size check unless account-only auth has
-			// a configured named account. Keep these limit cases independent
-			// of that guard so they exercise the list cap itself.
+			// Keep these limit cases independent of unrelated account config so
+			// they exercise the list cap itself.
 			cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: "provider", ExitCountry: "DE"}}
 			hops := HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
 			for len(hops) < MaxHopsPerSide+1 {

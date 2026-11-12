@@ -725,8 +725,7 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 	}
 	for _, want := range []string{
 		"accepted account field keys",
-		"named accounts and no legacy auth",
-		"the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead",
+		"the default route has no pre side",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the config topic lacks %q", want)

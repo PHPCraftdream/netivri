@@ -184,6 +184,14 @@ func validateOptionHopPools(o Options) error {
 	// List-valued settings are new configuration and are validated even when
 	// they are not selected by a route. Legacy scalar settings are checked only
 	// when the historical route cascade makes them effective.
+	for _, uri := range o.GlobalPostPool {
+		if err := validate(uri); err != nil {
+			return err
+		}
+	}
+	if spec := newHopPoolSpec(postHopPool, o.globalPostPool(), 0); o.Node != nil && spec != nil && len(spec.keys) > 1 {
+		return nodeInvalid("a global post hop pool cannot be combined with a default node")
+	}
 	for _, values := range []map[string][]string{o.RoutePrePool, o.RoutePostPool} {
 		for _, list := range values {
 			for _, raw := range list {
@@ -231,6 +239,9 @@ func validateOptionHopPools(o Options) error {
 		}
 	}
 	if len(o.AccountRoute) == 0 || o.Node != nil {
+		if o.GlobalPostPool != nil {
+			return nil
+		}
 		return validate(o.GlobalPost)
 	}
 	return nil

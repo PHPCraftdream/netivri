@@ -321,11 +321,10 @@ netivri status --json
 #            {"id": "5e6f7a8b", "state": "quarantined", "trips": 2, "next_revival_seconds": 42}, ...]}]
 ```
 
-**Interim scope gap:** account routes, including inherited global lists, use
-pools. The global `MATCH` post remains a scalar for connections without an
-account; no `GlobalPre` field is defined. A multi-entry global post required by
-connections without an account is rejected with the exact error
-`the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`.
+Account routes, including inherited global lists, use pools. A global post list
+of several hops also serves connections without an account (the default route
+and legacy auth) through the same pool; those connections have no login, so
+their site bindings share one anonymous key. The default route has no pre side.
 
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one

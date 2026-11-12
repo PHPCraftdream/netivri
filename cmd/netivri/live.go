@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -252,9 +253,12 @@ func nodePoolHopMap(in map[string][]config.HopList, routePools map[string]config
 	return out
 }
 
-func warmOptionsForPool(pool routePool) *core.WarmOptions {
+func warmOptionsForPool(pool routePool, globalPostPool []string) *core.WarmOptions {
 	if options := warmOptions(pool.nodes); options != nil {
 		return options
+	}
+	if len(globalPostPool) > 1 {
+		return &core.WarmOptions{ConfirmProbe: true}
 	}
 	for _, route := range pool.accountRoutes {
 		if len(pool.nodes[route]) == 0 && len(pool.routePost[route]) > 1 {
@@ -307,18 +311,8 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 	nodePost := scalarNodeHopMap(d.pool.nodePost)
 	nodePrePool := nodePoolHopMap(d.pool.nodePre, d.pool.routePre)
 	nodePostPool := nodePoolHopMap(d.pool.nodePost, d.pool.routePost)
-	globalPost := ""
-	// GlobalPost feeds only MATCH traffic; with account-only authentication it is unreachable.
-	if len(d.cfg.Chain.PostSOCKS5) <= 1 {
-		if len(d.cfg.Chain.PostSOCKS5) == 1 {
-			globalPost = d.cfg.Chain.PostSOCKS5[0]
-		}
-	} else if err := config.ValidateGlobalPostFallback(d.cfg); err == nil {
-		// Keep account inheritance in RoutePost/NodePost, but don't configure an unused fallback pool.
-		globalPost = ""
-	} else {
-		return core.Options{}, nil, err
-	}
+	globalPostPool := globalPostPoolOption(d.cfg)
+	globalPost := scalarGlobalPost(d.cfg.Chain.PostSOCKS5)
 	var observer core.Observer
 	if store != nil {
 		observer = statsObserver{store: store}
@@ -351,6 +345,7 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 		NodePrePool:           nodePrePool,
 		NodePostPool:          nodePostPool,
 		GlobalPost:            globalPost,
+		GlobalPostPool:        globalPostPool,
 		Servers:               cloneServerSpecs(d.servers),
 		AccountAllowedClients: accountAllowedClients(d.cfg),
 		NodeLabels:            d.pool.labels,
@@ -358,7 +353,7 @@ func (l *liveAngel) routeOptionsWithLoggerChecked(d desiredState, a mihauth.Auth
 		OnConnEvent:           l.connLog().event,
 		OnNodeHealth:          nodeHook,
 		Observer:              observer,
-		Warm:                  warmOptionsForPool(d.pool),
+		Warm:                  warmOptionsForPool(d.pool, globalPostPool),
 		AffinityTTL:           stats.BindingTTL,
 	}
 	l.configureHopOptions(&o)
@@ -473,8 +468,8 @@ func fingerprint(d desiredState) string {
 }
 
 // routesFingerprint covers nodes, labels, tiers, account routes and SOCKS5
-// chains. Route-specific chains are applied by Reconfigure; global post is
-// included because it affects core construction and requires a restart.
+// chains, including the global post pool. Route-specific chains and global post
+// are applied by Reconfigure when the core supports in-place updates.
 func routesFingerprint(d desiredState) string {
 	v := struct {
 		Nodes      map[string][]map[string]any
@@ -562,6 +557,45 @@ func scalarGlobalPost(hops config.HopList) string {
 	return ""
 }
 
+// globalPostPoolOption copies the global post list for the core. A list of
+// several hops is passed only when MATCH traffic can reach it; account routes
+// inherit the list through their own options.
+func globalPostPoolOption(cfg *config.Config) []string {
+	hops := cfg.Chain.PostSOCKS5
+	if hops == nil || (len(hops) > 1 && !globalPostFallbackReachable(cfg)) {
+		return nil
+	}
+	return append([]string{}, hops...)
+}
+
+func globalPostActive(hops config.HopList) bool {
+	for _, hop := range hops {
+		if hop != "" && !strings.EqualFold(hop, "none") {
+			return true
+		}
+	}
+	return false
+}
+
+// coreRuleMode reports whether the core built from d routes in rule mode:
+// account routes or a global post exist. A core in direct mode cannot take
+// either in place.
+func coreRuleMode(d desiredState) bool {
+	return len(d.pool.accountRoutes) > 0 || globalPostActive(d.cfg.Chain.PostSOCKS5)
+}
+
+// globalPostNeedsRestart reports a change of the global post list that
+// reaches MATCH traffic and that the core cannot apply in place: only a core
+// that routes in rule mode before and after the change can take it. A core in
+// direct mode has neither routes nor a global post to replace.
+func globalPostNeedsRestart(applied, candidate desiredState) bool {
+	oldPost, newPost := applied.cfg.Chain.PostSOCKS5, candidate.cfg.Chain.PostSOCKS5
+	if slices.Equal(oldPost, newPost) || (!globalPostFallbackReachable(applied.cfg) && !globalPostFallbackReachable(candidate.cfg)) {
+		return false
+	}
+	return !coreRuleMode(applied) || !coreRuleMode(candidate)
+}
+
 func globalPostFallbackReachable(cfg *config.Config) bool {
 	return cfg == nil || len(cfg.Accounts) == 0 || cfg.Auth.Login != "" || cfg.Auth.Password != ""
 }
@@ -569,9 +603,7 @@ func globalPostFallbackReachable(cfg *config.Config) bool {
 func reloadComparison(a mihauth.Authenticator, applied, candidate desiredState, since uint64) (desiredState, bool, bool) {
 	applied.cfg, candidate.cfg = snapshotReloadCredentials(a, applied.cfg, candidate.cfg, since)
 	same := fingerprint(applied) == fingerprint(candidate)
-	globalPostChanged := scalarGlobalPost(applied.cfg.Chain.PostSOCKS5) != scalarGlobalPost(candidate.cfg.Chain.PostSOCKS5) &&
-		(globalPostFallbackReachable(applied.cfg) || globalPostFallbackReachable(candidate.cfg))
-	inPlace := !same && !globalPostChanged && listenerFingerprint(applied) == listenerFingerprint(candidate) &&
+	inPlace := !same && !globalPostNeedsRestart(applied, candidate) && listenerFingerprint(applied) == listenerFingerprint(candidate) &&
 		(((len(applied.pool.accountRoutes) > 0) == (len(candidate.pool.accountRoutes) > 0)) || routesFingerprint(applied) == routesFingerprint(candidate) || (accountClientsFingerprint(applied.cfg) != accountClientsFingerprint(candidate.cfg)))
 	return candidate, same, inPlace
 }
@@ -701,13 +733,16 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	serverChanged := serverFingerprint(oldServers) != serverFingerprint(d.servers)
 	serverOnly := serverChanged && routesFingerprint(l.applied) == routesFingerprint(d)
 	policyOnly := accountClientsFingerprint(l.applied.cfg) != accountClientsFingerprint(d.cfg) && routesFingerprint(l.applied) == routesFingerprint(d) && !serverChanged
-	if len(d.pool.accountRoutes) == 0 && !serverOnly && !policyOnly {
+	// A core without node-backed routes (direct routes, direct-post pools, the
+	// global post pool) reconfigures in place without a node table or poller.
+	directCore := len(l.applied.pool.nodes) == 0 && len(d.pool.nodes) == 0 && coreRuleMode(l.applied) && coreRuleMode(d)
+	if len(d.pool.accountRoutes) == 0 && !serverOnly && !policyOnly && !directCore {
 		l.mu.Unlock()
 		return false
 	}
-	// Core route reconfiguration requires a live node table/poller, not merely
-	// account route entries. Keep policy/server-only cases independent.
-	if (len(d.pool.nodes) == 0 || len(l.applied.pool.nodes) == 0) && !serverOnly && !policyOnly {
+	// Otherwise route reconfiguration requires a live node table/poller, not
+	// merely account route entries. Keep policy/server-only cases independent.
+	if (len(d.pool.nodes) == 0 || len(l.applied.pool.nodes) == 0) && !serverOnly && !policyOnly && !directCore {
 		l.mu.Unlock()
 		return false
 	}

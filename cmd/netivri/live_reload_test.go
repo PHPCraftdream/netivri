@@ -974,7 +974,7 @@ func addLegacyAuthForReloadTest(t *testing.T, f *reloadFixture) *fakeCore {
 	return running
 }
 
-func TestReloadRestartsOnGlobalPostOnlyChange(t *testing.T) {
+func TestReloadReconfiguresOnGlobalPostSingletonWithRoutes(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
 	running := addLegacyAuthForReloadTest(t, f)
 	cfg, err := config.Load(config.ConfigPath(f.home))
@@ -986,37 +986,62 @@ func TestReloadRestartsOnGlobalPostOnlyChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.l.reload(t.Context())
-	if f.script.calls() != 3 || !running.isClosed() {
-		t.Fatalf("post-only change did not restart: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	calls := running.reconfigured()
+	if f.script.calls() != 2 || running.isClosed() || len(calls) != 1 {
+		t.Fatalf("post-only change: starts=%d closed=%v reconfigures=%d, want an in-place update", f.script.calls(), running.isClosed(), len(calls))
 	}
-	if len(running.reconfigured()) != 0 {
-		t.Fatal("post-only change attempted Reconfigure")
-	}
-	if got := f.script.call(2).GlobalPost; got != cfg.Chain.PostSOCKS5[0] {
-		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
+	if want := cfg.Chain.PostSOCKS5[0]; calls[0].GlobalPost != want || !reflect.DeepEqual(calls[0].GlobalPostPool, []string{want}) {
+		t.Errorf("Reconfigure GlobalPost/pool = %q/%v, want the configured hop", calls[0].GlobalPost, calls[0].GlobalPostPool)
 	}
 }
 
-func TestReloadRestartsOnGlobalPostWithRoutes(t *testing.T) {
-	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
+func TestReloadReconfiguresLegacyAuthGlobalPostPoolWithAccountOverride(t *testing.T) {
+	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE", PostSOCKS5: config.HopList{"none"}})
 	running := addLegacyAuthForReloadTest(t, f)
 	cfg, err := config.Load(config.ConfigPath(f.home))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1080"}
+	pool := config.HopList{"socks5://pool-one.example:1080", "http://pool-two.example:8080"}
+	cfg.Chain.PostSOCKS5 = pool
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
 	f.l.reload(t.Context())
-	if f.script.calls() != 3 || !running.isClosed() {
-		t.Fatalf("global post fallback change did not restart: starts=%d closed=%v", f.script.calls(), running.isClosed())
+	calls := running.reconfigured()
+	if f.script.calls() != 2 || running.isClosed() || len(calls) != 1 {
+		t.Fatalf("legacy-auth global pool addition changed lifecycle: starts=%d closed=%v reconfigures=%d", f.script.calls(), running.isClosed(), len(calls))
 	}
-	if len(running.reconfigured()) != 0 {
-		t.Fatal("global post fallback change attempted Reconfigure")
+	if !reflect.DeepEqual(calls[0].GlobalPostPool, []string(pool)) || calls[0].GlobalPost != "" {
+		t.Fatalf("legacy-auth pool options = %v/%q, want %v/empty", calls[0].GlobalPostPool, calls[0].GlobalPost, pool)
 	}
-	if got := f.script.call(2).GlobalPost; got != cfg.Chain.PostSOCKS5[0] {
-		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
+	key := calls[0].AccountRoute["alice"]
+	if key == "" || calls[0].RoutePost[key] != "none" || len(calls[0].RoutePostPool) != 0 {
+		t.Fatalf("account explicit override route=%q post=%v pools=%v", key, calls[0].RoutePost, calls[0].RoutePostPool)
+	}
+
+	singleton := config.HopList{"https://fallback.example:8443"}
+	cfg.Chain.PostSOCKS5 = singleton
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(t.Context())
+	calls = running.reconfigured()
+	if f.script.calls() != 2 || running.isClosed() || len(calls) != 2 {
+		t.Fatalf("legacy-auth pool-to-singleton restarted: starts=%d closed=%v reconfigures=%d", f.script.calls(), running.isClosed(), len(calls))
+	}
+	if calls[1].GlobalPost != singleton[0] || !reflect.DeepEqual(calls[1].GlobalPostPool, []string(singleton)) {
+		t.Fatalf("legacy-auth singleton options = %q/%v", calls[1].GlobalPost, calls[1].GlobalPostPool)
+	}
+
+	cfg.Chain.PostSOCKS5 = nil
+	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+		t.Fatal(err)
+	}
+	f.l.reload(t.Context())
+	calls = running.reconfigured()
+	if f.script.calls() != 2 || running.isClosed() || len(calls) != 3 || calls[2].GlobalPostPool != nil || calls[2].GlobalPost != "" {
+		t.Fatalf("legacy-auth global pool clear: starts=%d closed=%v options=%v", f.script.calls(), running.isClosed(), calls)
 	}
 }
 
@@ -1128,8 +1153,8 @@ func TestReloadReconfiguresGlobalPostPoolForNamedAccountsInPlace(t *testing.T) {
 	if !reflect.DeepEqual(calls[0].RoutePostPool[key], wantPool) {
 		t.Fatalf("inherited route post pool = %v, want %v", calls[0].RoutePostPool[key], wantPool)
 	}
-	if calls[0].GlobalPost != "" {
-		t.Errorf("unused MATCH fallback GlobalPost=%q, want empty", calls[0].GlobalPost)
+	if calls[0].GlobalPost != "" || calls[0].GlobalPostPool != nil {
+		t.Errorf("unused MATCH fallback GlobalPost/pool=%q/%v, want none", calls[0].GlobalPost, calls[0].GlobalPostPool)
 	}
 
 	cfg.Chain.PostSOCKS5 = config.HopList{"http://two.example:8080", "socks5://three.example:1080"}
@@ -1279,29 +1304,86 @@ func TestReloadServerTransactionErrorDoesNotRestart(t *testing.T) {
 	}
 }
 
-func TestReloadRestartsOnGlobalPostWithNoRoutes(t *testing.T) {
+func TestReloadRestartsOnGlobalPostSingletonWithNoRoutes(t *testing.T) {
 	f := newReloadFixture(t, upOptions{})
 	cfg, err := config.Load(config.ConfigPath(f.home))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://127.0.0.1:1080"}
+	cfg.Chain.PostSOCKS5 = config.HopList{"socks5://fallback.example:1080"}
 	if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
 		t.Fatal(err)
 	}
-
 	f.l.reload(t.Context())
-	if f.script.calls() != 2 {
-		t.Fatalf("global post change started core %d times, want restart (2)", f.script.calls())
+	if f.script.calls() != 2 || !f.script.inst(0).isClosed() {
+		t.Fatalf("singleton global post did not retain restart behavior: starts=%d closed=%v", f.script.calls(), f.script.inst(0).isClosed())
 	}
 	if len(f.script.inst(0).reconfigured()) != 0 {
-		t.Fatal("global post change without account routes attempted Reconfigure")
-	}
-	if !f.script.inst(0).isClosed() {
-		t.Fatal("old core remains open after fallback restart")
+		t.Fatal("singleton global post attempted Reconfigure")
 	}
 	if got := f.script.call(1).GlobalPost; got != cfg.Chain.PostSOCKS5[0] {
-		t.Errorf("restarted core GlobalPost = %q, want configured value", got)
+		t.Fatalf("restarted GlobalPost=%q, want configured singleton", got)
+	}
+}
+
+func TestReloadReconfiguresGlobalPostPoolInPlaceWithoutRoutes(t *testing.T) {
+	f := newReloadFixture(t, upOptions{})
+	cfg, err := config.Load(config.ConfigPath(f.home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setGlobal := func(hops config.HopList) {
+		t.Helper()
+		cfg.Chain.PostSOCKS5 = hops
+		if err := config.Save(config.ConfigPath(f.home), cfg); err != nil {
+			t.Fatal(err)
+		}
+		f.l.reload(t.Context())
+	}
+
+	// A core in direct mode has no rules to change: the first pool restarts it.
+	first := config.HopList{"socks5://one.example:1080", "http://two.example:8080"}
+	setGlobal(first)
+	if f.script.calls() != 2 || !f.script.inst(0).isClosed() {
+		t.Fatalf("first global pool: starts=%d old closed=%v, want a restart", f.script.calls(), f.script.inst(0).isClosed())
+	}
+	if got := f.script.call(1); !reflect.DeepEqual(got.GlobalPostPool, []string(first)) || got.GlobalPost != "" {
+		t.Fatalf("started GlobalPostPool/scalar = %v/%q, want %v/empty", got.GlobalPostPool, got.GlobalPost, first)
+	}
+	running := f.script.inst(1)
+	running.setInPlace(nil)
+
+	edits := []config.HopList{
+		{"http://two.example:8080", "socks5://one.example:1080"},
+		{"http://two.example:8080", "socks5://one.example:1080", "socks5://three.example:1080"},
+		{"http://two.example:8080", "socks5://three.example:1080"},
+		{"http://two.example:8080"},
+	}
+	for i, hops := range edits {
+		setGlobal(hops)
+		calls := running.reconfigured()
+		if f.script.calls() != 2 || running.isClosed() || len(calls) != i+1 {
+			t.Fatalf("global pool edit %d changed the lifecycle: starts=%d closed=%v reconfigures=%d", i+1, f.script.calls(), running.isClosed(), len(calls))
+		}
+		wantScalar := ""
+		if len(hops) == 1 {
+			wantScalar = hops[0]
+		}
+		if !reflect.DeepEqual(calls[i].GlobalPostPool, []string(hops)) || calls[i].GlobalPost != wantScalar {
+			t.Fatalf("global pool edit %d options = %v/%q, want %v/%q", i+1, calls[i].GlobalPostPool, calls[i].GlobalPost, hops, wantScalar)
+		}
+		if len(calls[i].AccountRoute) != 0 {
+			t.Fatalf("global pool edit %d carries account routes: %v", i+1, calls[i].AccountRoute)
+		}
+	}
+
+	// Removing the last global hop leaves a core without rules: restart.
+	setGlobal(nil)
+	if f.script.calls() != 3 || !running.isClosed() {
+		t.Fatalf("global pool removal: starts=%d closed=%v, want a restart", f.script.calls(), running.isClosed())
+	}
+	if got := f.script.call(2); got.GlobalPostPool != nil || got.GlobalPost != "" {
+		t.Fatalf("restarted GlobalPostPool/scalar = %#v/%q, want nil/empty", got.GlobalPostPool, got.GlobalPost)
 	}
 }
 

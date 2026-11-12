@@ -69,7 +69,7 @@ func TestPoolCoreAdaptersPreserveListsAndSingletonScalars(t *testing.T) {
 	}
 }
 
-func TestRouteOptionsAcceptsGlobalPostPoolOnlyForAccountRoutes(t *testing.T) {
+func TestRouteOptionsGlobalPostPoolReachesMatchOnlyWhenReachable(t *testing.T) {
 	multi := config.HopList{"socks5://first.example:1080", "http://second.example:8080"}
 	cfg := config.Default()
 	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
@@ -81,12 +81,21 @@ func TestRouteOptionsAcceptsGlobalPostPoolOnlyForAccountRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("account route with global pool: %v", err)
 	}
-	if options.GlobalPost != "" || !reflect.DeepEqual(options.RoutePostPool["direct"], []string(multi)) || options.AccountRoute["alice"] != "direct" {
-		t.Fatalf("options lost the account pool or exposed MATCH fallback: %+v", options)
+	if options.GlobalPost != "" || options.GlobalPostPool != nil || !reflect.DeepEqual(options.RoutePostPool["direct"], []string(multi)) || options.AccountRoute["alice"] != "direct" {
+		t.Fatalf("options lost the account pool or configured an unreachable MATCH pool: %+v", options)
+	}
+	// Legacy authentication makes MATCH reachable: the pool is configured.
+	cfg.Auth = config.Auth{Login: "legacy", Password: "$argon2id$fixture"}
+	options, _, err = (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg, pool: routePool{accountRoutes: map[string]string{"alice": "direct"}, routePost: map[string]config.HopList{"direct": multi}}}, nil, nil)
+	if err != nil {
+		t.Fatalf("legacy auth with global pool: %v", err)
+	}
+	if !reflect.DeepEqual(options.GlobalPostPool, []string(multi)) || options.GlobalPost != "" {
+		t.Fatalf("reachable MATCH pool = %v/%q, want %v/empty", options.GlobalPostPool, options.GlobalPost, multi)
 	}
 	cfg.Accounts = nil
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead") {
-		t.Fatalf("unauthenticated global pool error = %v", err)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a global pool without accounts rejected: %v", err)
 	}
 }
 
