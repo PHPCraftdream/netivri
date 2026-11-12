@@ -14,7 +14,18 @@ import (
 type Option func(*handshakeOptions)
 
 type handshakeOptions struct {
-	tlsConfig *tls.Config
+	tlsConfig   *tls.Config
+	negotiation time.Duration
+}
+
+// WithNegotiationTimeout bounds the exchange before the target request is
+// sent (TLS setup and SOCKS5 method and authentication negotiation). A proxy
+// that does not answer in time fails with a network timeout at the stage it
+// stalled in, not with a context error, so the caller can attribute it to the
+// proxy. The context deadline still applies to the whole handshake; a
+// nonpositive duration or one past the context deadline has no effect.
+func WithNegotiationTimeout(d time.Duration) Option {
+	return func(o *handshakeOptions) { o.negotiation = d }
 }
 
 // WithTLSConfig supplies TLS settings for HTTPS proxies. Certificate verification remains enabled.
@@ -140,6 +151,32 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 		return contextErr, clearErr
 	}
 
+	// targetPhase lifts the negotiation deadline before the target request is
+	// written. Re-checking the context afterwards keeps a cancellation that
+	// raced with the reset effective.
+	targetPhase := func() error { return nil }
+	if opts.negotiation > 0 {
+		limit := time.Now().Add(opts.negotiation)
+		if deadline.IsZero() || limit.Before(deadline) {
+			if err := conn.SetDeadline(limit); err == nil {
+				if ctx.Err() != nil {
+					// The cancellation callback may have run before the limit
+					// replaced its immediate deadline.
+					_ = conn.SetDeadline(time.Now())
+				}
+				targetPhase = func() error {
+					if err := conn.SetDeadline(deadline); err != nil {
+						return err
+					}
+					if ctx.Err() != nil {
+						return conn.SetDeadline(time.Now())
+					}
+					return nil
+				}
+			}
+		}
+	}
+
 	active := conn
 	stage := StageHandshake
 	var result net.Conn
@@ -168,14 +205,18 @@ func runHandshake(ctx context.Context, conn net.Conn, p Proxy, host string, port
 	if err == nil {
 		switch strings.ToLower(p.Scheme) {
 		case "socks5":
-			err = socks5Handshake(active, p, host, port)
+			err = socks5Handshake(active, p, host, port, targetPhase)
 			if err != nil {
 				sourceErr = err
 				operationContextErr = contextFailure(ctx)
 			}
 			result = active
 		case "http", "https":
-			result, err = httpConnectHandshake(active, p, target)
+			if err = targetPhase(); err != nil {
+				err = proxyError(StageHandshake, 0, err)
+			} else {
+				result, err = httpConnectHandshake(active, p, target)
+			}
 			if err != nil {
 				sourceErr = err
 				operationContextErr = contextFailure(ctx)

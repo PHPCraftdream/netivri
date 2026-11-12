@@ -165,7 +165,7 @@ func validateHost(host string) error {
 			return errInvalidProxy
 		}
 		for _, c := range label {
-			if c == '_' || !isHostChar(c) {
+			if !isHostChar(c) {
 				return errInvalidProxy
 			}
 		}

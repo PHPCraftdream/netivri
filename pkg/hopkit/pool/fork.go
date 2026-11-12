@@ -38,7 +38,6 @@ func (p *Pool) Fork(keys []string) *Pool {
 	p.mu.Unlock()
 
 	fork := New(keys, Options{Clock: clock, RNG: rand.NewPCG(seed1, seed2)})
-	fork.Reconcile(keys)
 	fork.mu.Lock()
 	for key, state := range states {
 		if h := fork.members[key]; h != nil {

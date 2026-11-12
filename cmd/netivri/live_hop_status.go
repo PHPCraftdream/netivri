@@ -31,12 +31,13 @@ type liveHopStatusEntry struct {
 }
 
 // addLiveHopPoolStatus fills AccountInfo.HopPools for every account whose route
-// has a role with several hops. Pools are told apart by role and pool identity,
-// so two providers behind one route never merge; accounts sharing a route get
-// the same data. Hops show only their short opaque id.
-func addLiveHopPoolStatus(accounts []angel.AccountInfo, routes routePool, inst coreInstance) {
+// has a role with several hops, and Status.HopPools with the pools of the global
+// default route (core.GlobalPoolRoute). Pools are told apart by role and pool
+// identity, so two providers behind one route never merge; accounts sharing a
+// route get the same data. Hops show only their short opaque id.
+func addLiveHopPoolStatus(st *angel.Status, routes routePool, inst coreInstance) {
 	source, ok := inst.(liveHopPoolSource)
-	if !ok {
+	if !ok || st == nil {
 		return
 	}
 	now := time.Now()
@@ -45,18 +46,28 @@ func addLiveHopPoolStatus(accounts []angel.AccountInfo, routes routePool, inst c
 	}
 
 	loginsByRoute := make(map[string][]int, len(routes.accountRoutes))
-	for i := range accounts {
-		if route, ok := routes.accountRoutes[accounts[i].Login]; ok {
+	for i := range st.Accounts {
+		if route, ok := routes.accountRoutes[st.Accounts[i].Login]; ok && route != core.GlobalPoolRoute {
 			loginsByRoute[route] = append(loginsByRoute[route], i)
 		}
 	}
-	if len(loginsByRoute) == 0 {
-		return
+	infos := liveHopPoolInfos(source, now, func(route string) bool {
+		return route == core.GlobalPoolRoute || len(loginsByRoute[route]) > 0
+	})
+	for route, indexes := range loginsByRoute {
+		for _, index := range indexes {
+			st.Accounts[index].HopPools = append(st.Accounts[index].HopPools, infos[route]...)
+		}
 	}
+	st.HopPools = infos[core.GlobalPoolRoute]
+}
 
+// liveHopPoolInfos groups the snapshots of the wanted routes into pool views,
+// pre pools before post pools, keeping only pools of several hops.
+func liveHopPoolInfos(source liveHopPoolSource, now time.Time, wanted func(route string) bool) map[string][]angel.HopPoolInfo {
 	pools := make(map[liveHopPoolKey]map[string]liveHopStatusEntry)
 	for _, snapshot := range source.SnapshotHopPools() {
-		if !validHopHealthRole(snapshot.Role) || !validHopHealthKey(snapshot.PoolIdentity) || snapshot.RouteKey == "" || len(loginsByRoute[snapshot.RouteKey]) == 0 {
+		if !validHopHealthRole(snapshot.Role) || !validHopHealthKey(snapshot.PoolIdentity) || snapshot.RouteKey == "" || !wanted(snapshot.RouteKey) {
 			continue
 		}
 		state := snapshot.State
@@ -104,13 +115,8 @@ func addLiveHopPoolStatus(accounts []angel.AccountInfo, routes routePool, inst c
 			groupsByRoute[group.route] = append(groupsByRoute[group.route], group)
 		}
 	}
-	routeKeys := make([]string, 0, len(groupsByRoute))
-	for route := range groupsByRoute {
-		routeKeys = append(routeKeys, route)
-	}
-	sort.Strings(routeKeys)
-	for _, route := range routeKeys {
-		groups := groupsByRoute[route]
+	out := make(map[string][]angel.HopPoolInfo, len(groupsByRoute))
+	for route, groups := range groupsByRoute {
 		sort.Slice(groups, func(i, j int) bool {
 			if groups[i].role != groups[j].role {
 				return groups[i].role == "pre"
@@ -147,11 +153,10 @@ func addLiveHopPoolStatus(accounts []angel.AccountInfo, routes routePool, inst c
 				}
 				info.Hops = append(info.Hops, hop)
 			}
-			for _, accountIndex := range loginsByRoute[route] {
-				accounts[accountIndex].HopPools = append(accounts[accountIndex].HopPools, info)
-			}
+			out[route] = append(out[route], info)
 		}
 	}
+	return out
 }
 
 // revivalSeconds rounds the wait for the next probe up to whole seconds.

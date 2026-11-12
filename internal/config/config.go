@@ -442,6 +442,9 @@ func validateChainURL(field, raw string) error {
 	if err != nil || !isChainScheme(u.Scheme) || u.Opaque != "" || u.Hostname() == "" || hasInvalidEscapes(raw) || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
 		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 	}
+	if !asciiHost(u.Hostname()) {
+		return invalid("%s: the host must be ASCII; write an international domain name in its punycode (xn--) form", field)
+	}
 	port := u.Port()
 	if port == "" {
 		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
@@ -458,6 +461,17 @@ func validateChainURL(field, raw string) error {
 		}
 	}
 	return nil
+}
+
+// asciiHost reports whether a hop host has only ASCII bytes: the proxy clients
+// cannot resolve or present a raw international name.
+func asciiHost(host string) bool {
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func hasInvalidEscapes(raw string) bool {

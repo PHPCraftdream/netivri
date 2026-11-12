@@ -17,6 +17,10 @@ func hopPoolLine(p angel.HopPoolInfo) string {
 	return line
 }
 
+// defaultRouteLabel names the pools of the global default route (connections
+// without an account route) where account pools show a login.
+const defaultRouteLabel = "default route"
+
 // hopPoolAllDown reports a pool in which every hop is quarantined.
 func hopPoolAllDown(p angel.HopPoolInfo) bool {
 	return p.HopCount > 0 && p.QuarantinedCount == p.HopCount

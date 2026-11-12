@@ -10,6 +10,7 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/hopstate"
+	hopkey "github.com/PHPCraftdream/netivri/pkg/hopkit/hop"
 	hoppool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 )
 
@@ -135,9 +136,7 @@ func (h *hopHealth) enqueue(hook uint64, event core.HopEvent) {
 			h.pending[i] = pendingHopEvent{event: event, hook: hook}
 			h.dirty, h.dirtyVersion = true, h.dirtyVersion+1
 			h.mu.Unlock()
-			if !h.manual {
-				h.signal()
-			}
+			h.signal()
 			return
 		}
 	}
@@ -148,9 +147,7 @@ func (h *hopHealth) enqueue(hook uint64, event core.HopEvent) {
 	}
 	h.dirty, h.dirtyVersion = true, h.dirtyVersion+1
 	h.mu.Unlock()
-	if !h.manual {
-		h.signal()
-	}
+	h.signal()
 }
 
 func (h *hopHealth) signal() {
@@ -163,10 +160,6 @@ func (h *hopHealth) signal() {
 // Attach is called after core startup; it restores only records matched to current pool metadata.
 func (h *hopHealth) Attach(inst hopHealthCore) {
 	if inst == nil {
-		return
-	}
-	if h.manual {
-		h.attachLocked(inst)
 		return
 	}
 	h.ioMu.Lock()
@@ -194,10 +187,8 @@ func (h *hopHealth) attachLocked(inst hopHealthCore) {
 	}
 	h.mu.Lock()
 	if h.memoryValid {
-		for role := range stored {
-			stored[role] = make(map[string]hoppool.Entry)
-		}
-		stored["pre"], stored["post"] = make(map[string]hoppool.Entry), make(map[string]hoppool.Entry)
+		// Memory of the previous core is newer than the files.
+		stored = map[string]map[string]hoppool.Entry{"pre": {}, "post": {}}
 	}
 	for role, rows := range h.memory {
 		for key, entry := range rows {
@@ -254,9 +245,7 @@ func (h *hopHealth) attachLocked(inst hopHealthCore) {
 	h.memory = map[string]map[string]hoppool.Entry{"pre": {}, "post": {}}
 	h.memoryValid = false
 	h.mu.Unlock()
-	if !h.manual {
-		h.signal()
-	}
+	h.signal()
 }
 
 func (h *hopHealth) loadRoles() (map[string]map[string]hoppool.Entry, bool) {
@@ -300,9 +289,7 @@ func (h *hopHealth) Activate() {
 		h.dirty, h.dirtyVersion = true, h.dirtyVersion+1
 	}
 	h.mu.Unlock()
-	if !h.manual {
-		h.signal()
-	}
+	h.signal()
 }
 
 // Refresh schedules a post-reconfigure snapshot without reloading persisted state.
@@ -316,9 +303,7 @@ func (h *hopHealth) Refresh() {
 		h.dirty, h.dirtyVersion = true, h.dirtyVersion+1
 	}
 	h.mu.Unlock()
-	if !h.manual {
-		h.signal()
-	}
+	h.signal()
 }
 
 // RejectPending retires callbacks from a failed candidate configuration.
@@ -337,17 +322,11 @@ func (h *hopHealth) RejectPending() {
 		h.rescan = true
 	}
 	h.mu.Unlock()
-	if !h.manual {
-		h.signal()
-	}
+	h.signal()
 }
 
 // Detach preserves in-memory quarantine state but does not force an early disk write.
 func (h *hopHealth) Detach() {
-	if h.manual {
-		h.detachLocked()
-		return
-	}
 	h.ioMu.Lock()
 	defer h.ioMu.Unlock()
 	h.detachLocked()
@@ -414,15 +393,6 @@ func (h *hopHealth) run() {
 }
 
 func (h *hopHealth) saveTick() {
-	if h.manual {
-		h.mu.Lock()
-		inst, dirty, closing := h.core, h.dirty, h.closing
-		h.mu.Unlock()
-		if inst != nil && dirty && !closing {
-			h.saveCoreLocked(inst, false)
-		}
-		return
-	}
 	h.ioMu.Lock()
 	defer h.ioMu.Unlock()
 	h.mu.Lock()
@@ -434,15 +404,6 @@ func (h *hopHealth) saveTick() {
 }
 
 func (h *hopHealth) processEvents() {
-	if h.manual {
-		h.mu.Lock()
-		inst, hook := h.core, h.activeHook
-		h.mu.Unlock()
-		if inst != nil && hook != 0 {
-			h.processForLocked(inst, hook)
-		}
-		return
-	}
 	h.ioMu.Lock()
 	defer h.ioMu.Unlock()
 	h.mu.Lock()
@@ -761,17 +722,7 @@ func validHopMetadata(snapshot core.HopPoolSnapshot) bool {
 		validHopHealthKey(snapshot.PoolIdentity) && validHopHealthKey(snapshot.Key)
 }
 func validHopHealthRole(role string) bool { return role == "pre" || role == "post" }
-func validHopHealthKey(key string) bool {
-	if len(key) != 64 {
-		return false
-	}
-	for _, c := range key {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
-}
+func validHopHealthKey(key string) bool   { return hopkey.ValidKey(key) }
 
 func (h *hopHealth) flushAndStop() {
 	h.ioMu.Lock()
@@ -823,40 +774,21 @@ func (h *hopHealth) warnSaveOnce() {
 	}
 }
 
-// Close must run while the core remains available; it performs the final flush.
+// Close must run while the core remains available; it performs the final
+// flush once. In manual mode (tests drive the worker steps themselves) there is
+// no worker goroutine and the flush runs here.
 func (h *hopHealth) Close() {
-	if h.manual {
-		h.mu.Lock()
-		h.closing = true
-		h.mu.Unlock()
-		h.flushForManual()
-		return
-	}
 	h.close.Do(func() {
 		h.mu.Lock()
 		h.closing = true
 		h.mu.Unlock()
+		if h.manual {
+			h.flushAndStop()
+			return
+		}
 		close(h.stop)
 	})
-	<-h.done
-}
-
-func (h *hopHealth) flushForManual() {
-	h.mu.Lock()
-	inst, hook := h.core, h.activeHook
-	h.activeHook = 0
-	h.mu.Unlock()
-	if inst != nil && hook != 0 {
-		h.processForLocked(inst, hook)
+	if !h.manual {
+		<-h.done
 	}
-	if inst != nil {
-		h.saveCoreLocked(inst, true)
-	} else if h.memoryValid {
-		h.saveMemoryLocked()
-	}
-	h.mu.Lock()
-	if h.core == inst {
-		h.core = nil
-	}
-	h.mu.Unlock()
 }

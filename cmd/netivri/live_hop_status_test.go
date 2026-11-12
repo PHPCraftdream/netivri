@@ -240,3 +240,55 @@ func TestStatusHopPoolsReachShortAndFullJSONAndKtav(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveStatusShowsTheDefaultRoutePoolAtTopLevel(t *testing.T) {
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	cfg := config.Default()
+	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
+	identity, keyA, keyB := statusPoolID('a'), statusPoolID('1'), statusPoolID('2')
+	inst := &liveStatusHopCore{
+		fakeCore: &fakeCore{addr: "127.0.0.1:12345"},
+		routes:   map[string]string{"alice": "provider~DE~route"},
+		now:      now,
+		snapshots: []core.HopPoolSnapshot{
+			statusPoolSnapshot("post", core.GlobalPoolRoute, identity, keyA, "healthy", 0),
+			statusPoolSnapshot("post", core.GlobalPoolRoute, identity, keyB, "quarantined", 1),
+		},
+		exported: []core.HopPoolState{{Role: "post", RouteKey: core.GlobalPoolRoute, PoolIdentity: identity, Entries: []hoppool.Entry{
+			{Key: keyB, Trips: 1, NextProbe: now.Add(30 * time.Second)},
+		}}},
+	}
+	live := &liveAngel{
+		applied: desiredState{cfg: cfg, pool: routePool{accountRoutes: map[string]string{"alice": "provider~DE~route"}}},
+		inst:    inst,
+	}
+	st := live.status("")
+	if len(st.HopPools) != 1 {
+		t.Fatalf("default route pools = %#v, want one", st.HopPools)
+	}
+	got := st.HopPools[0]
+	if got.Role != "post" || got.HopCount != 2 || got.ActiveCount != 1 || got.QuarantinedCount != 1 ||
+		got.Hops[1].ID != "22222222" || got.Hops[1].NextRevivalSeconds == nil || *got.Hops[1].NextRevivalSeconds != 30 {
+		t.Fatalf("default route pool = %#v", got)
+	}
+	for _, account := range st.Accounts {
+		if len(account.HopPools) != 0 {
+			t.Fatalf("account %s got the default route pool: %#v", account.Login, account.HopPools)
+		}
+	}
+	raw := mustJSON(t, st)
+	if !strings.Contains(raw, `"hop_pools":[{"role":"post"`) {
+		t.Fatalf("status JSON lacks the top-level pool: %s", raw)
+	}
+}
+
+func TestLiveStatusWithoutDefaultRoutePoolOmitsTheField(t *testing.T) {
+	live, _, _ := newLiveHopStatusFixture(t)
+	st := live.status("")
+	if st.HopPools != nil {
+		t.Fatalf("default route pools = %#v, want none", st.HopPools)
+	}
+	if raw := mustJSON(t, angel.Status{}); strings.Contains(raw, "hop_pools") {
+		t.Fatalf("empty status JSON has hop_pools: %s", raw)
+	}
+}

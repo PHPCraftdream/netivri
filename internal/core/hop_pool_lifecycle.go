@@ -156,10 +156,8 @@ func (m *hopPoolLifecycle) poolLock(*pool.Pool) *sync.Mutex { return &m.mutation
 type HopSnapshot = pool.HopSnapshot
 
 func poolState(p *pool.Pool, key string) HopSnapshot {
-	for _, state := range p.Snapshot() {
-		if state.Key == key {
-			return state
-		}
+	if state, ok := p.State(key); ok {
+		return state
 	}
 	return HopSnapshot{Key: key, State: pool.Healthy}
 }
@@ -699,7 +697,9 @@ func (m *hopPoolLifecycle) newReviver(options WarmOptions) (*hoprevive.Reviver, 
 				}
 			}
 			if selected == nil {
-				return nil, errors.New("core: missing native hop probe target")
+				// No usable target (for example a URL the native client rejects):
+				// keep the registration complete; the hop is never eligible.
+				selected = unusableProbeHop(key, use.role, m.now)
 			}
 			hops = append(hops, selected)
 		}
@@ -873,4 +873,10 @@ func hopAddress(raw string) string {
 		}
 	}
 	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
+// unusableProbeHop stands in for a hop without a native probe target. Probing
+// it is never eligible; a dial through it fails as errUnusableHop.
+func unusableProbeHop(key string, role hopPoolRole, now func() time.Time) *mihomoPoolHop {
+	return &mihomoPoolHop{key: key, role: role, proxyParseErr: errUnusableHop, now: now}
 }

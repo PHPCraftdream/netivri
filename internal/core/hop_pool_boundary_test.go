@@ -113,7 +113,7 @@ func TestPostProbeUsesLifecycleAndRequiresFreshCarrierEvidence(t *testing.T) {
 		{name: "down carrier", evidence: "down", wantCalls: 0, wantOutcome: pool.ProbeInconclusive},
 		{name: "evidence expires during dial", evidence: "fresh", advance: true, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
 		{name: "handshake failure", evidence: "fresh", wantCalls: 1, wantOutcome: pool.ProbeHardFailure},
-		{name: "refusal", evidence: "fresh", rep: 2, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
+		{name: "refusal is hard", evidence: "fresh", rep: 2, wantCalls: 1, wantOutcome: pool.ProbeHardFailure},
 		{name: "target", evidence: "fresh", rep: 3, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
 		{name: "other", evidence: "fresh", rep: 7, wantCalls: 1, wantOutcome: pool.ProbeInconclusive},
 	} {

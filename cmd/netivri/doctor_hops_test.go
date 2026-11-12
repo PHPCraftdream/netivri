@@ -149,3 +149,39 @@ func TestHopPoolViewHelpers(t *testing.T) {
 		t.Fatal("hopPoolAllDown")
 	}
 }
+
+func TestDoctorHopPoolsReportTheDefaultRoutePool(t *testing.T) {
+	home := doctorHopsHome(t)
+	allDown := angel.HopPoolInfo{Role: "post", HopCount: 2, QuarantinedCount: 2, Hops: []angel.HopInfo{
+		{ID: "55555555", State: "quarantined", Trips: 1}, {ID: "66666666", State: "quarantined", Trips: 2}}}
+	doctorStubAngel(t, func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{PID: 42, Listen: "127.0.0.1:7890", AllowedClients: "*",
+			Accounts: []angel.AccountInfo{{Login: "alice", HopPools: []angel.HopPoolInfo{allDown}}},
+			HopPools: []angel.HopPoolInfo{allDown}}, nil
+	})
+	doc, err := doctorRunDoc(t, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pools := doctorFind(t, doc, "hop pools")
+	want := "hop post pool (default route): all 2 hops are down, trying them anyway; hop post pool (alice): all 2 hops are down, trying them anyway"
+	if pools.Status != doctorWarn || pools.Detail != want {
+		t.Fatalf("hop pools = %+v, want %q", pools, want)
+	}
+}
+
+func TestDoctorHopPoolsDefaultRouteOnly(t *testing.T) {
+	home := doctorHopsHome(t)
+	up := angel.HopPoolInfo{Role: "post", HopCount: 3, ActiveCount: 3, Hops: []angel.HopInfo{
+		{ID: "11111111", State: "active"}, {ID: "22222222", State: "active"}, {ID: "33333333", State: "active"}}}
+	doctorStubAngel(t, func(context.Context, string) (angel.State, angel.Status, error) {
+		return angel.State{}, angel.Status{PID: 42, Listen: "127.0.0.1:7890", AllowedClients: "*", HopPools: []angel.HopPoolInfo{up}}, nil
+	})
+	doc, err := doctorRunDoc(t, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pools := doctorFind(t, doc, "hop pools"); pools.Status != doctorOK || pools.Detail != "1 pool(s), 3 of 3 hops up" {
+		t.Fatalf("hop pools = %+v", pools)
+	}
+}

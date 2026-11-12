@@ -12,7 +12,7 @@ type Strength uint8
 const (
 	// Inconclusive records no health change.
 	Inconclusive Strength = iota
-	// Soft increases the decaying sand score.
+	// Soft increases the decaying sand score and the soft streak.
 	Soft
 	// Hard advances the consecutive-hard failure count.
 	Hard
@@ -36,13 +36,19 @@ type Pool struct {
 	rng     *rand.Rand
 }
 
-const hardTripThreshold = 3
+const (
+	hardTripThreshold = 3
+	// softTripThreshold quarantines a hop whose failures are all ambiguous
+	// (for example behind a lazy carrier that never reports a connect error).
+	softTripThreshold = 5
+)
 
 type hop struct {
 	sand        float64
 	sandAt      time.Time
 	sandSet     bool
 	hard        int
+	soft        int
 	trips       int
 	quarantined bool
 	nextProbe   time.Time
@@ -92,6 +98,12 @@ func (p *Pool) Record(key string, strength Strength) {
 			h.sand = maxSand
 		}
 		h.hard = 0
+		if !h.quarantined {
+			h.soft++
+			if h.soft >= softTripThreshold {
+				p.trip(h, now)
+			}
+		}
 	case Hard:
 		if h.quarantined {
 			return
@@ -109,7 +121,7 @@ func (p *Pool) RecordHard(key string) { p.Record(key, Hard) }
 // RecordSoft records a soft failure for a known hop.
 func (p *Pool) RecordSoft(key string) { p.Record(key, Soft) }
 
-// RecordSuccess revives a hop, halves its sand, and clears hard-failure history.
+// RecordSuccess revives a hop, halves its sand, and clears failure streaks.
 func (p *Pool) RecordSuccess(key string) {
 	now := p.clock()
 	p.mu.Lock()

@@ -350,3 +350,24 @@ func TestLoadHopListShapes(t *testing.T) {
 		})
 	}
 }
+
+func TestChainHostsAllowUnderscoreAndRejectNonASCII(t *testing.T) {
+	for _, value := range []string{"socks5://my_proxy.example:1080", "http://user:secret@edge_1.example:3128", "socks5://xn--bcher-kva.example:1080"} {
+		c := Default()
+		c.Chain.PreSOCKS5 = HopList{value}
+		if err := c.Validate(); err != nil {
+			t.Errorf("rejected valid hop host: %v", err)
+		}
+	}
+	for _, value := range []string{"socks5://bücher.example:1080", "http://user:secret@b%C3%BCcher.example:3128"} {
+		c := Default()
+		c.Chain.PostSOCKS5 = HopList{value, "socks5://proxy.example:1080"}
+		err := c.Validate()
+		if err == nil {
+			t.Fatalf("accepted a non-ASCII hop host")
+		}
+		if !strings.Contains(err.Error(), "chain.post_socks5[0]") || !strings.Contains(err.Error(), "punycode") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "cher") {
+			t.Fatalf("non-ASCII host error = %v, want the field, the punycode hint and no URL", err)
+		}
+	}
+}

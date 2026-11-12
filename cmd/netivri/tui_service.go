@@ -485,6 +485,10 @@ func (s *serviceScreen) accountsCard() *tui.Card {
 			lines = append(lines, tui.CardLine{ID: fmt.Sprintf("pool-%s-%d", a.Login, i), Value: hopPoolLine(p), Kind: tui.CardReadOnly})
 		}
 	}
+	// The default route serves connections without an account route.
+	for i, p := range s.status.HopPools {
+		lines = append(lines, tui.CardLine{ID: fmt.Sprintf("pool-default-%d", i), Label: defaultRouteLabel, Value: hopPoolLine(p), Kind: tui.CardReadOnly})
+	}
 	c := tui.NewCard("Accounts", lines)
 	switch {
 	case !s.running:

@@ -50,7 +50,6 @@ func ForkFrom(keys []string, sources ...*Pool) *Pool {
 		options.RNG = rand.NewPCG(seed1, seed2)
 	}
 	fork := New(keys, options)
-	fork.Reconcile(keys)
 	fork.mu.Lock()
 	for key, state := range states {
 		if h := fork.members[key]; h != nil {
