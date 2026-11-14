@@ -49,6 +49,11 @@ func TestArmCrashDumpReportsEarlierCrashAndArmsOwn(t *testing.T) {
 	if len(infos) != 1 || !strings.Contains(infos[0], "pid 777") || !strings.Contains(infos[0], "did not stop cleanly") {
 		t.Fatalf("unclean report = %q", infos)
 	}
+	// Windows ends the programs that run when it restarts or shuts down: the
+	// line names that as a cause, not only a kill or a power loss.
+	if !strings.Contains(infos[0], "the computer restarted or lost power") {
+		t.Errorf("unclean report does not name a restart: %q", infos[0])
+	}
 	if len(warns) != 0 {
 		t.Fatalf("warnings = %q", warns)
 	}

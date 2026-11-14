@@ -384,10 +384,13 @@ state, the time it began and the time of the last answer are carried over by a
 `Reconfigure`.
 
 `cmd/netivri` writes the log lines. Three or more nodes going down within 10
-seconds are one burst: the first two get a `WARN` line each, the third raises
-one `WARN` summary (`node burst: ...`, with the reason kinds, and "right after
+seconds are one burst: the first two get a `WARN` line each (`INFO` for a fallback node), the third raises
+one summary (`node burst: ...`, with the reason kinds, and "right after
 start" in the first minute), the others and the third's own line are `INFO`,
-and an `INFO` line closes the burst when its last node is back. For 2 minutes
+and an `INFO` line closes the burst when its last node is back. The summary is a `WARN`
+when a first-tier node is among the nodes of the burst (every node is, without tier
+information) and an `INFO` when they are all fallback nodes; a first-tier node that joins
+such a burst raises the `WARN` once (`nodeLog.burstWarned`, cleared when the burst ends). For 2 minutes
 after the computer woke up (the angel notices a jump of the wall clock, probes
 every node at once and writes one `INFO` line with the length of the sleep) a
 down is a plain `INFO` line that counts toward neither a burst nor flapping. A network that fails
@@ -405,12 +408,15 @@ summary was emitted and the total grew, then resets the collection so later serv
 reports count toward neither bursts nor flapping,
 so the dead nodes of a subscription do not raise a burst at every start. A node with 3
 downs within an hour is flapping: one `WARN` (`node ... is flapping: ...`, with
-the reason kinds), then its down and back lines are `INFO` until its recent
-downs drop below 3 again (checked at its next down), and its downs do not count
+the reason kinds, and the level its further reports are written at), then its
+down and back lines are `INFO` until it has gone a whole hour without a down
+(checked at its next down: a down that finds fewer than 3 in the window because
+the old ones aged out, less than an hour after the previous one, is the same
+trouble and is not announced again), and its downs do not count
 toward a burst. Only a first-tier node (the first tier of some account's
 route, `routePool.firstTierLabels`) is a `WARN` for its down and flapping
 lines; the nodes of fallback tiers are `INFO`, because no account uses them
-while its first tier is up (the burst summary stays a `WARN`). For a fallback node the lines that repeat what
+while its first tier is up (and so is a burst of fallback nodes only). For a fallback node the lines that repeat what
 the log already says (the downs and backs of a flapping server after its flapping
 notice, a twin's down) are `DEBUG`, which `netivri logs` hides unless `--level debug`
 is given. The reason of a
