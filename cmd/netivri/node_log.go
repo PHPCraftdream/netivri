@@ -79,16 +79,18 @@ func makeNodeHealthLogger(infos []stats.NodeInfo, first map[string]bool, quiet f
 // third node); later unique servers and twins of collapsed servers are DEBUG.
 // These reports remain outside burst and flapping accounting.
 // A node that keeps going down (flapDowns times within flapWindow) is flapping:
-// one WARN says so, its further down and back lines are INFO until it has been
-// quiet for flapWindow, and it does not count toward a burst. One server under
+// one WARN says so, its further down and back lines are INFO (DEBUG for a
+// fallback node, see repeat) until it has gone a whole flapWindow without a
+// down, and it does not count toward a burst. One server under
 // two labels (the same id from two providers) is one node for all of this: its
 // twin's down within twinWindow keeps its annotation and follows the server's
 // chosen level. For the others, the first burstNodes-1 nodes that go down within
 // burstWindow get a WARN line each. The next one
 // also raises a single WARN summary ("node burst: ...") and from then on the
 // per-node lines of the burst are INFO, so a network loss that takes ten nodes
-// down at once reads as one warning. When the last node of a burst is back an
-// INFO line closes it.
+// down at once reads as one warning, and only when a first-tier node is among
+// them (a burst of fallback nodes is INFO; a first-tier node joining it later
+// makes it a WARN). When the last node of a burst is back an INFO line closes it.
 // A network that fails slowly makes no burst: when at least outageMinNodes
 // servers that have answered before are down at once, and half of them or
 // more, one WARN ("node outage: ...") says so, the down and back lines of the
@@ -120,6 +122,7 @@ type nodeLog struct {
 	burstPeak   map[string]struct{} // server ids at the largest burst size
 	burstSize   int
 	burstStart  time.Time
+	burstWarned bool // the burst has been written at WARN (a first-tier node is in it)
 	// The outage state: servers (not labels) that are down now, servers that
 	// never answered, and how many servers there are.
 	servers        int
@@ -254,7 +257,7 @@ func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
 		l.burstSize = max(len(l.burst), len(l.burstPeak))
 	}
 	if l.burst != nil && len(l.burst) == 0 {
-		l.burst, l.burstPeak, l.burstSize = nil, nil, 0
+		l.burst, l.burstPeak, l.burstSize, l.burstWarned = nil, nil, 0, false
 	}
 
 	window, windowKinds := l.window[:0], l.windowKinds[:0]
@@ -458,7 +461,14 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 	case len(l.window) < burstNodes:
 		l.nodeWarn(ev.Label, "%s", line)
 	case len(l.window) == burstNodes:
-		l.warn("%s", l.summary(now))
+		// A burst of fallback nodes only is INFO: no account uses them while the
+		// first tier is up, so nothing it does is a fault of the account's route.
+		l.burstWarned = l.anyFirstTier(l.window)
+		if l.burstWarned {
+			l.warn("%s", l.summary(now))
+		} else {
+			l.info("%s", l.summary(now))
+		}
 		l.info("%s", line)
 		if l.burst == nil {
 			l.burst = make(map[string]struct{}, len(l.window))
@@ -474,8 +484,23 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		if l.burst != nil {
 			l.burst[serverID(ev.Label)] = struct{}{}
 			l.updateBurstPeak()
+			// A first-tier node that joins a burst written at INFO makes it a WARN.
+			if !l.burstWarned && l.firstTier(ev.Label) {
+				l.burstWarned = true
+				l.warn("%s", l.summary(now))
+			}
 		}
 	}
+}
+
+// anyFirstTier reports whether one of the nodes is a first-tier node.
+func (l *nodeLog) anyFirstTier(labels []string) bool {
+	for _, label := range labels {
+		if l.firstTier(label) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *nodeLog) updateBurstPeak() {
@@ -502,9 +527,16 @@ func (l *nodeLog) twinOf(latest map[string]drop, ev core.NodeEvent, now time.Tim
 }
 
 // flaps records a down of the server and reports whether it is flapping.
-// The drop that makes it flap raises the one WARN about it.
+// The drop that makes it flap raises the one WARN about it. A flapping server
+// stays so until a whole flapWindow has passed without a down: a drop that
+// leaves fewer than flapDowns downs in the window (the older ones aged out) is
+// still the same trouble, not a new one to announce again.
 func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 	id := serverID(ev.Label)
+	var previous time.Time
+	if downs := l.drops[id]; len(downs) > 0 {
+		previous = downs[len(downs)-1].at
+	}
 	recent := l.drops[id][:0]
 	for _, d := range l.drops[id] {
 		if now.Sub(d.at) <= flapWindow {
@@ -513,7 +545,8 @@ func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 	}
 	recent = append(recent, drop{at: now, kind: reasonKind(ev.Reason), label: ev.Label})
 	l.drops[id] = recent
-	if len(recent) < flapDowns {
+	stays := l.flapping[id] && !previous.IsZero() && now.Sub(previous) <= flapWindow
+	if len(recent) < flapDowns && !stays {
 		delete(l.flapping, id)
 		return false
 	}
@@ -523,17 +556,32 @@ func (l *nodeLog) flaps(ev core.NodeEvent, now time.Time) bool {
 		for _, d := range recent {
 			kinds[d.kind]++
 		}
-		l.nodeWarn(ev.Label, "%s is flapping: %d downs within the last hour (%s); its further down and back reports are INFO",
-			l.describe(ev.Label), len(recent), joinKinds(kinds))
+		level := "DEBUG"
+		if l.repeatsAtInfo(ev.Label) {
+			level = "INFO"
+		}
+		l.nodeWarn(ev.Label, "%s is flapping: %d downs within the last hour (%s); its further down and back reports are %s",
+			l.describe(ev.Label), len(recent), joinKinds(kinds), level)
 	}
 	return true
+}
+
+// firstTier reports whether the node is one that an account uses while it is
+// healthy (a nil first makes every node one).
+func (l *nodeLog) firstTier(label string) bool {
+	return l.first == nil || l.first[label]
+}
+
+// repeatsAtInfo reports whether repeat writes the node's lines at INFO.
+func (l *nodeLog) repeatsAtInfo(label string) bool {
+	return l.first == nil || (l.first[label] && !l.outage)
 }
 
 // repeat logs a line that adds nothing to what is already in the log (a down
 // of a flapping server, a twin's down): INFO for a first-tier node, DEBUG for
 // the others, so the log of an account is not filled by nodes it never uses.
 func (l *nodeLog) repeat(label, format string, args ...any) {
-	if l.first == nil || (l.first[label] && !l.outage) {
+	if l.repeatsAtInfo(label) {
 		l.info(format, args...)
 		return
 	}
@@ -543,7 +591,7 @@ func (l *nodeLog) repeat(label, format string, args ...any) {
 // nodeWarn logs a per-node line at WARN for a first-tier node and at INFO for
 // the others (see nodeHealthLogger).
 func (l *nodeLog) nodeWarn(label, format string, args ...any) {
-	if l.first == nil || l.first[label] {
+	if l.firstTier(label) {
 		l.warn(format, args...)
 		return
 	}
@@ -580,7 +628,7 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	if len(l.burst) == 0 {
 		awake, slept := l.lasted(l.burstStart, l.now())
 		l.info("node burst over: %d nodes were down, all back after %s%s", l.burstSize, awake, slept)
-		l.burst, l.burstPeak, l.burstSize = nil, nil, 0
+		l.burst, l.burstPeak, l.burstSize, l.burstWarned = nil, nil, 0, false
 	}
 }
 

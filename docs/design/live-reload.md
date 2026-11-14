@@ -110,11 +110,20 @@ angel tells the statistics store about the nodes and calls
 4. Open connections finish on the node they use; `status` keeps showing them
    under that node, and their traffic still counts for it.
 
-The core refuses changes unsupported in place (including no-account/default
-routes and single direct-post-only updates where unsupported); the angel
-restarts. Global post remains scalar for no-account `MATCH`; account-route
-pool candidates, including inherited global/provider lists, are route changes
-when account routes exist.
+An instance without node-backed routes (direct routes, direct-post pools, the
+global post pool) has no node table, health table or poller. Its generation
+replaces only the rules, the proxy map and the hop pools, and the probes of the
+pools; hop health and site bindings follow the hops by identity. The angel
+takes this path when no route has nodes before and after the change and the
+core routes in rule mode (account routes or a global post) both times.
+
+The core refuses changes unsupported in place (a core in direct mode, a default
+node, a node-backed route that appears where there was none); the angel
+restarts. A change of the global post list is applied in place when the core
+routes in rule mode before and after; adding the first global post to a core
+without routes, or removing the last, restarts. Account-route pool candidates,
+including inherited global/provider lists, are route changes when account
+routes exist.
 
 ## Restarting the core
 

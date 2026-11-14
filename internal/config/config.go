@@ -351,9 +351,6 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
-	if err := ValidateGlobalPostFallback(c); err != nil {
-		return err
-	}
 	if err := validateServers(c); err != nil {
 		return err
 	}
@@ -361,20 +358,6 @@ func (c *Config) Validate() error {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
 	}
 	return nil
-}
-
-// ValidateGlobalPostFallback rejects a global post pool when traffic can reach
-// the unauthenticated/default MATCH route. All configured account rows have
-// AccountRoute mappings and may safely inherit the global list.
-func ValidateGlobalPostFallback(c *Config) error {
-	if c == nil || len(c.Chain.PostSOCKS5) <= 1 {
-		return nil
-	}
-	if len(c.Accounts) > 0 && c.Auth.Login == "" && c.Auth.Password == "" {
-		return nil
-	}
-	// The interim guard exists only until core supports a global post pool.
-	return invalid("the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead")
 }
 
 // ValidateAccountExit validates only the account exit policy. index is the
@@ -459,6 +442,9 @@ func validateChainURL(field, raw string) error {
 	if err != nil || !isChainScheme(u.Scheme) || u.Opaque != "" || u.Hostname() == "" || hasInvalidEscapes(raw) || u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" {
 		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
 	}
+	if !asciiHost(u.Hostname()) {
+		return invalid("%s: the host must be ASCII; write an international domain name in its punycode (xn--) form", field)
+	}
 	port := u.Port()
 	if port == "" {
 		return invalid("%s must be empty, none, or a valid socks5://, http:// or https:// URL with a host and port", field)
@@ -475,6 +461,17 @@ func validateChainURL(field, raw string) error {
 		}
 	}
 	return nil
+}
+
+// asciiHost reports whether a hop host has only ASCII bytes: the proxy clients
+// cannot resolve or present a raw international name.
+func asciiHost(host string) bool {
+	for i := 0; i < len(host); i++ {
+		if host[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
 
 func hasInvalidEscapes(raw string) bool {

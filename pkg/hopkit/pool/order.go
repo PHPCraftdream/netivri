@@ -66,10 +66,40 @@ type HopSnapshot struct {
 	Weight float64
 	// HardFailures is the current consecutive-hard count.
 	HardFailures int
+	// SoftStreak counts soft failures since the last success or trip.
+	SoftStreak int
 	// Trips is the quarantine-trip count, saturating only at max int.
 	Trips int
 	// NextProbe is the earliest time a probe may be leased.
 	NextProbe time.Time
+}
+
+// State returns the health of one member without copying the whole pool.
+func (p *Pool) State(key string) (HopSnapshot, bool) {
+	now := p.clock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	h := p.members[key]
+	if h == nil {
+		return HopSnapshot{}, false
+	}
+	return p.snapshotLocked(key, h, now), true
+}
+
+func (p *Pool) snapshotLocked(key string, h *hop, now time.Time) HopSnapshot {
+	sand := effectiveSand(h, now)
+	state := Healthy
+	if h.quarantined {
+		state = Quarantined
+		if h.lease != nil && now.Before(h.leaseUntil) {
+			state = Probing
+		}
+	}
+	return HopSnapshot{
+		Key: key, State: state,
+		Sand: sand, Weight: weight(sand),
+		HardFailures: h.hard, SoftStreak: h.soft, Trips: h.trips, NextProbe: h.nextProbe,
+	}
 }
 
 // Snapshot returns member health in stable insertion order.
@@ -83,19 +113,7 @@ func (p *Pool) Snapshot() []HopSnapshot {
 		if h == nil {
 			continue
 		}
-		sand := effectiveSand(h, now)
-		state := Healthy
-		if h.quarantined {
-			state = Quarantined
-			if h.lease != nil && now.Before(h.leaseUntil) {
-				state = Probing
-			}
-		}
-		result = append(result, HopSnapshot{
-			Key: key, State: state,
-			Sand: sand, Weight: weight(sand),
-			HardFailures: h.hard, Trips: h.trips, NextProbe: h.nextProbe,
-		})
+		result = append(result, p.snapshotLocked(key, h, now))
 	}
 	return result
 }

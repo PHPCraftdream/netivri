@@ -27,7 +27,8 @@ func (h tuiHeader) Header() (tui.Header, error) {
 	if errors.Is(err, angel.ErrNotRunning) {
 		return tui.Header{Running: false, Version: version}, nil
 	}
-	if err != nil {
+	// An angel of another build runs: its header is enough here.
+	if err != nil && !errors.Is(err, angel.ErrStatusShape) {
 		return tui.Header{}, err
 	}
 	v := st.Version

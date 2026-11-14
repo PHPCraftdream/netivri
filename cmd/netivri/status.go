@@ -63,6 +63,9 @@ func runStatus(args []string, stdout io.Writer) error {
 	if errors.Is(err, angel.ErrControlTimeout) {
 		return angelNotResponding()
 	}
+	if errors.Is(err, angel.ErrStatusShape) {
+		return angelOutdated(err)
+	}
 	if errors.Is(err, angel.ErrNotRunning) {
 		return &cli.Error{
 			Code:    "ANGEL_NOT_RUNNING",

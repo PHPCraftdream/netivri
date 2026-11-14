@@ -87,9 +87,9 @@ type Binder interface {
 }
 
 // Options configures an immutable Dialer. Clock and Mutate must be safe for
-// concurrent calls. Post enables site binding and retry of typed Connect or
-// Handshake failures only when the target request may not have been sent and
-// the next address is not known to be unreachable.
+// concurrent calls. Post enables site binding and retry of typed Connect,
+// Handshake or Refusal failures only when the target request may not have
+// been sent and the next address is not known to be unreachable.
 type Options struct {
 	Clock  func() time.Time
 	Binder Binder
@@ -132,9 +132,10 @@ func New(p *pool.Pool, hops []Hop, options Options) *Dialer {
 }
 
 // DialContext dials through the pool. Pre mode tries each unique hop at most
-// once in pool order. Post mode retries typed Connect or Handshake failures
-// only when NextUnreachable and TargetSent are both false; it never bypasses
-// the configured pool.
+// once in pool order and stops once maxNextUnreachable hops have reported the
+// next address unreachable. Post mode retries typed Connect, Handshake or
+// Refusal failures only when NextUnreachable and TargetSent are both false; it
+// never bypasses the configured pool.
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
 	return d.dial(ctx, network, address, "", "")
 }
@@ -142,8 +143,9 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 // DialSite dials a site through the pool. With Post enabled, a healthy
 // login/site binding is tried first and retained as a candidate for safe
 // retries; unhealthy bindings are removed before drawing a replacement. Post
-// mode retries typed Connect or Handshake failures only when NextUnreachable
-// and TargetSent are both false, and never bypasses the configured pool.
+// mode retries typed Connect, Handshake or Refusal failures only when
+// NextUnreachable and TargetSent are both false, and never bypasses the
+// configured pool.
 func (d *Dialer) DialSite(ctx context.Context, network, address, login, site string) (net.Conn, error) {
 	return d.dial(ctx, network, address, login, site)
 }
@@ -194,6 +196,7 @@ func (d *Dialer) dial(ctx context.Context, network, address, login, site string)
 		return nil, ErrNoHops
 	}
 	var last error
+	nextUnreachable := 0
 	for _, hop := range candidates {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -226,8 +229,24 @@ func (d *Dialer) dial(ctx context.Context, network, address, login, site string)
 		if d.post && !retryablePostFailure(err) {
 			return nil, err
 		}
+		if !d.post && reportsNextUnreachable(err) {
+			// The next address is likely down for everyone: do not multiply
+			// the load by trying every pre hop against it.
+			if nextUnreachable++; nextUnreachable >= maxNextUnreachable {
+				return nil, err
+			}
+		}
 	}
 	return nil, last
+}
+
+// maxNextUnreachable bounds the pre hops tried once hops report the next
+// address unreachable.
+const maxNextUnreachable = 2
+
+func reportsNextUnreachable(err error) bool {
+	var staged *StageError
+	return errors.As(err, &staged) && staged != nil && staged.NextUnreachable
 }
 
 // ErrNoHops is returned if the configured pool has no dialable candidates.
@@ -237,7 +256,7 @@ var ErrNoHops = errors.New("hop dial: no candidates")
 var ErrNoConnection = errors.New("hop dial: no connection returned")
 
 // retryablePostFailure permits retry only when a typed failure proves the
-// selected hop failed before the target request could have reached it.
+// selected hop failed or refused before the target request could have reached it.
 func retryablePostFailure(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -246,16 +265,12 @@ func retryablePostFailure(err error) bool {
 	if !errors.As(err, &staged) || staged == nil || staged.NextUnreachable || staged.TargetSent {
 		return false
 	}
-	return staged.Stage == Connect || staged.Stage == Handshake
+	return staged.Stage == Connect || staged.Stage == Handshake || staged.Stage == Refusal
 }
 
 func (d *Dialer) healthy(key string) bool {
-	for _, snapshot := range d.pool.Snapshot() {
-		if snapshot.Key == key {
-			return snapshot.State == pool.Healthy
-		}
-	}
-	return false
+	state, ok := d.pool.State(key)
+	return ok && state.State == pool.Healthy
 }
 
 func (d *Dialer) change(key string, change func()) {

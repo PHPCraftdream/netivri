@@ -76,10 +76,8 @@ func TestConfigValidateHopLimits(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := Default()
-			// A 17-entry global post list is rejected by the separate MATCH
-			// fallback guard before the size check unless account-only auth has
-			// a configured named account. Keep these limit cases independent
-			// of that guard so they exercise the list cap itself.
+			// Keep these limit cases independent of unrelated account config so
+			// they exercise the list cap itself.
 			cfg.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: "provider", ExitCountry: "DE"}}
 			hops := HopList{"socks5://one.example:1080", "socks5://two.example:1080"}
 			for len(hops) < MaxHopsPerSide+1 {
@@ -350,5 +348,26 @@ func TestLoadHopListShapes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChainHostsAllowUnderscoreAndRejectNonASCII(t *testing.T) {
+	for _, value := range []string{"socks5://my_proxy.example:1080", "http://user:secret@edge_1.example:3128", "socks5://xn--bcher-kva.example:1080"} {
+		c := Default()
+		c.Chain.PreSOCKS5 = HopList{value}
+		if err := c.Validate(); err != nil {
+			t.Errorf("rejected valid hop host: %v", err)
+		}
+	}
+	for _, value := range []string{"socks5://bücher.example:1080", "http://user:secret@b%C3%BCcher.example:3128"} {
+		c := Default()
+		c.Chain.PostSOCKS5 = HopList{value, "socks5://proxy.example:1080"}
+		err := c.Validate()
+		if err == nil {
+			t.Fatalf("accepted a non-ASCII hop host")
+		}
+		if !strings.Contains(err.Error(), "chain.post_socks5[0]") || !strings.Contains(err.Error(), "punycode") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "cher") {
+			t.Fatalf("non-ASCII host error = %v, want the field, the punycode hint and no URL", err)
+		}
 	}
 }

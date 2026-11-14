@@ -45,6 +45,14 @@ type connLog struct {
 	// quiet, when it says true (the computer woke up a moment ago), turns the
 	// warnings of a period into INFO lines; nil is never quiet.
 	quiet func() bool
+	// now is the wall clock and asleep tells how much of a span of it the
+	// computer slept (nil: none), so that the hourly summary can say what time
+	// it covers; beatSince is when the current tally began, beatEvery how long
+	// it should last.
+	now       func() time.Time
+	asleep    func(from, to time.Time) time.Duration
+	beatSince time.Time
+	beatEvery time.Duration
 
 	mu    sync.Mutex
 	nodes map[string]stats.NodeInfo
@@ -307,7 +315,8 @@ type endedTally struct {
 }
 
 func newConnLog(info, warn logFunc) *connLog {
-	return &connLog{info: info, warn: warn, debug: func(string, ...any) {}, nodes: map[string]stats.NodeInfo{},
+	return &connLog{info: info, warn: warn, debug: func(string, ...any) {}, now: time.Now, beatSince: time.Now().Round(0), beatEvery: connBeatEvery,
+		nodes: map[string]stats.NodeInfo{},
 		dials: map[loginNode]map[string]int{}, ended: map[loginNode]*endedTally{},
 		moves: map[siteMove]int{}, panics: map[panicKey]int{}, loginFails: map[string]int{}, hour: map[string]*hourTally{}}
 }
@@ -437,6 +446,9 @@ func (a *loggedAuth) Users() []string { return a.inner.Users() }
 // run writes the reports every period, the summary of the accounts every beat
 // and the last period when ctx ends.
 func (c *connLog) run(ctx context.Context, every, beat time.Duration, tick func()) {
+	c.mu.Lock()
+	c.beatEvery = beat
+	c.mu.Unlock()
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	beats := time.NewTicker(beat)
@@ -468,6 +480,7 @@ func (c *connLog) heartbeat() {
 	hour := c.hour
 	c.hour = map[string]*hourTally{}
 	nodes := c.nodes
+	period := c.endTally()
 	c.mu.Unlock()
 	describe := func(label string) string { return describeConnNode(nodes, label) }
 	logins := make([]string, 0, len(hour))
@@ -481,13 +494,37 @@ func (c *connLog) heartbeat() {
 		t := hour[login]
 		// A summary in which most connections failed is a warning, not a note.
 		serious := failedMost(t.ended, t.silent+t.broken)
-		c.level(serious)("account %s: last hour: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
-			login, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
+		c.level(serious)("account %s: %s: %s ended, %d broken, %d closed before any data, %d without an answer%s, %d dials failed, %s down, %s up%s",
+			login, period, count(t.ended, "connection", "connections"), t.broken, t.empty, t.silent, t.silentDetail(describe), t.dialsFailed,
 			humanBytes(t.down), humanBytes(t.up), t.answers.detail())
 		if targets := t.targetsDetail(); targets != "" {
 			c.debug("account %s: destinations without an answer in the last hour: %s", login, targets)
 		}
 	}
+}
+
+// endTally closes the current hourly tally and says what time it covers: "last
+// hour", or, when the computer slept during it, since when and how long it
+// slept (the angel is frozen while it sleeps, so the tally holds only what
+// happened before). A sleep that the sleep watch has not noticed yet shows as
+// time beyond beatEvery that nothing explains; it is told without a length.
+// The caller holds c.mu.
+func (c *connLog) endTally() string {
+	now := c.now().Round(0) // the wall clock: a monotonic reading does not count the sleep
+	since := c.beatSince
+	c.beatSince = now
+	var slept time.Duration
+	if c.asleep != nil {
+		slept = c.asleep(since, now)
+	}
+	from := since.UTC().Format(time.RFC3339)
+	switch {
+	case slept > sleepGap:
+		return fmt.Sprintf("since %s, not counting %s asleep", from, slept.Round(time.Second))
+	case now.Sub(since)-c.beatEvery > sleepGap:
+		return fmt.Sprintf("since %s, the computer slept in between", from)
+	}
+	return "last hour"
 }
 
 // humanBytes renders a byte count as B, KiB, MiB or GiB.

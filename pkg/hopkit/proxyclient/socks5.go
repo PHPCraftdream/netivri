@@ -7,7 +7,9 @@ import (
 	"strings"
 )
 
-func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int) error {
+// socks5Handshake negotiates and sends the CONNECT request; targetPhase runs
+// right before the request is written.
+func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int, targetPhase func() error) error {
 	methods := []byte{0}
 	if p.Username != "" || p.Password != "" {
 		methods = append(methods, 2)
@@ -43,6 +45,11 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int) 
 	request, err := socks5Request(targetHost, targetPort)
 	if err != nil {
 		return proxyError(StageOther, 0, err)
+	}
+	if targetPhase != nil {
+		if err := targetPhase(); err != nil {
+			return proxyError(StageHandshake, 0, err)
+		}
 	}
 	if err := writeAll(conn, request); err != nil {
 		return targetSentError(StageHandshake, 0, err)

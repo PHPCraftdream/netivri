@@ -50,12 +50,11 @@ from the routes currently using the value: `listen.*`, `auth.login`/`auth.passwo
 and `chain.post_socks5` are marked restart-needed; `auth.allow_init_remote`,
 `fetch.proxy`, `fetch.update_interval` and `chain.pre_socks5` are not. Thus a
 changed `chain.post_socks5` conservatively reports `restart_needed: true`, even
-when the running core can apply a global post change in place for node-backed
-account routes that inherit it. Scalar global-post changes affecting no-account
-`MATCH` traffic require a restart. A change used only by direct-post routes may
-also require a restart when the core reports in-place reconfiguration
-unsupported. A running angel notices the written file within a few seconds and
-applies it; the command itself never restarts anything.
+when the running core applies the change in place (it does while the listener
+routes in rule mode, with account routes or a global post, before and after the
+change; the first global post of a listener without routes, or removing the
+last, restarts it). A running angel notices the written file within a few
+seconds and applies it; the command itself never restarts anything.
 
 ## Fields
 
@@ -82,7 +81,7 @@ applies it; the command itself never restarts anything.
 
 `provider` and `exit_country` may each hold a list: items separated by commas, blanks around a comma ignored, a repeated item kept once. In `exit_country` a `*` item stands for every country the list does not name, nodes of an unknown country included, at its place in the order (`DE,*` is DE first, then everything else; `*` alone is any country). When the file is loaded the lists are rewritten in the canonical form (`DE,NL`, `main,backup`), and the commands store them that way. The order is the priority: the countries first, then, inside a country, the providers (`provider: main,backup` with `exit_country: DE,NL` tries `main` in DE, `backup` in DE, `main` in NL, `backup` in NL). See [`docs/design/accounts.md`](design/accounts.md).
 
-Account writes validate the entire resulting configuration before saving; validation failures return `CONFIG_INVALID` and persist no changes. Batch account writes are atomic. An account route-to-direct or direct-to-route change applies in place only when at least one account route has stored nodes both before and after, keeping existing connections. The first node-backed route appearing or last disappearing (including the first explicit direct route on a default-only instance), direct-only changes, and changes after the last node-backed route restart the listener. Keeping another account's node-backed route through a flip preserves connections. Adding an account always restarts, as with `account add`; default/default-node/global-post changes retain their usual restart behavior. When adding or changing servers for explicit-direct-only accounts, the listener restarts if the core reports the change unsupported in place; other server transaction errors leave the current configuration running and appear in `status`.
+Account writes validate the entire resulting configuration before saving; validation failures return `CONFIG_INVALID` and persist no changes. Batch account writes are atomic. An account route-to-direct or direct-to-route change applies in place only when at least one account route has stored nodes both before and after, keeping existing connections. The first node-backed route appearing or last disappearing (including the first explicit direct route on a default-only instance), direct-only changes, and changes after the last node-backed route restart the listener. Keeping another account's node-backed route through a flip preserves connections. Adding an account always restarts, as with `account add`; default-node changes retain their usual restart behavior. When adding or changing servers for explicit-direct-only accounts, the listener restarts if the core reports the change unsupported in place; other server transaction errors leave the current configuration running and appear in `status`.
 
 ## Server listeners
 
@@ -208,8 +207,20 @@ Pools select candidates by weighted health. A soft failure adds to a score
 capped at 8; its half-life is 30 seconds, and success halves the score. The
 weight is exponentially lower as the score rises (minimum 0.05), but a
 weighted choice still gives a non-quarantined candidate a chance. Three hard
-failures in a row quarantine a hop for 30 seconds; each re-trip doubles the
-backoff to a 600-second cap. Once due, a quarantined hop is probed under a
+failures in a row quarantine a hop for 30 seconds; so do five soft failures
+without a success in between (a hop behind a VPN node often fails only
+ambiguously, because the node reports nothing until the hop answers). Each
+re-trip doubles the backoff to a 600-second cap.
+
+One attempt through a hop has 3 seconds to get as far as sending the target:
+connecting to the hop, TLS setup of an `https://` hop and the SOCKS5 method and
+password exchange. A hop that stays silent fails at once (a connect or TLS
+timeout is a hard failure, a silent SOCKS5 negotiation a soft one) and the
+connection tries another hop with the time it has left. A post hop is also
+retried after it refuses the password before the target was sent; the target
+request of an `http://` hop is its first message, so such a hop is not
+retried once it was sent. Hop host names may contain `_`; an international
+name must be written in its punycode (`xn--`) form. Once due, a quarantined hop is probed under a
 single 25-second lease. A successful probe revives it; a failed probe re-trips
 it with the longer backoff. If every candidate is quarantined, the pool tries
 the quarantined hops anyway: a post pool never bypasses its post proxy.
@@ -229,23 +240,44 @@ eight key characters plus trips/backoff; recovery is INFO with downtime; an
 all-down pool warns `all N hops are down, trying them anyway` (rate-limited per
 pool state).
 
+## Seeing the pools
+
+A running angel reports every pool (a role with more than one hop on an account
+route) in `netivri status`: per account, `hop_pools` lists for each role the
+hop count, how many hops are active and how many quarantined, and per hop its
+short id, state (`active`, `quarantined` or `probing`), trips and the seconds
+until the next revival probe. The short id is the first eight characters of the
+opaque key that the quarantine log lines print; URLs, hosts and credentials are
+never shown. Single-hop routes show nothing. `netivri doctor` adds the checks
+`hop state` (the two `.health` files are readable), `hop pools` (a warning when
+every hop of a pool is down) and `hop persistence` (an `info` for hops whose
+state cannot be stored). The Service tab of the shell shows one line per pool
+under the account, e.g. `post 3 hops: 2 up, 1 down`. The pool of the global
+default route (a `chain.post_socks5` list of several hops serving connections
+without an account route) is the top-level `hop_pools` of the status and is
+named `default route` in `doctor` and on the Service tab. See
+[`docs/cli.md`](cli.md#status) for the JSON fields.
+
+To read the state of a pool:
+
+```
+netivri status --json    # accounts[].hop_pools[].hops[].state / next_revival_seconds
+netivri doctor           # "hop pools": warn when every hop of a pool is down
+netivri logs --level warn
+```
+
 ## Direct and post-only scope
 
 A direct account can use its effective post candidates directly. A pre list
-only applies with a VPN node. The global post remains scalar for no-account
-`MATCH` traffic. A multi-entry `chain.post_socks5` is accepted only when named
-accounts are configured and legacy auth (`auth.login`/`auth.password`) is
-absent: those account routes can inherit the global list, while no-account
-`MATCH` traffic cannot use a post pool. With default unauthenticated/no-account
-traffic or legacy auth configured, validation returns exactly:
-
-> the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead
-
-This is an interim core limitation; see
-[`docs/design/live-reload.md`](design/live-reload.md),
-"Applying routes in place" and
-[`internal/core/reconfigure.go`](../internal/core/reconfigure.go) for the
-route reconfiguration boundary.
+only applies with a VPN node. A multi-entry `chain.post_socks5` is a pool for
+the account routes that inherit it and for connections without an account (the
+default route when no account route matches, and legacy auth), with the same
+weighted health and quarantine. Connections without a login share one anonymous
+site binding namespace, so each site keeps its hop for them, as it does per
+login for accounts. The default route has no pre side. A single-hop global post
+keeps its scalar mapping. See [`docs/design/hop-pools.md`](design/hop-pools.md)
+and [`docs/design/live-reload.md`](design/live-reload.md), "Applying routes in
+place", for how pool edits are applied.
 
 ## Allowed clients
 
@@ -384,8 +416,7 @@ object):
 The Ktav fields are ordered arrays, up to 16 candidate URLs on each side.
 Legacy scalar URLs remain accepted and singleton lists render as scalars.
 Candidates are alternatives, not serial hops. See [SOCKS5 chain](#socks5-chain)
-for weighted selection, quarantine/revival, bindings and the global-post scope
-gap.
+for weighted selection, quarantine/revival, bindings and the global-post pool.
 
 ```ktav
 chain: {

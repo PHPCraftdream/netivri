@@ -379,21 +379,13 @@ func findHop(hops []dial.Hop, key string) dial.Hop {
 }
 
 func snapshotState(p *pool.Pool, key string) pool.State {
-	for _, snapshot := range p.Snapshot() {
-		if snapshot.Key == key {
-			return snapshot.State
-		}
-	}
-	return ""
+	state, _ := p.State(key)
+	return state.State
 }
 
 func snapshotTrips(p *pool.Pool, key string) int {
-	for _, snapshot := range p.Snapshot() {
-		if snapshot.Key == key {
-			return snapshot.Trips
-		}
-	}
-	return 0
+	state, _ := p.State(key)
+	return state.Trips
 }
 
 type realClock struct{}

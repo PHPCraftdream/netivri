@@ -98,6 +98,7 @@ func (p *Pool) trip(h *hop, now time.Time) {
 		h.trips++
 	}
 	h.hard = hardTripThreshold
+	h.soft = 0
 	h.quarantined = true
 	h.lease = nil
 	h.leaseUntil = time.Time{}
@@ -118,6 +119,7 @@ func (p *Pool) revive(h *hop, now time.Time) {
 	p.advanceSand(h, now)
 	h.sand *= 0.5
 	h.hard = 0
+	h.soft = 0
 	h.trips = 0
 	h.quarantined = false
 	h.nextProbe = time.Time{}

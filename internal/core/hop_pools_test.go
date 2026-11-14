@@ -327,9 +327,12 @@ func TestPostHopHealthCountsStayBoundedWithNativeCarrier(t *testing.T) {
 			t.Fatal("native post failure did not remain sanitized")
 		}
 	}
+	// Five soft refusals in a row quarantine the hop once; refusals while it is
+	// quarantined (it is the only hop, so it is still tried) do not re-trip it
+	// or extend its backoff.
 	got := poolState(p, spec.keys[0])
-	if got.HardFailures != 0 || got.Sand <= 0 || got.Trips != 0 || got.State != pool.Healthy {
-		t.Fatal("proxy auth refusals were not recorded as soft refusing-hop failures")
+	if got.Sand <= 0 || got.Trips != 1 || got.State != pool.Quarantined || !got.NextProbe.Equal(now.Add(30*time.Second)) {
+		t.Fatalf("repeated refusals: hard=%d sand=%v trips=%d state=%s next=%v, want one soft-streak trip", got.HardFailures, got.Sand, got.Trips, got.State, got.NextProbe)
 	}
 	if attempts := proxy.targets.Load(); attempts != 9 {
 		t.Fatalf("native proxy attempts = %d, want one per request", attempts)

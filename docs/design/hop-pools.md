@@ -20,7 +20,14 @@ duplicate entries are rejected.
 Account routes (including direct accounts with post candidates) use the pool
 fields carried into core options: `RoutePrePool`, `RoutePostPool`, `NodePrePool`
 and `NodePostPool`, with old scalar fields kept for singleton legacy routes.
-`GlobalPost` remains scalar for connections without an account; a multi-entry global post list needed by those connections is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. A global pre field is not defined. This no-account limitation does not disable a global candidate list inherited by account routes.
+`GlobalPost` remains the scalar of connections without an account when the
+global list has one hop. A global list of several hops is carried by
+`GlobalPostPool` and serves those connections (the `MATCH` rule: the default
+route and legacy auth) through the same pool adapter and health as account
+routes; a one-hop `GlobalPostPool` builds exactly the scalar mapping. A global
+pre field is not defined: the default route has no pre side. A global pool of
+several distinct hops is refused with a default `Node`. The pool identity of the
+global pool is the route `MATCH` (`core.GlobalPoolRoute`).
 
 ## Weighted selection and health
 
@@ -29,15 +36,29 @@ seconds, and success halves it. The weight is `exp(-ln(20) * sand / 8)`, with
 a floor of 0.05. Candidates are selected as a weighted random permutation;
 quarantined candidates are excluded while any candidate is healthy.
 
-Three consecutive hard failures quarantine a candidate for 30 seconds. Each
+Three consecutive hard failures quarantine a candidate for 30 seconds, and so
+do five soft failures without a success in between (a soft failure interrupts
+the hard streak but not the soft one); soft failures while quarantined do not
+extend the backoff. Each
 re-trip doubles its backoff to the 600-second cap. A due candidate gets one
 25-second probe lease. Successful probing revives it; hard probe failure
 re-trips with doubled backoff. If every candidate is quarantined, pool order
 includes quarantined candidates and they are tried; in particular a post pool
 never falls back to a node-only/direct path. Pre dialing tries candidates in
-weighted order until one succeeds or all have been attempted; post dialing
-selects one and returns its result without retrying another or bypassing the
-post hop.
+weighted order until one succeeds, all have been attempted, or two hops have
+reported the next address unreachable (the node is then likely down for all).
+Post dialing retries another post hop only while nothing can have reached the
+site: a Connect, Handshake or Refusal failure before the target request was
+sent; it never bypasses the post hop.
+
+Each attempt has a 3-second negotiation budget up to the moment the target
+request is sent (connect, TLS, SOCKS5 method and authentication). A silent hop
+then fails with a typed stage instead of a context timeout: a connect or TLS
+timeout is a hard Connect failure, a silent SOCKS5 negotiation an ambiguous
+Handshake failure. The rest of the connection's deadline remains for another
+hop. A hop URL the native client cannot use is a hard Connect failure and is
+never probed, so it stays quarantined. A probe refused by the hop is a hard
+probe failure.
 
 Soft/hard blame is stage-aware. Transport failure connecting to the current
 hop is hard against that hop; an explicit downstream-unreachable response is
@@ -53,7 +74,10 @@ Post pools bind on `(login, site)`. `site` is a lowercase registrable domain
 using Public Suffix List rules, or an IP literal; a healthy binding stays with
 its hop, even if the node below it changes. If its hop becomes unhealthy or
 quarantined, the binding is removed and a replacement is selected before
-trying the dial. The default sliding binding lifetime is 24 hours.
+trying the dial. The default sliding binding lifetime is 24 hours. Connections
+without a login (the global default route) bind under one fixed anonymous login,
+so their sites are keyed by site alone; that namespace never collides with an
+account login.
 
 ## Persistence and logs
 

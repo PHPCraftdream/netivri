@@ -151,13 +151,18 @@ func (b *Binder) remove(entry *binderEntry) {
 	b.lru.Remove(entry.lru)
 }
 
+// removeExpired drops expired entries from the LRU tail. Every touch moves an
+// entry to the front with expiry now+TTL, so expiries grow toward the front and
+// the scan stops at the first live entry. A clock that steps back can leave an
+// expired entry behind a live one; Get still checks expiry itself.
 func (b *Binder) removeExpired(now time.Time) {
 	for element := b.lru.Back(); element != nil; {
 		previous := element.Prev()
 		entry := element.Value.(*binderEntry)
-		if !now.Before(entry.expires) {
-			b.remove(entry)
+		if now.Before(entry.expires) {
+			return
 		}
+		b.remove(entry)
 		element = previous
 	}
 }

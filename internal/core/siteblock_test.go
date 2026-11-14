@@ -161,11 +161,11 @@ func TestSiteThatWasAnsweredIsNotBlockedByStrayDeadConnections(t *testing.T) {
 
 func TestSilentConnectionsOfAClientThatLeftDoNotCount(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < 2*silentNeeded; i++ {
-		endConn(t, g, health, clock, blackholed, connEnd{wait: silentMinLife - time.Second})
+	for i := 0; i < 2*silentRatioMin; i++ {
+		endConn(t, g, health, clock, blackholed, connEnd{wait: silentRatioMinLife - time.Millisecond})
 	}
-	if n := g.blocks.blockedCount(); n != 0 {
-		t.Fatalf("%d blocks from connections that lived under %s", n, silentMinLife)
+	if n := g.blocks.blockedCount(); n != 0 || g.blocks.any() {
+		t.Fatalf("%d blocks (evidence %v) from connections that lived under %s", n, g.blocks.any(), silentRatioMinLife)
 	}
 }
 

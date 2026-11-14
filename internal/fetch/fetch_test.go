@@ -301,6 +301,11 @@ func TestClassifyErrNamesTheKindOfFailure(t *testing.T) {
 		{errors.New("dial tcp: lookup example.com: no such host"), "request failed: dns failure"},
 		{errors.New("connect: network is unreachable"), "request failed: network unreachable"},
 		{errors.New("tls: handshake failure"), "request failed: handshake failed"},
+		// Windows WSAETIMEDOUT, as net/http wraps it: no "timeout" in the text.
+		{&url.Error{Op: "Get", URL: "https://example.com/secret/token123", Err: &net.OpError{Op: "dial", Net: "tcp",
+			Err: errors.New("connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.")}},
+			"request failed: timeout"},
+		{errors.New("connected host has failed to respond"), "request failed: timeout"},
 		{errors.New("something nobody expected at example.com"), "request failed"},
 	} {
 		e := classifyErr(c.err, tu)

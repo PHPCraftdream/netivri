@@ -359,3 +359,66 @@ func TestRestoreClampsNonPositiveTripCounts(t *testing.T) {
 		t.Fatalf("restored trip count = %d, want 1", snapshot.Trips)
 	}
 }
+
+func TestSoftStreakQuarantinesAtThresholdAndSuccessResetsIt(t *testing.T) {
+	clock := newTestClock()
+	p := newTestPool(clock, "hop", "other")
+	for i := 1; i < softTripThreshold; i++ {
+		p.RecordSoft("hop")
+		if got := requireSnapshot(t, p, "hop"); got.State != Healthy || got.SoftStreak != i {
+			t.Fatalf("after %d soft failures: state=%s streak=%d, want healthy streak %d", i, got.State, got.SoftStreak, i)
+		}
+	}
+	p.RecordSuccess("hop")
+	if got := requireSnapshot(t, p, "hop"); got.SoftStreak != 0 {
+		t.Fatalf("success left soft streak %d, want 0", got.SoftStreak)
+	}
+	for i := 0; i < softTripThreshold; i++ {
+		p.RecordSoft("hop")
+	}
+	got := requireSnapshot(t, p, "hop")
+	if got.State != Quarantined || got.Trips != 1 || got.SoftStreak != 0 || !got.NextProbe.Equal(clock.Now().Add(30*time.Second)) {
+		t.Fatalf("after %d soft failures: state=%s trips=%d streak=%d next=%v, want quarantined for 30s", softTripThreshold, got.State, got.Trips, got.SoftStreak, got.NextProbe)
+	}
+	for i := 0; i < 2*softTripThreshold; i++ {
+		p.RecordSoft("hop")
+	}
+	if again := requireSnapshot(t, p, "hop"); again.Trips != 1 || !again.NextProbe.Equal(got.NextProbe) || again.SoftStreak != 0 {
+		t.Fatalf("soft failures while quarantined changed trips=%d next=%v streak=%d", again.Trips, again.NextProbe, again.SoftStreak)
+	}
+	if other := requireSnapshot(t, p, "other"); other.State != Healthy || other.SoftStreak != 0 {
+		t.Fatalf("other hop changed: %#v", other)
+	}
+}
+
+func TestHardFailuresDoNotResetSoftStreak(t *testing.T) {
+	clock := newTestClock()
+	p := newTestPool(clock, "hop")
+	for i := 0; i < softTripThreshold-1; i++ {
+		p.RecordSoft("hop")
+		p.RecordHard("hop")
+	}
+	if got := requireSnapshot(t, p, "hop"); got.State != Healthy || got.SoftStreak != softTripThreshold-1 || got.HardFailures != 1 {
+		t.Fatalf("interleaved failures: state=%s streak=%d hard=%d", got.State, got.SoftStreak, got.HardFailures)
+	}
+	p.RecordSoft("hop")
+	if got := requireSnapshot(t, p, "hop"); got.State != Quarantined || got.Trips != 1 {
+		t.Fatalf("interleaved soft streak did not trip: state=%s trips=%d", got.State, got.Trips)
+	}
+}
+
+func TestRestoreClearsSoftStreak(t *testing.T) {
+	clock := newTestClock()
+	p := newTestPool(clock, "hop")
+	for i := 0; i < softTripThreshold-1; i++ {
+		p.RecordSoft("hop")
+	}
+	p.Restore(nil, clock.Now())
+	if got := requireSnapshot(t, p, "hop"); got.SoftStreak != 0 {
+		t.Fatalf("restore left soft streak %d", got.SoftStreak)
+	}
+	p.RecordSoft("hop")
+	if got := requireSnapshot(t, p, "hop"); got.State != Healthy {
+		t.Fatalf("one soft failure after restore quarantined the hop")
+	}
+}

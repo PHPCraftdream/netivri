@@ -70,7 +70,7 @@ func TestProberOutcomesAndClosesSuccessfulConnection(t *testing.T) {
 		{name: "handshake hard", err: &dial.StageError{Stage: dial.Handshake}, want: pool.ProbeHardFailure},
 		{name: "next unreachable handshake inconclusive", err: &dial.StageError{Stage: dial.Handshake, NextUnreachable: true}, want: pool.ProbeInconclusive},
 		{name: "target inconclusive", err: &dial.StageError{Stage: dial.Target, NextUnreachable: true}, want: pool.ProbeInconclusive},
-		{name: "refusal inconclusive", err: &dial.StageError{Stage: dial.Refusal}, want: pool.ProbeInconclusive},
+		{name: "refusal hard", err: &dial.StageError{Stage: dial.Refusal}, want: pool.ProbeHardFailure},
 		{name: "unknown stage inconclusive", err: &dial.StageError{Stage: dial.Unknown}, want: pool.ProbeInconclusive},
 		{name: "raw error inconclusive", err: errors.New("network failure"), want: pool.ProbeInconclusive},
 		{name: "canceled stage inconclusive", err: &dial.StageError{Stage: dial.Handshake, Err: fmt.Errorf("wrapped: %w", context.Canceled)}, want: pool.ProbeInconclusive},

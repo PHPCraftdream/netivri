@@ -31,6 +31,25 @@ type AccountInfo struct {
 	Exit           string        `json:"exit,omitempty"`
 	AllowedClients string        `json:"allowed_clients"`
 	Chain          *AccountChain `json:"chain,omitempty"`
+	HopPools       []HopPoolInfo `json:"hop_pools,omitempty"`
+}
+
+// HopPoolInfo reports counts and safe identifiers for a multi-hop route role.
+type HopPoolInfo struct {
+	Role               string    `json:"role"`
+	HopCount           int       `json:"hop_count"`
+	ActiveCount        int       `json:"active_count"`
+	QuarantinedCount   int       `json:"quarantined_count"`
+	UnpersistableCount int       `json:"unpersistable_count,omitempty"`
+	Hops               []HopInfo `json:"hops"`
+}
+
+// HopInfo reports one hop using only its short opaque key prefix.
+type HopInfo struct {
+	ID                 string `json:"id,omitempty"`
+	State              string `json:"state"`
+	Trips              int    `json:"trips"`
+	NextRevivalSeconds *int64 `json:"next_revival_seconds,omitempty"`
 }
 
 // AccountChain is the effective, redacted SOCKS5 chain configuration for an account.
@@ -172,7 +191,10 @@ type Status struct {
 	StartedAt      string        `json:"started_at"`
 	Version        string        `json:"version"`
 	Accounts       []AccountInfo `json:"accounts,omitempty"`
-	Servers        []ServerInfo  `json:"servers,omitempty"`
+	// HopPools are the hop pools of the global default route (connections
+	// without an account route); omitted when it has no pool of several hops.
+	HopPools []HopPoolInfo `json:"hop_pools,omitempty"`
+	Servers  []ServerInfo  `json:"servers,omitempty"`
 	// Activity has one entry per account while the core runs.
 	Activity []AccountActivity `json:"activity,omitempty"`
 	Warm     *WarmInfo         `json:"warm,omitempty"`
@@ -283,14 +305,44 @@ func writeCtlErr(w http.ResponseWriter, code int, errCode, msg string) {
 // ErrControlRejected marks a non-2xx control answer.
 var ErrControlRejected = errors.New("control request rejected")
 
-// parseControlStatus decodes a /v1/status answer.
+// ErrStatusShape marks a live angel whose status answer does not decode in
+// full: it runs another netivri build. Its pid and the scalar header still
+// decode, so it is told apart from a dead angel and can be stopped.
+var ErrStatusShape = errors.New("the running angel is another netivri build")
+
+// statusHeader holds the status fields every build answers in the same shape.
+type statusHeader struct {
+	Angel      string   `json:"angel"`
+	Foreground bool     `json:"foreground"`
+	PID        int      `json:"pid"`
+	Listen     string   `json:"listen"`
+	Protocols  []string `json:"protocols"`
+	Auth       string   `json:"auth"`
+	StartedAt  string   `json:"started_at"`
+	Version    string   `json:"version"`
+}
+
+// parseControlStatus decodes a /v1/status answer. An answer whose header
+// decodes but whose body does not returns that header with ErrStatusShape.
 func parseControlStatus(data []byte, code int) (Status, error) {
 	if code != http.StatusOK {
 		return Status{}, fmt.Errorf("%w: HTTP %d", ErrControlRejected, code)
 	}
 	var st Status
 	if err := json.Unmarshal(data, &st); err != nil {
-		return Status{}, fmt.Errorf("decode status answer: %w", err)
+		var h statusHeader
+		if json.Unmarshal(data, &h) != nil || h.PID <= 0 {
+			return Status{}, fmt.Errorf("decode status answer: %w", err)
+		}
+		v := h.Version
+		if v == "" {
+			v = "unknown"
+		}
+		return Status{
+				Angel: h.Angel, Foreground: h.Foreground, PID: h.PID, Listen: h.Listen,
+				Protocols: h.Protocols, Auth: h.Auth, StartedAt: h.StartedAt, Version: h.Version,
+			}, fmt.Errorf("%w (pid %d, version %s); restart it: netivri down, then netivri up (decode status answer: %v)",
+				ErrStatusShape, h.PID, v, err)
 	}
 	return st, nil
 }

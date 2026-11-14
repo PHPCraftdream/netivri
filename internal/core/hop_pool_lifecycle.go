@@ -156,10 +156,8 @@ func (m *hopPoolLifecycle) poolLock(*pool.Pool) *sync.Mutex { return &m.mutation
 type HopSnapshot = pool.HopSnapshot
 
 func poolState(p *pool.Pool, key string) HopSnapshot {
-	for _, state := range p.Snapshot() {
-		if state.Key == key {
-			return state
-		}
+	if state, ok := p.State(key); ok {
+		return state
 	}
 	return HopSnapshot{Key: key, State: pool.Healthy}
 }
@@ -296,6 +294,7 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 		return nil, nil, err
 	}
 	uses = append(uses, directUses...)
+	uses = append(uses, globalPostPoolUses(o, gen)...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if o.SiteBinder != nil {
@@ -367,6 +366,29 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 	return updated, uniqueSorted(names), nil
 }
 
+// GlobalPoolRoute is the RouteKey that hop events and snapshots report for the
+// pool of the global default route (connections without an account route).
+const GlobalPoolRoute = "MATCH"
+
+// globalPostPoolUses is the lifecycle use of the global post pool: nil unless
+// the effective list has several distinct hops. Like a direct-post route it has
+// no node carrier. A pool of several hops is refused with a default node.
+func globalPostPoolUses(o Options, gen int) []*hopPoolUse {
+	spec := newHopPoolSpec(postHopPool, o.globalPostPool(), gen)
+	if spec == nil || len(spec.keys) < 2 {
+		return nil
+	}
+	members := make(map[string]member, len(spec.keys))
+	for _, key := range spec.keys {
+		members[key] = nil
+	}
+	return []*hopPoolUse{{
+		logical: hopPoolLogicalKey{role: postHopPool, route: GlobalPoolRoute, node: -1},
+		route:   GlobalPoolRoute, role: postHopPool, node: -1, spec: spec,
+		adapterName: globalPostProxyName(gen), members: members, direct: true,
+	}}
+}
+
 func postHopKeys(o Options) map[string]bool {
 	keys := make(map[string]bool)
 	for _, route := range o.AccountRoute {
@@ -385,6 +407,11 @@ func postHopKeys(o Options) map[string]bool {
 					keys[key] = true
 				}
 			}
+		}
+	}
+	for _, uri := range o.globalPostPool() {
+		if key := hopPoolKey(uri); key != "" {
+			keys[key] = true
 		}
 	}
 	return keys
@@ -670,7 +697,9 @@ func (m *hopPoolLifecycle) newReviver(options WarmOptions) (*hoprevive.Reviver, 
 				}
 			}
 			if selected == nil {
-				return nil, errors.New("core: missing native hop probe target")
+				// No usable target (for example a URL the native client rejects):
+				// keep the registration complete; the hop is never eligible.
+				selected = unusableProbeHop(key, use.role, m.now)
 			}
 			hops = append(hops, selected)
 		}
@@ -844,4 +873,10 @@ func hopAddress(raw string) string {
 		}
 	}
 	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
+// unusableProbeHop stands in for a hop without a native probe target. Probing
+// it is never eligible; a dial through it fails as errUnusableHop.
+func unusableProbeHop(key string, role hopPoolRole, now func() time.Time) *mihomoPoolHop {
+	return &mihomoPoolHop{key: key, role: role, proxyParseErr: errUnusableHop, now: now}
 }

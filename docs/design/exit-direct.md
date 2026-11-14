@@ -63,8 +63,9 @@ lifecycle for a choice of two values. If shared profiles are wanted later, an
   instance, the listener restarts. Direct-only changes and changes after the
   last node-backed route restart. Keeping another account's node-backed route
   through a flip preserves connections. Adding an account always restarts, as
-  with `account add`; defaults, default-node and global-post changes retain
-  their existing restart behavior.
+  with `account add`; defaults and default-node changes retain their existing
+  restart behavior; a global-post change applies in place while the listener
+  routes in rule mode before and after.
   Clone inherits the source exit unless `--exit` overrides it.
 
 For server updates with explicit-direct-only accounts, the listener restarts if the core reports that the update is unsupported in place; other server transaction errors leave the current configuration running and appear under `status.reload`.

@@ -7,8 +7,8 @@ import (
 )
 
 func TestFallbackHopPoolIdentityIgnoresUserinfo(t *testing.T) {
-	first := hopPoolKey("http://first-user:first-secret@bad_host.invalid:8080")
-	second := hopPoolKey("http://second-user:second-secret@bad_host.invalid:8080")
+	first := hopPoolKey("http://first-user:first-secret@bücher.invalid:8080")
+	second := hopPoolKey("http://second-user:second-secret@bücher.invalid:8080")
 	if !strings.HasPrefix(first, "u:") || first != second {
 		t.Fatal("fallback health identity must ignore credentials")
 	}

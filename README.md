@@ -38,7 +38,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
 - **Steady exits.** An account keeps one exit node per destination site, nodes
   are probed in the background, and a slow handshake on a VLESS node gets one
   extra attempt against the same node.
-- **Pre/post proxy pools.** `pre_socks5` (how netivri reaches a VPN node) and `post_socks5` (where traffic goes after it) accept up to 16 ordered candidates per side using `socks5://`, `http://` (HTTP CONNECT) or `https://` over TLS. Candidates are alternatives, never serial hops; global, provider and account lists use full nearest-level replacement, with `none` clearing inherited candidates. Weighted hop health quarantines repeatedly failing candidates and probes for revival; post hops are bound per login and site. See [`docs/config.md`](docs/config.md#socks5-chain).
+- **Pre/post proxy pools.** `pre_socks5` (how netivri reaches a VPN node) and `post_socks5` (where traffic goes after it) accept up to 16 ordered candidates per side using `socks5://`, `http://` (HTTP CONNECT) or `https://` over TLS. Candidates are alternatives, never serial hops; global, provider and account lists use full nearest-level replacement, with `none` clearing inherited candidates. Weighted hop health quarantines repeatedly failing candidates and probes for revival; post hops are bound per login and site. `status`, `doctor` and the Service tab show the pools. See [`docs/config.md`](docs/config.md#socks5-chain).
 - **Separate runs.** `--local` makes `./.netivri` its own state directory
   (settings, tokens, subscriptions, statistics, angel), found again without a
   flag from that directory; `--home {DIR}` names any directory.
@@ -295,7 +295,10 @@ netivri account set-socks5 {ACCOUNT} --post inherit
 
 These are candidate alternatives: weighted health lowers a hop's selection
 weight after soft failures (score half-life 30 seconds); three hard failures
-quarantine it for 30 seconds, doubling on re-trip to 600 seconds. Quarantined
+in a row, or five soft failures without a success in between, quarantine it
+for 30 seconds, doubling on re-trip to 600 seconds. A hop that does not
+answer within 3 seconds (connect, TLS, SOCKS5 negotiation) fails at once so
+another hop is tried in the same connection. Quarantined
 hops are probed for revival. All-down pools still try candidates, never
 bypassing a post proxy. Post hops bind per login and public-suffix-aware site
 domain for the default 24-hour lifetime. Role-separated health files are
@@ -305,11 +308,28 @@ quarantine/re-trip is WARN with role and the first eight key characters,
 recovery is INFO with downtime, and a rate-limited all-down warning says
 `all N hops are down, trying them anyway`.
 
-**Interim scope gap:** account routes, including inherited global lists, use
-pools. The global `MATCH` post remains a scalar for connections without an
-account; no `GlobalPre` field is defined. A multi-entry global post required by
-connections without an account is rejected with the exact error
-`the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`.
+Reading the pools: `netivri status` (short and `--full`, in Ktav or with `--json`)
+adds `hop_pools` to the accounts whose route has a role with several hops:
+per role the hop count, active and quarantined counts and, per hop, its short
+opaque id, state (`active`, `quarantined`, `probing`), trips and the seconds until
+the next revival probe. `netivri doctor` warns when every hop of a pool is down
+and checks that the two `.health` files are readable; the Service tab of the
+shell shows a line such as `post 3 hops: 2 up, 1 down` under the account. The
+pool of the default route (a global post list of several hops) is the top-level
+`hop_pools` of the status and is named `default route` in `doctor` and the
+Service tab. Hops are never shown by URL or credentials.
+
+```
+netivri status --json
+# "hop_pools": [{"role": "post", "hop_count": 3, "active_count": 2, "quarantined_count": 1,
+#   "hops": [{"id": "1a2b3c4d", "state": "active", "trips": 0},
+#            {"id": "5e6f7a8b", "state": "quarantined", "trips": 2, "next_revival_seconds": 42}, ...]}]
+```
+
+Account routes, including inherited global lists, use pools. A global post list
+of several hops also serves connections without an account (the default route
+and legacy auth) through the same pool; those connections have no login, so
+their site bindings share one anonymous key. The default route has no pre side.
 
 `netivri help` lists every command; `netivri help sub add` (or
 `netivri sub add --help`) shows the flags, examples and possible errors of one

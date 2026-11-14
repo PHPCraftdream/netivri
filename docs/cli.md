@@ -45,7 +45,7 @@ Full management in the shell. The list shows Name, Protocol, Port and State. `a`
 
 ### Service
 
-The angel and its checks, the shell side of `up`, `down`, `status` and `doctor` (the same operations, not copies). The list has three rows: Angel, Checks and Accounts. The Angel card shows the state, listen address, process id, uptime and version of the running angel (re-read every 3 seconds, including while another tab is selected) and the actions Start (`s`), Stop... (`x`) and Restart... (`t`); Stop and Restart ask first and the confirmation names the open connections that will drop, Cancel is the default. Start of a running angel and Stop of a stopped one only say so; Restart of a stopped angel just starts it. The Checks card runs the checks of `netivri doctor` on demand (`c`) and lists each with its status and, for warnings and failures, the detail. The Accounts card shows the live activity of every account (connections and bytes, as in `status`). Errors are shown by message and hint only.
+The angel and its checks, the shell side of `up`, `down`, `status` and `doctor` (the same operations, not copies). The list has three rows: Angel, Checks and Accounts. The Angel card shows the state, listen address, process id, uptime and version of the running angel (re-read every 3 seconds, including while another tab is selected) and the actions Start (`s`), Stop... (`x`) and Restart... (`t`); Stop and Restart ask first and the confirmation names the open connections that will drop, Cancel is the default. Start of a running angel and Stop of a stopped one only say so; Restart of a stopped angel just starts it. The Checks card runs the checks of `netivri doctor` on demand (`c`) and lists each with its status and, for warnings and failures, the detail. The Accounts card shows the live activity of every account (connections and bytes, as in `status`). Under an account whose route has a pool of several hops, one line per pool shows it compactly, for example `post 3 hops: 2 up, 1 down` (a hop being probed counts as down). Errors are shown by message and hint only.
 
 ### Logs
 
@@ -406,8 +406,10 @@ know, or none) or `3 dial
 failures`. `{WORDS}` is a short excerpt of the error in which every word that could be
 an address, host, port, path or credential is replaced by `<addr>`. A node that goes
 down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
-within the last hour (...)`, says so, and its further down and back lines are `INFO`
-until it has been quiet for an hour (a flapping node does not count toward a burst). Only
+within the last hour (...); its further down and back reports are INFO`, says so (the line
+names the level: `DEBUG` for a node of a later tier and during an outage), and its further
+down and back lines follow it until the node has gone a whole hour without a down, so one that
+keeps going down every half hour is announced once (a flapping node does not count toward a burst). Only
 a node of the first tier of some account's route raises a `WARN` for going down or flapping; the
 nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up,
 and what they repeat (the downs and backs of a flapping node after its `flapping` line, the down of a
@@ -476,9 +478,11 @@ again. When the window expires, the minute connection-log tick writes one final 
 summary was emitted and the total grew, then starts a fresh collection window. All such reports count toward
 neither a burst nor flapping. When 3
 or more nodes go down within 10 seconds (a lost network on this machine, a shared
-outage, or the first probes after a start) the third one raises a single `WARN`,
+outage, or the first probes after a start) the third one raises a single line,
 `node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
-lost network or a shared outage` (with `, right after start` in the first minute), the
+lost network or a shared outage` (with `, right after start` in the first minute), a `WARN` when
+a node of the first tier of some account's route is among them and an `INFO` when they are all nodes
+of later tiers (a first-tier node that joins such a burst raises the `WARN` once); the
 nodes of the burst are logged at `INFO` from then on, and `node burst over: 9 nodes
 were down, all back after 41s` closes it when the last one is back. A network that fails
 slowly (nodes are probed minutes apart, so their downs trickle in over many minutes) is no burst: when
@@ -496,7 +500,12 @@ up`, counts toward neither a burst nor flapping, and the per-minute connection l
 It reads the file, so it works while the angel runs and after it stopped or failed to start.
 The hourly summary of an account (`account alice: last hour: 978 connections ended, ...`) is a `WARN` when at
 least 20 connections ended and half or more of them were broken or got no answer, an `INFO` otherwise (and
-right after the computer woke up).
+right after the computer woke up). When the computer slept during the hour the summary says what it
+covers instead of `last hour`, since the angel is frozen while it sleeps and the figures are those of the
+time before: `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: 169 connections ended, ...`
+(`since ...Z, the computer slept in between` when the sleep has not been noticed yet). A previous angel that
+did not stop cleanly is named at the next start in one `INFO` line that says it was killed, or the computer
+restarted or lost power (Windows ends a running angel when it restarts), and that there is no crash dump.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
@@ -637,6 +646,9 @@ The checks:
 | `listen` | The address the running angel reports and its `allowed_clients` rule; `fail` when its core is down; when nothing runs, whether the configured port is free (a local probe). |
 | `subscriptions` | Every configured subscription has a stored snapshot no older than twice `fetch.update_interval` (skipped when the interval is `off`), and every account names configured subscriptions only (a `fail` even while the angel is down). |
 | `account {ACCOUNT}` | One per account: its route has stored nodes (`fail` otherwise, like `NO_NODES_FOR_COUNTRY`); with a running angel, a node in service in the first tier that has nodes (`warn` when only a fallback tier is in service, `fail` when none is; a node is in service unless the routing has taken it out, so a single failed probe does not count against it). Without an angel the stored nodes are counted and the liveness part is a `warn`; until the warm-up has probed the route it is a `warn` too. An explicit direct exit reports `exit: direct`; doctor warns if served by a non-loopback server. An account with neither provider nor exit country uses the default route. |
+| `hop state` | Only when `{HOME}/run/hops-pre.health` or `hops-post.health` exists: each file is readable and how many dead hops it holds (`warn` for an unreadable file; the angel then starts without that stored state and rewrites it). The hops are never named. |
+| `hop pools` | Only with a running angel that reports a pool (a role with more than one hop on an account route): `ok` with the count of up hops, `warn` when every hop of a pool is quarantined, in the wording of the log line: `hop pre pool (alice, eve): all 3 hops are down, trying them anyway`. The accounts sharing the pool are listed. |
+| `hop persistence` | Only when some pool hop cannot be written to the hop state files (a key the store rejects): `ok` with an `info:` detail; such a hop works normally, its quarantine is only forgotten when the angel restarts. |
 | `log` | No `WARN` or `ERROR` entries in the last hour of the angel log (count and newest message otherwise). Reports of a node going down, the summary of a burst of them and the warning about a flapping node are only counted ("besides N node-down reports"): the `account` checks already say whether the routes have live nodes. The log is read even when the angel is down; a missing log file is `ok` ("no log yet"). |
 
 Errors: `DOCTOR_FAILED` (exit 7) when at least one check failed; the document
@@ -715,7 +727,7 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   node of a better tier has been up for 5 minutes. `pre_socks5`
   and `post_socks5` give the effective proxy of each side (see
   `set-socks5`); in `show` `own` is the configured account list as a redacted
-  array, or null when no own list is configured. For this account's alternate providers, `account show` / `status` can report `varies` with source `provider`; an account list overrides that provider candidate list. See [config.md](config.md#socks5-chain) for the full cascade and scalar-only no-account global post scope.
+  array, or null when no own list is configured. For this account's alternate providers, `account show` / `status` can report `varies` with source `provider`; an account list overrides that provider candidate list. See [config.md](config.md#socks5-chain) for the full cascade and the global post pool for connections without an account.
   ```json
   {"login": "alice", "provider": "main,backup", "exit_country": "DE,*",
    "pre_socks5": {"value": ["socks5://pre.example:1080"], "source": "global", "auth": true},
@@ -765,8 +777,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   operation. Replacement/add/remove cannot be mixed on a side; removing the
   last entry restores inheritance. Legacy scalar URLs remain valid. A post
   list on an account without a VPN route is used directly. A running angel
-  applies account-route list changes in place when supported; direct-post-only
-  changes may restart if the core reports in-place reconfiguration unsupported.
+  applies account-route list changes in place, including edits of an account
+  pool whose route has no nodes (reorder, add, remove).
   See [design/hop-pools.md](design/hop-pools.md) for exact health, binding, state-file and log semantics, including role-separated files `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health`.
 - `set-exit` takes one login or comma-separated logins, or `--all`, followed by
   `route` or `direct`. Direct requires empty provider and country; no
@@ -781,8 +793,8 @@ and exit country (the design is in [design/accounts.md](design/accounts.md)).
   (including the first explicit direct route on a default-only instance),
   direct-only changes, and changes after the last node-backed route restart the
   listener. Keeping another account's node-backed route through a flip preserves
-  connections. Adding an account always restarts, as with `account add`; default/
-  default-node/global-post changes retain their usual restart behavior.
+  connections. Adding an account always restarts, as with `account add`;
+  default-node changes retain their usual restart behavior.
   Direct exits bypass the VPN and expose this machine's address. They may be
   served by the mixed proxy or a server; `doctor` warns for a direct account on a
   non-loopback server bind or mixed proxy bind, without failing the check. When
@@ -879,8 +891,11 @@ running listener and the open connections go on. Account-only `allowed_clients`
 changes are applied hot to servers and mixed-proxy authentication; existing
 connections stay open. Adding or removing an account, changing its credentials,
 or changing the bind or port restarts the listener and ends open connections.
-Changes to `listen.allowed_clients` or global `chain.post_socks5` also require a
-restart. Route changes are applied in place when supported; existing
+Changes to `listen.allowed_clients` also require a restart. A change of the
+global `chain.post_socks5` applies in place while the listener routes in rule
+mode (account routes or a global post) before and after the change; the first
+global post of a listener without routes, or removing the last one, restarts it.
+Route changes are applied in place when supported; existing
 connections stay open. Server changes are transactional: unchanged listeners
 and their connections are kept, except changed UDP listeners, whose connections
 end when their sockets are restarted. A change it cannot apply, such as a route
@@ -893,8 +908,8 @@ existing connections. The first node-backed route appearing or last disappearing
 (including the first explicit direct route on a default-only instance), direct-
 only changes, and changes after the last node-backed route restart the listener.
 Keeping another node-backed account route through a flip preserves connections.
-Adding an account always restarts, as with `account add`; default/default-node/
-global-post changes retain their usual restart behavior.
+Adding an account always restarts, as with `account add`; default-node changes
+retain their usual restart behavior.
 
 See [design/live-reload.md](design/live-reload.md)
 and [design/socks5-chain.md](design/socks5-chain.md).
@@ -958,19 +973,18 @@ when the validation fails. The valid keys and their values are listed by
 scalar URL, `none`, or empty to clear; edit `config.ktav` for candidate arrays).
 The fields accept up to 16 URLs per side; legacy scalar URLs remain accepted and
 singleton lists render as scalars. `none` stands alone to clear inherited
-candidates. Entries are alternatives, not serial hops. Multi-entry global post
-is supported for account routes that inherit it, but the no-account `MATCH`
-path still uses scalar `GlobalPost`; a multi-entry global post needed by a
-connection without an account is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. A plain `auth.password` is stored as an argon2id hash and is never echoed; the literal value `init` stores the placeholder that waits for the first client.
+candidates. Entries are alternatives, not serial hops. A multi-entry global post
+serves the account routes that inherit it and connections without an account
+(the default route and legacy auth) through one pool. A plain `auth.password` is stored as an argon2id hash and is never echoed; the literal value `init` stores the placeholder that waits for the first client.
 
 The answer reports `restart_needed`: `true` when the running angel has to
 restart its listener for the change to apply (`listen.bind`, `listen.port`,
 `listen.allowed_clients`, `auth.login`, `auth.password`), `false` when it
 applies without a listener restart (`auth.allow_init_remote`, `fetch.*`,
 route changes including account-route pre/post pools and global/provider list
-changes used by account routes). A global post change affecting only the
-no-account `MATCH` path restarts the listener; direct-post-only changes may
-also restart if the core reports in-place reconfiguration unsupported. See
+changes used by account routes, and global post changes while the listener
+routes in rule mode before and after). Adding the first global post to a
+listener without routes, or removing the last, restarts the listener. See
 [design/live-reload.md](design/live-reload.md). The command itself never
 restarts anything: a running angel notices the written file within a few
 seconds and applies it.
@@ -1011,7 +1025,10 @@ inconclusive control errors; the control response is capped at 4 MiB.
 `foreground` is `true` for `up --foreground`, `false` for the angel. The
 foreground mode applies the same control-probe rules: a control timeout returns
 `ANGEL_NOT_RESPONDING` before the core or proxy listener starts, and an
-inconclusive non-timeout failure returns `INTERNAL`.
+inconclusive non-timeout failure returns `INTERNAL`. An angel of another netivri version whose
+status answer does not decode in full counts as running when its pid matches the state file:
+`up` answers `already_running` (or `ALREADY_RUNNING` for conflicting settings), `--foreground`
+refuses with `ALREADY_RUNNING`, and `down` stops it.
 `already_running` is `true` when the command found and reused a running
 angel (idempotent success, exit 0); these keys are additive and do not
 bump `schema_version`. When an angel is already running and the caller
@@ -1186,6 +1203,36 @@ packets), plus shared-endpoint `members`, `default`, `unclassified` and
 `slow_first_byte`. The selection
 fields of the planned shape below are not included
 yet; they arrive with `netivri use`.
+
+Each account record also has `hop_pools` when the route of the account has a role with more than
+one hop (the field is omitted otherwise, so single-hop routes show nothing new): an array with one
+item per pool, `pre` pools before `post` pools, each
+`{"role", "hop_count", "active_count", "quarantined_count", "unpersistable_count", "hops"}`.
+`quarantined_count` also counts the hops being probed; `unpersistable_count` is omitted when zero.
+`hops` is sorted by the hop's opaque key and each item is
+`{"id", "state", "trips", "next_revival_seconds"}`: `id` is the first eight characters of the
+hop's opaque key (the one the `hop pre 1a2b3c4d quarantined` log lines show; omitted for a hop the
+hop state files cannot hold), `state` is `active`, `quarantined` or `probing`, `trips` how often the
+hop was quarantined in a row, and `next_revival_seconds` the whole seconds (rounded up, `0` when
+due) until the next revival probe of a quarantined hop; it is omitted for active and probing
+hops. Accounts that share a route report the same pools; two pools with different providers or lists on one
+route stay separate items. A hop is never shown by URL, host or credentials. Both the short and the
+full view carry these fields.
+
+The top level of the status data has `hop_pools` of the same shape for the global default route
+(connections without an account route, the `MATCH` rule) when its post list has more than one hop;
+it is omitted otherwise. `doctor` names that pool `default route` where an account pool shows its
+logins, and the Service tab lists it as a `default route` line under the accounts.
+
+Example of one account record (`chain` left out) with a post pool of three hops, one of them quarantined:
+
+```json
+{"login": "alice", "provider": "main", "exit_country": "DE", "exit": "route", "allowed_clients": "*",
+ "hop_pools": [{"role": "post", "hop_count": 3, "active_count": 2, "quarantined_count": 1,
+                "hops": [{"id": "1a2b3c4d", "state": "active", "trips": 0},
+                         {"id": "5e6f7a8b", "state": "quarantined", "trips": 2, "next_revival_seconds": 42},
+                         {"id": "c0ffee00", "state": "active", "trips": 0}]}]}
+```
 
 `status` reports effective account exit modes (`route` or `direct`); `account show` reports the configured mode and direct accounts have no node tiers.
 
@@ -1366,7 +1413,9 @@ When no angel is running: error `ANGEL_NOT_RUNNING` on stderr, exit 4
 (start it with `netivri up`). A stale state file (dead pid, no live control
 answer: connection refused, another pid) counts as not running and is removed. An angel that
 only answers too slowly (busy reloading) is not gone: `ANGEL_NOT_RESPONDING`, exit 1, and its
-state file stays.
+state file stays. An angel started by another netivri version whose status this version cannot
+decode is running too: `ANGEL_OUTDATED`, exit 1, with its pid and version in the message; `doctor`
+fails its `angel` check with the same text. Restart it with `netivri down`, then `netivri up`.
 
 Planned shape once node selection and subscriptions are wired in (additive
 to the fields above):
@@ -1629,6 +1678,7 @@ Raw proxy mappings (credentials) are never printed.
 | `ANGEL_START_TIMEOUT` | 1 | The angel did not report startup within 15 s |
 | `ANGEL_STOP_TIMEOUT` | 1 | The angel did not stop within 15 s after `down` |
 | `ANGEL_NOT_RESPONDING` | 1 | `status`, `down` or `up`: the state file names an angel whose control endpoint did not answer within 2 s (busy, for example reloading); retry in a moment. Nothing is removed, stopped or spawned |
+| `ANGEL_OUTDATED` | 1 | `status`: the angel runs another netivri version and its status answer does not decode in this one; the message names its pid and version. Restart it with `netivri down`, then `netivri up`. `down` stops such an angel and `up` reports it as already running |
 | `PORT_IN_USE` | 6 | Listen port is taken |
 | `SERVER_PORT_AMBIGUOUS` | 6 | A shared TCP port cannot be classified: TLS match keys overlap, or a member that is not the default has no explicit SNI that its link sends (an IP literal is never sent as SNI). Set or change `sni`, or mark one member as the default; a default does not resolve overlapping keys. |
 | `DOCTOR_FAILED` | 7 | `doctor`: at least one check failed (the document is still printed on stdout) |

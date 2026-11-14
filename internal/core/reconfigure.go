@@ -14,8 +14,9 @@ import (
 )
 
 // ErrReconfigureUnsupported reports a change Reconfigure cannot apply in
-// place: the instance or the new options route through a default node, or
-// one of them has no account routes. The caller restarts the instance.
+// place: the instance or the new options route through a default node, a
+// node-backed route appears where the instance has none, or the instance runs
+// in direct mode. The caller restarts the instance.
 var ErrReconfigureUnsupported = errors.New("core: this change needs a new instance")
 
 // errInstanceClosed is returned by Reconfigure on a closed instance.
@@ -32,8 +33,13 @@ var startWarmForReconfigure = startWarm
 // What a node label keeps across the change: its health (measurements, down
 // state, hedge budget), its probe backoff and the site bindings that point at
 // it, as long as the login keeps its route key and the route still contains
-// the label. Nothing is
-// announced for a node that keeps its state. InitialBindings is ignored.
+// the label. Nothing is announced for a node that keeps its state.
+// InitialBindings is ignored.
+//
+// An instance without node-backed routes (direct routes, direct-post pools and
+// the global post pool) has no node state: it is updated in place as long as
+// the new options have no node-backed route either. Its hop pools keep their
+// health by hop identity, as the pools of node-backed routes do.
 //
 // Mihomo's configuration is not re-applied: the new member proxies and
 // sticky groups get names of their own (see memberProxyName) and are added to
@@ -56,7 +62,7 @@ func (i *Instance) Reconfigure(o Options) error {
 			return err
 		}
 	}
-	if len(o.AccountRoute) == 0 && len(o.Servers) == 0 && len(i.Servers()) == 0 {
+	if len(o.AccountRoute) == 0 && len(o.Servers) == 0 && len(i.Servers()) == 0 && !i.state().rule {
 		return ErrReconfigureUnsupported
 	}
 
@@ -72,11 +78,14 @@ func (i *Instance) Reconfigure(o Options) error {
 	if old.table != nil && len(o.AccountRoute) == 0 {
 		return ErrReconfigureUnsupported
 	}
+	if old.table == nil && old.rule && i.route == routeDirect {
+		return i.reconfigureDirect(old, o)
+	}
 	if old.table == nil || i.route != routeDirect || i.poller == nil {
 		if old.table != nil || i.route != routeDirect || len(i.state().accountRoutes) != 0 {
 			return ErrReconfigureUnsupported
 		}
-		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || (o.GlobalPost != "" && !isNoChain(o.GlobalPost)) {
+		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || o.globalPostActive() {
 			return ErrReconfigureUnsupported
 		}
 		tx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
@@ -284,6 +293,144 @@ func (i *Instance) Reconfigure(o Options) error {
 		routeLabels:      routeLabels(plans),
 		names:            names,
 		prevNames:        old.names,
+	})
+	warmPublished = true
+	return nil
+}
+
+// hasNodeRoute reports whether any account route of o is backed by nodes.
+func hasNodeRoute(o Options) bool {
+	for _, key := range o.AccountRoute {
+		if len(o.RouteNodes[key]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// matchProbeFilter limits the probed leaves to the global post chain when
+// MATCH traffic uses one; nil probes every netivri leaf.
+func matchProbeFilter(o Options, gen int) func(name string) bool {
+	switch {
+	case o.globalPostActive():
+		want := globalPostProxyName(gen)
+		return func(name string) bool { return name == want }
+	case o.Node != nil:
+		return func(name string) bool { return name == nodeName }
+	}
+	return nil
+}
+
+// reconfigureDirect applies o to a rule-mode instance that has no node-backed
+// route: direct routes, direct-post pools and the global post pool. Such an
+// instance has no affinity table, health table or poller, so only the rules,
+// the proxy map, the pool lifecycle and the probes change. Options that need a
+// node-backed route, or leave no rule at all, need a new instance.
+func (i *Instance) reconfigureDirect(old *routingState, o Options) error {
+	if hasNodeRoute(o) || (len(o.AccountRoute) == 0 && !o.globalPostActive()) {
+		return ErrReconfigureUnsupported
+	}
+	gen := old.gen + 1
+	rawProxies, rawGroups, rawRules, err := prepareRoutesGen(o, gen)
+	if err != nil {
+		return err
+	}
+	members, err := parseMembers(rawProxies)
+	if err != nil {
+		return err
+	}
+	names := generationProxyNames(nil, rawProxies, rawGroups)
+	proxies := tunnel.Proxies()
+	known := make(map[string]bool, len(names))
+	for _, name := range names {
+		known[name] = true
+	}
+	rules, err := parseRouteRules(rawRules, func(name string) bool {
+		_, builtin := proxies[name]
+		return known[name] || builtin
+	})
+	if err != nil {
+		return err
+	}
+	for _, mapping := range rawProxies {
+		name, _ := mapping["name"].(string)
+		if members[name] == nil {
+			return errors.New("core: missing route helper proxy")
+		}
+	}
+	serverTx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			serverTx.rollback()
+		}
+	}()
+	old.warm.Close()
+	poolInputs := make(map[string]C.Proxy, len(proxies)+len(members))
+	for name, proxy := range proxies {
+		poolInputs[name] = proxy
+	}
+	for name, proxy := range members {
+		poolInputs[name] = proxy
+	}
+	hopPools := old.hopPools
+	if hopPools == nil {
+		hopPools = newHopPoolLifecycle(o.OnHopEvent)
+	}
+	poolMap, poolNames, err := hopPools.installGen(o, nil, poolInputs, nil, gen)
+	if err != nil {
+		return err
+	}
+	for _, name := range old.prevNames {
+		delete(poolMap, name)
+	}
+	names = append(names, poolNames...)
+	// Proxies before rules, as in Reconfigure.
+	tunnel.UpdateProxies(poolMap, tunnel.Providers())
+	tunnel.UpdateRules(rules, nil, tunnel.RuleProviders())
+
+	var warm *warmer
+	warmPublished := false
+	defer func() {
+		if !warmPublished {
+			warm.Close()
+		}
+	}()
+	if o.Warm != nil {
+		wo := *o.Warm
+		wo.only = matchProbeFilter(o, gen)
+		wo.probeBaseNames = hopPools.baseProbeNames(nil)
+		if len(hopPools.uses) > 0 {
+			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
+			if normalizeErr != nil {
+				return normalizeErr
+			}
+			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
+			if reviveErr != nil {
+				return reviveErr
+			}
+			wo.hopRevive = reviver.Round
+		}
+		if warm, err = startWarmForReconfigure(wo, nil); err != nil {
+			return err
+		}
+	}
+	if err := serverTx.commit(); err != nil {
+		return err
+	}
+	committed = true
+	hopPools.completeInstall(o.SiteBinder)
+	i.routing.Store(&routingState{
+		gen:           gen,
+		accountRoutes: copyAccountRoutes(o.AccountRoute),
+		hopPools:      hopPools,
+		warm:          warm,
+		rule:          true,
+		names:         names,
+		prevNames:     old.names,
 	})
 	warmPublished = true
 	return nil

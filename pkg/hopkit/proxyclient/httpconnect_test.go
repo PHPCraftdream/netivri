@@ -454,8 +454,11 @@ func TestParseHTTPStatusCases(t *testing.T) {
 		{"HTTP/2.0 200 OK\r\n", 0, false},
 		{"HTTP/1.1 99 Nope\r\n", 0, false},
 		{"HTTP/1.1 600 Nope\r\n", 0, false},
-		{"HTTP/1.1 200\r\n", 0, false},
-		{"HTTP/1.1 200\n", 0, false},
+		{"HTTP/1.1 200\r\n", 200, true},
+		{"HTTP/1.1 200\n", 200, true},
+		{"HTTP/1.1 200X\r\n", 0, false},
+		{"HTTP/1.1 20\r\n", 0, false},
+		{"HTTP/1.1 407 \r\n", 407, true},
 	}
 	for _, tc := range cases {
 		got, ok := parseHTTPStatus(tc.line)

@@ -126,7 +126,8 @@ var helpTopics = []helpTopic{
 			"Service: the list has Angel, Checks and Accounts. The Angel card shows the state, listen address, process, " +
 				"uptime and version and has Start (s), Stop... (x) and Restart... (t); Stop and Restart ask first and " +
 				"name the open connections that will drop. Checks runs the checks of 'netivri doctor' (c) and lists " +
-				"each with its status and detail; Accounts shows the live activity of every account. It is the shell side " +
+				"each with its status and detail; Accounts shows the live activity of every account and, under an " +
+				"account whose route has a hop pool, one line per pool such as 'post 3 hops: 2 up, 1 down'. It is the shell side " +
 				"of up, down, status and doctor.",
 			"Logs: the list shows the angel log, one line per entry with time, level and message, oldest first, the newest 200 lines by default. Follow is on (f): new lines appear as the angel writes them and the view stays at the bottom; scrolling up reads in the past, f or End returns to the live tail. l cycles the level filter (debug, info, warn, error: the level and above), / searches the shown lines (Esc clears), s sets a since window (30m, 2h, 7d; empty clears) and n the number of newest lines. It is the shell side of 'netivri logs', through the same reader.",
 			"Stats: the table of 'netivri stats' (per node or per account, b toggles) with the window (since) and the subscription, country, node and account filters as prompts, and r to reload; read-only. " +
@@ -305,10 +306,12 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri down [--home {DIR}]"},
 		Description: "Stops the angel through its control channel and waits until it is gone, up to 15 seconds. " +
 			"It is safe to repeat: with nothing running it succeeds and reports was_running false. It never kills a " +
-			"process by pid.",
+			"process by pid. It also stops an angel started by another netivri version, so after an update " +
+			"'netivri down' and 'netivri up' move the angel onto the new version.",
 		Examples: []helpExample{
 			{"Stop the angel", "netivri down"},
 			{"Stop the angel of another profile", "netivri down --home ./work-profile"},
+			{"After installing a new version, move the angel onto it", "netivri down && netivri up"},
 		},
 		Errors: []helpError{
 			herr("ANGEL_STOP_TIMEOUT", cli.ExitInternal, "the angel did not stop within 15 seconds"),
@@ -331,6 +334,12 @@ var helpTopics = []helpTopic{
 			"connections), how many connections and bytes, and through which nodes, providers and countries, the " +
 			"busiest first; a node also carries the display name the subscription gives it, when there is one. " +
 			"'active_accounts' counts the active ones.\n\n" +
+			"When an account's route has a role (pre or post) with more than one hop, its record carries " +
+			"'hop_pools': per role the hop count, how many hops are active and how many quarantined and, per " +
+			"hop, its short id (the 8 characters the quarantine log lines print), its state (active, " +
+			"quarantined or probing), trips and next_revival_seconds, the wait until the next revival probe " +
+			"of a quarantined hop. Routes with single hops show nothing; hops are never shown by URL. The pool of " +
+			"the global default route (connections without an account route) is the top-level 'hop_pools'.\n\n" +
 			"It exits with 4 when no angel is running, so it works as a check in scripts. By default the answer is " +
 			"short; --full adds the complete warm-up node list, the statistics store and the sticky-routing counters.\n\n" +
 			"With --watch it keeps running and prints who is active, one frame per --interval (default 2s, between " +
@@ -344,6 +353,7 @@ var helpTopics = []helpTopic{
 		Examples: []helpExample{
 			{"Show the angel and who is using it (see activity)", "netivri status"},
 			{"Show everything including the warm node list, stats and affinity", "netivri status --full"},
+			{"Read the hop pools (accounts[].hop_pools; default route: hop_pools)", "netivri status --json"},
 			{"Watch who is active, refreshed every two seconds", "netivri status --watch"},
 			{"Watch as one JSON object per line, every five seconds", "netivri status --watch --interval 5s --json"},
 			{"Start the angel only when it is not running (POSIX shell)", "netivri status >/dev/null 2>&1 || netivri up"},
@@ -351,6 +361,7 @@ var helpTopics = []helpTopic{
 		Errors: []helpError{
 			herr("ANGEL_NOT_RUNNING", cli.ExitNoAngel, "nothing is running; start it with 'netivri up'"),
 			herr("ANGEL_NOT_RESPONDING", cli.ExitInternal, "the angel is running but did not answer in time (busy reloading); retry in a moment"),
+			herr("ANGEL_OUTDATED", cli.ExitInternal, "the angel runs another netivri version whose status this one cannot read; restart it: 'netivri down', then 'netivri up'"),
 		},
 		SeeAlso: []string{"up", "stats"},
 	},
@@ -740,7 +751,7 @@ var helpTopics = []helpTopic{
 	{
 		Name: "account set-exit", Group: groupAccount, Summary: "Change an account's exit mode",
 		Usage:       []string{"netivri account set-exit {ACCOUNT}[,{ACCOUNT}...] {route|direct}", "netivri account set-exit --all {route|direct}"},
-		Description: "Changes the exit mode of one or more accounts, or every account with --all. Direct requires empty provider and country; it exposes this machine's address, ignores inherited pre-proxy, and rejects an explicitly configured pre-proxy; an effective post proxy may be used directly. If a change to any account field conflicts with another account's direct exit, it is rejected before saving with CONFIG_INVALID and a hint to run 'netivri account set-exit {ACCOUNT} route' first. The change is prechecked before saving. Switching to direct never clears provider/country implicitly: clear them first or CONFIG_INVALID is returned. Switching to route with empty route fields retains the existing default-route behavior. Route/direct changes apply in place with connections retained only when account routes are nonempty and have stored nodes both before and after; if the first node-backed route appears or last disappears (including the first explicit direct route on a default-only instance), the listener restarts. Direct-only changes or changes after the last node-backed route restart. Keeping another node-backed route through a flip preserves connections. Adding an account always restarts. Default/default-node/global-post changes retain their usual restart behavior.",
+		Description: "Changes the exit mode of one or more accounts, or every account with --all. Direct requires empty provider and country; it exposes this machine's address, ignores inherited pre-proxy, and rejects an explicitly configured pre-proxy; an effective post proxy may be used directly. If a change to any account field conflicts with another account's direct exit, it is rejected before saving with CONFIG_INVALID and a hint to run 'netivri account set-exit {ACCOUNT} route' first. The change is prechecked before saving. Switching to direct never clears provider/country implicitly: clear them first or CONFIG_INVALID is returned. Switching to route with empty route fields retains the existing default-route behavior. Route/direct changes apply in place with connections retained only when account routes are nonempty and have stored nodes both before and after; if the first node-backed route appears or last disappears (including the first explicit direct route on a default-only instance), the listener restarts. Direct-only changes or changes after the last node-backed route restart. Keeping another node-backed route through a flip preserves connections. Adding an account always restarts. Default-node changes retain their usual restart behavior.",
 		Examples:    []helpExample{{"Set one account to direct after clearing its route", "netivri account set-country {ACCOUNT} --none\nnetivri account set-provider {ACCOUNT} --none\nnetivri account set-exit {ACCOUNT} direct"}, {"Set every eligible account to route mode", "netivri account set-exit --all route"}},
 		Flags:       []helpFlag{{"--all", "Apply the new exit mode to every configured account."}},
 		Errors: []helpError{
@@ -949,8 +960,8 @@ var helpTopics = []helpTopic{
 		Description: "Shows what the angel wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
 			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
 			"reason) or coming back (with the downtime, not counting the time the computer slept), each with a time and a level. Three or more nodes " +
-			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
-			"hour is one 'flapping' warning, not a warning per drop; when 6 or more servers (at least half of those " +
+			"going down within 10 seconds are one 'node burst' warning (an INFO line when none of them is a first-tier node of an account's route), and a node that goes down 3 times within an " +
+			"hour is one 'flapping' warning, not a warning per drop, and stays flapping until a whole hour passes without a down; when 6 or more servers (at least half of those " +
 			"that have answered) are down at once, as when the network fails slowly, one 'node outage' warning " +
 			"says so and the down and back lines of the nodes are DEBUG until most are back; nodes that have never answered are " +
 			"reported individually for the first two unique servers, then one INFO summary (with the third node's detail also at DEBUG) and DEBUG details within a 30-second window. " +
@@ -964,7 +975,7 @@ var helpTopics = []helpTopic{
 			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account (a WARN when at least 20 connections ended and half or more of them were broken or got no answer, INFO otherwise): connections ended, broken, closed before any data " +
 			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
 			"went through), failed dials, " +
-			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
+			"bytes, and how long the node took to start answering (median and 95th percentile); a summary that covers a sleep says since when and how long the computer slept instead of 'last hour'. When the computer " +
 			"slept, one line says for how long, the nodes are probed at once and their failures for the next two " +
 			"minutes are INFO. A failure names its kind from a fixed list: timeout, connection refused, " +
 			"connection reset, dns failure, network unreachable, connection closed, handshake failed, " +
@@ -994,7 +1005,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only.",
-			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start.",
+			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start (it says the angel was killed, or the computer restarted or lost power).",
 			"A panic inside the protocol layer of one connection does not stop the angel: that connection is closed and a WARN line says which node, what panicked and where.",
 		},
 		SeeAlso: []string{"status", "stats"},
@@ -1063,6 +1074,11 @@ var helpTopics = []helpTopic{
 			"the angel log; reports of nodes going down (bursts and flapping nodes included) are only counted, since the account " +
 			"checks cover the routes; the log is read even when the angel is down, and a missing " +
 			"log file is fine).\n\n" +
+			"Hop pools add checks only when there is something to report: hop state (the " +
+			"hops-pre.health and hops-post.health files in the run directory are readable), hop pools " +
+			"(warn when every hop of a pool is quarantined, as in the log line 'all N hops are down, " +
+			"trying them anyway') and hop persistence (an info for hops whose state cannot be stored). " +
+			"Hops are named by role only.\n\n" +
 			"A check that cannot run is a warn with the reason, never a failure of the whole " +
 			"command. No check contacts anything but the local angel and the local port; " +
 			"subscription URLs, passwords and hashes are never printed.",
@@ -1099,7 +1115,7 @@ var helpTopics = []helpTopic{
 		Group:       groupConfig,
 		Summary:     "Change one global setting",
 		Usage:       []string{"netivri config set {KEY} {VALUE}"},
-		Description: "Changes one global setting and validates the entire candidate config before writing. The error names the key, never the value. auth.password is stored as an argon2id hash and never echoed; init stores the placeholder. none or empty clears keys that allow it. For chain.pre_socks5 / chain.post_socks5, VALUE is one URL, none or empty; edit config.ktav for ordered lists of up to 16 URLs per side. Legacy scalar Ktav URLs load as singleton lists and render back as scalars; `none/[none]` clears inherited candidates. A multi-entry global post list is accepted when named accounts are configured without legacy auth, since those account routes can inherit it. Without that scope (default unauthenticated/no-account MATCH traffic or legacy auth), it is rejected with `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. Account-route pool changes, including inherited global post changes, apply in place when supported; scalar global-post changes affecting no-account MATCH traffic require restart. A direct-post-only change may also restart if the core reports reconfiguration unsupported. A changed chain.post_socks5 conservatively reports restart_needed: true because the config key's static metadata marks it restart-needed; that flag does not describe this route-specific in-place case.",
+		Description: "Changes one global setting and validates the entire candidate config before writing. The error names the key, never the value. auth.password is stored as an argon2id hash and never echoed; init stores the placeholder. none or empty clears keys that allow it. For chain.pre_socks5 / chain.post_socks5, VALUE is one URL, none or empty; edit config.ktav for ordered lists of up to 16 URLs per side. Legacy scalar Ktav URLs load as singleton lists and render back as scalars; `none/[none]` clears inherited candidates. A multi-entry global post list is a pool for the account routes that inherit it and for connections without an account (the default route and legacy auth). Account-route pool changes, including inherited global post changes, apply in place when supported, and so do global post changes while the running core routes in rule mode (account routes or a global post) before and after; the first global post of a core without routes, or removing the last, restarts the listener. A changed chain.post_socks5 conservatively reports restart_needed: true because the config key's static metadata marks it restart-needed; that flag does not describe the in-place cases.",
 		Examples: []helpExample{
 			{"Move the proxy port", "netivri config set listen.port 8080"},
 			{"The plain password is hashed and never echoed", "netivri config set auth.password {PASSWORD}"},
@@ -1176,7 +1192,7 @@ var helpTopics = []helpTopic{
 			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
 			"default manual) set the preferred exit.\n\n" +
-			"`chain.pre_socks5` and `chain.post_socks5` are ordered candidate arrays at global, provider and account levels; `accounts.pre_socks5` and `accounts.post_socks5` are the accepted account field keys, represented per row as `accounts[].pre_socks5` and `accounts[].post_socks5`; `subscriptions[].pre_socks5` and `subscriptions[].post_socks5` configure per-subscription chains. Each side supports up to 16 candidates. Legacy scalar Ktav URLs remain singleton lists. The nearest configured list replaces the less-specific list; empty/absent inherits and `none` clears inherited candidates. Candidates are alternatives, not serial hops. Weighted health quarantines failures and probes recovery. The no-account `MATCH` post remains scalar-only; a multi-entry global post is accepted only with named accounts and no legacy auth, since those account routes can inherit the list. Otherwise validation returns `the global chain with several post hops is not supported for connections without an account yet; set the list on the accounts or provider instead`. See 'netivri help routing' for the interim scope. URLs use socks5://, http:// or https:// with required ports, and credentials are never printed.\n\n" +
+			"`chain.pre_socks5` and `chain.post_socks5` are ordered candidate arrays at global, provider and account levels; `accounts.pre_socks5` and `accounts.post_socks5` are the accepted account field keys, represented per row as `accounts[].pre_socks5` and `accounts[].post_socks5`; `subscriptions[].pre_socks5` and `subscriptions[].post_socks5` configure per-subscription chains. Each side supports up to 16 candidates. Legacy scalar Ktav URLs remain singleton lists. The nearest configured list replaces the less-specific list; empty/absent inherits and `none` clears inherited candidates. Candidates are alternatives, not serial hops. Weighted health quarantines failures and probes recovery. A multi-entry global post is a pool for the account routes that inherit it and for connections without an account (the default route and legacy auth); the default route has no pre side. URLs use socks5://, http:// or https:// with required ports, and credentials are never printed.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
 			"around a comma are ignored. The rules: * (every address), loopback (127.0.0.0/8 and ::1), an exact " +
 			"IPv4 or IPv6 address, an IPv4 whole-octet mask (trailing * octets only: 192.168.1.*, 10.*; a * " +
@@ -1240,7 +1256,7 @@ var helpTopics = []helpTopic{
 			"fallback. Direct accounts have no node tiers; `account show` reports effective pre_socks5 with source " +
 			"`direct`, value `[\"none\"]`, and own value null. The post proxy is the hop after netivri's exit.\n\n" +
 			"The pool supports at most 16 hops per side. " +
-			"Each URL requires a host and port. Each ordered pre/post list is a set of alternatives per side; weighted hop health selects one live proxy per side per connection, not serial hops. Empty lists inherit; none disables a side, and status shows redacted effective lists. Three hard failures quarantine a hop for 30 seconds with doubling backoff to 600 seconds; probes test recovery. All-down pools still try candidates and never bypass a post proxy. Post hops bind per login and registrable site domain for 24 hours by default. Separate `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health` files persist lowercase 64-hex SHA-256 keys, never URLs. Logs omit URLs: quarantine/re-trip is WARN, recovery INFO, and a rate-limited all-down warning says `all N hops are down, trying them anyway`. No-account `MATCH` still uses scalar global post; its exact multi-entry error is documented in 'netivri help config'. See 'netivri help config' and account/provider set-socks5 topics.\n\n" +
+			"Each URL requires a host and port. Each ordered pre/post list is a set of alternatives per side; weighted hop health selects one live proxy per side per connection, not serial hops. Empty lists inherit; none disables a side, and status shows redacted effective lists. Three hard failures, or five soft failures without a success, quarantine a hop for 30 seconds with doubling backoff to 600 seconds; probes test recovery. A hop that does not get as far as sending the target within 3 seconds fails and another hop is tried; a post hop that refuses the password before the target was sent is retried on another hop. Host names may contain _; write international names in punycode (xn--). All-down pools still try candidates and never bypass a post proxy. Post hops bind per login and registrable site domain for 24 hours by default. Separate `{HOME}/run/hops-pre.health` and `{HOME}/run/hops-post.health` files persist lowercase 64-hex SHA-256 keys, never URLs. Logs omit URLs: quarantine/re-trip is WARN, recovery INFO, and a rate-limited all-down warning says `all N hops are down, trying them anyway`. Connections without a login share one anonymous site binding namespace. A multi-entry global post is also a pool for connections without an account (the default route and legacy auth); the default route has no pre side. See 'netivri help config' and account/provider set-socks5 topics.\n\n" +
 			"A * in the country list stands for every country the list does not name, nodes of an unknown country " +
 			"included, at its place in the order: DE,* tries Germany first, then everything else; * alone is any " +
 			"country. Quote it in shells that expand globs (--country '*').\n\n" +
@@ -1259,7 +1275,7 @@ var helpTopics = []helpTopic{
 			"other sites stay where they are. A dial counts from its start, a connection from its first bytes; a successful dial is not an answer. The block lasts 30 minutes and doubles with every repeat up to 8 hours; an " +
 			"answer through the node ends it at once, and a site that was answered through the node is not blocked by " +
 			"a few stray dead connections. A lossy path is blocked too: when 20 or more connections to the site in 10 minutes " +
-			"got no answer and they are at least 90 percent of those that got none or an answer at their first bytes, the " +
+			"got no answer after at least 2 seconds (a client such as Telegram gives up after 2-3 seconds and retries) and they are at least 90 percent of those that got none or an answer at their first bytes, the " +
 			"node is blocked for the site for the same time, and an answer does not lift that block (it ends with its time). Blocks are kept in memory only (a restart forgets them), and the log tells of each " +
 			"one ('netivri logs', the destination itself at DEBUG). A site whose server never answers on purpose (a " +
 			"long poll that is always closed first) can be moved too; it keeps working through the next node.\n\n" +
@@ -1303,7 +1319,9 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"status: angel, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
-				"provider, exit_country, exit, allowed_clients), route, started_at, uptime_seconds, version, " +
+				"provider, exit_country, exit, allowed_clients, and hop_pools[] when a role has several hops: role, " +
+				"hop_count, active_count, quarantined_count, unpersistable_count and hops[] with id, state, trips, " +
+				"next_revival_seconds), route, started_at, uptime_seconds, version, " +
 				"active_accounts, activity[] (login, active, connections, upload_bytes, download_bytes - byte counts -, " +
 				"providers[], countries[], nodes[] with node, name, provider, country, connections and the byte " +
 				"counters), warm (alive = nodes whose last probe succeeded, total = the number of nodes, " +

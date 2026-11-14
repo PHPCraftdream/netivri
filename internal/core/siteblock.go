@@ -50,8 +50,15 @@ const (
 
 // silentMinLife: a connection that waited for an answer for less than this (from
 // the first bytes it sent) is a client that left, not a destination that does
-// not answer. A variable only so that a test can shorten it.
+// not answer, for the plain rule. A variable only so that a test can shorten it.
 var silentMinLife = 5 * time.Second
+
+// silentRatioMinLife is the same bound for the ratio rule. Some clients give up
+// after 2-3 s without an answer and retry at once (Telegram): under
+// silentMinLife none of their connections would count and a dead path stays in
+// use. The ratio rule needs many silent connections that are the large
+// majority, which a client that only leaves early does not make.
+var silentRatioMinLife = 2 * time.Second
 
 type blockKey struct {
 	login, site string
@@ -109,21 +116,26 @@ func (st *blockState) block(now time.Time) time.Duration {
 }
 
 type siteBlocks struct {
-	mu         sync.RWMutex
-	m          map[blockKey]*blockState
-	n          atomic.Int64 // len(m), read without the lock on the hot path
-	now        func() time.Time
-	minLife    time.Duration
-	pruneAfter time.Time
-	pruneScans uint64
+	mu      sync.RWMutex
+	m       map[blockKey]*blockState
+	n       atomic.Int64 // len(m), read without the lock on the hot path
+	now     func() time.Time
+	minLife time.Duration // see silentMinLife
+	// ratioMinLife: see silentRatioMinLife; never above minLife in effect.
+	ratioMinLife time.Duration
+	pruneAfter   time.Time
+	pruneScans   uint64
 }
 
 func newSiteBlocks(now func() time.Time) *siteBlocks {
 	if now == nil {
 		now = time.Now
 	}
-	return &siteBlocks{m: map[blockKey]*blockState{}, now: now, minLife: silentMinLife}
+	return &siteBlocks{m: map[blockKey]*blockState{}, now: now, minLife: silentMinLife, ratioMinLife: silentRatioMinLife}
 }
+
+// shortestLife is the least wait that counts for either rule.
+func (b *siteBlocks) shortestLife() time.Duration { return min(b.minLife, b.ratioMinLife) }
 
 // any reports whether anything is recorded; false makes blocked free.
 func (b *siteBlocks) any() bool { return b != nil && b.n.Load() > 0 }
@@ -177,10 +189,11 @@ func (b *siteBlocks) answered(login, site string, member int, first bool) {
 }
 
 // silentEnd records a connection or dial timeout that waited without an answer.
-// The plain rule needs no recent site answer; both rules need a node answer
-// after the run (or the window) began.
+// The plain rule needs no recent site answer and a wait of minLife; the ratio
+// rule counts waits from ratioMinLife; both need a node answer after the run
+// (or the window) began.
 func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Duration, answeredRecently bool, okAt time.Time) (time.Duration, bool) {
-	if waited < b.minLife {
+	if waited < b.shortestLife() {
 		return 0, false
 	}
 	now := b.now()
@@ -210,7 +223,7 @@ func (b *siteBlocks) silentEnd(login, site string, member int, waited time.Durat
 		st.winSilent, st.winOK = 0, 0
 		return st.block(now), true
 	}
-	if answeredRecently {
+	if answeredRecently || waited < b.minLife {
 		return 0, false
 	}
 	if st.silent == 0 || now.Sub(st.since) > silentWindow {
@@ -308,7 +321,7 @@ func (g *stickyGroup) recordNoAnswer(login, site string, member int, label strin
 // recordDialTimeout records dials that timed out after the minimum wait.
 // recordNoAnswer enforces the node-health and recent-site-answer gates.
 func (g *stickyGroup) recordDialTimeout(login, site string, member int, label string, md *C.Metadata, started time.Time, took time.Duration) {
-	if g.blocks == nil || g.blocks.minLife > took {
+	if g.blocks == nil || took < g.blocks.shortestLife() {
 		return
 	}
 	var port uint16

@@ -360,7 +360,7 @@ func TestPostDialDoesNotRetryUnsafeFailureClasses(t *testing.T) {
 		err  error
 	}{
 		{name: "target", err: &StageError{Stage: Target}},
-		{name: "refusal", err: &StageError{Stage: Refusal}},
+		{name: "refusal target sent", err: &StageError{Stage: Refusal, TargetSent: true}},
 		{name: "unknown", err: &StageError{Stage: Unknown}},
 		{name: "raw", err: errors.New("unstructured failure")},
 		{name: "handshake next unreachable", err: &StageError{Stage: Handshake, NextUnreachable: true}},
@@ -566,4 +566,80 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func TestPostDialRetriesRefusalBeforeTargetSent(t *testing.T) {
+	keys := []string{"a", "b", "c"}
+	want := deterministicOrder(keys, nil)
+	p := newPool(keys...)
+	calls := []string{}
+	hops := make([]Hop, 0, len(keys))
+	for _, key := range keys {
+		key := key
+		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+			calls = append(calls, key)
+			if key == want[0] {
+				return nil, &StageError{Stage: Refusal, Err: errors.New("auth refused")}
+			}
+			return &fakeConn{}, nil
+		}})
+	}
+	conn, err := New(p, hops, Options{Post: true}).DialSite(context.Background(), "tcp", "target:443", "login", "site")
+	if err != nil || conn == nil {
+		t.Fatalf("post dial = (%v, %v), want success on the next hop", conn, err)
+	}
+	if len(calls) != 2 || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("post attempts = %v, want %v", calls, want[:2])
+	}
+	for _, snapshot := range p.Snapshot() {
+		if snapshot.Key == want[0] && (snapshot.Sand <= 0 || snapshot.HardFailures != 0) {
+			t.Fatalf("refusing hop health = sand %v hard %d, want a soft failure", snapshot.Sand, snapshot.HardFailures)
+		}
+	}
+}
+
+func TestPreDialStopsAfterTwoHopsReportNextUnreachable(t *testing.T) {
+	keys := []string{"a", "b", "c", "d"}
+	want := deterministicOrder(keys, nil)
+	calls := []string{}
+	hops := make([]Hop, 0, len(keys))
+	for _, key := range keys {
+		key := key
+		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+			calls = append(calls, key)
+			return nil, &StageError{Stage: Target, NextUnreachable: true, TargetSent: true}
+		}})
+	}
+	_, err := New(newPool(keys...), hops, Options{}).DialContext(context.Background(), "tcp", "node:443")
+	var staged *StageError
+	if !errors.As(err, &staged) || !staged.NextUnreachable {
+		t.Fatalf("error = %v, want the next-unreachable failure", err)
+	}
+	if len(calls) != maxNextUnreachable || calls[0] != want[0] || calls[1] != want[1] {
+		t.Fatalf("pre attempts = %v, want the first %d of %v", calls, maxNextUnreachable, want)
+	}
+}
+
+func TestPreDialNextUnreachableThenSuccessUsesLaterHop(t *testing.T) {
+	keys := []string{"a", "b", "c"}
+	want := deterministicOrder(keys, nil)
+	calls := []string{}
+	hops := make([]Hop, 0, len(keys))
+	for _, key := range keys {
+		key := key
+		hops = append(hops, &fakeHop{key: key, dial: func(context.Context, string, string) (net.Conn, error) {
+			calls = append(calls, key)
+			if key == want[0] {
+				return nil, &StageError{Stage: Target, NextUnreachable: true, TargetSent: true}
+			}
+			return &fakeConn{}, nil
+		}})
+	}
+	conn, err := New(newPool(keys...), hops, Options{}).DialContext(context.Background(), "tcp", "node:443")
+	if err != nil || conn == nil {
+		t.Fatalf("pre dial = (%v, %v), want success after one next-unreachable report", conn, err)
+	}
+	if len(calls) != 2 || calls[1] != want[1] {
+		t.Fatalf("pre attempts = %v, want %v", calls, want[:2])
+	}
 }

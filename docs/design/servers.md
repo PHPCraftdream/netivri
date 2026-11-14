@@ -168,7 +168,8 @@ type Protocol interface {
   when servers have no account routes. An explicit global `post_socks5: none`
   is no-hop, not a setting that disables this hot account policy. Bind, port,
   account credentials, account additions/removals, global
-  `listen.allowed_clients` and global post-proxy changes require restart.
+  `listen.allowed_clients` changes require restart; global post-proxy changes
+  apply in place while the listener routes in rule mode before and after.
   Routes update in place where supported. Server changes are transactional;
   unchanged connections stay open, except connections on changed UDP listeners,
   which end when sockets restart.
