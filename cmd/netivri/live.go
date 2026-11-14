@@ -1205,6 +1205,7 @@ func (l *liveAngel) connLog() *connLog {
 			func(format string, args ...any) { l.warnf(format, args...) })
 		l.conns.debug = func(format string, args ...any) { l.debugf(format, args...) }
 		l.conns.quiet = l.sleep().quiet
+		l.conns.asleep = l.sleep().asleep
 	})
 	return l.conns
 }

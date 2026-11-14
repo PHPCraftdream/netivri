@@ -16,6 +16,9 @@ versions; every such change is listed here.
 - **A subscription fetch that timed out while connecting says so on Windows.** The error read `request failed (direct, connecting)` without its kind, because Windows words that timeout without the word "timeout"; it now reads `request failed: timeout (direct, connecting)`.
 - **`down` stops an angel of another version.** After an update, `down` and `up` failed with `decode status answer` against an angel that the previous version had started, so it could not be stopped from the CLI. Both now need only its pid: `down` stops it and `up` reports it as running; `status` answers `ANGEL_OUTDATED` with the angel's pid and version and the restart command, `doctor` fails its `angel` check with the same text, and the shell header shows the running angel.
 - **The pool of the default route is visible.** `status` has a top-level `hop_pools` for a global post list of several hops; `doctor` and the Service tab show it as `default route`.
+- **A flapping node is announced once, not again every time its old downs age out.** A node stopped being flapping as soon as fewer than 3 of its downs were left in the last hour, so one that went down every 35 minutes got a new `is flapping` line (and its INFO lines) every few hours; it now stays flapping until a whole hour has passed without a down. The line also named the wrong level: it said its further reports are `INFO` for a node of a later tier whose repeats are `DEBUG`; it now says `DEBUG` there (and during an outage), `INFO` for a first-tier node.
+- **A burst of nodes that no account uses is not a warning.** `node burst: ...` was a `WARN` even when every node in it belonged to a later tier of the routes, which no account uses while its first tier is up; it is now `INFO` then, and a first-tier node that joins such a burst raises the `WARN` once. A burst with a first-tier node in it, and every burst without tier information, stay a `WARN`.
+- **The hourly summary says what it covers after a sleep.** The summary written at the wake of a computer that had slept for 26 hours read `last hour` but held the time before the sleep; it now reads `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: ...` (or `..., the computer slept in between: ...` when the sleep watch has not noticed the sleep yet). The note about a previous angel that did not stop cleanly names a restart of the computer next to a kill and a power loss, which is what Windows does to a running angel when it restarts.
 
 ### Added
 
@@ -41,7 +44,8 @@ versions; every such change is listed here.
   traceback of all goroutines to `run/crash/` (with the start time, pid and version of
   that angel). A clean stop removes the file; the next start keeps the dump as
   `crash-{TIME}-{PID}.txt` (the 10 newest), logs one `ERROR` line with its name, and says
-  in one `INFO` line when the previous angel was killed or lost power without a dump.
+  in one `INFO` line when the previous angel was killed, or the computer restarted or lost
+  power, without a dump.
 
 - **Preview a subscription before adding it, in the shell.** The provider add wizard gains a
   `Preview countries` step after the Via step: it fetches the URL through the same strict

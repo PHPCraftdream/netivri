@@ -74,7 +74,7 @@ func armCrashDump(home string, infof, errorf, warnf func(string, ...any)) func()
 		errorf("previous angel (pid %d, version %s) crashed at %s; the dump is run/crash/%s", c.PID, c.Version, c.At.Format(time.RFC3339), c.File)
 	}
 	for _, c := range rep.Unclean {
-		infof("previous angel (pid %d, version %s) did not stop cleanly: it was killed or the machine lost power, so there is no crash dump", c.PID, c.Version)
+		infof("previous angel (pid %d, version %s) did not stop cleanly: it was killed, or the computer restarted or lost power, so there is no crash dump", c.PID, c.Version)
 	}
 	dump, err := angel.StartCrashDump(home, versionWithCommit(), time.Now())
 	if err != nil {

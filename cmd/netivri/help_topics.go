@@ -960,8 +960,8 @@ var helpTopics = []helpTopic{
 		Description: "Shows what the angel wrote to {DIR}/run/netivri.log: start and stop, applied and rejected " +
 			"configuration changes, subscription refreshes, storage problems and route nodes going down (with the " +
 			"reason) or coming back (with the downtime, not counting the time the computer slept), each with a time and a level. Three or more nodes " +
-			"going down within 10 seconds are one 'node burst' warning, and a node that goes down 3 times within an " +
-			"hour is one 'flapping' warning, not a warning per drop; when 6 or more servers (at least half of those " +
+			"going down within 10 seconds are one 'node burst' warning (an INFO line when none of them is a first-tier node of an account's route), and a node that goes down 3 times within an " +
+			"hour is one 'flapping' warning, not a warning per drop, and stays flapping until a whole hour passes without a down; when 6 or more servers (at least half of those " +
 			"that have answered) are down at once, as when the network fails slowly, one 'node outage' warning " +
 			"says so and the down and back lines of the nodes are DEBUG until most are back; nodes that have never answered are " +
 			"reported individually for the first two unique servers, then one INFO summary (with the third node's detail also at DEBUG) and DEBUG details within a 30-second window. " +
@@ -975,7 +975,7 @@ var helpTopics = []helpTopic{
 			"passwords (only DEBUG lines name the destinations that get no answer, as host:port), and once an hour a summary per account (a WARN when at least 20 connections ended and half or more of them were broken or got no answer, INFO otherwise): connections ended, broken, closed before any data " +
 			"or without an answer (with how many sites, which ports, how long they waited and which nodes they " +
 			"went through), failed dials, " +
-			"bytes, and how long the node took to start answering (median and 95th percentile). When the computer " +
+			"bytes, and how long the node took to start answering (median and 95th percentile); a summary that covers a sleep says since when and how long the computer slept instead of 'last hour'. When the computer " +
 			"slept, one line says for how long, the nodes are probed at once and their failures for the next two " +
 			"minutes are INFO. A failure names its kind from a fixed list: timeout, connection refused, " +
 			"connection reset, dns failure, network unreachable, connection closed, handshake failed, " +
@@ -1005,7 +1005,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only.",
-			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start.",
+			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start (it says the angel was killed, or the computer restarted or lost power).",
 			"A panic inside the protocol layer of one connection does not stop the angel: that connection is closed and a WARN line says which node, what panicked and where.",
 		},
 		SeeAlso: []string{"status", "stats"},

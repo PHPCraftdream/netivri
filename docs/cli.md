@@ -406,8 +406,10 @@ know, or none) or `3 dial
 failures`. `{WORDS}` is a short excerpt of the error in which every word that could be
 an address, host, port, path or credential is replaced by `<addr>`. A node that goes
 down 3 times within an hour is flapping: one `WARN`, `node ... is flapping: 3 downs
-within the last hour (...)`, says so, and its further down and back lines are `INFO`
-until it has been quiet for an hour (a flapping node does not count toward a burst). Only
+within the last hour (...); its further down and back reports are INFO`, says so (the line
+names the level: `DEBUG` for a node of a later tier and during an outage), and its further
+down and back lines follow it until the node has gone a whole hour without a down, so one that
+keeps going down every half hour is announced once (a flapping node does not count toward a burst). Only
 a node of the first tier of some account's route raises a `WARN` for going down or flapping; the
 nodes of later tiers are logged at `INFO`, since no account uses them while its first tier is up,
 and what they repeat (the downs and backs of a flapping node after its `flapping` line, the down of a
@@ -476,9 +478,11 @@ again. When the window expires, the minute connection-log tick writes one final 
 summary was emitted and the total grew, then starts a fresh collection window. All such reports count toward
 neither a burst nor flapping. When 3
 or more nodes go down within 10 seconds (a lost network on this machine, a shared
-outage, or the first probes after a start) the third one raises a single `WARN`,
+outage, or the first probes after a start) the third one raises a single line,
 `node burst: 3 of 36 nodes went down within 10s (probe failures (timeout) x3), likely a
-lost network or a shared outage` (with `, right after start` in the first minute), the
+lost network or a shared outage` (with `, right after start` in the first minute), a `WARN` when
+a node of the first tier of some account's route is among them and an `INFO` when they are all nodes
+of later tiers (a first-tier node that joins such a burst raises the `WARN` once); the
 nodes of the burst are logged at `INFO` from then on, and `node burst over: 9 nodes
 were down, all back after 41s` closes it when the last one is back. A network that fails
 slowly (nodes are probed minutes apart, so their downs trickle in over many minutes) is no burst: when
@@ -496,7 +500,12 @@ up`, counts toward neither a burst nor flapping, and the per-minute connection l
 It reads the file, so it works while the angel runs and after it stopped or failed to start.
 The hourly summary of an account (`account alice: last hour: 978 connections ended, ...`) is a `WARN` when at
 least 20 connections ended and half or more of them were broken or got no answer, an `INFO` otherwise (and
-right after the computer woke up).
+right after the computer woke up). When the computer slept during the hour the summary says what it
+covers instead of `last hour`, since the angel is frozen while it sleeps and the figures are those of the
+time before: `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: 169 connections ended, ...`
+(`since ...Z, the computer slept in between` when the sleep has not been noticed yet). A previous angel that
+did not stop cleanly is named at the next start in one `INFO` line that says it was killed, or the computer
+restarted or lost power (Windows ends a running angel when it restarts), and that there is no crash dump.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
