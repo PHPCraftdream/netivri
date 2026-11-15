@@ -116,7 +116,7 @@ func TestSettingsListShowsGroupsAndSafeValues(t *testing.T) {
 	if len(f.s.list.Rows) != 4 {
 		t.Fatalf("rows = %d, want 4", len(f.s.list.Rows))
 	}
-	for i, want := range [][2]string{{"Listen", "3 keys"}, {"Auth", "3 keys"}, {"Fetch", "2 keys"}, {"Chain", "2 keys"}} {
+	for i, want := range [][2]string{{"Listen", "3 keys"}, {"Auth", "3 keys"}, {"Fetch", "3 keys"}, {"Chain", "2 keys"}} {
 		got := f.s.list.Rows[i].Cells
 		if got[0] != want[0] || got[1] != want[1] {
 			t.Errorf("row %d = %v, want %v", i, got, want)

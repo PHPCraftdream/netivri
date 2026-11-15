@@ -69,10 +69,18 @@ as a budget that only goes down. See [`design/parity.md`](design/parity.md).
   logged only if the test failed and costs nothing on a green run. Register
   it after the cleanup that stops what the report reads (cleanups run last
   in, first out). Every end-to-end `startUp` already does this: a failed test
-  prints how the angel process ended, the tail of its log, the crash dumps
-  of its home and its `status --full`, redacted like all test output. A
-  failure helper must name the primary error before any check that can stop
-  the test early (such as the secret scan).
+  prints how the angel process ended (pid, lifetime, exit code), the head
+  and the tail of its log, the head of a Go crash dump, the crash dumps of
+  its home and its `status --full`, redacted like all test output (the
+  angels run with `GOTRACEBACK=all`). A flow with several processes can
+  also call `e2eTraceOn(t)` and `e2eMark(t, ...)`: the failure log then
+  shows a timed trace of the steps, of every start and exit of an angel
+  (marked when it exits on its own) and of snapshots the test takes of the
+  angels' status, plus, on Windows, the memory left and the Application and
+  resource-exhaustion events about the program of the last 30 minutes.
+  `TestE2EHysteria2Lifecycle` uses it. A failure helper must name the
+  primary error before any check that can stop the test early (such as the
+  secret scan).
 - **Table-driven** tests where the cases are natural.
 - **No real internet.** Anything network-facing is tested against a local
   fake HTTP/SOCKS server on loopback.

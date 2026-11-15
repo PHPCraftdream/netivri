@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -132,6 +133,13 @@ type upProc struct {
 	exitMu    sync.Mutex
 	exited    bool
 	exitErr   error
+	// home, startedAt and exitedAt tell a failure report how long the angel
+	// lived; stopping is set once the test itself stops the angel, to tell that
+	// exit from one the angel made on its own.
+	home      string
+	startedAt time.Time
+	exitedAt  time.Time
+	stopping  atomic.Bool
 }
 
 var (
@@ -159,7 +167,7 @@ func upProcReport(home string) string {
 	if h := e2eCrashHead(p.Stderr()); h != "" {
 		head = h + "\n"
 	}
-	return state + "\n" + head + e2eTail("stderr", p.Stderr(), 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
+	return state + "\n" + head + e2eHeadTail("stderr", p.Stderr(), 20, 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
 }
 
 // e2eAngelFailureReport is the detail shown only when a test that started the
@@ -170,15 +178,15 @@ func e2eAngelFailureReport(home string, p *upProc) string {
 	p.exitMu.Lock()
 	state := "running"
 	if p.exited {
-		state = fmt.Sprintf("exited (%v)", p.exitErr)
+		state = fmt.Sprintf("exited (%v), %s after it started, at %s", p.exitErr, p.exitedAt.Sub(p.startedAt).Round(time.Millisecond), p.exitedAt.UTC().Format("15:04:05.000"))
 	}
 	p.exitMu.Unlock()
 	var b strings.Builder
-	fmt.Fprintf(&b, "angel process: %s\n", state)
+	fmt.Fprintf(&b, "angel process: %s (pid %d, started at %s, now %s)\n", state, p.cmd.Process.Pid, p.startedAt.UTC().Format("15:04:05.000"), time.Now().UTC().Format("15:04:05.000"))
 	if head := e2eCrashHead(p.Stderr()); head != "" {
 		b.WriteString(head + "\n")
 	}
-	b.WriteString(e2eTail("angel log (stderr)", p.Stderr(), 200))
+	b.WriteString(e2eHeadTail("angel log (stderr)", p.Stderr(), 40, 200))
 	b.WriteString("\n" + e2eTail("stdout", p.Stdout(), 10))
 	b.WriteString("\ncrash dumps: " + e2eRedactDiagnostic(e2eCrashDumps(home)))
 	code, out, errOut, err := angelExec(home, "status", "--full")
@@ -346,7 +354,7 @@ func e2eTail(name, text string, n int) string {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		kept = append(kept, e2eRedactDiagnostic(line))
+		kept = append(kept, e2eRedactStderrLine(line))
 	}
 	if len(kept) > n {
 		kept = kept[len(kept)-n:]
@@ -363,7 +371,9 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	cmd := exec.Command(netivriBin, full...)
 	// The angel log goes to stderr, so a failure report can show what the
 	// angel did (a foreground run has no log file).
-	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, logStderrEnv+"=1")
+	// GOTRACEBACK=all: a panic of the angel dumps every goroutine, not only the
+	// one that panicked, so the report of a failed test can name the cause.
+	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, logStderrEnv+"=1", "GOTRACEBACK=all")
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -393,6 +403,8 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 		stderrEOF: make(chan struct{}),
 		stdoutR:   stdoutR,
 		stderrR:   stderrR,
+		home:      home,
+		startedAt: time.Now(),
 	}
 	// Cleanup registered immediately after Start: any failure below must
 	// not leave the child running.
@@ -429,9 +441,19 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	}()
 	go func() {
 		err := cmd.Wait()
+		now := time.Now()
 		p.exitMu.Lock()
-		p.exited, p.exitErr = true, err
+		p.exited, p.exitErr, p.exitedAt = true, err, now
 		p.exitMu.Unlock()
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		if p.stopping.Load() {
+			e2eMark(t, "angel %s (pid %d) stopped by the test after %s, exit code %d", filepath.Base(home), cmd.Process.Pid, now.Sub(p.startedAt).Round(time.Millisecond), code)
+		} else {
+			e2eMark(t, "angel %s (pid %d) EXITED ON ITS OWN after %s, exit code %d: %v", filepath.Base(home), cmd.Process.Pid, now.Sub(p.startedAt).Round(time.Millisecond), code, err)
+		}
 		p.waitCh <- err
 	}()
 	select {
@@ -449,6 +471,7 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 		}
 		p.status = st
 		p.FirstLine = res.line
+		e2eMark(t, "angel %s started: pid %d, listen %s", filepath.Base(home), cmd.Process.Pid, st.Data.Listen)
 	case <-time.After(e2eFirstLineTimeout):
 		p.Stop()
 		t.Fatalf("no first stdout line within %v (stderr so far: %s)", e2eFirstLineTimeout, p.stderrBuf.String())
@@ -469,6 +492,7 @@ func (p *upProc) Stderr() string { return p.stderrBuf.String() }
 // Kill on Windows. Idempotent; registered as cleanup by startUp.
 func (p *upProc) Stop() {
 	p.stopOnce.Do(func() {
+		p.stopping.Store(true)
 		if p.cmd.Process != nil {
 			if runtime.GOOS == "windows" {
 				_ = p.cmd.Process.Kill()

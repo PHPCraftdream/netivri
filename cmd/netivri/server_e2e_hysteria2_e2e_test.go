@@ -26,6 +26,8 @@ import (
 func TestE2EHysteria2Lifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+	e2eTraceOn(t)
+	step := func(format string, args ...any) { e2eMark(t, format, args...) }
 	const accountPassword = "hysteria2-e2e-account-password"
 	aliceUp, bobUp := accountsServer(t), accountsServer(t)
 	aliceEcho, bobEcho := accountsEcho(t), accountsEcho(t)
@@ -62,6 +64,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 		t.Helper()
 		return serverRun(t, homeA, args...)
 	}
+	step("add the hysteria2 server edge on udp port %d", port)
 	code, out, stderr := runServer("add", "--protocol", "hysteria2", "--name", "edge", "--account", "*", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1")
 	if code != 0 {
 		t.Fatalf("server add: %s", serverErrorSummary(out, stderr))
@@ -69,6 +72,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 1)
 	e2eHysteria2WaitStatus(t, ctx, homeA, "edge", "hysteria2", true)
+	step("server edge is up on A, reload 1")
 	link := func(account string) string {
 		t.Helper()
 		c, stdout, errout := runServer("link", "edge", "--account", account, "--format", "uri")
@@ -154,6 +158,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	}
 	angelB := startUp(t, homeB, "--port", "0")
 	trackAngel(angelB)
+	snap := func(label string) { e2eHysteria2Snapshot(t, label, homeA, homeB, secrets) }
 	drive := func(account, echo string, own, other *accountsUpstream) {
 		t.Helper()
 		beforeOwn, beforeOther := own.count.Load(), other.count.Load()
@@ -167,8 +172,10 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 			t.Fatalf("%s routed to wrong recorder", account)
 		}
 	}
+	step("drive alice and bob through B")
 	drive("alice", aliceEcho, aliceUp, bobUp)
 	drive("bob", bobEcho, bobUp, aliceUp)
+	snap("after the first drives")
 	bodyMu.RLock()
 	aliceURI := bodyByAccount["alice"]
 	bodyMu.RUnlock()
@@ -176,16 +183,21 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	if err := e2eHysteria2ProbeFromURI(ctx, aliceURI, aliceEcho, "incorrect-hysteria2-credential"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "authentication failed, status code: 404") {
 		e2eHysteria2Failure(t, homeA, homeB, secrets, "wrong credential", err)
 	}
+	step("probe with a wrong credential was refused as expected")
 	if err := e2eHysteria2ProbeFromURI(ctx, oldAlice, aliceEcho, ""); err != nil {
 		e2eHysteria2Failure(t, homeA, homeB, secrets, "valid imported URI", err)
 	}
+	step("probe with the valid imported URI passed")
 	beforeAlice, beforeBob := aliceUp.count.Load(), bobUp.count.Load()
+	step("rotate the credential of alice")
 	code, out, stderr = runServer("rotate", "edge", "--account", "alice")
 	if code != 0 {
 		t.Fatalf("rotate: %s", serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 2)
+	step("alice rotated, reload 2")
+	snap("after rotate")
 	if err := e2eHysteria2ProbeFromURI(ctx, oldAlice, aliceEcho, ""); err == nil || !strings.Contains(strings.ToLower(err.Error()), "authentication failed, status code: 404") {
 		e2eHysteria2Failure(t, homeA, homeB, secrets, "rotated credential", err)
 	}
@@ -193,6 +205,7 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 		e2eHysteria2Failure(t, homeA, homeB, secrets, "failed authentication route recorder", io.ErrUnexpectedEOF)
 	}
 	setLinks()
+	step("links reissued; updating the subscription of B")
 	for _, account := range []string{"alice"} {
 		c, stdout, errout := accountsRun(t, homeB, "sub", "update", "provider-"+account)
 		if c != 0 {
@@ -203,12 +216,15 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	waitStatusReload(t, ctx, homeB, 1)
 	drive("alice", aliceEcho, aliceUp, bobUp)
 	drive("bob", bobEcho, bobUp, aliceUp)
+	step("drives after the subscription update passed; restricting alice")
 	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "192.0.2.0/24")
 	if code != 0 {
 		t.Fatalf("set allowed clients: %s", serverErrorSummary(out, stderr))
 	}
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 3)
+	step("alice restricted to 192.0.2.0/24, reload 3")
+	snap("after restriction")
 	beforeAlice, beforeBob = aliceUp.count.Load(), bobUp.count.Load()
 	bodyMu.RLock()
 	aliceURI = bodyByAccount["alice"]
@@ -222,12 +238,14 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	}
 	// A dead route backs off probes (45s base, lengthened per failure); restarting B clears its cached dead-node state.
 	restartB := func() {
+		step("restart client angel B")
 		if code, stdout, errout := accountsRun(t, homeB, "down"); code != 0 && !e2eHysteria2AngelNotRunning(stdout, errout) {
 			t.Fatalf("client angel down: %s", serverErrorSummary(stdout, errout))
 		}
 		angelB.Stop()
 		angelB = startUp(t, homeB, "--port", "0")
 		trackAngel(angelB)
+		snap("after restart of B")
 	}
 	restartB()
 	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"bob", bobEcho, bobUp, aliceUp}})
@@ -237,9 +255,11 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	}
 	assertNoSecrets(t, out, stderr, secrets...)
 	waitStatusReload(t, ctx, homeA, 4)
+	step("allowed clients of alice cleared, reload 4")
 	restartB()
 	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"alice", aliceEcho, aliceUp, bobUp}, {"bob", bobEcho, bobUp, aliceUp}})
 	aliceLink, bobLink := link("alice"), link("bob")
+	step("restart server angel A")
 	code, out, stderr = accountsRun(t, homeA, "down")
 	if code != 0 {
 		t.Fatalf("angel down: %s", serverErrorSummary(out, stderr))
@@ -249,11 +269,13 @@ func TestE2EHysteria2Lifecycle(t *testing.T) {
 	angelA = startUp(t, homeA, "--port", "0")
 	trackAngel(angelA)
 	e2eHysteria2WaitStatus(t, ctx, homeA, "edge", "hysteria2", true)
+	snap("after restart of A")
 	restartB()
 	if link("alice") != aliceLink || link("bob") != bobLink {
 		t.Fatal("server links changed across restart")
 	}
 	e2eHysteria2RetryEchoes(t, ctx, angelB.Status().Data.Listen, accountPassword, secrets, homeA, homeB, []e2eHysteria2Echo{{"alice", aliceEcho, aliceUp, bobUp}, {"bob", bobEcho, bobUp, aliceUp}})
+	step("remove server edge")
 	code, out, stderr = runServer("remove", "edge")
 	if code != 0 {
 		t.Fatalf("server remove: %s", serverErrorSummary(out, stderr))
@@ -278,10 +300,17 @@ func e2eHysteria2RetryEchoes(t *testing.T, parent context.Context, proxy, passwo
 	for _, check := range checks {
 		beforeOwn, beforeOther := check.own.count.Load(), check.other.count.Load()
 		var lastErr error
+		attempts := 0
 		for {
 			attemptCtx, attemptCancel := context.WithTimeout(ctx, 3*time.Second)
 			lastErr = e2eHysteria2AccountsClient(attemptCtx, proxy, check.account, password, check.echo)
 			attemptCancel()
+			attempts++
+			if lastErr == nil {
+				e2eMark(t, "echo %s passed at attempt %d", check.account, attempts)
+			} else if attempts <= 3 || attempts%10 == 0 {
+				e2eMark(t, "echo %s attempt %d failed: %s", check.account, attempts, e2eHysteria2Sanitize(lastErr.Error(), secrets))
+			}
 			if lastErr == nil {
 				if check.own.count.Load() <= beforeOwn || check.other.count.Load() != beforeOther {
 					e2eHysteria2Diagnostics(t, homeA, homeB, secrets)
@@ -649,4 +678,28 @@ func e2eHysteria2ProbeFromURI(ctx context.Context, uri, target, overridePassword
 		return io.ErrUnexpectedEOF
 	}
 	return nil
+}
+
+// e2eHysteria2Snapshot records the status of both angels in the failure trace,
+// so a failed run shows how the pair stood at each step, also when an angel is
+// gone by the time the report is made. It never fails the test.
+func e2eHysteria2Snapshot(t *testing.T, label, homeA, homeB string, secrets []string) {
+	for _, angel := range []struct {
+		name, home string
+		full       bool
+	}{{"A", homeA, false}, {"B", homeB, true}} {
+		args := []string{"status", "--json"}
+		if angel.full {
+			args = []string{"status", "--full", "--json"}
+		}
+		code, stdout, stderr, err := angelExec(angel.home, args...)
+		switch {
+		case err != nil:
+			e2eMark(t, "snapshot %s, angel %s: status did not run: %v", label, angel.name, err)
+		case code != 0:
+			e2eMark(t, "snapshot %s, angel %s: status exit %d: %s", label, angel.name, code, e2eHysteria2Sanitize(strings.TrimSpace(stdout+stderr), secrets))
+		default:
+			e2eMark(t, "snapshot %s, angel %s: %s", label, angel.name, e2eHysteria2Status(stdout, angel.full, secrets))
+		}
+	}
 }
