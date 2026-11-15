@@ -162,7 +162,7 @@ One loop wakes every 30 seconds and asks which subscription is due:
   a shortened interval applies at once.
 
 A refresh uses the same fetch as `sub update` (`fetchSnapshot`: the same
-proxy rules, never silently direct, never printing the URL). It stores the new
+the proxy used as `fetch.mode` says, by default as the reserve after a failed direct fetch, never printing the URL). It stores the new
 snapshot only if the routes can still be built with it
 (`accountRoutePoolWith` replaces the stored snapshot of that provider by the
 fetched one without touching the disk). A list in which an account's country

@@ -114,8 +114,8 @@ func TestSubCountriesFromURLDoesNotStore(t *testing.T) {
 	fetchCalls := 0
 	app, out := testApp(t, func(ctx context.Context, rawURL string, o fetch.Options) (*fetch.Result, error) {
 		fetchCalls++
-		if o.Proxy != "" {
-			t.Errorf("unexpected proxy %q", o.Proxy)
+		if o.Reserve != "" || o.Proxy != "" {
+			t.Errorf("unexpected proxy %q %q", o.Proxy, o.Reserve)
 		}
 		return &fetch.Result{Body: []byte(testBody), Status: 200}, nil
 	})
@@ -163,12 +163,15 @@ func TestSubCountriesFromURLDoesNotStore(t *testing.T) {
 	}
 }
 
-// TestSubCountriesURLProxySelection: the fetch goes through --via when
-// given, else through fetch.proxy, never direct when one is configured.
+// TestSubCountriesURLProxySelection: the reserve proxy is --via when
+// given, else through fetch.proxy, as the reserve after a direct attempt.
 func TestSubCountriesURLProxySelection(t *testing.T) {
 	var proxies []string
 	app, out := testApp(t, func(ctx context.Context, rawURL string, o fetch.Options) (*fetch.Result, error) {
-		proxies = append(proxies, o.Proxy)
+		if o.Proxy != "" {
+			t.Errorf("a configured proxy is a reserve, never strict: %q", o.Proxy)
+		}
+		proxies = append(proxies, o.Reserve)
 		return &fetch.Result{Body: []byte(testBody), Status: 200}, nil
 	})
 	seedConfig(t, app)

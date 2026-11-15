@@ -93,14 +93,23 @@ type Crash struct {
 	Version string
 	// At is when the file was last written: the crash for a dump.
 	At time.Time
+	// Started is when that angel started, from the dump header (At when the
+	// header is unreadable).
+	Started time.Time
+	// BootedAt is when the computer booted, set only for an unclean stop of an
+	// angel that started before that boot: it ended with a restart or a power
+	// loss. Zero when the angel started after the boot, or the boot time is
+	// unknown.
+	BootedAt time.Time
 }
 
 // CrashReport is what the earlier angels left behind.
 type CrashReport struct {
 	// Dumps crashed: their traceback is kept in run/crash.
 	Dumps []Crash
-	// Unclean stopped without a traceback (killed, or the machine lost
-	// power); their empty dump files are removed.
+	// Unclean stopped without a traceback (killed, or the machine restarted or
+	// lost power: Crash.BootedAt tells the latter); their empty dump files are
+	// removed.
 	Unclean []Crash
 }
 
@@ -130,6 +139,7 @@ func ReportCrashes(home string) CrashReport {
 		if info, err := e.Info(); err == nil {
 			c.At = info.ModTime().UTC()
 		}
+		c.Started = crashStarted(string(data), c.At)
 		if strings.Contains(string(data), "\ngoroutine ") || strings.Contains(string(data), "\npanic: ") || strings.Contains(string(data), "\nfatal error: ") {
 			kept := strings.TrimSuffix(name, crashPending) + crashKept
 			if err := os.Rename(path, filepath.Join(dir, kept)); err != nil {
@@ -140,6 +150,7 @@ func ReportCrashes(home string) CrashReport {
 			continue
 		}
 		if err := os.Remove(path); err == nil {
+			c.BootedAt, _ = rebootedSince(c.Started)
 			rep.Unclean = append(rep.Unclean, c)
 		}
 	}
@@ -166,6 +177,19 @@ func crashVersion(text string) string {
 		}
 	}
 	return ""
+}
+
+// crashStarted reads the start time of a dump header; fallback when it is not
+// there or does not parse.
+func crashStarted(text string, fallback time.Time) time.Time {
+	for _, line := range strings.SplitN(text, "\n", 6) {
+		if v, ok := strings.CutPrefix(line, "started: "); ok {
+			if t, err := time.Parse(time.RFC3339, strings.TrimSpace(v)); err == nil {
+				return t.UTC()
+			}
+		}
+	}
+	return fallback
 }
 
 // pruneCrashDumps keeps the MaxCrashDumps newest kept dumps (the names sort by time).

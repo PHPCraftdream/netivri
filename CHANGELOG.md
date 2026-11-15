@@ -22,6 +22,14 @@ versions; every such change is listed here.
 
 ### Added
 
+- **A restart of the computer is named by its boot time.** The `INFO` line about a previous angel that did not
+  stop cleanly said only that it was killed, or the computer restarted or lost power. The angel now reads when
+  the computer booted (`btime` of `/proc/stat` on Linux, `kern.boottime` on macOS, the uptime on Windows) and,
+  when that was after the angel had started, writes `the computer booted at 2026-11-14T15:38:02Z, after that
+  angel started at ..., so it ended with a restart or a power loss`. With Fast Startup a Windows shutdown
+  followed by a start keeps the uptime, so there only a restart is named and a shutdown keeps the general
+  wording.
+
 - **The hop pools are visible.** `status` (short, `--full`, Ktav and `--json`) adds `hop_pools` to every account whose route has a role with several hops: per role the hop count, the active and quarantined counts and, per hop, its short opaque id (the eight characters the quarantine log lines print), state (`active`, `quarantined`, `probing`), trips and `next_revival_seconds`; the fields are additive and single-hop routes show nothing new. `doctor` adds `hop state` (the `hops-pre.health` and `hops-post.health` files are readable), `hop pools` (a warning when every hop of a pool is down, in the wording of the log line) and `hop persistence` (an `info` for hops the state files cannot hold), each only when there is something to report. The Service tab shows a line such as `post 3 hops: 2 up, 1 down` under the account. Hops are never shown by URL, host or credentials. The README, `docs/cli.md`, `docs/config.md` and the help topics describe how to read the pool state.
 
 - **Ordered proxy-chain settings.** Global, provider and account `pre_socks5` / `post_socks5` values are ordered arrays; the nearest non-empty level replaces the complete list, and legacy Ktav scalars continue to load as singleton lists and render back as scalars. `none` must stand alone, duplicate entries are invalid. Lists accept up to 16 candidates per side; candidates are alternatives, not serial hops. Setters accept repeated replacement flags plus one-based, original-list `--remove-pre {INDEX}` / `--remove-post {INDEX}` and repeatable `--add-pre {URL}` / `--add-post {URL}` operations; duplicate original removal indexes reject the entire operation. The Accounts and Providers shells both support list replacement, add, remove, inherit and none through their existing pre/post pickers, without reordering. JSON pre/post values (including account `own`) are redacted arrays, an intentional breaking shape change documented under Unreleased without a schema/version bump.
@@ -154,6 +162,20 @@ versions; every such change is listed here.
 - **Explicit direct exits per account.** `accounts[].exit` opts an account into direct egress, optionally via the effective post proxy. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Server-only changes that a direct-only core cannot apply in place now restart too. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Direct requires empty provider/country; inherited pre-proxy is ignored but an explicitly configured account pre-proxy is rejected. This is never a fallback and exposes this machine's address to destinations. See [`docs/design/exit-direct.md`](docs/design/exit-direct.md).
 
 ### Changed
+
+- **A configured proxy is the reserve channel of a subscription fetch, and `fetch.mode` chooses.**
+  `fetch.proxy` and the per-provider `--via` used to be strict: every fetch went through the proxy
+  and never directly. The new `fetch.mode` (`config set fetch.mode`, the Settings screen, or the
+  file) says how the proxy is used: `reserve`, the default, goes directly first and takes the proxy
+  automatically when the direct attempt cannot connect, breaks off, or is refused for the address
+  (HTTP 403, 429, 451), while a 404, a bad body or a body over the size limit is not retried;
+  `proxy` is the old strict path, only through the proxy and never directly; `direct` never uses a
+  proxy and keeps the configured ones unused. With no proxy there is no reserve. When both attempts
+  of `reserve` fail, the error keeps the direct code and ends `; then through the reserve proxy: ...`.
+  This applies to `sub add`, `sub update`, `sub countries --url`, the hourly refresh and the
+  Providers preview. In the default mode the provider sees this machine's own address whenever the
+  direct fetch works, so a proxy set only to hide it needs `fetch.mode: proxy`; `README.md` and
+  `SECURITY.md` say so.
 
 - The interactive screens use the new frame and layout of shell v2 (see Added).
 

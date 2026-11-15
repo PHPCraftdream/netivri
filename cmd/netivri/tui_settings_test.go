@@ -16,7 +16,7 @@ import (
 var settingsKeys = []string{
 	"listen.bind", "listen.port", "listen.allowed_clients",
 	"auth.login", "auth.password", "auth.allow_init_remote",
-	"fetch.proxy", "fetch.update_interval",
+	"fetch.proxy", "fetch.mode", "fetch.update_interval",
 	"chain.pre_socks5", "chain.post_socks5",
 }
 
@@ -116,7 +116,7 @@ func TestSettingsListShowsGroupsAndSafeValues(t *testing.T) {
 	if len(f.s.list.Rows) != 4 {
 		t.Fatalf("rows = %d, want 4", len(f.s.list.Rows))
 	}
-	for i, want := range [][2]string{{"Listen", "3 keys"}, {"Auth", "3 keys"}, {"Fetch", "2 keys"}, {"Chain", "2 keys"}} {
+	for i, want := range [][2]string{{"Listen", "3 keys"}, {"Auth", "3 keys"}, {"Fetch", "3 keys"}, {"Chain", "2 keys"}} {
 		got := f.s.list.Rows[i].Cells
 		if got[0] != want[0] || got[1] != want[1] {
 			t.Errorf("row %d = %v, want %v", i, got, want)
@@ -258,6 +258,7 @@ func TestSettingsFieldOpensTheRightPrompt(t *testing.T) {
 		{id: "auth.password", kind: tui.SecretPrompt, value: ""},
 		{id: "auth.allow_init_remote", kind: tui.ChoicePrompt, value: "false"},
 		{id: "fetch.proxy", kind: tui.SecretPrompt, value: ""},
+		{id: "fetch.mode", kind: tui.TextPrompt, skipValue: true},
 		{id: "fetch.update_interval", kind: tui.TextPrompt, skipValue: true},
 		{id: "chain.pre_socks5", kind: tui.SecretPrompt, value: ""},
 		{id: "chain.post_socks5", kind: tui.SecretPrompt, value: ""},
@@ -560,7 +561,7 @@ func TestSettingsParityRefs(t *testing.T) {
 			t.Errorf("missing %s in %v", r, f.s.ParityRefs())
 		}
 	}
-	if len(got) != 11 {
-		t.Errorf("refs = %d, want 11", len(got))
+	if len(got) != 12 {
+		t.Errorf("refs = %d, want 12", len(got))
 	}
 }

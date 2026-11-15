@@ -244,13 +244,26 @@ func deriveName(rawURL string, subs []config.Subscription) string {
 	return name
 }
 
-// proxyFor picks the fetch proxy: an explicit --via wins over the
-// configured fetch.proxy; there is no fallback to direct and no
-// environment proxy (fetch.Options.Proxy == "" is an explicit direct
-// connection inside internal/fetch).
+// proxyFor picks the proxy of a fetch: an explicit --via wins over the
+// configured fetch.proxy. "" means none. The environment proxy is never used.
 func proxyFor(via, cfgProxy string) string {
 	if via != "" {
 		return via
 	}
 	return cfgProxy
+}
+
+// fetchOptions builds the options of a subscription fetch: fetch.mode says how
+// the proxy of proxyFor is used. reserve (the default) fetches directly and
+// takes the proxy only after the direct attempt failed, proxy fetches only
+// through it, direct never uses it.
+func fetchOptions(via string, f config.Fetch) fetch.Options {
+	proxy := proxyFor(via, f.Proxy)
+	switch f.EffectiveMode() {
+	case config.FetchDirect:
+		return fetch.Options{}
+	case config.FetchProxy:
+		return fetch.Options{Proxy: proxy}
+	}
+	return fetch.Options{Reserve: proxy}
 }

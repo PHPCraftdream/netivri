@@ -26,7 +26,7 @@ func TestProviderPreviewStepShowsCountriesAndUnknown(t *testing.T) {
 	h := providerSeed(t)
 	var via string
 	get := func(_ context.Context, _ string, o fetch.Options) (*fetch.Result, error) {
-		via = o.Proxy
+		via = o.Reserve
 		return &fetch.Result{Body: []byte(previewBodyFixture)}, nil
 	}
 	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })

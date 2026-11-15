@@ -488,8 +488,8 @@ func TestSubAddInvalidHopProxyRemainsConfigInvalid(t *testing.T) {
 	}
 }
 
-// Proxy selection: --via beats fetch.proxy; otherwise fetch.proxy; with
-// neither the fetcher sees Proxy == "" (explicit direct, no env proxy).
+// Proxy selection: --via beats fetch.proxy as the reserve proxy; otherwise fetch.proxy; with
+// neither the fetcher sees Reserve == "" (direct only, no env proxy).
 func TestSubAddProxySelection(t *testing.T) {
 	var got []fetch.Options
 	app, _ := testApp(t, func(_ context.Context, _ string, o fetch.Options) (*fetch.Result, error) {
@@ -514,11 +514,11 @@ func TestSubAddProxySelection(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d fetches, want 2", len(got))
 	}
-	if got[0].Proxy != "http://127.0.0.1:8080" {
-		t.Errorf("--via proxy = %q, want the explicit one", got[0].Proxy)
+	if got[0].Reserve != "http://127.0.0.1:8080" {
+		t.Errorf("--via proxy = %q, want the explicit one", got[0].Reserve)
 	}
-	if got[1].Proxy != "socks5://127.0.0.1:1080" {
-		t.Errorf("proxy = %q, want fetch.proxy", got[1].Proxy)
+	if got[1].Reserve != "socks5://127.0.0.1:1080" {
+		t.Errorf("proxy = %q, want fetch.proxy", got[1].Reserve)
 	}
 }
 
@@ -613,5 +613,35 @@ func TestSubAddReAddRefreshesQuota(t *testing.T) {
 	quota := entry["quota"].(map[string]any)
 	if quota["used"] != float64(3) {
 		t.Errorf("list quota used = %v, want 3", quota["used"])
+	}
+}
+
+// fetch.mode decides how the proxy of proxyFor is used: reserve (and unset)
+// after a failed direct fetch, proxy strictly, direct not at all. --via wins
+// over fetch.proxy in every mode, and no proxy leaves nothing to use.
+func TestFetchOptionsByMode(t *testing.T) {
+	const global, via = "socks5://127.0.0.1:1080", "http://127.0.0.1:8080"
+	cases := []struct {
+		name string
+		via  string
+		cfg  config.Fetch
+		want fetch.Options
+	}{
+		{"default uses the proxy as the reserve", "", config.Fetch{Proxy: global}, fetch.Options{Reserve: global}},
+		{"reserve", "", config.Fetch{Proxy: global, Mode: config.FetchReserve}, fetch.Options{Reserve: global}},
+		{"via wins in reserve", via, config.Fetch{Proxy: global, Mode: config.FetchReserve}, fetch.Options{Reserve: via}},
+		{"proxy is strict", "", config.Fetch{Proxy: global, Mode: config.FetchProxy}, fetch.Options{Proxy: global}},
+		{"via wins in proxy", via, config.Fetch{Proxy: global, Mode: config.FetchProxy}, fetch.Options{Proxy: via}},
+		{"direct ignores both", via, config.Fetch{Proxy: global, Mode: config.FetchDirect}, fetch.Options{}},
+		{"no proxy in reserve", "", config.Fetch{}, fetch.Options{}},
+		{"no proxy in proxy mode", "", config.Fetch{Mode: config.FetchProxy}, fetch.Options{}},
+		{"unknown mode reads as reserve", "", config.Fetch{Proxy: global, Mode: "unknown"}, fetch.Options{Reserve: global}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fetchOptions(tc.via, tc.cfg); got != tc.want {
+				t.Errorf("fetchOptions = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }

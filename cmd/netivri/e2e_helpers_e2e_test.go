@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -132,6 +133,13 @@ type upProc struct {
 	exitMu    sync.Mutex
 	exited    bool
 	exitErr   error
+	// home, startedAt and exitedAt tell a failure report how long the angel
+	// lived; stopping is set once the test itself stops the angel, to tell that
+	// exit from one the angel made on its own.
+	home      string
+	startedAt time.Time
+	exitedAt  time.Time
+	stopping  atomic.Bool
 }
 
 var (
@@ -155,7 +163,11 @@ func upProcReport(home string) string {
 		state = "angel process: exited"
 	}
 	p.exitMu.Unlock()
-	return state + "\n" + e2eTail("stderr", p.Stderr(), 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
+	head := ""
+	if h := e2eCrashHead(p.Stderr()); h != "" {
+		head = h + "\n"
+	}
+	return state + "\n" + head + e2eHeadTail("stderr", p.Stderr(), 20, 60) + "\n" + e2eTail("stdout", p.Stdout(), 5)
 }
 
 // e2eAngelFailureReport is the detail shown only when a test that started the
@@ -166,12 +178,15 @@ func e2eAngelFailureReport(home string, p *upProc) string {
 	p.exitMu.Lock()
 	state := "running"
 	if p.exited {
-		state = fmt.Sprintf("exited (%v)", p.exitErr)
+		state = fmt.Sprintf("exited (%v), %s after it started, at %s", p.exitErr, p.exitedAt.Sub(p.startedAt).Round(time.Millisecond), p.exitedAt.UTC().Format("15:04:05.000"))
 	}
 	p.exitMu.Unlock()
 	var b strings.Builder
-	fmt.Fprintf(&b, "angel process: %s\n", state)
-	b.WriteString(e2eTail("angel log (stderr)", p.Stderr(), 200))
+	fmt.Fprintf(&b, "angel process: %s (pid %d, started at %s, now %s)\n", state, p.cmd.Process.Pid, p.startedAt.UTC().Format("15:04:05.000"), time.Now().UTC().Format("15:04:05.000"))
+	if head := e2eCrashHead(p.Stderr()); head != "" {
+		b.WriteString(head + "\n")
+	}
+	b.WriteString(e2eHeadTail("angel log (stderr)", p.Stderr(), 40, 200))
 	b.WriteString("\n" + e2eTail("stdout", p.Stdout(), 10))
 	b.WriteString("\ncrash dumps: " + e2eRedactDiagnostic(e2eCrashDumps(home)))
 	code, out, errOut, err := angelExec(home, "status", "--full")
@@ -250,6 +265,88 @@ func TestE2ERedactDiagnosticText(t *testing.T) {
 	}
 }
 
+// e2eCrashHeadLines is how many lines of a crash dump e2eCrashHead keeps.
+const e2eCrashHeadLines = 40
+
+// e2eCrashHead returns the start of a Go crash dump found in stderr: the
+// "fatal error:", "panic:" or "runtime:" line and the first goroutines, which
+// name the cause. The tail of a long dump loses them, so a failure report shows
+// this block as well. It is "" when stderr holds no dump. Stack lines keep
+// their module paths; only credentials and links are redacted.
+func e2eCrashHead(stderr string) string {
+	lines := strings.Split(stderr, "\n")
+	start := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "fatal error: ") || strings.HasPrefix(line, "panic: ") || strings.HasPrefix(line, "runtime: ") || strings.HasPrefix(line, "unexpected fault address") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	end := min(start+e2eCrashHeadLines, len(lines))
+	kept := make([]string, 0, end-start)
+	for _, line := range lines[start:end] {
+		kept = append(kept, e2eRedactCrashLine(strings.TrimRight(line, "\r")))
+	}
+	return "crash dump head:\n" + strings.Join(kept, "\n")
+}
+
+// e2eRedactCrashLine hides links, ids and long tokens of one crash dump line
+// and the whole line when it names a password or a secret.
+func e2eRedactCrashLine(line string) string {
+	lower := strings.ToLower(line)
+	if strings.Contains(lower, "password") || strings.Contains(lower, "secret") {
+		return "[redacted]"
+	}
+	line = e2eURLPattern.ReplaceAllString(line, "[redacted]")
+	line = e2eUUIDPattern.ReplaceAllString(line, "[redacted]")
+	return e2eTokenPattern.ReplaceAllString(line, "[redacted]")
+}
+
+// TestE2ECrashHead checks that the head of a long crash dump survives: the
+// cause line and the first goroutine, with links and credentials hidden.
+func TestE2ECrashHead(t *testing.T) {
+	if got := e2eCrashHead("2026-11-09T21:31:26Z INFO configuration applied\n2026-11-09T21:31:30Z WARN panic: not a dump\n"); got != "" {
+		t.Fatalf("a log without a dump gave a head: %q", got)
+	}
+	var b strings.Builder
+	b.WriteString("2026-11-09T21:31:30Z INFO server edge stopped\n")
+	b.WriteString("fatal error: unexpected signal during runtime execution\r\n")
+	b.WriteString("[signal 0xc0000005 code=0x0 addr=0x0 pc=0x7ff7]\n\n")
+	b.WriteString("goroutine 7 gp=0x1 m=3 [running]:\n")
+	b.WriteString("\tgithub.com/metacubex/http@v1.2.3/transport.go:10 +0x1 fp=0x2 sp=0x3 pc=0x4\n")
+	b.WriteString("dial https://sub.example.invalid/feed?token=abc failed\n")
+	b.WriteString("user password hunter2\n")
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "tail line %d\n", i)
+	}
+	got := e2eCrashHead(b.String())
+	if !strings.HasPrefix(got, "crash dump head:\nfatal error: unexpected signal during runtime execution\n[signal 0xc0000005") {
+		t.Fatalf("head does not start at the cause line: %q", got)
+	}
+	for _, want := range []string{"goroutine 7 gp=0x1 m=3 [running]:", "github.com/metacubex/http@v1.2.3/transport.go:10"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("head lost %q: %q", want, got)
+		}
+	}
+	for _, secret := range []string{"sub.example.invalid", "hunter2", "\r", "INFO server edge stopped"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("head kept %q", secret)
+		}
+	}
+	if n := strings.Count(got, "\n"); n != e2eCrashHeadLines {
+		t.Fatalf("head has %d line breaks, want %d", n, e2eCrashHeadLines)
+	}
+	if strings.Contains(got, "tail line 99") {
+		t.Fatal("head ran past its limit")
+	}
+	if got := e2eCrashHead("panic: boom\n"); got != "crash dump head:\npanic: boom\n" {
+		t.Fatalf("short dump: %q", got)
+	}
+}
+
 // e2eTail returns the last n redacted lines of text.
 func e2eTail(name, text string, n int) string {
 	var kept []string
@@ -257,7 +354,7 @@ func e2eTail(name, text string, n int) string {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		kept = append(kept, e2eRedactDiagnostic(line))
+		kept = append(kept, e2eRedactStderrLine(line))
 	}
 	if len(kept) > n {
 		kept = kept[len(kept)-n:]
@@ -274,7 +371,9 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	cmd := exec.Command(netivriBin, full...)
 	// The angel log goes to stderr, so a failure report can show what the
 	// angel did (a foreground run has no log file).
-	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, logStderrEnv+"=1")
+	// GOTRACEBACK=all: a panic of the angel dumps every goroutine, not only the
+	// one that panicked, so the report of a failed test can name the cause.
+	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, logStderrEnv+"=1", "GOTRACEBACK=all")
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -304,6 +403,8 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 		stderrEOF: make(chan struct{}),
 		stdoutR:   stdoutR,
 		stderrR:   stderrR,
+		home:      home,
+		startedAt: time.Now(),
 	}
 	// Cleanup registered immediately after Start: any failure below must
 	// not leave the child running.
@@ -340,9 +441,19 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	}()
 	go func() {
 		err := cmd.Wait()
+		now := time.Now()
 		p.exitMu.Lock()
-		p.exited, p.exitErr = true, err
+		p.exited, p.exitErr, p.exitedAt = true, err, now
 		p.exitMu.Unlock()
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		if p.stopping.Load() {
+			e2eMark(t, "angel %s (pid %d) stopped by the test after %s, exit code %d", filepath.Base(home), cmd.Process.Pid, now.Sub(p.startedAt).Round(time.Millisecond), code)
+		} else {
+			e2eMark(t, "angel %s (pid %d) EXITED ON ITS OWN after %s, exit code %d: %v", filepath.Base(home), cmd.Process.Pid, now.Sub(p.startedAt).Round(time.Millisecond), code, err)
+		}
 		p.waitCh <- err
 	}()
 	select {
@@ -360,6 +471,7 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 		}
 		p.status = st
 		p.FirstLine = res.line
+		e2eMark(t, "angel %s started: pid %d, listen %s", filepath.Base(home), cmd.Process.Pid, st.Data.Listen)
 	case <-time.After(e2eFirstLineTimeout):
 		p.Stop()
 		t.Fatalf("no first stdout line within %v (stderr so far: %s)", e2eFirstLineTimeout, p.stderrBuf.String())
@@ -380,6 +492,7 @@ func (p *upProc) Stderr() string { return p.stderrBuf.String() }
 // Kill on Windows. Idempotent; registered as cleanup by startUp.
 func (p *upProc) Stop() {
 	p.stopOnce.Do(func() {
+		p.stopping.Store(true)
 		if p.cmd.Process != nil {
 			if runtime.GOOS == "windows" {
 				_ = p.cmd.Process.Kill()

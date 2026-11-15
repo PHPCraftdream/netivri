@@ -268,9 +268,9 @@ forms; the URL is never printed.
 - `sub countries {SUBSCRIPTION}`: the stored snapshot, no network.
 - `sub countries`: every configured provider (config order) plus `countries`,
   the summed union of their stored snapshots.
-- `sub countries --url {URL} [--via {PROXY}]`: fetches through the same strict
-  path as `sub add` (`--via` wins over `fetch.proxy`, no direct fallback),
-  parses and prints, but stores nothing and touches no config. Fetch and
+- `sub countries --url {URL} [--via {PROXY}]`: fetches the same way as
+  `sub add` (`--via`, else `fetch.proxy`, used as `fetch.mode` says: by default
+  directly first with the proxy as the reserve), parses and prints, but stores nothing and touches no config. Fetch and
   parse failures use the `FETCH_*` / `SUBSCRIPTION_*` codes of `sub add`.
   `--url` together with a {SUBSCRIPTION}, `--via` without `--url` and an empty
   `--url` are usage errors.
@@ -504,8 +504,13 @@ right after the computer woke up). When the computer slept during the hour the s
 covers instead of `last hour`, since the angel is frozen while it sleeps and the figures are those of the
 time before: `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: 169 connections ended, ...`
 (`since ...Z, the computer slept in between` when the sleep has not been noticed yet). A previous angel that
-did not stop cleanly is named at the next start in one `INFO` line that says it was killed, or the computer
-restarted or lost power (Windows ends a running angel when it restarts), and that there is no crash dump.
+did not stop cleanly is named at the next start in one `INFO` line and there is no crash dump. When the
+computer booted after that angel had started, the line says so with the boot time (`the computer booted at
+2026-11-14T15:38:02Z, after that angel started at 2026-11-13T09:00:00Z, so it ended with a restart or a power
+loss`); otherwise it says the angel was killed, or the computer restarted or lost power (Windows ends a running
+angel when it restarts). The boot time comes from the system (`btime` of `/proc/stat`, `kern.boottime`, the
+uptime on Windows); with Fast Startup a Windows shutdown followed by a start keeps the uptime, so only a restart
+moves it and the general wording stays.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry
@@ -928,14 +933,15 @@ as `set` or `not set` — never the hash, and the `init` placeholder counts
 as `not set`. Proxy setting `fetch.proxy` is shown as `scheme://host:port` without credentials,
 plus an `auth` boolean. `chain.pre_socks5` and `chain.post_socks5` are redacted
 arrays in `value`, plus `auth` indicating whether any URL had credentials.
-An empty `fetch.update_interval` means the default of one hour applies.
+An empty `fetch.update_interval` means the default of one hour applies. `fetch.mode` is shown with the default
+applied (`reserve` when the key is not set).
 
 ```json
 {"schema_version": 1, "ok": true,
  "data": {"groups": {
    "listen": {"bind": "127.0.0.1", "port": 7890, "allowed_clients": "*"},
    "auth": {"login": "", "password": "not set", "allow_init_remote": false},
-   "fetch": {"proxy": {"value": "", "auth": false}, "update_interval": ""},
+   "fetch": {"proxy": {"value": "", "auth": false}, "mode": "reserve", "update_interval": ""},
    "chain": {"pre_socks5": {"value": [], "auth": false},
              "post_socks5": {"value": ["socks5://post.example:1080"], "auth": false}}}}}
 ```
@@ -968,7 +974,8 @@ when the validation fails. The valid keys and their values are listed by
 `localhost`), `listen.port` (1–65535), `listen.allowed_clients`
 (comma-separated client rules), `auth.login`, `auth.password`
 (`auth.allow_init_remote` true/false), `fetch.proxy` (a `socks5://`,
-`socks5h://`, `http://` or `https://` URL), `fetch.update_interval`
+`socks5h://`, `http://` or `https://` URL), `fetch.mode` (`reserve`, `proxy` or
+`direct`; `none` or empty restores `reserve`), `fetch.update_interval`
 (`off` or `5m`–`168h`) and `chain.pre_socks5` / `chain.post_socks5` (one
 scalar URL, `none`, or empty to clear; edit `config.ktav` for candidate arrays).
 The fields accept up to 16 URLs per side; legacy scalar URLs remain accepted and
@@ -1484,7 +1491,7 @@ netivri sub rename main work
 netivri sub set {SUBSCRIPTION} [--url {URL}] [--via {PROXY|none}]
 ```
 
-Changes the connection settings of one subscription without fetching it. `--url` replaces the subscription URL (a credential, never printed), `--via` the fetch proxy (`none` removes it; `fetch.proxy` still applies). At least one is required (exit 2); a side that is not given stays as it is. An invalid URL or proxy is `CONFIG_INVALID` (exit 2) and never echoes the value; an unknown name is `SUB_NOT_FOUND` (exit 5). Output: `{"name": "main", "changed": ["url", "via"]}`. Run `netivri sub update {SUBSCRIPTION}` afterwards to fetch the nodes from the new URL.
+Changes the connection settings of one subscription without fetching it. `--url` replaces the subscription URL (a credential, never printed), `--via` the proxy of this provider (by default the reserve used when the direct fetch fails, see `fetch.mode`; `none` removes it; `fetch.proxy` still applies). At least one is required (exit 2); a side that is not given stays as it is. An invalid URL or proxy is `CONFIG_INVALID` (exit 2) and never echoes the value; an unknown name is `SUB_NOT_FOUND` (exit 5). Output: `{"name": "main", "changed": ["url", "via"]}`. Run `netivri sub update {SUBSCRIPTION}` afterwards to fetch the nodes from the new URL.
 
 ```sh
 netivri sub set main --url https://provider.example/sub/{TOKEN}

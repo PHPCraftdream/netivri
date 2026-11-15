@@ -28,8 +28,8 @@ Consequences:
 
 - **Nothing to load, download or ship.** The pure backend never loads a shared
   library, never downloads anything and never spawns a process, so the binding
-  cannot make a connection of its own and cannot bypass the fetch proxy rule
-  (all outgoing fetches go through the configured proxy, see subscriptions).
+  cannot make a connection of its own and cannot bypass the fetch rule (all
+  outgoing fetches are made by `internal/fetch`, see subscriptions).
   The Go binary stays `CGO_ENABLED=0` and is the only file of a release; there
   is no `ktav_cabi`, no `KTAV_LIB_PATH`, and no way for a missing library to
   break a command.

@@ -143,13 +143,45 @@ const (
 	UpdateOff = "off"
 )
 
-// Fetch carries the proxy used for all outgoing subscription fetches and how
-// often the angel refreshes the subscriptions.
+// How a subscription fetch uses a configured proxy (fetch.mode).
+const (
+	// FetchReserve, the default: the fetch goes directly and takes the proxy
+	// only after the direct attempt failed.
+	FetchReserve = "reserve"
+	// FetchProxy: the fetch goes only through the proxy, never directly.
+	FetchProxy = "proxy"
+	// FetchDirect: the fetch never uses a proxy; the configured proxies stay
+	// in the file but are not used.
+	FetchDirect = "direct"
+)
+
+// Fetch carries the proxy used for all outgoing subscription fetches, how that
+// proxy is used and how often the angel refreshes the subscriptions.
 type Fetch struct {
 	Proxy string `json:"proxy,omitempty"`
+	// Mode is FetchReserve, FetchProxy or FetchDirect; empty means FetchReserve.
+	Mode string `json:"mode,omitempty"`
 	// UpdateInterval is a Go duration ("30m", "1h"), "off", or empty for the
 	// default of one hour.
 	UpdateInterval string `json:"update_interval,omitempty"`
+}
+
+// EffectiveMode returns the fetch mode with the default applied. It expects a
+// validated value; an unknown one reads as the default.
+func (f Fetch) EffectiveMode() string {
+	switch f.Mode {
+	case FetchProxy, FetchDirect:
+		return f.Mode
+	}
+	return FetchReserve
+}
+
+func validateFetchMode(raw string) error {
+	switch raw {
+	case "", FetchReserve, FetchProxy, FetchDirect:
+		return nil
+	}
+	return invalid(`fetch.mode must be "reserve", "proxy" or "direct"`)
 }
 
 // Interval returns the refresh period and false when the refresh is off. It
@@ -224,6 +256,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := validateProxy("fetch.proxy", c.Fetch.Proxy); err != nil {
+		return err
+	}
+	if err := checkScalar("fetch.mode", c.Fetch.Mode); err != nil {
+		return err
+	}
+	if err := validateFetchMode(c.Fetch.Mode); err != nil {
 		return err
 	}
 	if err := checkScalar("fetch.update_interval", c.Fetch.UpdateInterval); err != nil {
