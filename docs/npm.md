@@ -9,9 +9,8 @@ npm) is the only network path.
 ## Layout
 
 - `@netivri/proxy` — the main package: a small dependency-free CommonJS launcher
-  (`bin/netivri.js`). It maps `process.platform` / `process.arch` (plus a
-  to a platform package,
-  resolves the binary with `require.resolve`, and spawns it with
+  (`bin/netivri.js`). It maps `process.platform` / `process.arch` to a
+  platform package, resolves the binary with `require.resolve`, and spawns it with
   `stdio: 'inherit'`, forwarding SIGINT/SIGTERM/SIGHUP and the exit code.
 - `@netivri/proxy-{OS}-{CPU}` — six platform packages (`linux-x64`,
   `linux-arm64`, `darwin-x64`, `darwin-arm64`, `w32-x64`,

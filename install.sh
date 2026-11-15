@@ -107,6 +107,9 @@ if [ -n "$FROM_DIR" ]; then
   fi
 fi
 
+# The tag is vX.Y.Z; accept it as well as X.Y.Z.
+VERSION="${VERSION#v}"
+
 # The version ends up in URLs and file names: allow only version characters.
 case "$VERSION" in
   *[!0-9A-Za-z.+-]*)

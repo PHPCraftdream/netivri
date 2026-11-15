@@ -75,7 +75,7 @@ class Netivri < Formula
 
   def install
     bin.install "netivri"
-    doc.install "LICENSE", "README.md"
+    doc.install "LICENSE", "README.md", "THIRD_PARTY_LICENSES"
   end
 
   test do

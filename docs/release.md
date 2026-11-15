@@ -56,17 +56,15 @@ advice above applies. The organization is created on npmjs.com (free plan, publi
 packages): the `NPM_TOKEN` must belong to a member of it who may publish, and the
 Trusted Publisher is configured on each of the seven packages. The older unscoped
 `netivri-*` packages from earlier attempts stay on the registry; deprecate
-them by hand (`npm deprecate`), the release never touches them. Rename the
-package or ask npm support to release the name.
+them by hand (`npm deprecate`), the release never touches them.
 
 A version number is used up on npm for good: "Once `package@version` has
 been used, you can never use it again", even after `npm unpublish`. After
 all versions of a package are unpublished, npm also refuses new versions of
 that package for 24 hours. A withdrawn release therefore comes back with a
 new version number, unless none of its packages reached npm. The `@netivri`
-packages start at 0.1.0: the numbers 0.1.0 and 0.2.0 were used under the
-older unscoped names, and their GitHub releases and tags were deleted before
-the first release under the organization.
+packages start at 0.1.0; the older unscoped `netivri-*` names are other
+packages, and their numbers do not count for the organization.
 
 **First release: token.** Trusted Publishing can only be configured for a
 package that already exists on npm, so the first publish of the seven packages
@@ -136,8 +134,9 @@ inside the directory holding the archives and the checksum file.
 
 ## Consumers
 
-The npm platform packages and the standalone installer (later tasks) consume
-these same archives; they repackage, they do not rebuild.
+The npm platform packages, the Linux packages, the Scoop manifest, the
+Homebrew formula and the standalone installers consume these same archives;
+they repackage, they do not rebuild.
 
 ## Linux libc
 

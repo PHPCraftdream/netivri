@@ -68,6 +68,8 @@ if (-not $BaseUrl) { $BaseUrl = $env:NETIVRI_BASE_URL }
 if (-not $BaseUrl) { $BaseUrl = '' }
 if (-not $FromDir) { $FromDir = $env:NETIVRI_FROM_DIR }
 if (-not $FromDir) { $FromDir = '' }
+# The tag is vX.Y.Z; accept it as well as X.Y.Z.
+if ($Version.StartsWith('v')) { $Version = $Version.Substring(1) }
 # The version ends up in URLs and file names: allow only version characters.
 if ($Version -and $Version -notmatch '^[0-9A-Za-z.+-]+$') { Fail "invalid version: $Version" }
 
