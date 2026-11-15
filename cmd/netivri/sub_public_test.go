@@ -98,7 +98,7 @@ func TestRunSubFlagsEndToEnd(t *testing.T) {
 	var gotProxies []string
 	old := subFetch
 	subFetch = func(_ context.Context, _ string, o fetch.Options) (*fetch.Result, error) {
-		gotProxies = append(gotProxies, o.Proxy)
+		gotProxies = append(gotProxies, o.Reserve)
 		return &fetch.Result{Body: []byte(testBody), Status: 200}, nil
 	}
 	t.Cleanup(func() { subFetch = old })

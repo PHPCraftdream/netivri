@@ -155,6 +155,20 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **A configured proxy is the reserve channel of a subscription fetch, and `fetch.mode` chooses.**
+  `fetch.proxy` and the per-provider `--via` used to be strict: every fetch went through the proxy
+  and never directly. The new `fetch.mode` (`config set fetch.mode`, the Settings screen, or the
+  file) says how the proxy is used: `reserve`, the default, goes directly first and takes the proxy
+  automatically when the direct attempt cannot connect, breaks off, or is refused for the address
+  (HTTP 403, 429, 451), while a 404, a bad body or a body over the size limit is not retried;
+  `proxy` is the old strict path, only through the proxy and never directly; `direct` never uses a
+  proxy and keeps the configured ones unused. With no proxy there is no reserve. When both attempts
+  of `reserve` fail, the error keeps the direct code and ends `; then through the reserve proxy: ...`.
+  This applies to `sub add`, `sub update`, `sub countries --url`, the hourly refresh and the
+  Providers preview. In the default mode the provider sees this machine's own address whenever the
+  direct fetch works, so a proxy set only to hide it needs `fetch.mode: proxy`; `README.md` and
+  `SECURITY.md` say so.
+
 - The interactive screens use the new frame and layout of shell v2 (see Added).
 
 - Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.

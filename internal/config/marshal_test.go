@@ -75,3 +75,37 @@ func TestMarshalNilConfig(t *testing.T) {
 		t.Fatal("expected an error for a nil config")
 	}
 }
+
+// fetch.mode survives the whole-file rewrite; the default (empty) mode is not
+// written at all, so a file made before the key existed stays as it was.
+func TestMarshalFetchModeRoundTrip(t *testing.T) {
+	for _, mode := range []string{FetchReserve, FetchProxy, FetchDirect} {
+		cfg := fullConfig()
+		cfg.Fetch.Mode = mode
+		doc, err := Marshal(cfg)
+		if err != nil {
+			t.Fatalf("mode %s: Marshal: %v", mode, err)
+		}
+		if !strings.Contains(doc, "mode: "+mode+"\n") {
+			t.Errorf("mode %s is not in the document:\n%s", mode, doc)
+		}
+		path := filepath.Join(t.TempDir(), "config.ktav")
+		if err := Save(path, cfg); err != nil {
+			t.Fatalf("mode %s: Save: %v", mode, err)
+		}
+		loaded, err := Load(path)
+		if err != nil {
+			t.Fatalf("mode %s: Load: %v", mode, err)
+		}
+		if loaded.Fetch.Mode != mode || !reflect.DeepEqual(loaded, cfg) {
+			t.Errorf("mode %s: round trip mismatch: loaded %+v", mode, loaded.Fetch)
+		}
+	}
+	doc, err := Marshal(fullConfig())
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(doc, "mode: reserve") || strings.Contains(doc, "mode: proxy") || strings.Contains(doc, "mode: direct") {
+		t.Errorf("an unset mode is written:\n%s", doc)
+	}
+}

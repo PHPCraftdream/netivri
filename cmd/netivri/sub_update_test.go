@@ -228,11 +228,11 @@ func TestSubUpdateProxySelection(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d fetches, want 2", len(got))
 	}
-	if got[0].Proxy != "socks5://127.0.0.1:1080" {
-		t.Errorf("sub via = %q, want the per-subscription via", got[0].Proxy)
+	if got[0].Reserve != "socks5://127.0.0.1:1080" {
+		t.Errorf("sub via = %q, want the per-subscription via", got[0].Reserve)
 	}
-	if got[1].Proxy != "http://127.0.0.1:8080" {
-		t.Errorf("proxy = %q, want fetch.proxy", got[1].Proxy)
+	if got[1].Reserve != "http://127.0.0.1:8080" {
+		t.Errorf("proxy = %q, want fetch.proxy", got[1].Reserve)
 	}
 }
 
@@ -250,5 +250,40 @@ func TestSubUpdateOutputHasNoURL(t *testing.T) {
 	var env map[string]any
 	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
 		t.Fatalf("stdout is not one JSON object: %v", err)
+	}
+}
+
+// The update fetch follows fetch.mode: the proxy is the reserve by default, the
+// only path in proxy mode, and unused in direct mode.
+func TestSubUpdateFollowsFetchMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode        string
+		wantProxy   string
+		wantReserve string
+	}{
+		{"", "", "socks5://127.0.0.1:1080"},
+		{config.FetchReserve, "", "socks5://127.0.0.1:1080"},
+		{config.FetchProxy, "socks5://127.0.0.1:1080", ""},
+		{config.FetchDirect, "", ""},
+	} {
+		t.Run("mode "+tc.mode, func(t *testing.T) {
+			var got []fetch.Options
+			app, _ := testApp(t, fetchMap(t, map[string]any{"https://a.example/sub": testBodyFI}, &got))
+			seedConfig(t, app, config.Subscription{Name: "a", URL: "https://a.example/sub", Via: "socks5://127.0.0.1:1080"})
+			cfg, err := app.load()
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			cfg.Fetch.Mode = tc.mode
+			if err := config.Save(app.configPath(), cfg); err != nil {
+				t.Fatalf("save: %v", err)
+			}
+			if err := app.update([]string{"--home", app.home, "--all"}); err != nil {
+				t.Fatalf("update: %v", err)
+			}
+			if len(got) != 1 || got[0].Proxy != tc.wantProxy || got[0].Reserve != tc.wantReserve {
+				t.Errorf("fetch options = %+v, want Proxy %q Reserve %q", got, tc.wantProxy, tc.wantReserve)
+			}
+		})
 	}
 }

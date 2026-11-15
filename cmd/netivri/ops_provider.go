@@ -477,7 +477,7 @@ func ProviderCountriesURL(home, rawURL, via string, get func(context.Context, st
 	if e != nil {
 		return 0, nil, 0, e
 	}
-	res, e := get(context.Background(), rawURL, fetch.Options{Proxy: proxyFor(via, cfg.Fetch.Proxy)})
+	res, e := get(context.Background(), rawURL, fetchOptions(via, cfg.Fetch))
 	if e != nil {
 		return 0, nil, 0, e
 	}

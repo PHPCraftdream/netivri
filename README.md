@@ -26,8 +26,11 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   default; a non-loopback bind requires proxy authentication. TCP only.
 - **Subscriptions.** Clash/Mihomo YAML and base64 lists of share links
   (`vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, ...). A
-  subscription is fetched through a strict proxy and never silently directly;
-  its URL is a credential and is never printed.
+  subscription is fetched directly first; a configured proxy (`--via`, else
+  `fetch.proxy`) is the reserve channel and takes over automatically when the
+  direct fetch fails. `fetch.mode` changes that: `proxy` fetches only through
+  the proxy and never directly, `direct` never uses it. Its URL is a
+  credential and is never printed.
 - **Accounts with an exit country.** Several logins share the port; each can
   name providers and exit countries (one or a comma-separated list in priority
   order, `--provider main,backup --country DE,NL`) and is routed only through
@@ -262,7 +265,7 @@ netivri sub set-socks5 main --pre inherit           # back to global candidates
 
 netivri sub rename main work                        # accounts and stored nodes follow
 netivri sub set work --url https://provider.example/sub/{TOKEN}   # a new link; then: netivri sub update work
-netivri sub set work --via none                     # stop fetching through a proxy
+netivri sub set work --via none                     # drop the reserve proxy of this provider
 ```
 
 ## SOCKS5 chain scope

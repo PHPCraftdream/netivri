@@ -48,7 +48,7 @@ waits for the first client.
 The answer reports `restart_needed` from the config key's static metadata, not
 from the routes currently using the value: `listen.*`, `auth.login`/`auth.password`
 and `chain.post_socks5` are marked restart-needed; `auth.allow_init_remote`,
-`fetch.proxy`, `fetch.update_interval` and `chain.pre_socks5` are not. Thus a
+`fetch.proxy`, `fetch.mode`, `fetch.update_interval` and `chain.pre_socks5` are not. Thus a
 changed `chain.post_socks5` conservatively reports `restart_needed: true`, even
 when the running core applies the change in place (it does while the listener
 routes in rule mode, with account routes or a global post, before and after the
@@ -66,11 +66,12 @@ seconds and applies it; the command itself never restarts anything.
 | `auth.login` | string | *(empty)* | Proxy username. A literal, or the placeholder `init` (see below). Empty together with `auth.password` means: no authentication. |
 | `auth.password` | string | *(empty)* | Proxy password: `init`, or an argon2id PHC hash (starts with `$argon2id$`). Plaintext passwords are rejected by validation. |
 | `auth.allow_init_remote` | boolean | `false` | Permit the `init` placeholder on a non-loopback bind. |
-| `fetch.proxy` | string | *(empty)* | Proxy used for all outgoing subscription fetches. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
+| `fetch.proxy` | string | *(empty)* | Proxy for all outgoing subscription fetches; `fetch.mode` says how it is used. One of `socks5://`, `socks5h://`, `http://`, `https://`, optionally with `user:password@` credentials. |
+| `fetch.mode` | string | *(empty)* = `reserve` | How a subscription fetch uses a proxy (`fetch.proxy`, or the `via` of the provider). `reserve`: the fetch goes directly and takes the proxy only after the direct attempt could not connect, broke off, or was refused for the address (HTTP 403, 429, 451); with no proxy there is no reserve. `proxy`: only through the proxy, never directly (the provider never sees this machine's address). `direct`: never through a proxy; the configured proxies stay in the file but are not used. |
 | `fetch.update_interval` | string | *(empty)* = `1h` | How often the running angel re-fetches every subscription. A duration from `5m` to `168h` (`30m`, `1h`, `12h`), or `off`. See [`docs/design/live-reload.md`](design/live-reload.md). |
 | `chain.pre_socks5` | ordered array of strings (legacy scalar accepted) | `[]` | Default proxy list netivri connects through to reach a VPN node: `socks5://`, `http://` or `https://` `[user:password@]host:port` URLs, or `none` to disable this side. See "SOCKS5 chain" below. |
 | `chain.post_socks5` | ordered array of strings (legacy scalar accepted) | `[]` | Default proxy list for traffic after the VPN node (or directly, for traffic without a route): same entries as `chain.pre_socks5`. |
-| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription fetch proxy, same scheme rules as `fetch.proxy`) and optional ordered `pre_socks5` and `post_socks5` arrays (same entries as `chain.*`; legacy scalar URLs load as singleton lists). Names must be unique and non-empty. |
+| `subscriptions` | array | `[]` | Provider subscriptions: objects with `name`, `url` (secret!) and optional `via` (a per-subscription proxy, same scheme rules as `fetch.proxy`, wins over it; `fetch.mode` says how it is used) and optional ordered `pre_socks5` and `post_socks5` arrays (same entries as `chain.*`; legacy scalar URLs load as singleton lists). Names must be unique and non-empty. |
 | `accounts` | array | `[]` | Proxy accounts: objects with required unique `login` (1–64 ASCII letters, digits, `.`, `_`, `@`, `-`), required `password` (`init` or argon2id PHC hash), optional `provider` (the name of a subscription: 1–64 characters of `A-Za-z0-9._-`; or up to 16 names separated by commas, in priority order), and optional `exit_country` (two ASCII letters, normalized uppercase; or up to 32 codes separated by commas, in priority order, with `*` for "any other country"), optional `exit` (empty/absent for default `route`, or `direct`), optional `allowed_clients` (the same rule list as `listen.allowed_clients`, restricting the addresses this account may authenticate from; enforced before password verification, so an `init` account cannot be claimed from a disallowed address), and optional ordered `pre_socks5` and `post_socks5` arrays (same entries as `chain.*`, or `none` to disable and replace the inherited list for that side). Legacy scalar URLs load as singleton lists. Direct requires empty provider and exit_country; explicitly configured account pre-proxy is rejected except `none`, inherited pre-proxy is ignored, and effective post-proxy may be used directly. |
 | `servers` | array | `[]` | Inbound server endpoint objects; see [Server listeners](#server-listeners). Each has `name`, `protocol`, optional `bind`, `port`, `accounts`, optional `public_host`, and flattened protocol-specific option keys. Credentials/material are kept separately in `{HOME}/server-secrets.ktav`. |
 | `selection.node` | string | *(empty)* | Reserved for the planned `netivri use {NODE}`: validated, but nothing reads it yet. |
@@ -360,8 +361,10 @@ auth.login:: init
 auth.password:: init
 auth.allow_init_remote: false
 
-## All subscription fetches go through this proxy.
+## The proxy of the subscription fetches (see fetch.mode).
 ## fetch.proxy:: socks5://user:secret@proxy.example:1080
+## How the proxy is used: reserve (default, after a failed direct fetch), proxy (only through it) or direct (never).
+## fetch.mode: reserve
 ## Re-fetch every subscription this often (5m to 168h, or off).
 fetch.update_interval: 1h
 

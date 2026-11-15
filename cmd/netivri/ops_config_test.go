@@ -98,6 +98,9 @@ func TestConfigGetDefaultDisplayValuesOnEmptyHome(t *testing.T) {
 	if res.Groups["fetch"]["update_interval"] != "" {
 		t.Errorf("update_interval = %v, want empty", res.Groups["fetch"]["update_interval"])
 	}
+	if res.Groups["fetch"]["mode"] != "reserve" {
+		t.Errorf("mode = %v, want the default reserve", res.Groups["fetch"]["mode"])
+	}
 }
 
 func TestConfigGetKeyFilter(t *testing.T) {
@@ -170,8 +173,8 @@ func TestConfigGetRedactsSecrets(t *testing.T) {
 
 func TestConfigKeyMetadata(t *testing.T) {
 	keys := ConfigKeys()
-	if len(keys) != 10 {
-		t.Fatalf("len(ConfigKeys) = %d, want 10", len(keys))
+	if len(keys) != 11 {
+		t.Fatalf("len(ConfigKeys) = %d, want 11", len(keys))
 	}
 	want := []struct {
 		key      string
@@ -185,6 +188,7 @@ func TestConfigKeyMetadata(t *testing.T) {
 		{"auth.password", ConfigKeyPassword, true},
 		{"auth.allow_init_remote", ConfigKeyBool, false},
 		{"fetch.proxy", ConfigKeyProxy, false},
+		{"fetch.mode", ConfigKeyText, false},
 		{"fetch.update_interval", ConfigKeyText, false},
 		{"chain.pre_socks5", ConfigKeyProxy, false},
 		{"chain.post_socks5", ConfigKeyProxy, true},
@@ -357,6 +361,48 @@ func TestConfigSetEachKey(t *testing.T) {
 			t.Errorf("proxy = %q", lc.Fetch.Proxy)
 		}
 	})
+	t.Run("fetch.mode", func(t *testing.T) {
+		home := t.TempDir()
+		for _, mode := range []string{"proxy", "direct", "reserve"} {
+			res, err := ConfigSet(home, "fetch.mode", mode)
+			if err != nil {
+				t.Fatalf("set %s: %v", mode, err)
+			}
+			if !res.Changed || res.RestartNeeded {
+				t.Errorf("set %s: result = %+v", mode, res)
+			}
+			lc, _ := loadConfig(home)
+			if lc.Fetch.Mode != mode {
+				t.Errorf("mode = %q, want %q", lc.Fetch.Mode, mode)
+			}
+			if got := ConfigDisplayValue(lc, "fetch.mode"); got != mode {
+				t.Errorf("display after set %s = %v", mode, got)
+			}
+			if raw, ok := ConfigRawValue(lc, "fetch.mode"); !ok || raw != mode {
+				t.Errorf("raw after set %s = %q %v", mode, raw, ok)
+			}
+		}
+		if res, err := ConfigSet(home, "fetch.mode", "reserve"); err != nil || res.Changed {
+			t.Errorf("setting the same mode again: %+v %v, want no change", res, err)
+		}
+		// none (or an empty value) restores the default: the key is not written.
+		for _, how := range []string{"none", "NONE", ""} {
+			if _, err := ConfigSet(home, "fetch.mode", "proxy"); err != nil {
+				t.Fatalf("set proxy: %v", err)
+			}
+			res, err := ConfigSet(home, "fetch.mode", how)
+			if err != nil || !res.Changed {
+				t.Fatalf("clear with %q: %+v %v", how, res, err)
+			}
+			lc, _ := loadConfig(home)
+			if lc.Fetch.Mode != "" {
+				t.Errorf("mode after clearing with %q = %q, want empty", how, lc.Fetch.Mode)
+			}
+			if got := ConfigDisplayValue(lc, "fetch.mode"); got != "reserve" {
+				t.Errorf("display after clearing = %v, want the default reserve", got)
+			}
+		}
+	})
 	t.Run("update_interval", func(t *testing.T) {
 		home := t.TempDir()
 		res, err := ConfigSet(home, "fetch.update_interval", "30m")
@@ -524,6 +570,7 @@ func TestConfigSetInvalidNothingWritten(t *testing.T) {
 		{"bad bind", "listen.bind", "999.1.1.1", config.CodeConfigInvalid, "999.1.1.1"},
 		{"empty allowed_clients", "listen.allowed_clients", "", config.CodeConfigInvalid, ""},
 		{"short interval", "fetch.update_interval", "1m", config.CodeConfigInvalid, "1m"},
+		{"unknown fetch mode", "fetch.mode", "strict", config.CodeConfigInvalid, "strict"},
 		{"bad scheme", "chain.pre_socks5", "ftp://x:1", config.CodeConfigInvalid, "ftp"},
 	}
 	for _, tc := range cases {

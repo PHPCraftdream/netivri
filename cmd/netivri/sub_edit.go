@@ -24,14 +24,14 @@ func (a *subApp) rename(args []string) error {
 	return nil
 }
 
-// set changes the subscription URL and/or the fetch proxy of a provider. The
+// set changes the subscription URL and/or the reserve proxy of a provider. The
 // URL is a credential and is never echoed.
 func (a *subApp) set(args []string) error {
 	fs := flag.NewFlagSet("sub set", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	_ = fs.String("home", "", "state directory (resolved by runSub)")
 	url := fs.String("url", "", "new subscription URL")
-	via := fs.String("via", "", "fetch proxy URL, or none to fetch without one")
+	via := fs.String("via", "", "reserve proxy URL, or none to remove it")
 	pos, err := parseFlags(fs, args)
 	if err != nil || len(pos) != 1 {
 		return cli.Usage("sub set: requires NAME and --url and/or --via")

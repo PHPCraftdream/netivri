@@ -58,7 +58,9 @@ var configKeys = []ConfigKey{
 	{Key: "auth.allow_init_remote", Group: "auth", GroupLabel: "Auth", Label: "Allow init remote",
 		Hint: "let non-loopback clients claim the init login", Kind: ConfigKeyBool},
 	{Key: "fetch.proxy", Group: "fetch", GroupLabel: "Fetch", Label: "Fetch proxy",
-		Hint: "proxy URL for subscription fetches; none clears", Kind: ConfigKeyProxy},
+		Hint: "reserve proxy URL for subscription fetches; none clears", Kind: ConfigKeyProxy},
+	{Key: "fetch.mode", Group: "fetch", GroupLabel: "Fetch", Label: "Fetch mode",
+		Hint: "reserve (default), proxy or direct; none restores the default", Kind: ConfigKeyText},
 	{Key: "fetch.update_interval", Group: "fetch", GroupLabel: "Fetch", Label: "Update interval",
 		Hint: "refresh period such as 30m or 1h, off, or empty for 1h", Kind: ConfigKeyText},
 	{Key: "chain.pre_socks5", Group: "chain", GroupLabel: "Chain", Label: "Pre-hop",
@@ -131,6 +133,8 @@ func ConfigDisplayValue(cfg *config.Config, key string) any {
 		return cfg.Auth.AllowInitRemote
 	case "fetch.proxy":
 		return configProxyValue{Value: redactChain(cfg.Fetch.Proxy), Auth: chainHasAuth(cfg.Fetch.Proxy)}
+	case "fetch.mode":
+		return cfg.Fetch.EffectiveMode()
 	case "fetch.update_interval":
 		return cfg.Fetch.UpdateInterval
 	case "chain.pre_socks5":
@@ -168,6 +172,8 @@ func ConfigRawValue(cfg *config.Config, key string) (string, bool) {
 		return cfg.Listen.AllowedClients, true
 	case "auth.login":
 		return cfg.Auth.Login, true
+	case "fetch.mode":
+		return cfg.Fetch.Mode, true
 	case "fetch.update_interval":
 		return cfg.Fetch.UpdateInterval, true
 	}
@@ -241,7 +247,7 @@ func singletonHop(value string) config.HopList {
 // the key.
 func configClearableKey(key string) bool {
 	switch key {
-	case "auth.login", "auth.password", "fetch.proxy",
+	case "auth.login", "auth.password", "fetch.proxy", "fetch.mode",
 		"fetch.update_interval", "chain.pre_socks5", "chain.post_socks5":
 		return true
 	}
@@ -325,6 +331,8 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 			changed = cfg.Auth.Login != text
 		case "fetch.proxy":
 			changed = cfg.Fetch.Proxy != text
+		case "fetch.mode":
+			changed = cfg.Fetch.Mode != text
 		case "fetch.update_interval":
 			changed = cfg.Fetch.UpdateInterval != text
 		case "chain.pre_socks5":
@@ -352,6 +360,8 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 		cand.Auth.AllowInitRemote = boolean
 	case "fetch.proxy":
 		cand.Fetch.Proxy = text
+	case "fetch.mode":
+		cand.Fetch.Mode = text
 	case "fetch.update_interval":
 		cand.Fetch.UpdateInterval = text
 	case "chain.pre_socks5":

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,44 @@ func TestErrorsNeverEchoSecrets(t *testing.T) {
 	if err := dup.Validate(); err != nil {
 		if cliErr := err.(*cli.Error); !strings.Contains(cliErr.Message, "duplicates subscriptions[0]") {
 			t.Errorf("duplicate error should name positions: %q", cliErr.Message)
+		}
+	}
+}
+
+func TestFetchEffectiveMode(t *testing.T) {
+	cases := map[string]string{
+		"":            FetchReserve,
+		FetchReserve:  FetchReserve,
+		FetchProxy:    FetchProxy,
+		FetchDirect:   FetchDirect,
+		"unknown":     FetchReserve,
+		"Proxy":       FetchReserve,
+		" proxy":      FetchReserve,
+		"reserve\n":   FetchReserve,
+		"directional": FetchReserve,
+	}
+	for raw, want := range cases {
+		if got := (Fetch{Mode: raw}).EffectiveMode(); got != want {
+			t.Errorf("EffectiveMode(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestValidateFetchMode(t *testing.T) {
+	for _, mode := range []string{"", FetchReserve, FetchProxy, FetchDirect} {
+		cfg := validBaseline()
+		cfg.Fetch.Mode = mode
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("mode %q: unexpected error: %v", mode, err)
+		}
+	}
+	for _, mode := range []string{"strict", "Reserve", "PROXY", "reserve ", " direct", "only", "none", "off"} {
+		cfg := validBaseline()
+		cfg.Fetch.Mode = mode
+		err := cfg.Validate()
+		var ce *cli.Error
+		if !errors.As(err, &ce) || ce.Code != CodeConfigInvalid || ce.Exit != cli.ExitUsage || !strings.Contains(ce.Message, "fetch.mode") {
+			t.Errorf("mode %q: got %v, want CONFIG_INVALID naming fetch.mode", mode, err)
 		}
 	}
 }

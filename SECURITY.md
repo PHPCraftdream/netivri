@@ -28,8 +28,12 @@ in a new release and credited in the changelog unless you prefer otherwise.
 - Subscription URLs and `--via` proxies are credentials: they are not printed
   or logged.
 - Proxy passwords are stored as argon2id hashes.
-- Subscriptions are fetched through a strict proxy and never silently
-  directly.
+- Subscriptions are fetched by `fetch.mode`. By default (`reserve`) the fetch
+  goes directly first and a configured proxy (`--via`, else `fetch.proxy`) is
+  only the reserve channel, used after the direct fetch failed, so a provider
+  sees this machine's own address whenever the direct fetch works. Set
+  `fetch.mode: proxy` for the strict path: every fetch goes through the proxy
+  and never silently directly. `direct` never uses a proxy.
 
 A report that breaks one of these promises is a vulnerability. Problems in an
 upstream dependency (Mihomo, `sing`) are welcome too; they are forwarded

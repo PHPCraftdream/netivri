@@ -1,6 +1,8 @@
-// Package fetch implements a strict-proxy HTTP fetcher for subscription
-// links: when a proxy is configured, every byte goes through it and a
-// proxy failure never falls back to a direct connection.
+// Package fetch implements the HTTP fetcher for subscription links. A fetch
+// is direct, or strictly through Options.Proxy (every byte goes through it and
+// a proxy failure never falls back to a direct connection), or direct with
+// Options.Reserve as the reserve channel: the proxy is used only after the
+// direct attempt failed.
 package fetch
 
 import (
@@ -37,7 +39,14 @@ const (
 type Options struct {
 	// Proxy is "" for an explicit direct connection, or a socks5://,
 	// socks5h://, http:// or https:// proxy URL with optional userinfo.
+	// A set Proxy is strict: no direct attempt, no fallback, Reserve ignored.
 	Proxy string
+	// Reserve is a proxy URL of the same forms, used only when Proxy is empty:
+	// the fetch goes direct first and takes this proxy after the direct attempt
+	// could not connect, broke off, or was refused for the address (HTTP 403,
+	// 429, 451). It is not tried when the direct attempt got an answer that a
+	// proxy would not change (a 404, a bad body, a size over the limit).
+	Reserve string
 	// Timeout bounds the whole request including redirects and body
 	// read. DefaultTimeout when zero.
 	Timeout time.Duration
@@ -60,20 +69,64 @@ type Result struct {
 // FETCH_HTTP_STATUS. Messages never contain the URL path/query, proxy
 // credentials or proxy path; at most the target host is included.
 func Get(ctx context.Context, rawURL string, o Options) (*Result, error) {
-	return get(ctx, rawURL, o, nil)
+	return getReserve(ctx, rawURL, o, nil)
 }
 
-// get is Get with an optional TLS config whose RootCAs may trust a
-// custom certificate authority (used by tests); nil means the system
-// roots with verification always on.
+// getReserve is Get with the TLS seam of get. With a Reserve and no Proxy it
+// makes the direct attempt and, when that is worth retrying through a proxy,
+// the second one through Reserve; a failure of both carries the direct code
+// and names both.
+func getReserve(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Result, error) {
+	if o.Proxy != "" || o.Reserve == "" {
+		return get(ctx, rawURL, o, tlsCfg)
+	}
+	if _, err := parseProxy(o.Reserve); err != nil {
+		return nil, err
+	}
+	res, retry, err := attempt(ctx, rawURL, o, tlsCfg)
+	if err == nil || !retry || ctx.Err() != nil {
+		return res, err
+	}
+	second := o
+	second.Proxy, second.Reserve = o.Reserve, ""
+	res, secondErr := get(ctx, rawURL, second, tlsCfg)
+	if secondErr == nil {
+		return res, nil
+	}
+	return nil, bothFailed(err, secondErr)
+}
+
+// bothFailed keeps the code, hint and exit of the direct failure and adds the
+// reason the reserve proxy failed too. Both messages are free of secrets.
+func bothFailed(direct, reserve error) error {
+	var d, r *cli.Error
+	if !errors.As(direct, &d) || !errors.As(reserve, &r) {
+		return direct
+	}
+	out := *d
+	out.Message = d.Message + "; then through the reserve proxy: " + r.Message
+	return &out
+}
+
+// get is one fetch with a strict path (direct, or through o.Proxy), with an
+// optional TLS config whose RootCAs may trust a custom certificate authority
+// (used by tests); nil means the system roots with verification always on.
 func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Result, error) {
+	res, _, err := attempt(ctx, rawURL, o, tlsCfg)
+	return res, err
+}
+
+// attempt is get and also says whether a failure is worth a second try through
+// a reserve proxy: the connection failed, broke off, or the server refused the
+// address. A bad URL, a bad body or a size over the limit would fail again.
+func attempt(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (res *Result, retry bool, err error) {
 	target, err := parseTarget(rawURL)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	proxyURL, err := parseProxy(o.Proxy)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	timeout, maxBytes, ua := effective(o)
 
@@ -93,13 +146,13 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 	progress := newProgress(proxyURL != nil)
 	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, progress.trace()), http.MethodGet, target.url(), nil)
 	if err != nil {
-		return nil, urlInvalid("request could not be built")
+		return nil, false, urlInvalid("request could not be built")
 	}
 	req.Header.Set("User-Agent", ua)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, progress.annotate(classifyErr(err, target))
+		return nil, true, progress.annotate(classifyErr(err, target))
 	}
 	progress.set(phaseBody)
 	defer resp.Body.Close()
@@ -108,7 +161,7 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 	// its body; at most statusDrainLimit is drained before closing.
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		drain(resp.Body, statusDrainLimit)
-		return nil, &cli.Error{
+		return nil, refusesAddress(resp.StatusCode), &cli.Error{
 			Code:    "FETCH_HTTP_STATUS",
 			Message: fmt.Sprintf("unexpected HTTP status %d", resp.StatusCode),
 			Hint:    "the subscription server rejected the request",
@@ -117,16 +170,22 @@ func get(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) (*Re
 	}
 	// A declared body over the cap is rejected before reading.
 	if resp.ContentLength > maxBytes {
-		return nil, fetchFailed(target, "response exceeds the size limit")
+		return nil, false, fetchFailed(target, "response exceeds the size limit")
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, progress.annotate(classifyErr(err, target))
+		return nil, true, progress.annotate(classifyErr(err, target))
 	}
 	if int64(len(body)) > maxBytes {
-		return nil, fetchFailed(target, "response exceeds the size limit")
+		return nil, false, fetchFailed(target, "response exceeds the size limit")
 	}
-	return &Result{Body: body, Status: resp.StatusCode, Header: resp.Header}, nil
+	return &Result{Body: body, Status: resp.StatusCode, Header: resp.Header}, false, nil
+}
+
+// refusesAddress reports an HTTP status that blocks this address and may pass
+// from another: forbidden, too many requests, unavailable for legal reasons.
+func refusesAddress(status int) bool {
+	return status == http.StatusForbidden || status == http.StatusTooManyRequests || status == http.StatusUnavailableForLegalReasons
 }
 
 // newTransport builds the one transport used for the whole request.

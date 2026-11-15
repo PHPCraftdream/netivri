@@ -372,7 +372,7 @@ var helpTopics = []helpTopic{
 		Usage:   []string{"netivri sub {add|list|update|rm|countries|set-socks5|rename|set} [arguments]", "netivri sub -i"},
 		Description: "A subscription is the link a provider gives you; it lists proxy nodes as Clash/Mihomo YAML or as " +
 			"a base64 list of share links (vless://, vmess://, trojan://, ss://, hysteria2://). The URL is a credential: " +
-			"netivri never prints or logs it. Every fetch goes through a strict proxy path and never silently directly.",
+			"netivri never prints or logs it. How a configured proxy (the provider's --via, else fetch.proxy) is used is set by fetch.mode in config.ktav: reserve, the default, fetches directly and takes the proxy automatically only when the direct fetch fails; proxy fetches only through it and never directly; direct never uses it.",
 		Examples: []helpExample{
 			{"Add a subscription, look at it and refresh it later", "netivri sub add https://provider.example/sub/{TOKEN} --name main\nnetivri sub list\nnetivri sub update --all"},
 		},
@@ -384,20 +384,23 @@ var helpTopics = []helpTopic{
 		Summary: "Add a subscription",
 		Usage:   []string{"netivri sub add {URL} [--name {NAME}] [--via {PROXY}] [--pre-socks5 {URL|none} ...] [--post-socks5 {URL|none} ...]"},
 		Description: "Fetches the subscription, parses it, stores its nodes and only then adds it to the config. If " +
-			"anything fails nothing is added. The fetch goes through --via when given, otherwise through fetch.proxy " +
-			"from config.ktav, otherwise directly; environment proxies are never used.\n\n" +
+			"anything fails nothing is added. By default (fetch.mode reserve) the fetch goes directly first and the " +
+			"proxy, --via when given, otherwise fetch.proxy from config.ktav, is the reserve channel: it is used only " +
+			"when the direct fetch cannot connect, breaks off, or the server refuses the address (HTTP 403, 429, 451); " +
+			"with no proxy there is no reserve. fetch.mode proxy fetches only through the proxy, direct never uses it. " +
+			"Environment proxies are never used.\n\n" +
 			"It is idempotent by URL: adding a known URL again re-fetches it under its existing name and reports " +
 			"existing true. The URL is never printed.",
 		Flags: []helpFlag{
 			{"--name {NAME}", "Name of the subscription (letters, digits, . _ -; at most 64). Default: derived from the host of the URL. A name used by a different URL is SUB_EXISTS_NAME."},
-			{"--via {PROXY}", "Fetch through this proxy: an http(s):// or socks5(h):// URL."},
+			{"--via {PROXY}", "Proxy for this provider, an http(s):// or socks5(h):// URL. By default (fetch.mode reserve) it is used when the direct fetch fails."},
 			{"--pre-socks5 {URL|none}", "Repeat to set ordered provider pre-list candidates (up to 16); `none` must stand alone to clear inherited candidates. Candidates are alternatives, not serial hops."},
 			{"--post-socks5 {URL|none}", "Repeat to set ordered provider post-list candidates (up to 16); `none` must stand alone to clear inherited candidates. Candidates are alternatives, not serial hops."},
 		},
 		Examples: []helpExample{
 			{"Add a subscription; the name comes from the host", "netivri sub add https://provider.example/sub/{TOKEN}"},
 			{"Give it a name you will use in accounts", "netivri sub add https://provider.example/sub/{TOKEN} --name main"},
-			{"The provider is blocked directly: fetch through a local proxy", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
+			{"The provider is blocked directly: a local proxy is the reserve channel", "netivri sub add https://provider.example/sub/{TOKEN} --name main --via socks5h://127.0.0.1:1080"},
 			{"Set ordered pre candidates for main", "netivri sub add https://provider.example/sub/{TOKEN} --name main \\\n  --pre-socks5 http://p.example:8080 \\\n  --pre-socks5 socks5://b.example:1080"},
 			{"Set ordered post candidates for main", "netivri sub add https://provider.example/sub/{TOKEN} --name main \\\n  --post-socks5 socks5://e.example:1080 \\\n  --post-socks5 https://b.example:443"},
 		},
@@ -460,19 +463,19 @@ var helpTopics = []helpTopic{
 	{
 		Name:    "sub set",
 		Group:   groupSubs,
-		Summary: "Change the URL or the fetch proxy of a provider",
+		Summary: "Change the URL or the reserve proxy of a provider",
 		Usage:   []string{"netivri sub set {SUBSCRIPTION} --url {URL}", "netivri sub set {SUBSCRIPTION} --via {PROXY|none}", "netivri sub set {SUBSCRIPTION} --url {URL} --via {PROXY|none}"},
 		Description: "Changes the connection settings of one subscription without fetching it: --url replaces the subscription URL (a credential, never printed), " +
-			"--via sets the proxy used to fetch it, or none to fetch without one (fetch.proxy from the config still applies). A side that is not given stays as it is. " +
+			"--via sets the proxy of this provider (by default the reserve, used when the direct fetch fails; see fetch.mode), or none to remove it (fetch.proxy from the config still applies). A side that is not given stays as it is. " +
 			"Run 'netivri sub update' afterwards to fetch the nodes from the new URL.",
 		Flags: []helpFlag{
 			{"--url {URL}", "New subscription URL, http:// or https://."},
-			{"--via {PROXY|none}", "Fetch through this proxy (an http(s):// or socks5(h):// URL), or none to remove it."},
+			{"--via {PROXY|none}", "Proxy for the fetch (an http(s):// or socks5(h):// URL; by default the reserve after a failed direct fetch), or none to remove it."},
 		},
 		Examples: []helpExample{
 			{"The provider gave a new link", "netivri sub set main --url https://provider.example/sub/{TOKEN}\nnetivri sub update main"},
-			{"Fetch through a local proxy", "netivri sub set main --via socks5h://127.0.0.1:1080"},
-			{"Stop using the fetch proxy", "netivri sub set main --via none"},
+			{"Use a local proxy as the reserve channel", "netivri sub set main --via socks5h://127.0.0.1:1080"},
+			{"Stop using the reserve proxy", "netivri sub set main --via none"},
 		},
 		Errors: []helpError{
 			herr("SUB_NOT_FOUND", cli.ExitNotFound, "no subscription with that name"),
@@ -541,12 +544,12 @@ var helpTopics = []helpTopic{
 		},
 		Description: "Shows which exit countries a provider offers, so you know what to give --country. With a {SUBSCRIPTION} " +
 			"it reads that provider's stored nodes without any network. With no argument it lists every provider and " +
-			"the union of their countries. With --url it fetches a subscription through the same strict path as " +
-			"'sub add' and prints its countries without storing anything.\n\n" +
+			"the union of their countries. With --url it fetches a subscription the same way as " +
+			"'sub add' (directly first, the proxy as the reserve) and prints its countries without storing anything.\n\n" +
 			"A node's country is read from its name; nodes where that is not possible are counted as unknown.",
 		Flags: []helpFlag{
 			{"--url {URL}", "Count the countries of this subscription URL without storing it. Cannot be combined with a {SUBSCRIPTION}."},
-			{"--via {PROXY}", "Fetch --url through this proxy. Needs --url."},
+			{"--via {PROXY}", "Proxy for the --url fetch (by default the reserve after a failed direct fetch). Needs --url."},
 		},
 		Examples: []helpExample{
 			{"Every provider and all countries", "netivri sub countries"},
@@ -1120,6 +1123,7 @@ var helpTopics = []helpTopic{
 			{"Move the proxy port", "netivri config set listen.port 8080"},
 			{"The plain password is hashed and never echoed", "netivri config set auth.password {PASSWORD}"},
 			{"Clear the fetch proxy", "netivri config set fetch.proxy none"},
+			{"Fetch subscriptions only through the proxy, never directly", "netivri config set fetch.mode proxy"},
 		},
 		Errors: []helpError{
 			herr("USAGE", cli.ExitUsage, "unknown key, wrong argument count or a malformed number or boolean"),
@@ -1179,11 +1183,14 @@ var helpTopics = []helpTopic{
 			"either the placeholder init or an argon2id hash (it starts with $argon2id$); a plain password is " +
 			"rejected. auth.allow_init_remote (default false) permits the init placeholder on a non-loopback bind. " +
 			"fetch.proxy is the proxy for all outgoing subscription fetches, a socks5://, socks5h://, http:// or " +
-			"https:// URL with a host. fetch.update_interval is how often the angel re-fetches every " +
+			"https:// URL with a host. fetch.mode says how a proxy (fetch.proxy, or the provider's subscriptions.via) " +
+			"is used: reserve (the default) fetches directly and takes the proxy only after the direct attempt " +
+			"failed, proxy fetches only through it and never directly, direct never uses it. " +
+			"fetch.update_interval is how often the angel re-fetches every " +
 			"subscription: a duration from 5m to 168h, or off; the default is 1h.\n\n" +
 			"subscriptions is an array of provider subscriptions, each with subscriptions.name, subscriptions.url " +
-			"(a secret, never printed), an optional subscriptions.via, a per-subscription fetch proxy with the " +
-			"same rules as fetch.proxy, and optional subscriptions.pre_socks5 and subscriptions.post_socks5 (the hops " +
+			"(a secret, never printed), an optional subscriptions.via, a per-subscription proxy with the " +
+			"same rules as fetch.proxy that wins over it, and optional subscriptions.pre_socks5 and subscriptions.post_socks5 (the hops " +
 			"of this provider's nodes, same values as chain.*). accounts is an array of proxy accounts: accounts.login (1 to 64 " +
 			"characters of A-Za-z0-9._@-, unique, not the reserved init, not a duplicate of a non-init " +
 			"auth.login), accounts.password (init or an argon2id hash), and optional accounts.provider (a " +

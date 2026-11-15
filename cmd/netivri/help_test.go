@@ -690,6 +690,7 @@ func TestConfigTopicNamesEveryConfigKey(t *testing.T) {
 		"auth.password",
 		"auth.allow_init_remote",
 		"fetch.proxy",
+		"fetch.mode",
 		"fetch.update_interval",
 		"subscriptions",
 		"subscriptions.name",

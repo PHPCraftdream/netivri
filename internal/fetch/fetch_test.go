@@ -1,6 +1,7 @@
 package fetch
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -367,5 +368,59 @@ func TestProgressNamesPathAndPhase(t *testing.T) {
 	}
 	if newProgress(false).annotate(nil) != nil {
 		t.Error("annotate(nil) must stay nil")
+	}
+}
+
+func TestReserveInvalidProxyIsRefusedBeforeAnyRequest(t *testing.T) {
+	_, err := Get(context.Background(), "http://unused.invalid/sub", Options{Reserve: "ftp://proxy.example:21"})
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "FETCH_URL_INVALID" || ce.Exit != cli.ExitUsage {
+		t.Fatalf("got %v, want FETCH_URL_INVALID/ExitUsage", err)
+	}
+	if containsStr(ce.Message, "proxy.example") {
+		t.Errorf("message echoes the proxy: %q", ce.Message)
+	}
+}
+
+func TestRefusesAddress(t *testing.T) {
+	for status, want := range map[int]bool{
+		http.StatusForbidden:                  true,
+		http.StatusTooManyRequests:            true,
+		http.StatusUnavailableForLegalReasons: true,
+		http.StatusUnauthorized:               false,
+		http.StatusNotFound:                   false,
+		http.StatusInternalServerError:        false,
+		http.StatusOK:                         false,
+	} {
+		if got := refusesAddress(status); got != want {
+			t.Errorf("refusesAddress(%d) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestBothFailedKeepsTheDirectCodeAndNamesBoth(t *testing.T) {
+	direct := &cli.Error{Code: "FETCH_FAILED", Message: "request to h failed: request failed: timeout (direct, connecting)", Hint: "check connectivity to the subscription server", Exit: cli.ExitNetwork}
+	reserve := &cli.Error{Code: "FETCH_PROXY_FAILED", Message: "could not reach or negotiate with the configured proxy", Exit: cli.ExitNetwork}
+	var ce *cli.Error
+	if !errors.As(bothFailed(direct, reserve), &ce) {
+		t.Fatal("not a cli.Error")
+	}
+	if ce.Code != "FETCH_FAILED" || ce.Hint != direct.Hint || ce.Exit != cli.ExitNetwork {
+		t.Errorf("code/hint/exit changed: %+v", ce)
+	}
+	want := direct.Message + "; then through the reserve proxy: " + reserve.Message
+	if ce.Message != want {
+		t.Errorf("message = %q, want %q", ce.Message, want)
+	}
+	if direct.Message != "request to h failed: request failed: timeout (direct, connecting)" {
+		t.Error("bothFailed changed the direct error in place")
+	}
+	// An error that is not a *cli.Error stays as it was.
+	plain := errors.New("plain")
+	if got := bothFailed(plain, reserve); got != plain {
+		t.Errorf("plain direct error replaced: %v", got)
+	}
+	if got := bothFailed(direct, plain); got != error(direct) {
+		t.Errorf("direct error replaced by a plain reserve error: %v", got)
 	}
 }

@@ -65,7 +65,7 @@ func (a *subApp) updateOne(store *subscription.Store, cfg *config.Config, s conf
 	return res
 }
 func fetchSnapshot(ctx context.Context, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time, cfg *config.Config, s config.Subscription) (subscription.Snapshot, error) {
-	res, e := get(ctx, s.URL, fetch.Options{Proxy: proxyFor(s.Via, cfg.Fetch.Proxy)})
+	res, e := get(ctx, s.URL, fetchOptions(s.Via, cfg.Fetch))
 	if e != nil {
 		return subscription.Snapshot{}, e
 	}

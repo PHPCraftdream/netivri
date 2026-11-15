@@ -99,7 +99,7 @@ var parityCatalog = []capability{
 
 	// Global settings: file only today
 	{ID: "settings.global", CLI: []string{"config get", "config set"},
-		TUI: []string{"settings/list", "settings/listen.allowed_clients", "settings/auth.login", "settings/auth.password", "settings/auth.allow_init_remote", "settings/fetch.proxy", "settings/fetch.update_interval", "settings/chain.pre_socks5", "settings/chain.post_socks5"}},
+		TUI: []string{"settings/list", "settings/listen.allowed_clients", "settings/auth.login", "settings/auth.password", "settings/auth.allow_init_remote", "settings/fetch.proxy", "settings/fetch.mode", "settings/fetch.update_interval", "settings/chain.pre_socks5", "settings/chain.post_socks5"}},
 
 	// The shell's own navigation
 	{ID: "frame.tabs", TUI: []string{"frame/tabs"}, Exempt: []exemption{permanent("cli", "navigation of the shell")}},

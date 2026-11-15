@@ -76,9 +76,10 @@ a country.
 
 `netivri sub countries` reports these counts: for a {SUBSCRIPTION} from the stored
 snapshot (no network), for every configured provider plus a summed union
-with no argument, and for `--url {URL} [--via {PROXY}]` by fetching through
-the same strict path as `sub add` (the `--via` proxy or `fetch.proxy`, no
-direct fallback) without storing anything. A provider without a stored
+with no argument, and for `--url {URL} [--via {PROXY}]` by fetching the same
+way as `sub add` (the `--via` proxy or `fetch.proxy`, used as `fetch.mode`
+says: by default directly first with the proxy as the reserve channel)
+without storing anything. A provider without a stored
 snapshot is reported with null fields; the URL is never printed.
 
 ## On-disk layout
