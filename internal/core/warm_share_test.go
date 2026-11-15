@@ -149,7 +149,7 @@ func TestProbeAllIdleNodeIsProbedLessOften(t *testing.T) {
 	w, l, clock := idleWarmer(func(string) bool { return true })
 	w.probe = l.probe(nil)
 	var rounds []int
-	for i := 0; i <= 8; i++ {
+	for i := range 9 {
 		before := len(l.probedNames())
 		w.probeAll(context.Background())
 		if len(l.probedNames()) > before {
@@ -172,7 +172,7 @@ func TestProbeAllIdleNodeIsProbedLessOften(t *testing.T) {
 func TestProbeAllBusyNodeIsProbedEveryRound(t *testing.T) {
 	w, l, clock := idleWarmer(func(string) bool { return false })
 	w.probe = l.probe(nil)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		w.probeAll(context.Background())
 		clock.now = clock.now.Add(45 * time.Second)
 	}
@@ -186,7 +186,7 @@ func TestProbeAllBusyNodeIsProbedEveryRound(t *testing.T) {
 func TestProbeAllIdleNodeThatFailsIsProbedAgainNextRound(t *testing.T) {
 	w, l, clock := idleWarmer(func(string) bool { return true })
 	w.probe = l.probe(map[string]bool{"netivri-a": true})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		w.probeAll(context.Background())
 		clock.now = clock.now.Add(45 * time.Second)
 	}

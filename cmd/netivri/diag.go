@@ -191,7 +191,7 @@ func accountDiagNodes(home, login string, maxNodes int) ([]core.DiagNode, error)
 		n = len(raws)
 	}
 	nodes := make([]core.DiagNode, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		nodes = append(nodes, core.DiagNode{Label: labels[i], Mapping: raws[i]})
 	}
 	return nodes, nil

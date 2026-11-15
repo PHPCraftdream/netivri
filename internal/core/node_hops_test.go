@@ -22,7 +22,11 @@ func TestPrepareRoutesPerNodeHops(t *testing.T) {
 	}
 	byName := map[string]map[string]any{}
 	for _, p := range proxies {
-		byName[p["name"].(string)] = p
+		name, ok := p["name"].(string)
+		if !ok {
+			t.Fatalf("proxy name is %T, want string", p["name"])
+		}
+		byName[name] = p
 	}
 	if byName["netivri-r0-0-pre"] == nil || byName["netivri-r0-0-pre"]["type"] != "http" {
 		t.Errorf("node 0 must have an http pre hop: %v", proxies)

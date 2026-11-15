@@ -37,7 +37,7 @@ func TestAccountsProviderPickerPersistsLiteralAnyProvider(t *testing.T) {
 		}
 	}
 
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.providers = []string{"any", "backup"}
 	s.beginAdd()
 	wizard := s.dialog.wizard
@@ -112,7 +112,7 @@ func TestAccountsProviderTextEditPreservesLiteralAny(t *testing.T) {
 	if _, err := AccountAdd(h, AccountAddOptions{Login: "alice", Country: "DE", Exit: "route", ExitGiven: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	a := s.rows[0]
 	s.openEdit(a, "provider")

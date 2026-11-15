@@ -72,7 +72,8 @@ func (r *udpEchoRunning) loop() {
 				return
 			default:
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				continue
 			}
 			return
@@ -86,7 +87,8 @@ func (r *udpEchoRunning) loop() {
 				return
 			default:
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				continue
 			}
 			return
@@ -106,17 +108,17 @@ func udpEchoSpec(port int, rev string) servers.Spec {
 	return servers.Spec{Name: "udp-echo", Protocol: udpIntegrationProtocolName, Bind: "127.0.0.1", Port: port, Accounts: []string{"alice"}, Params: params}
 }
 func udpAddress(port int) string { return net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) }
-func udpExchange(t *testing.T, port int, payload string, deadline time.Duration) bool {
+func udpExchange(t *testing.T, port int, payload string) bool {
 	t.Helper()
-	c, err := net.DialTimeout("udp", udpAddress(port), time.Second)
+	c, err := (&net.Dialer{Timeout: time.Second}).DialContext(t.Context(), "udp", udpAddress(port))
 	if err != nil {
 		return false
 	}
-	defer c.Close()
-	if err = c.SetDeadline(time.Now().Add(deadline)); err != nil {
+	defer func() { _ = c.Close() }()
+	if err = c.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 		t.Fatal(err)
 	}
-	if err = c.SetWriteDeadline(time.Now().Add(deadline)); err != nil {
+	if err = c.SetWriteDeadline(time.Now().Add(testTimeout)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = c.Write([]byte(payload)); err != nil {
@@ -152,13 +154,13 @@ func TestUDPServerStartReconfigureRollbackAndClose(t *testing.T) {
 			_ = inst.Close()
 		}
 	})
-	if !udpExchange(t, p1, "initial", testTimeout) {
+	if !udpExchange(t, p1, "initial") {
 		t.Fatal("initial UDP echo failed")
 	}
 	if err := inst.Reconfigure(Options{HomeDir: home, Servers: []servers.Spec{udpEchoSpec(p1, "changed")}}); err != nil {
 		t.Fatal(err)
 	}
-	if !udpExchange(t, p1, "same-port-reconfigured", testTimeout) {
+	if !udpExchange(t, p1, "same-port-reconfigured") {
 		t.Fatal("same-port parameter replacement failed")
 	}
 	p2 := servertest.StartOnFreePort(t, func(port int) error {
@@ -175,21 +177,25 @@ func TestUDPServerStartReconfigureRollbackAndClose(t *testing.T) {
 		}
 		return nil
 	})
-	if !udpExchange(t, p2, "new-port", testTimeout) {
+	if !udpExchange(t, p2, "new-port") {
 		t.Fatal("new UDP listener failed")
 	}
-	probe, err := net.ListenPacket("udp", udpAddress(p1))
+	probe, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", udpAddress(p1))
 	if err != nil {
 		t.Fatalf("old port not freed after replacement: %v", err)
 	}
 	_ = probe.Close()
 	p1 = p2
-	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	blocker, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = blocker.Close() })
-	blocked := blocker.LocalAddr().(*net.UDPAddr).Port
+	blockedAddr, ok := blocker.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("blocker address is %T, want *net.UDPAddr", blocker.LocalAddr())
+	}
+	blocked := blockedAddr.Port
 	if err = inst.Reconfigure(Options{HomeDir: home, Servers: []servers.Spec{udpEchoSpec(blocked, "blocked")}}); err == nil {
 		_ = blocker.Close()
 		t.Fatal("occupied UDP replacement succeeded")
@@ -202,14 +208,14 @@ func TestUDPServerStartReconfigureRollbackAndClose(t *testing.T) {
 	if err = blocker.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if !udpExchange(t, p1, "restored", testTimeout) {
+	if !udpExchange(t, p1, "restored") {
 		t.Fatal("old listener stopped responding after failed replacement")
 	}
 	if err = inst.Close(); err != nil {
 		t.Fatal(err)
 	}
 	closed = true
-	probe, err = net.ListenPacket("udp", udpAddress(p1))
+	probe, err = (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", udpAddress(p1))
 	if err != nil {
 		t.Fatalf("Close did not free UDP port: %v", err)
 	}
@@ -257,7 +263,8 @@ func (r *tcpEchoRunning) loop() {
 				return
 			default:
 			}
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				continue
 			}
 			return
@@ -265,7 +272,7 @@ func (r *tcpEchoRunning) loop() {
 		r.wg.Add(1)
 		go func() {
 			defer r.wg.Done()
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 			if err = c.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 				return
 			}
@@ -283,11 +290,11 @@ func tcpEchoSpec(port int, rev string) servers.Spec {
 }
 func tcpExchange(t *testing.T, port int, payload string) bool {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", udpAddress(port), testTimeout)
+	c, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", udpAddress(port))
 	if err != nil {
 		return false
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err = c.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 		t.Fatal(err)
 	}
@@ -337,12 +344,16 @@ func TestMixedTCPUDPCommitRollbackIntegration(t *testing.T) {
 		}
 		return nil
 	})
-	blocker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	blocker, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = blocker.Close() })
-	blocked := blocker.LocalAddr().(*net.UDPAddr).Port
+	blockedAddr, ok := blocker.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("blocker address is %T, want *net.UDPAddr", blocker.LocalAddr())
+	}
+	blocked := blockedAddr.Port
 	oldTCP := s.items["tcp-echo"]
 	tx, err := s.prepare([]servers.Spec{tcpEchoSpec(tcpPort, "changed"), udpEchoSpec(blocked, "changed")}, nil, nil, nil)
 	if err != nil {
@@ -366,11 +377,11 @@ func TestMixedTCPUDPCommitRollbackIntegration(t *testing.T) {
 	if !tcpExchange(t, tcpPort, "old-tcp") {
 		t.Fatal("old TCP did not echo after rollback")
 	}
-	if !udpExchange(t, udpPort, "old-udp", testTimeout) {
+	if !udpExchange(t, udpPort, "old-udp") {
 		t.Fatal("old UDP did not echo after rollback")
 	}
 	s.close()
-	probe, err := net.Listen("tcp", udpAddress(tcpPort))
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", udpAddress(tcpPort))
 	if err != nil {
 		t.Fatalf("Close did not free TCP port: %v", err)
 	}

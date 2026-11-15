@@ -1,8 +1,8 @@
 package main
 
 import (
+	"errors"
 	"flag"
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -62,11 +62,11 @@ func parseHopIndices(values []string, flagName string) ([]int, error) {
 // tests can exercise list mechanics with a test-only capacity.
 func applyHopEdit(original config.HopList, edit HopEdit, validate func(config.HopList) error) (config.HopList, error) {
 	if validate == nil {
-		return nil, fmt.Errorf("hop validator is required")
+		return nil, errors.New("hop validator is required")
 	}
 	if edit.Replace != nil {
 		if edit.Add != nil || edit.Remove != nil {
-			return nil, fmt.Errorf("replacement and incremental hop edits cannot be combined")
+			return nil, errors.New("replacement and incremental hop edits cannot be combined")
 		}
 		result := cloneHopList(*edit.Replace)
 		if err := validate(result); err != nil {
@@ -75,17 +75,17 @@ func applyHopEdit(original config.HopList, edit HopEdit, validate func(config.Ho
 		return result, nil
 	}
 	if edit.Add != nil && edit.Remove != nil {
-		return nil, fmt.Errorf("adding and removing hops cannot be combined")
+		return nil, errors.New("adding and removing hops cannot be combined")
 	}
 	result := cloneHopList(original)
 	if edit.Remove != nil {
 		remove := make(map[int]struct{}, len(edit.Remove))
 		for _, index := range edit.Remove {
 			if index < 1 || index > len(original) {
-				return nil, fmt.Errorf("hop index is out of range")
+				return nil, errors.New("hop index is out of range")
 			}
 			if _, duplicate := remove[index]; duplicate {
-				return nil, fmt.Errorf("duplicate hop index")
+				return nil, errors.New("duplicate hop index")
 			}
 			remove[index] = struct{}{}
 		}
@@ -121,8 +121,8 @@ func validateHopEdit(original config.HopList, edit HopEdit, field string) (confi
 }
 
 func replaceHopList(hops config.HopList) *config.HopList {
-	copy := cloneHopList(hops)
-	return &copy
+	replaced := cloneHopList(hops)
+	return &replaced
 }
 
 func chainDisabled(hops config.HopList) bool {

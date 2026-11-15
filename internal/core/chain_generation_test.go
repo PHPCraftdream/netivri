@@ -28,7 +28,11 @@ func TestChainHelpersAreGeneratedAndAttributed(t *testing.T) {
 			t.Fatalf("credential on unexpected proxy %v", proxy["name"])
 		}
 	}
-	if got := groups[0]["proxies"].([]string); !reflect.DeepEqual(got, []string{"netivri-g3-r0-0-post"}) {
+	got, ok := groups[0]["proxies"].([]string)
+	if !ok {
+		t.Fatalf("group proxies are %T, want []string", groups[0]["proxies"])
+	}
+	if !reflect.DeepEqual(got, []string{"netivri-g3-r0-0-post"}) {
 		t.Fatalf("group members = %v", got)
 	}
 	plans, err := buildRoutePlansGen(o, 3)
@@ -101,7 +105,7 @@ func TestDirectRouteHasNoStickyPlan(t *testing.T) {
 }
 func TestWarmLeavesExcludeDirectAndProbeThreeChainsOnceEach(t *testing.T) {
 	proxies := map[string]C.Proxy{"DIRECT": testWarmProxy{name: "DIRECT", typ: C.Direct}}
-	for node := 0; node < 3; node++ {
+	for node := range 3 {
 		base := memberProxyName(0, 0, node)
 		proxies[base] = testWarmProxy{name: base, typ: C.Socks5}
 		pre, post := base+"-pre", base+"-post"

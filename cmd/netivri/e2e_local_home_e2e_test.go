@@ -19,7 +19,7 @@ import (
 func localExec(dir, global string, args ...string) (code int, stdout, stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), angelE2ETimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, args...)
+	cmd := exec.CommandContext(ctx, netivriBin, args...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+global)
 	var outBuf, errBuf bytes.Buffer
@@ -95,7 +95,7 @@ func TestE2ELocalHomesAreIsolated(t *testing.T) {
 	if angelStateExists(global) {
 		t.Error("the state of a --local run reached NETIVRI_HOME")
 	}
-	if ignore, err := os.ReadFile(filepath.Join(homeA, ".gitignore")); err != nil || string(ignore) != "*\n" {
+	if ignore, err := os.ReadFile(filepath.Join(homeA, ".gitignore")); err != nil || string(ignore) != "*\n" { //nolint:gosec // G304: .gitignore inside the test's own temp directory
 		t.Errorf(".gitignore = %q, %v; want everything in the directory ignored", ignore, err)
 	}
 
@@ -105,7 +105,7 @@ func TestE2ELocalHomesAreIsolated(t *testing.T) {
 		t.Fatalf("status in a: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 	status := angelData(t, out)
-	if angelInt(t, status, "pid") != angelInt(t, upA, "pid") || status["home_source"] != "./.netivri" {
+	if angelPID(t, status) != angelPID(t, upA) || status["home_source"] != "./.netivri" {
 		t.Errorf("status in a: pid %v source %v, want the angel of a found through ./.netivri", status["pid"], status["home_source"])
 	}
 	sameDirectory(t, status["home"], homeA)
@@ -126,11 +126,11 @@ func TestE2ELocalHomesAreIsolated(t *testing.T) {
 		t.Fatalf("up --local in b: exit %d, stdout %q, stderr %q", code, out, errOut)
 	}
 	upB := angelData(t, out)
-	if angelInt(t, upB, "pid") == angelInt(t, upA, "pid") || upB["listen"] == upA["listen"] {
+	if angelPID(t, upB) == angelPID(t, upA) || upB["listen"] == upA["listen"] {
 		t.Errorf("two directories, one angel: a %v/%v, b %v/%v", upA["pid"], upA["listen"], upB["pid"], upB["listen"])
 	}
 	_, out, _ = localRun(t, a, global, "status")
-	if angelInt(t, angelData(t, out), "pid") != angelInt(t, upA, "pid") {
+	if angelPID(t, angelData(t, out)) != angelPID(t, upA) {
 		t.Error("status in a answers with another angel")
 	}
 

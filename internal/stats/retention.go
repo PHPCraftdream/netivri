@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -11,14 +12,14 @@ func (s *Store) pruneDB(now time.Time) error {
 	cutoff := now.UTC().Add(-s.opts.Retention).UnixMilli()
 	hourlyCutoff := now.UTC().Add(-hourlyTTL).Unix() / 3600
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin prune: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Fold old raw samples into hourly, adding to existing rows.
-	fold, err := tx.Prepare(`
+	fold, err := tx.PrepareContext(context.Background(), `
 INSERT INTO hourly (hour, node, kind, n, ok, ms_sum, ms_max, bytes)
 SELECT ts / 3600000, node, kind, COUNT(*), SUM(ok),
        SUM(CASE WHEN ok = 1 THEN ms ELSE 0 END), MAX(ms), SUM(bytes)
@@ -30,16 +31,16 @@ ON CONFLICT(hour, node, kind) DO UPDATE SET
 	if err != nil {
 		return fmt.Errorf("stats: prepare fold: %w", err)
 	}
-	defer fold.Close()
-	if _, err := fold.Exec(cutoff); err != nil {
+	defer func() { _ = fold.Close() }()
+	if _, err := fold.ExecContext(context.Background(), cutoff); err != nil {
 		return fmt.Errorf("stats: fold samples: %w", err)
 	}
-	if _, err := tx.Exec("DELETE FROM sample WHERE ts < ?", cutoff); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM sample WHERE ts < ?", cutoff); err != nil {
 		return fmt.Errorf("stats: delete samples: %w", err)
 	}
 
 	// Same fold for the per-account samples.
-	foldAcct, err := tx.Prepare(`
+	foldAcct, err := tx.PrepareContext(context.Background(), `
 INSERT INTO account_hourly (hour, account, node, kind, n, ok, ms_sum, ms_max, bytes, up, down)
 SELECT ts / 3600000, account, node, kind, COUNT(*), SUM(ok),
        SUM(CASE WHEN ok = 1 THEN ms ELSE 0 END), MAX(ms), SUM(bytes), SUM(up), SUM(down)
@@ -52,20 +53,20 @@ ON CONFLICT(hour, account, node, kind) DO UPDATE SET
 	if err != nil {
 		return fmt.Errorf("stats: prepare fold: %w", err)
 	}
-	defer foldAcct.Close()
-	if _, err := foldAcct.Exec(cutoff); err != nil {
+	defer func() { _ = foldAcct.Close() }()
+	if _, err := foldAcct.ExecContext(context.Background(), cutoff); err != nil {
 		return fmt.Errorf("stats: fold samples: %w", err)
 	}
-	if _, err := tx.Exec("DELETE FROM account_sample WHERE ts < ?", cutoff); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM account_sample WHERE ts < ?", cutoff); err != nil {
 		return fmt.Errorf("stats: delete samples: %w", err)
 	}
-	if _, err := tx.Exec("DELETE FROM account_hourly WHERE hour < ?", hourlyCutoff); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM account_hourly WHERE hour < ?", hourlyCutoff); err != nil {
 		return fmt.Errorf("stats: delete hourly: %w", err)
 	}
-	if _, err := tx.Exec("DELETE FROM hourly WHERE hour < ?", hourlyCutoff); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM hourly WHERE hour < ?", hourlyCutoff); err != nil {
 		return fmt.Errorf("stats: delete hourly: %w", err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(context.Background(), `
 DELETE FROM node
 WHERE NOT EXISTS (SELECT 1 FROM sample WHERE sample.node = node.id)
   AND NOT EXISTS (SELECT 1 FROM hourly WHERE hourly.node = node.id)
@@ -74,7 +75,7 @@ WHERE NOT EXISTS (SELECT 1 FROM sample WHERE sample.node = node.id)
   AND NOT EXISTS (SELECT 1 FROM binding WHERE binding.label = node.label)`); err != nil {
 		return fmt.Errorf("stats: delete unused nodes: %w", err)
 	}
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(context.Background(), `
 DELETE FROM account
 WHERE NOT EXISTS (SELECT 1 FROM account_sample WHERE account_sample.account = account.id)
   AND NOT EXISTS (SELECT 1 FROM account_hourly WHERE account_hourly.account = account.id)

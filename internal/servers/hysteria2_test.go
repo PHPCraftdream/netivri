@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -28,7 +29,7 @@ func TestHysteria2RegisteredUDP(t *testing.T) {
 func TestHysteria2Validation(t *testing.T) {
 	p := hysteria2{}
 	limit := uint64(math.MaxInt64 / 1_000_000)
-	for _, value := range []string{"1", "10", "1000", fmt.Sprint(limit)} {
+	for _, value := range []string{"1", "10", "1000", strconv.FormatUint(limit, 10)} {
 		if err := p.Validate(map[string]string{"up": value}); err != nil {
 			t.Errorf("rejected valid bandwidth %q: %v", value, err)
 		}
@@ -36,7 +37,7 @@ func TestHysteria2Validation(t *testing.T) {
 			t.Errorf("rejected valid bandwidth %q: %v", value, err)
 		}
 	}
-	for _, value := range []string{"1.5", "1e2", "0", "-1", "+1", "NaN", "+Inf", "-Inf", "18446744073709551616", fmt.Sprint(limit + 1), "secret"} {
+	for _, value := range []string{"1.5", "1e2", "0", "-1", "+1", "NaN", "+Inf", "-Inf", "18446744073709551616", strconv.FormatUint(limit+1, 10), "secret"} {
 		for _, direction := range []string{"up", "down"} {
 			if err := p.Validate(map[string]string{direction: value}); err == nil || strings.Contains(err.Error(), value) {
 				t.Errorf("invalid or leaked %s=%q: %v", direction, value, err)
@@ -100,6 +101,13 @@ func TestHysteria2URIImporterAndMihomo(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := Spec{Name: "edge", Protocol: "hysteria2", Bind: "127.0.0.1", Port: 443, Accounts: []string{"alice", "bob"}, Params: map[string]string{"sni": "origin.example", "obfs": "salamander", "up": "10", "down": "20"}, Material: SecretMap(material), Users: UserSecrets{"alice": secret, "bob": {"password": "other"}}}
+	link := hysteria2CheckURI(t, p, spec, secret, material)
+	hysteria2CheckImport(t, link, secret, material)
+	hysteria2CheckMihomo(t, p, spec, secret, material)
+}
+
+func hysteria2CheckURI(t *testing.T, p hysteria2, spec Spec, secret, material map[string]string) string {
+	t.Helper()
 	link, err := p.Link(spec, "alice", "edge.example")
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +119,11 @@ func TestHysteria2URIImporterAndMihomo(t *testing.T) {
 	if u.User.String() != secret["password"] || u.Query().Get("pinSHA256") != TLSFingerprint(material) || u.Query().Has("pcs") || u.Query().Get("sni") != "origin.example" || u.Query().Get("insecure") != "0" || u.Query().Get("up") != "10" || u.Query().Get("down") != "20" {
 		t.Fatal("URI output mismatch")
 	}
+	return link
+}
+
+func hysteria2CheckImport(t *testing.T, link string, secret, material map[string]string) {
+	t.Helper()
 	converted, err := convert.ConvertsV2Ray([]byte(link))
 	if err != nil || len(converted) != 1 {
 		t.Fatalf("import failed: %v", err)
@@ -119,6 +132,10 @@ func TestHysteria2URIImporterAndMihomo(t *testing.T) {
 	if proxy["type"] != "hysteria2" || proxy["password"] != secret["password"] || proxy["fingerprint"] != TLSFingerprint(material) || proxy["obfs-password"] != material["obfs_password"] || proxy["up"] != "10" || proxy["down"] != "20" || proxy["server"] != "edge.example" || proxy["port"] != "443" || proxy["name"] != "edge" || proxy["sni"] != "origin.example" || proxy["skip-cert-verify"] != false || proxy["obfs"] != "salamander" {
 		t.Fatal("imported fields differ")
 	}
+}
+
+func hysteria2CheckMihomo(t *testing.T, p hysteria2, spec Spec, secret, material map[string]string) {
+	t.Helper()
 	snippet, err := p.Mihomo(spec, "alice", "edge.example")
 	if err != nil {
 		t.Fatal(err)

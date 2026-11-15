@@ -57,7 +57,9 @@ func e2eTraceOn(t *testing.T) *e2eTrace {
 // one, so shared helpers can call it freely.
 func e2eMark(t *testing.T, format string, args ...any) {
 	if v, ok := e2eTraces.Load(t); ok {
-		v.(*e2eTrace).add(fmt.Sprintf(format, args...))
+		if tr, isTrace := v.(*e2eTrace); isTrace {
+			tr.add(fmt.Sprintf(format, args...))
+		}
 	}
 }
 
@@ -198,7 +200,7 @@ func TestE2ETraceReport(t *testing.T) {
 	if !strings.Contains(got, "+   5.0") {
 		t.Errorf("events are not timed from the start of the test:\n%s", got)
 	}
-	for i := 0; i < e2eTraceMaxEvents-3+5; i++ { // three events are in already: five are over the limit
+	for range e2eTraceMaxEvents - 3 + 5 { // three events are in already: five are over the limit
 		tr.add("more")
 	}
 	if got := tr.report(""); !strings.Contains(got, "5 later events not kept") || strings.Count(got, "\n") != e2eTraceMaxEvents+1 {
@@ -216,8 +218,8 @@ func TestE2EMarkWithoutTraceDoesNothing(t *testing.T) {
 }
 
 func TestE2EHeadTail(t *testing.T) {
-	var lines []string
-	for i := 0; i < 50; i++ {
+	lines := make([]string, 0, 50)
+	for i := range 50 {
 		lines = append(lines, fmt.Sprintf("line %d", i))
 	}
 	got := e2eHeadTail("log", strings.Join(lines, "\n"), 3, 4)

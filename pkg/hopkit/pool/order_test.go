@@ -10,7 +10,7 @@ func TestOrderHidesQuarantinedAndProbingWhenHealthyExists(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "healthy-a", "quarantined", "soft-only", "healthy-b")
 	p.RecordSoft("soft-only")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("quarantined")
 	}
 	preDueOrder := p.Order(clock.Now())
@@ -34,7 +34,7 @@ func TestOrderHidesQuarantinedAndProbingWhenHealthyExists(t *testing.T) {
 func TestExpiredProbationStaysOutOfCommonOrderUntilSuccess(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop", "other")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -63,7 +63,7 @@ func TestAllQuarantinedFallbackIncludesEveryKeyWithoutDuplicates(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "a", "b", "c", "d")
 	for _, key := range []string{"a", "b", "c", "d"} {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			p.RecordHard(key)
 		}
 	}
@@ -94,7 +94,7 @@ func TestOrderIsReproducibleAndCopiesCallerPCG(t *testing.T) {
 	if got := caller.Uint64(); got != wantCallerNext {
 		t.Fatalf("New advanced the caller's PCG: got next %d, want %d", got, wantCallerNext)
 	}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		left, right := first.Order(clock.Now()), second.Order(clock.Now())
 		leftSeen := requireUniqueStrings(t, left)
 		rightSeen := requireUniqueStrings(t, right)
@@ -118,11 +118,11 @@ func TestWeightedOrderFavorsLowSandButStillDrawsHighSandFirst(t *testing.T) {
 	p := newTestPoolWithSeed(clock, 1001, 2002, "low", "high")
 	// Four soft failures stay below the soft-streak quarantine: weight 20^-0.5,
 	// so low wins first place with probability 1/(1+0.2236) = 0.817.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		p.RecordSoft("high")
 	}
 	lowFirst, highFirst := 0, 0
-	for i := 0; i < draws; i++ {
+	for i := range draws {
 		order := p.Order(clock.Now())
 		if len(order) != 2 || order[0] == order[1] {
 			t.Fatalf("draw %d was not a two-key permutation: %v", i, order)

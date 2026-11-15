@@ -11,7 +11,7 @@ import (
 )
 
 func TestValidateCLIHopListPreservesConfigErrors(t *testing.T) {
-	const secretUser = "fake-hop-user"
+	const secretUser = "fake-hop-user" //nolint:gosec // G101: fake credential, test fixture only
 	const secretPassword = "fake-hop-password"
 	cases := []struct {
 		name        string

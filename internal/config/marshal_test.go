@@ -11,7 +11,7 @@ import (
 // that only survives as a raw String and a subscription with via.
 func fullConfig() *Config {
 	cfg := Default()
-	cfg.Auth = Auth{Login: "123456", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash"}
+	cfg.Auth = Auth{Login: "123456", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash"} //nolint:gosec // G101: fixture argon2 hash, not a real credential
 	cfg.Fetch = Fetch{Proxy: "socks5://alice:pw@proxy.example:1080", UpdateInterval: "30m"}
 	cfg.Subscriptions = []Subscription{
 		{Name: "main", URL: "https://provider.example/sub", Via: "http://via.example:3128"},

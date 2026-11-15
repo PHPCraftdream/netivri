@@ -244,35 +244,11 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	silenceMihomoLog()
 	C.SetHomeDir(o.HomeDir)
 
-	raw := config.DefaultRawConfig()
-	raw.Mode = tunnel.Direct
-	raw.LogLevel = mihomolog.SILENT
-	raw.Port, raw.SocksPort, raw.RedirPort, raw.TProxyPort, raw.MixedPort = 0, 0, 0, 0, 0
-	raw.ExternalController = ""
-	raw.AllowLan = false
-	// Nothing is selected or cached in v1: no state database, no geodata
-	// updates, nothing to persist across runs.
-	raw.Profile.StoreSelected = false
-	raw.Profile.StoreFakeIP = false
-	raw.GeoAutoUpdate = false
-	route := routeDirect
 	proxies, groups, rules, err := prepareRoutes(o)
 	if err != nil {
 		return nil, err
 	}
-	if o.Node != nil || len(o.AccountRoute) != 0 || o.globalPostActive() {
-		raw.Mode = tunnel.Rule
-		raw.Proxy = proxies
-		raw.ProxyGroup = groups
-		raw.Rule = rules
-		// Rule mode uses MATCH for the default route; per-user route rules
-		// take precedence and domain destinations remain unresolved.
-		// No rule needs process lookup, so keep it disabled.
-		raw.FindProcessMode = process.FindProcessOff
-		if o.Node != nil {
-			route = routeNode
-		}
-	}
+	raw, route := startRawConfig(o, proxies, groups, rules)
 
 	cfg, err := config.ParseRawConfig(raw)
 	if err != nil {
@@ -287,7 +263,6 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	var table *affinityTable
 	var health *healthTable
-	var poller *throughputPoller
 	hopPools := newHopPoolLifecycle(o.OnHopEvent)
 	if len(plans) > 0 {
 		table = newAffinityTable(nil, o.AffinityTTL)
@@ -313,54 +288,20 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	inbound.SetAllowedIPs(allowed)
 
-	restored := 0
-	var poolNames []string
-	if health != nil {
-		health.registerMembers(healthMembersForPlans(plans))
-	}
-	parsedProxies := tunnel.Proxies()
-	updated, installedPoolNames, poolErr := hopPools.install(o, plans, parsedProxies, health)
-	poolNames = installedPoolNames
-	if poolErr != nil {
+	poolNames, restored, err := installStartRoutes(o, plans, table, health, hopPools)
+	if err != nil {
+		// The filter was already set; restore allow-all on shutdown.
 		executor.Shutdown()
 		resetAllowedClients()
-		return nil, poolErr
-	}
-	if len(plans) > 0 || len(poolNames) > 0 {
-		tunnel.UpdateProxies(updated, tunnel.Providers())
-	}
-	if len(plans) > 0 {
-		// The replaced select groups become garbage; their finalizers are
-		// drained by the next Start through drainFinalizers.
-		if err := installStickyGroups(plans, table, health, o.Observer, o.OnConnEvent); err != nil {
-			// The filter was already set; restore allow-all on shutdown.
-			executor.Shutdown()
-			resetAllowedClients()
-			return nil, err
-		}
-		poolNames = append(poolNames, planProxyNames(plans)...)
-		restored = loadInitialBindings(table, plans, o.AccountRoute, o.InitialBindings)
+		return nil, err
 	}
 	hopPools.completeInstall(o.SiteBinder)
 
-	bind := o.Bind
-	if bind == "" {
-		bind = "127.0.0.1"
-	}
-	addr := net.JoinHostPort(bind, strconv.Itoa(o.Port))
 	tt := newTrackedTunnel(tunnel.Tunnel)
-	ln, err := mixed.NewWithConfig(
-		LC.AuthServer{Enable: true, Listen: addr, AuthStore: authStore.NewAuthStore(o.Authenticator)},
-		inbound.NewListenConfig(),
-		tt,
-		inbound.WithInName("NETIVRI-MIXED"), inbound.WithSpecialRules(""),
-	)
+	ln, err := listenMixed(o, tt)
 	if err != nil {
 		executor.Shutdown()
 		resetAllowedClients()
-		if isAddrInUse(err) {
-			return nil, &cli.Error{Code: "PORT_IN_USE", Message: "listen " + addr + ": port is already in use", Exit: cli.ExitConflict}
-		}
 		return nil, err
 	}
 
@@ -368,63 +309,18 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	// stopped before executor.Shutdown, see Close.
 	var warm *warmer
 	if o.Warm != nil {
-		// Copy: never mutate the caller's WarmOptions.
-		wo := *o.Warm
-		if len(plans) > 0 {
-			// Feed the probe results to the sticky health table and the
-			// observer; the caller's own OnProbe, if any, still runs.
-			// Down feeds the down state back so probed nodes that stay
-			// down are probed with a lengthened interval.
-			nameToLabel := memberNameLabels(plans)
-			nameToHealthKey := memberNameHealthKeys(plans)
-			wo.OnProbe = probeHookKeys(nameToLabel, nameToHealthKey, nil, o.Observer, o.Warm.OnProbe)
-			wo.OnProbeError = probeErrorHookKeys(nameToLabel, nameToHealthKey, nil, o.Warm.OnProbeError)
-			wo.onProbeGroup = probeGroupHealthHook(nameToHealthKey, health)
-			wo.only = func(name string) bool {
-				_, tracked := nameToLabel[name]
-				return generatedMemberName(name) && tracked
-			}
-			wo.Down = func(name string) bool { return health.downKey(nameToHealthKey[name]) }
-			wo.Idle = fallbackIdle(plans, health)
-			keys := memberProbeKeys(plans, o)
-			wo.Same = func(name string) string { return keys[name] }
-		} else if o.Node != nil || o.globalPostActive() {
-			// MATCH traffic leaves through the global post when there is one
-			// (behind the default node, if any): probe that whole chain.
-			wo.only = matchProbeFilter(o, 0)
+		wo, warmErr := warmOptionsForStart(o, plans, health, hopPools)
+		if warmErr == nil {
+			warm, warmErr = startWarm(wo, o.Node) //nolint:contextcheck // warm and pool end via warm.Close/inst.Close; binding them to the Start ctx would change their lifetime
 		}
-		wo.probeBaseNames = hopPools.baseProbeNames(plans)
-		if len(hopPools.uses) > 0 {
-			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
-			if normalizeErr != nil {
-				_ = ln.Close()
-				executor.Shutdown()
-				resetAllowedClients()
-				return nil, normalizeErr
-			}
-			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
-			if reviveErr != nil {
-				_ = ln.Close()
-				executor.Shutdown()
-				resetAllowedClients()
-				return nil, reviveErr
-			}
-			wo.hopRevive = reviver.Round
-		}
-		warm, err = startWarm(wo, o.Node)
-		if err != nil {
+		if warmErr != nil {
 			_ = ln.Close()
 			executor.Shutdown()
 			resetAllowedClients()
-			return nil, err
+			return nil, warmErr
 		}
 	}
-	if len(plans) > 0 {
-		memberLabels := memberNameLabels(plans)
-		memberHealthKeys := memberNameHealthKeys(plans)
-		poller = newThroughputPollerWithHealthKeys(managerSource{statistic.DefaultManager}, health, o.Observer, memberLabels, memberHealthKeys, realStickyClock{})
-		poller.start()
-	}
+	poller := startThroughputPoller(o, plans, health)
 
 	serverState := &serverSet{items: make(map[string]*serverEntry), broker: newSocketBroker()}
 	serverTx, serverErr := serverState.prepare(o.Servers, tt, allowed, o.AccountAllowedClients)
@@ -473,16 +369,143 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	current = inst
 
 	// Optional lifecycle: cancel ctx to stop the instance.
-	if ctx != nil && ctx.Done() != nil {
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = inst.Close()
-			case <-inst.done:
-			}
-		}()
-	}
+	watchContext(ctx, inst)
 	return inst, nil
+}
+
+// startRawConfig is the Mihomo config Start applies, and the route kind. Rule
+// mode with the route rules when the instance routes through a node, an
+// account or the global post pool; direct mode otherwise.
+func startRawConfig(o Options, proxies, groups []map[string]any, rules []string) (*config.RawConfig, string) {
+	raw := config.DefaultRawConfig()
+	raw.Mode = tunnel.Direct
+	raw.LogLevel = mihomolog.SILENT
+	raw.Port, raw.SocksPort, raw.RedirPort, raw.TProxyPort, raw.MixedPort = 0, 0, 0, 0, 0
+	raw.ExternalController = ""
+	raw.AllowLan = false
+	// Nothing is selected or cached in v1: no state database, no geodata
+	// updates, nothing to persist across runs.
+	raw.Profile.StoreSelected = false
+	raw.Profile.StoreFakeIP = false
+	raw.GeoAutoUpdate = false
+	route := routeDirect
+	if o.Node != nil || len(o.AccountRoute) != 0 || o.globalPostActive() {
+		raw.Mode = tunnel.Rule
+		raw.Proxy = proxies
+		raw.ProxyGroup = groups
+		raw.Rule = rules
+		// Rule mode uses MATCH for the default route; per-user route rules
+		// take precedence and domain destinations remain unresolved.
+		// No rule needs process lookup, so keep it disabled.
+		raw.FindProcessMode = process.FindProcessOff
+		if o.Node != nil {
+			route = routeNode
+		}
+	}
+	return raw, route
+}
+
+// installStartRoutes registers the health of the planned members, installs the
+// hop pools and the sticky groups, and restores the initial bindings. It returns
+// the proxy names Start added and how many bindings it restored.
+func installStartRoutes(o Options, plans []routePlan, table *affinityTable, health *healthTable, hopPools *hopPoolLifecycle) ([]string, int, error) {
+	if health != nil {
+		health.registerMembers(healthMembersForPlans(plans))
+	}
+	parsedProxies := tunnel.Proxies()
+	updated, poolNames, poolErr := hopPools.install(o, plans, parsedProxies, health)
+	if poolErr != nil {
+		return nil, 0, poolErr
+	}
+	if len(plans) > 0 || len(poolNames) > 0 {
+		tunnel.UpdateProxies(updated, tunnel.Providers())
+	}
+	restored := 0
+	if len(plans) > 0 {
+		// The replaced select groups become garbage; their finalizers are
+		// drained by the next Start through drainFinalizers.
+		if err := installStickyGroups(plans, table, health, o.Observer, o.OnConnEvent); err != nil {
+			return nil, 0, err
+		}
+		poolNames = append(poolNames, planProxyNames(plans)...)
+		restored = loadInitialBindings(table, plans, o.AccountRoute, o.InitialBindings)
+	}
+	return poolNames, restored, nil
+}
+
+// listenMixed opens netivri's own mixed listener on the configured bind and port.
+func listenMixed(o Options, tt *trackedTunnel) (*mixed.Listener, error) {
+	bind := o.Bind
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(bind, strconv.Itoa(o.Port))
+	ln, err := mixed.NewWithConfig(
+		LC.AuthServer{Enable: true, Listen: addr, AuthStore: authStore.NewAuthStore(o.Authenticator)},
+		inbound.NewListenConfig(),
+		tt,
+		inbound.WithInName("NETIVRI-MIXED"), inbound.WithSpecialRules(""),
+	)
+	if err != nil {
+		if isAddrInUse(err) {
+			return nil, &cli.Error{Code: "PORT_IN_USE", Message: "listen " + addr + ": port is already in use", Exit: cli.ExitConflict}
+		}
+		return nil, err
+	}
+	return ln, nil
+}
+
+// warmOptionsForStart is the copy of o.Warm that Start starts the warmer with:
+// the probe hooks of the planned members, or the global post chain as the
+// target of MATCH traffic, and the hop revive when a hop pool is in use.
+func warmOptionsForStart(o Options, plans []routePlan, health *healthTable, hopPools *hopPoolLifecycle) (WarmOptions, error) {
+	// Copy: never mutate the caller's WarmOptions.
+	wo := *o.Warm
+	if len(plans) > 0 {
+		// Feed the probe results to the sticky health table and the
+		// observer; the caller's own OnProbe, if any, still runs.
+		// Down feeds the down state back so probed nodes that stay
+		// down are probed with a lengthened interval.
+		nameToLabel := memberNameLabels(plans)
+		planProbeHooks(&wo, o, plans, nameToLabel, health)
+		wo.only = func(name string) bool {
+			_, tracked := nameToLabel[name]
+			return generatedMemberName(name) && tracked
+		}
+	} else if o.Node != nil || o.globalPostActive() {
+		// MATCH traffic leaves through the global post when there is one
+		// (behind the default node, if any): probe that whole chain.
+		wo.only = matchProbeFilter(o, 0)
+	}
+	wo.probeBaseNames = hopPools.baseProbeNames(plans)
+	return reviveWarmOptions(hopPools, wo)
+}
+
+// startThroughputPoller starts the poller of the planned members; nil without
+// sticky groups.
+func startThroughputPoller(o Options, plans []routePlan, health *healthTable) *throughputPoller {
+	if len(plans) == 0 {
+		return nil
+	}
+	memberLabels := memberNameLabels(plans)
+	memberHealthKeys := memberNameHealthKeys(plans)
+	poller := newThroughputPollerWithHealthKeys(managerSource{statistic.DefaultManager}, health, o.Observer, memberLabels, memberHealthKeys, realStickyClock{})
+	poller.start()
+	return poller
+}
+
+// watchContext closes inst once ctx is done, unless inst is closed first.
+func watchContext(ctx context.Context, inst *Instance) {
+	if ctx == nil || ctx.Done() == nil {
+		return
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = inst.Close()
+		case <-inst.done:
+		}
+	}()
 }
 
 // state returns the current routing generation; an Instance that was never

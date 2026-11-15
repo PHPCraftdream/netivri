@@ -21,6 +21,7 @@ var settingsKeys = []string{
 }
 
 type settingsFixture struct {
+	t      testing.TB
 	s      *settingsScreen
 	cfg    *config.Config
 	toasts []string
@@ -36,13 +37,13 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
 		t.Fatalf("save fixture config: %v", err)
 	}
-	f := &settingsFixture{cfg: cfg}
+	f := &settingsFixture{cfg: cfg, t: t}
 	env := tui.Env{
 		Home:       home,
 		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
-	f.s = newSettingsScreen(env.Home, env).(*settingsScreen)
+	f.s = mustAs[*settingsScreen](t, newSettingsScreen(env.Home, env))
 	f.s.load = func(string) (*config.Config, error) { return f.cfg, nil }
 	f.s.set = func(_, key, value string) (ConfigSetResult, error) {
 		f.calls = append(f.calls, [2]string{key, value})
@@ -53,12 +54,12 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 }
 
 func (f *settingsFixture) drain(c tea.Cmd) {
-	f.s = parityDrain(f.s, c).(*settingsScreen)
+	f.s = mustAs[*settingsScreen](f.t, parityDrain(f.s, c))
 }
 
 func (f *settingsFixture) key(k tea.KeyPressMsg) {
 	sc, c := f.s.Update(k)
-	f.s = sc.(*settingsScreen)
+	f.s = mustAs[*settingsScreen](f.t, sc)
 	f.drain(c)
 }
 

@@ -39,7 +39,7 @@ type angelStateFile struct {
 
 func angelReadState(home string) (angelStateFile, error) {
 	var st angelStateFile
-	data, err := os.ReadFile(filepath.Join(home, angelStateRel))
+	data, err := os.ReadFile(filepath.Join(home, angelStateRel)) //nolint:gosec // G304: state file inside the test's own angel home
 	if err != nil {
 		return st, err
 	}
@@ -54,10 +54,10 @@ func angelStateExists(home string) bool {
 // angelExec runs the binary to completion. Problems that are not a non-zero
 // exit are returned as errors instead of failing the test, so cleanups can use
 // it too.
-func angelExec(home string, args ...string) (code int, stdout, stderr string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), angelE2ETimeout)
+func angelExec(parent context.Context, home string, args ...string) (code int, stdout, stderr string, err error) {
+	ctx, cancel := context.WithTimeout(parent, angelE2ETimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, args...)
+	cmd := exec.CommandContext(ctx, netivriBin, args...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -78,7 +78,7 @@ func angelExec(home string, args ...string) (code int, stdout, stderr string, er
 
 func angelRun(t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	code, stdout, stderr, err := angelExec(home, args...)
+	code, stdout, stderr, err := angelExec(t.Context(), home, args...)
 	if err != nil {
 		t.Fatalf("netivri %v: %v (stdout %q, stderr %q)", args, err, stdout, stderr)
 	}
@@ -96,7 +96,7 @@ func newAngelHome(t *testing.T) *angelHome {
 	t.Helper()
 	h := &angelHome{dir: t.TempDir()}
 	t.Cleanup(func() {
-		code, _, _, err := angelExec(h.dir, "down")
+		code, _, _, err := angelExec(context.WithoutCancel(t.Context()), h.dir, "down")
 		downOK := err == nil && code == 0
 		pid := h.pid
 		if st, rerr := angelReadState(h.dir); rerr == nil {
@@ -129,12 +129,12 @@ func angelData(t *testing.T, stdout string) map[string]any {
 	return env.Data
 }
 
-// angelInt reads a JSON number from a decoded data object.
-func angelInt(t *testing.T, data map[string]any, key string) int {
+// angelPID reads the JSON number "pid" from a decoded data object.
+func angelPID(t *testing.T, data map[string]any) int {
 	t.Helper()
-	v, ok := data[key].(float64)
+	v, ok := data["pid"].(float64)
 	if !ok {
-		t.Fatalf("data[%q] = %v, want a number", key, data[key])
+		t.Fatalf("data[\"pid\"] = %v, want a number", data["pid"])
 	}
 	return int(v)
 }
@@ -186,7 +186,7 @@ func TestE2EAngelLifecycle(t *testing.T) {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	up := angelData(t, stdout)
-	pid := angelInt(t, up, "pid")
+	pid := angelPID(t, up)
 	h.pid = pid
 	listen, _ := up["listen"].(string)
 	if up["already_running"] != false || up["foreground"] != false || listen == "" {
@@ -207,7 +207,7 @@ func TestE2EAngelLifecycle(t *testing.T) {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	status := angelData(t, stdout)
-	if angelInt(t, status, "pid") != pid || status["listen"] != listen {
+	if angelPID(t, status) != pid || status["listen"] != listen {
 		t.Errorf("status = %v, want pid %d and listen %q", status, pid, listen)
 	}
 	if status["foreground"] != false || status["auth"] != "none" || status["route"] != "direct" {
@@ -227,7 +227,7 @@ func TestE2EAngelLifecycle(t *testing.T) {
 		t.Fatalf("second up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	again := angelData(t, stdout)
-	if again["already_running"] != true || angelInt(t, again, "pid") != pid {
+	if again["already_running"] != true || angelPID(t, again) != pid {
 		t.Errorf("second up data = %v, want already_running with pid %d", again, pid)
 	}
 
@@ -246,7 +246,7 @@ func TestE2EAngelLifecycle(t *testing.T) {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	down := angelData(t, stdout)
-	if down["was_running"] != true || angelInt(t, down, "pid") != pid {
+	if down["was_running"] != true || angelPID(t, down) != pid {
 		t.Errorf("down data = %v, want was_running with pid %d", down, pid)
 	}
 
@@ -301,7 +301,7 @@ func (w *angelLineWriter) String() string {
 func TestE2EAngelForegroundRegisters(t *testing.T) {
 	h := newAngelHome(t)
 
-	cmd := exec.Command(netivriBin, "up", "--foreground", "--port", "0")
+	cmd := exec.CommandContext(t.Context(), netivriBin, "up", "--foreground", "--port", "0")
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+h.dir)
 	stdout, stderr := newAngelLineWriter(), newAngelLineWriter()
 	cmd.Stdout = stdout
@@ -333,7 +333,7 @@ func TestE2EAngelForegroundRegisters(t *testing.T) {
 	}
 	line, _, _ := strings.Cut(stdout.String(), "\n")
 	started := angelData(t, line)
-	pid := angelInt(t, started, "pid")
+	pid := angelPID(t, started)
 	listen, _ := started["listen"].(string)
 	if started["foreground"] != true || listen == "" {
 		t.Fatalf("up data = %v", started)
@@ -344,7 +344,7 @@ func TestE2EAngelForegroundRegisters(t *testing.T) {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, out, errOut)
 	}
 	status := angelData(t, out)
-	if angelInt(t, status, "pid") != pid || status["listen"] != listen || status["foreground"] != true {
+	if angelPID(t, status) != pid || status["listen"] != listen || status["foreground"] != true {
 		t.Errorf("status = %v, want pid %d, listen %q, foreground true", status, pid, listen)
 	}
 
@@ -375,7 +375,7 @@ func TestE2EAngelStaleState(t *testing.T) {
 	h := newAngelHome(t)
 
 	// A port nothing listens on.
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestE2EAngelStaleState(t *testing.T) {
 		t.Fatalf("up after stale state exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	up := angelData(t, stdout)
-	h.pid = angelInt(t, up, "pid")
+	h.pid = angelPID(t, up)
 	if up["already_running"] != false {
 		t.Errorf("up data = %v, want already_running false", up)
 	}
@@ -421,12 +421,12 @@ func TestE2EAngelStaleState(t *testing.T) {
 // and no angel is left behind.
 func TestE2EAngelBusyPort(t *testing.T) {
 	h := newAngelHome(t)
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("hold port: %v", err)
 	}
-	defer l.Close()
-	busy := l.Addr().(*net.TCPAddr).Port
+	defer func() { _ = l.Close() }()
+	busy := listenerPort(t, l)
 
 	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", strconv.Itoa(busy))
 	if code != cli.ExitConflict {

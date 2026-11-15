@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // hopCardLine returns the card line with the given ID and its index.
@@ -33,7 +34,7 @@ func hopScreen(t *testing.T, pre bool) (*accountsScreen, string) {
 	if _, e := AccountAdd(h, opts); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	rows, e := AccountList(h)
 	if e != nil {
@@ -42,12 +43,20 @@ func hopScreen(t *testing.T, pre bool) (*accountsScreen, string) {
 	s.rows = rows
 	s.syncRows("alice")
 	s.workspace.SetFocus(tui.PaneCard)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	return s, h
 }
 
 func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 	s, h := hopScreen(t, false)
+	checkHopPickerCancel(t, s, h)
+	checkHopPickerEmptySecretRejected(t, s, h)
+	checkHopPickerAddSecretPersists(t, s, h)
+	checkHopPickerRemoveOption(t, s, h)
+}
+
+func checkHopPickerCancel(t *testing.T, s *accountsScreen, h string) {
+	t.Helper()
 	a, ok := s.selectedAccount()
 	if !ok {
 		t.Fatal("missing selected account")
@@ -67,12 +76,15 @@ func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 	if err != nil || len(cfg.Accounts[0].PreSOCKS5) != 0 {
 		t.Fatalf("cancel changed config: err=%v", err)
 	}
+}
 
-	// Empty secret input reports validation failure and does not update the
-	// stored configuration.
+// Empty secret input reports validation failure and does not update the
+// stored configuration.
+func checkHopPickerEmptySecretRejected(t *testing.T, s *accountsScreen, h string) {
+	t.Helper()
 	s.rows, _ = AccountList(h)
 	s.syncRows("alice")
-	a, _ = s.selectedAccount()
+	a, _ := s.selectedAccount()
 	_ = s.openEdit(a, "pre")
 	_, _ = s.Update(accountsDialogResult{Values: map[string]string{"value": "add"}})
 	_, emptyCmd := s.Update(accountsDialogResult{Values: map[string]string{"value": ""}})
@@ -80,7 +92,7 @@ func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 		t.Fatal("empty add did not produce its validation result")
 	}
 	runAccountCmd(s, emptyCmd)
-	cfg, err = config.Load(config.ConfigPath(h))
+	cfg, err := config.Load(config.ConfigPath(h))
 	if err != nil || len(cfg.Accounts[0].PreSOCKS5) != 0 {
 		t.Fatalf("empty add changed configuration: err=%v", err)
 	}
@@ -88,32 +100,38 @@ func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 		t.Fatal("empty add did not keep the secret prompt with an error")
 	}
 	_, _ = s.Update(accountsDialogResult{Canceled: true})
+}
 
+func checkHopPickerAddSecretPersists(t *testing.T, s *accountsScreen, h string) {
+	t.Helper()
 	s.syncRows("alice")
-	a, _ = s.selectedAccount()
+	a, _ := s.selectedAccount()
 	_ = s.openEdit(a, "pre")
 	_, _ = s.Update(accountsDialogResult{Values: map[string]string{"value": "add"}})
 	if s.dialog == nil || s.dialog.prompt == nil || s.dialog.prompt.Kind != tui.SecretPrompt || s.dialog.prompt.Value != "" {
 		t.Fatal("add did not open a blank SecretPrompt")
 	}
-	secret := "socks5://u:hop-secret@pre.example:1080"
+	secret := "socks5://u:hop-secret@pre.example:1080" //nolint:gosec // G101: fake credential, test fixture only
 	s.dialog.prompt.Value = secret
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{"value": secret}})
 	if cmd == nil {
 		t.Fatal("secret result did not start add")
 	}
 	runAccountCmd(s, cmd)
-	cfg, err = config.Load(config.ConfigPath(h))
+	cfg, err := config.Load(config.ConfigPath(h))
 	if err != nil || !reflect.DeepEqual(cfg.Accounts[0].PreSOCKS5, config.HopList{secret}) {
 		t.Fatalf("added hop did not persist: err=%v", err)
 	}
 	if strings.Contains(s.View(100, 20), "hop-secret") || strings.Contains(s.message, "hop-secret") {
 		t.Fatal("screen exposed the newly saved secret")
 	}
+}
 
+func checkHopPickerRemoveOption(t *testing.T, s *accountsScreen, h string) {
+	t.Helper()
 	s.rows, _ = AccountList(h)
 	s.syncRows("alice")
-	a, _ = s.selectedAccount()
+	a, _ := s.selectedAccount()
 	_ = s.openEdit(a, "pre")
 	var removeValue string
 	for _, option := range s.dialog.prompt.Options {
@@ -127,12 +145,12 @@ func TestAccountsHopPickerAddRemoveCancelAndSecretSafety(t *testing.T) {
 	if removeValue != "remove:1" {
 		t.Fatalf("remove option = %q, want remove:1", removeValue)
 	}
-	cmd = submitAccountHopOption(t, s, removeValue)
+	cmd := submitAccountHopOption(t, s, removeValue)
 	if cmd == nil {
 		t.Fatal("remove selection did not start mutation")
 	}
 	runAccountCmd(s, cmd)
-	cfg, err = config.Load(config.ConfigPath(h))
+	cfg, err := config.Load(config.ConfigPath(h))
 	if err != nil || len(cfg.Accounts[0].PreSOCKS5) != 0 {
 		t.Fatalf("remove did not clear hop: err=%v", err)
 	}
@@ -145,7 +163,7 @@ func TestAccountsHopPickerReplacementUsesAccountUpdate(t *testing.T) {
 	a, _ := s.selectedAccount()
 	_ = s.openEdit(a, "pre")
 	_, _ = s.Update(accountsDialogResult{Values: map[string]string{"value": "replace"}})
-	replacement := "https://new-user:new-secret@replacement.example:443"
+	replacement := "https://new-user:new-secret@replacement.example:443" //nolint:gosec // G101: fake credential, test fixture only
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{"value": replacement}})
 	if cmd == nil {
 		t.Fatal("replacement did not start AccountUpdate")
@@ -202,7 +220,7 @@ func TestAccountsHopPickerOperationSentinelsAndDirectPreSafety(t *testing.T) {
 	if _, err := AccountAdd(directHome, AccountAddOptions{Login: "direct", Exit: "direct", ExitGiven: true}); err != nil {
 		t.Fatal(err)
 	}
-	direct := newAccountsScreen(directHome, tui.Env{}).(*accountsScreen)
+	direct := mustAs[*accountsScreen](t, newAccountsScreen(directHome, tui.Env{}))
 	direct.rows, _ = AccountList(directHome)
 	direct.syncRows("direct")
 	directAccount, _ := direct.selectedAccount()
@@ -272,7 +290,7 @@ func TestAccountsHopPickerInvalidAndDuplicateKeepSecretDialog(t *testing.T) {
 
 func TestAccountsCardHopListsShowSafeStateAndAlternativesCount(t *testing.T) {
 	pre := []string{"socks5://a:secret-one@first.example:1080", "http://b:secret-two@second.example:3128"}
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", PreSOCKS5: accountChainInfo{Source: "account", Value: pre}}}
 	s.syncRows("alice")
 	line, _ := hopCardLine(s, "pre")
@@ -294,7 +312,7 @@ func TestAccountsInheritPreHopEndToEnd(t *testing.T) {
 	if line.ID == "" || line.Disabled {
 		t.Fatal("clear pre-hop should be enabled for the configured override")
 	}
-	for n := 0; n < i; n++ {
+	for range i {
 		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -313,7 +331,7 @@ func TestAccountsInheritPreHopEndToEnd(t *testing.T) {
 	if len(alice.PreSOCKS5) != 0 {
 		t.Fatal("pre-hop override was not removed")
 	}
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	line, _ = hopCardLine(s, "clear-pre")
 	if !line.Disabled {
 		t.Fatal("inherit pre-hop stayed enabled after inheriting")
@@ -365,7 +383,7 @@ func TestAccountsListRetainsOwnConfiguredStateWithoutChangingJSON(t *testing.T) 
 			if err != nil || strings.Contains(string(encoded), `"own_set"`) {
 				t.Fatalf("internal metadata changed JSON contract: %s err=%v", encoded, err)
 			}
-			s := newAccountsScreen(h, tui.Env{}).(*accountsScreen)
+			s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{}))
 			s.rows = rows
 			s.syncRows("alice")
 			line, _ := hopCardLine(s, "clear-pre")
@@ -467,7 +485,7 @@ func TestAccountsHopLinesShowStateOnly(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.syncRows("alice")
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	pw, _ = hopCardLine(s, "password")
 	if pw.Value != "set" {
 		t.Fatalf("password line after setting one = %q, want set", pw.Value)

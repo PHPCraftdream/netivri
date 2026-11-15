@@ -28,7 +28,7 @@ var verifyHash = VerifyHash
 // (login, passwordHash) in the configuration file.
 type Options struct {
 	Login    string
-	Password string
+	Password string //nolint:gosec // G117: the operator-supplied credential is the input of this API
 	Persist  func(login, passwordHash string) error
 }
 

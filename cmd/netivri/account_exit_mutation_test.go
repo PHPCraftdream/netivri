@@ -38,7 +38,7 @@ func TestAccountDirectMutationValidationIsAtomic(t *testing.T) {
 			if err := config.Save(path, seed); err != nil {
 				t.Fatal(err)
 			}
-			before, err := os.ReadFile(path)
+			before, err := os.ReadFile(filepath.Clean(path))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -49,7 +49,7 @@ func TestAccountDirectMutationValidationIsAtomic(t *testing.T) {
 			if !errors.As(err, &ce) || ce.Code != config.CodeConfigInvalid {
 				t.Fatalf("error = %v, output=%s; want CONFIG_INVALID", err, out.String())
 			}
-			after, readErr := os.ReadFile(path)
+			after, readErr := os.ReadFile(filepath.Clean(path))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}

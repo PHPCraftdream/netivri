@@ -56,17 +56,41 @@ func e2eStatusActivity(t *testing.T, home string) (int, map[string]e2eActivity) 
 	return env.Data.ActiveAccounts, byLogin
 }
 
+// e2eActivityState is the angel started by TestE2EStatusShowsWhoIsActive.
+type e2eActivityState struct {
+	home    string
+	backend string
+	up      *accountsUpstream
+	listen  string
+}
+
 // TestE2EStatusShowsWhoIsActive runs an angel with a routed account (alice,
 // DE, provider fixture) and a direct one (bob), opens connections and reads
 // who is active, through which node, provider and country.
 func TestE2EStatusShowsWhoIsActive(t *testing.T) {
+	st := setupActivityAngel(t)
+	checkActivityIdle(t, st.home)
+
+	alice := socks5AuthConnect(t, st.listen, "alice", accountsDEPass, st.backend)
+	defer func() { _ = alice.Close() }()
+	echoRoundTrip(t, alice, alice)
+	checkAliceConnected(t, st.home)
+
+	bob := socks5AuthConnect(t, st.listen, "bob", accountsDEPass, st.backend)
+	defer func() { _ = bob.Close() }()
+	echoRoundTrip(t, bob, bob)
+	checkBothConnected(t, st)
+}
+
+// setupActivityAngel writes the fixture config and snapshot and starts the angel.
+func setupActivityAngel(t *testing.T) e2eActivityState {
+	t.Helper()
 	home := t.TempDir()
 	hash, err := auth.Hash(accountsDEPass)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := accountsEcho(t)
-	up := accountsServer(t)
+	st := e2eActivityState{home: home, backend: accountsEcho(t), up: accountsServer(t)}
 	writeConfig(t, home, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{
 			{Login: "alice", Password: hash, Provider: "fixture", ExitCountry: "DE"},
@@ -74,7 +98,7 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 		}
 		cfg.Subscriptions = []config.Subscription{{Name: "fixture", URL: "https://fixture.invalid/subscription"}}
 	})
-	host, portText, err := net.SplitHostPort(up.listener.Addr().String())
+	host, portText, err := net.SplitHostPort(st.up.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,17 +112,23 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 	}
 	p := startUp(t, home, "--port", "0")
 	assertStatusSuccess(t, p.Status())
-	listen := p.Status().Data.Listen
+	st.listen = p.Status().Data.Listen
+	return st
+}
 
+// checkActivityIdle checks that an idle angel reports no active account.
+func checkActivityIdle(t *testing.T, home string) {
+	t.Helper()
 	active, who := e2eStatusActivity(t, home)
 	if active != 0 || len(who) != 2 || who["alice"].Active || who["bob"].Active {
 		t.Fatalf("idle angel: active=%d who=%+v", active, who)
 	}
+}
 
-	alice := socks5AuthConnect(t, listen, "alice", accountsDEPass, backend)
-	defer alice.Close()
-	echoRoundTrip(t, alice, alice)
-	active, who = e2eStatusActivity(t, home)
+// checkAliceConnected checks alice's node, provider, country and traffic.
+func checkAliceConnected(t *testing.T, home string) {
+	t.Helper()
+	active, who := e2eStatusActivity(t, home)
 	a := who["alice"]
 	if active != 1 || !a.Active || a.Connections != 1 || who["bob"].Active {
 		t.Fatalf("alice connected: active=%d who=%+v", active, who)
@@ -114,11 +144,12 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 	if a.UploadBytes <= 0 || a.DownloadBytes <= 0 {
 		t.Errorf("alice moved no bytes: up %d down %d", a.UploadBytes, a.DownloadBytes)
 	}
+}
 
-	bob := socks5AuthConnect(t, listen, "bob", accountsDEPass, backend)
-	defer bob.Close()
-	echoRoundTrip(t, bob, bob)
-	active, who = e2eStatusActivity(t, home)
+// checkBothConnected checks bob's direct route and that only alice reached the upstream.
+func checkBothConnected(t *testing.T, st e2eActivityState) {
+	t.Helper()
+	active, who := e2eStatusActivity(t, st.home)
 	b := who["bob"]
 	if active != 2 || !who["alice"].Active || !b.Active || b.Connections != 1 {
 		t.Fatalf("both connected: active=%d who=%+v", active, who)
@@ -126,7 +157,7 @@ func TestE2EStatusShowsWhoIsActive(t *testing.T) {
 	if len(b.Providers) != 0 || len(b.Countries) != 0 {
 		t.Errorf("bob has no route but reports providers %v countries %v", b.Providers, b.Countries)
 	}
-	if up.count.Load() != 1 {
-		t.Errorf("the upstream saw %d connections, want only alice's 1", up.count.Load())
+	if st.up.count.Load() != 1 {
+		t.Errorf("the upstream saw %d connections, want only alice's 1", st.up.count.Load())
 	}
 }

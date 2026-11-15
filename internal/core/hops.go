@@ -50,15 +50,6 @@ func nodeHop(node map[string]any) hopInfo {
 	return hopInfo{addr: strings.ToLower(net.JoinHostPort(server, port)), proto: strings.ToLower(typ)}
 }
 
-// routeHopsOf is routeHops with the per-node hops of Options.
-func routeHopsOf(o Options, key string, nodes []map[string]any) []hopSet {
-	out := make([]hopSet, len(nodes))
-	for i, node := range nodes {
-		out[i] = hopSet{pre: chainHop(o.nodePre(key, i)), node: nodeHop(node), post: chainHop(o.nodePost(key, i))}
-	}
-	return out
-}
-
 // checkedNodeHops rejects per-node hops that do not match the nodes of the route.
 func checkedNodeHops(o Options, key string, n int) error {
 	if s, ok := o.NodePre[key]; ok && len(s) != n {

@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func selectProviderCardLine(t *testing.T, s *providersScreen, id string) {
@@ -57,7 +58,7 @@ func providerChooseHopOperation(t *testing.T, s *providersScreen, value string) 
 	if choice < 0 {
 		t.Fatalf("hop picker has no operation %q", value)
 	}
-	for i := 0; i < choice; i++ {
+	for range choice {
 		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	_, chosen := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -102,7 +103,7 @@ func clearProviderPrompt(t *testing.T, s *providersScreen) {
 		t.Fatal("cannot clear a closed prompt")
 	}
 	remaining := len([]rune(s.prompt.Value))
-	for i := 0; i < remaining; i++ {
+	for range remaining {
 		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	if s.prompt == nil || s.prompt.Value != "" {
@@ -112,15 +113,28 @@ func clearProviderPrompt(t *testing.T, s *providersScreen) {
 
 func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid/path"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
+	checkProviderHopsInheritedByDefault(t, s)
+	secretURL := "http://user:hop-secret@proxy.example:8080" //nolint:gosec // G101: fake credential, test fixture only
+	checkProviderHopsReplacePreHop(t, s, h, secretURL)
+	checkProviderHopsEmptyReplacementKeeps(t, s, h, secretURL)
+	checkProviderHopsSetPostNone(t, s, h)
+	checkProviderHopsClearBoth(t, s, h)
+}
+
+func checkProviderHopsInheritedByDefault(t *testing.T, s *providersScreen) {
+	t.Helper()
 	if got := providerCardValue(s, "pre"); got != "inherited" {
 		t.Fatalf("fresh Pre-hop = %q, want inherited", got)
 	}
 	if !providerCardDisabled(s, "clear-pre") || !providerCardDisabled(s, "clear-post") {
 		t.Fatal("Clear actions must be disabled while the hops are inherited")
 	}
+}
 
+func checkProviderHopsReplacePreHop(t *testing.T, s *providersScreen, h, secretURL string) {
+	t.Helper()
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
 	if s.mode != "hop-picker" || s.prompt == nil || s.prompt.Kind != tui.ChoicePrompt {
@@ -133,7 +147,6 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	if cmd != nil || s.mode != "edit-prompt" || s.prompt == nil || s.prompt.Kind != tui.SecretPrompt || s.prompt.Value != "" {
 		t.Fatal("replace did not open a blank secret prompt")
 	}
-	secretURL := "http://user:hop-secret@proxy.example:8080"
 	providerType(s, secretURL)
 	if view := ansi.Strip(s.View(100, 30)); strings.Contains(view, "hop-secret") {
 		t.Fatal("hop credentials visible while typing")
@@ -159,26 +172,32 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	if providerCardDisabled(s, "clear-pre") || !providerCardDisabled(s, "clear-post") {
 		t.Fatal("only Clear pre-hop must be enabled now")
 	}
+}
 
+func checkProviderHopsEmptyReplacementKeeps(t *testing.T, s *providersScreen, h, secretURL string) {
+	t.Helper()
 	// Empty replacement input preserves the legacy "leave unchanged" shortcut.
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
 	_ = providerChooseHopOperation(t, s, "replace")
-	_, cmd = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	drainProvider(s, cmd)
-	cfg, err = loadConfig(h)
+	cfg, err := loadConfig(h)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.dialog != nil || !slices.Equal(cfg.Subscriptions[0].PreSOCKS5, config.HopList{secretURL}) {
 		t.Fatal("empty replacement did not leave the saved hop unchanged")
 	}
+}
 
+func checkProviderHopsSetPostNone(t *testing.T, s *providersScreen, h string) {
+	t.Helper()
 	selectProviderCardLine(t, s, "post")
 	_, _ = s.activateCard()
-	cmd = providerChooseHopOperation(t, s, "none")
+	cmd := providerChooseHopOperation(t, s, "none")
 	drainProvider(s, cmd)
-	cfg, err = loadConfig(h)
+	cfg, err := loadConfig(h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,13 +211,16 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	if len(listed.Providers) != 1 || !slices.Equal(listed.Providers[0].Pre, []string{"http://proxy.example:8080"}) || !slices.Equal(listed.Providers[0].Post, []string{"none"}) {
 		t.Fatalf("provider hop list shape mismatch: providers=%d", len(listed.Providers))
 	}
+}
 
+func checkProviderHopsClearBoth(t *testing.T, s *providersScreen, h string) {
+	t.Helper()
 	for _, id := range []string{"clear-pre", "clear-post"} {
 		selectProviderCardLine(t, s, id)
-		_, cmd = s.activateCard()
+		_, cmd := s.activateCard()
 		drainProvider(s, cmd)
 	}
-	cfg, _ = loadConfig(h)
+	cfg, _ := loadConfig(h)
 	if len(cfg.Subscriptions[0].PreSOCKS5) != 0 || len(cfg.Subscriptions[0].PostSOCKS5) != 0 {
 		t.Fatal("clear actions did not remove both provider overrides")
 	}
@@ -207,101 +229,146 @@ func TestProviderHopsEditAndClearEndToEnd(t *testing.T) {
 	}
 }
 
+// providerClearHopCase is the state shared by the phases of one clear-hop subtest.
+type providerClearHopCase struct {
+	side                   string
+	alphaPre, alphaPost    string
+	betaPre, betaPost      string
+	h                      string
+	s                      *providersScreen
+	heldWorker             func() tea.Msg
+	calledHome, calledName string
+	calledOptions          ProviderUpdateOptions
+}
+
 func TestProviderClearHopTargetsSelectionAtCreation(t *testing.T) {
 	for _, side := range []string{"pre", "post"} {
 		t.Run(side, func(t *testing.T) {
-			alphaPre, alphaPost := "http://alpha-pre.invalid:8080", "http://alpha-post.invalid:8081"
-			betaPre, betaPost := "http://beta-pre.invalid:8082", "http://beta-post.invalid:8083"
-			h := providerSeed(t,
-				config.Subscription{Name: "alpha", URL: "https://alpha.invalid", PreSOCKS5: config.HopList{alphaPre}, PostSOCKS5: config.HopList{alphaPost}},
-				config.Subscription{Name: "beta", URL: "https://beta.invalid", PreSOCKS5: config.HopList{betaPre}, PostSOCKS5: config.HopList{betaPost}},
-			)
-			s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-			drainProvider(s, s.Init())
-			if s.selected != "alpha" {
-				t.Fatalf("initial selection = %q, want alpha", s.selected)
-			}
-
-			var heldWorker func() tea.Msg
-			s.env.Background = func(label string, work func() tea.Msg) tea.Cmd {
-				heldWorker = work
-				return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
-			}
-			var calledHome, calledName string
-			var calledOptions ProviderUpdateOptions
-			update := s.updateProvider
-			s.updateProvider = func(home, name string, options ProviderUpdateOptions) error {
-				calledHome, calledName, calledOptions = home, name, options
-				return update(home, name, options)
-			}
-
-			cmd := s.clearHop(side)
-			if heldWorker == nil || cmd == nil {
-				t.Fatal("clear did not schedule a held background worker")
-			}
-			_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-			if s.selected != "beta" || s.selectedName() != "beta" {
-				t.Fatalf("selection after Down = screen %q, list %q; want beta", s.selected, s.selectedName())
-			}
-
-			background := cmd()
-			wrapped, ok := background.(tui.BackgroundMsg)
-			if !ok {
-				t.Fatalf("background result = %T, want tui.BackgroundMsg", background)
-			}
-			result, ok := wrapped.Value.(providerResultMsg)
-			if !ok || result.kind != "edit" || result.value != "alpha" || result.err != nil {
-				t.Fatal("clear worker did not return a successful result for its captured target")
-			}
-			if calledHome != h || calledName != "alpha" {
-				t.Fatalf("ProviderUpdate target home=%q name=%q, want %q alpha", calledHome, calledName, h)
-			}
-			if side == "pre" {
-				if edit := calledOptions.PreEdit; edit == nil || edit.Replace == nil || len(*edit.Replace) != 0 || calledOptions.PostEdit != nil || calledOptions.Pre != nil || calledOptions.Post != nil {
-					t.Fatal("clear-pre did not pass only an empty replacement PreEdit")
-				}
-			} else if edit := calledOptions.PostEdit; edit == nil || edit.Replace == nil || len(*edit.Replace) != 0 || calledOptions.PreEdit != nil || calledOptions.Pre != nil || calledOptions.Post != nil {
-				t.Fatal("clear-post did not pass only an empty replacement PostEdit")
-			}
-
-			_, load := s.Update(background)
-			if load == nil || s.pendingSelect != "alpha" {
-				t.Fatalf("successful edit pending selection = %q, load command = %v; want alpha and load", s.pendingSelect, load != nil)
-			}
-			_, loadResult := s.Update(load())
-			if loadResult != nil || s.selected != "alpha" {
-				t.Fatal("provider edit reload did not retain the edited selection")
-			}
-
-			cfg, err := loadConfig(h)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := make(map[string]config.Subscription, len(cfg.Subscriptions))
-			for _, sub := range cfg.Subscriptions {
-				got[sub.Name] = sub
-			}
-			if side == "pre" {
-				if len(got["alpha"].PreSOCKS5) != 0 || !slices.Equal(got["alpha"].PostSOCKS5, config.HopList{alphaPost}) {
-					t.Fatal("clear-pre changed the wrong alpha hop")
-				}
-			} else if len(got["alpha"].PostSOCKS5) != 0 || !slices.Equal(got["alpha"].PreSOCKS5, config.HopList{alphaPre}) {
-				t.Fatal("clear-post changed the wrong alpha hop")
-			}
-			if !slices.Equal(got["beta"].PreSOCKS5, config.HopList{betaPre}) || !slices.Equal(got["beta"].PostSOCKS5, config.HopList{betaPost}) {
-				t.Fatal("clear changed beta's hops")
-			}
+			c := &providerClearHopCase{side: side}
+			setupProviderClearHopCase(t, c)
+			cmd := startProviderClearHop(t, c)
+			background := checkProviderClearWorkerResult(t, c, cmd)
+			checkProviderClearReload(t, c, background)
+			checkProviderClearSavedHops(t, c)
 		})
 	}
 }
 
-func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
-	oldPre := "http://pre-user:pre-secret@pre.example:8080"
-	oldPost := "https://post-user:post-secret@post.example:8443"
-	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid/path", PreSOCKS5: config.HopList{oldPre}, PostSOCKS5: config.HopList{oldPost}})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
-	drainProvider(s, s.Init())
+func setupProviderClearHopCase(t *testing.T, c *providerClearHopCase) {
+	t.Helper()
+	c.alphaPre, c.alphaPost = "http://alpha-pre.invalid:8080", "http://alpha-post.invalid:8081"
+	c.betaPre, c.betaPost = "http://beta-pre.invalid:8082", "http://beta-post.invalid:8083"
+	c.h = providerSeed(t,
+		config.Subscription{Name: "alpha", URL: "https://alpha.invalid", PreSOCKS5: config.HopList{c.alphaPre}, PostSOCKS5: config.HopList{c.alphaPost}},
+		config.Subscription{Name: "beta", URL: "https://beta.invalid", PreSOCKS5: config.HopList{c.betaPre}, PostSOCKS5: config.HopList{c.betaPost}},
+	)
+	c.s = mustAs[*providersScreen](t, newProvidersScreen(c.h, providerEnv(c.h)))
+	drainProvider(c.s, c.s.Init())
+	if c.s.selected != "alpha" {
+		t.Fatalf("initial selection = %q, want alpha", c.s.selected)
+	}
 
+	c.s.env.Background = func(label string, work func() tea.Msg) tea.Cmd {
+		c.heldWorker = work
+		return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
+	}
+	update := c.s.updateProvider
+	c.s.updateProvider = func(home, name string, options ProviderUpdateOptions) error {
+		c.calledHome, c.calledName, c.calledOptions = home, name, options
+		return update(home, name, options)
+	}
+}
+
+// startProviderClearHop schedules clear on the alpha selection, then moves the selection to beta.
+func startProviderClearHop(t *testing.T, c *providerClearHopCase) tea.Cmd {
+	t.Helper()
+	cmd := c.s.clearHop(c.side)
+	if c.heldWorker == nil || cmd == nil {
+		t.Fatal("clear did not schedule a held background worker")
+	}
+	_, _ = c.s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if c.s.selected != "beta" || c.s.selectedName() != "beta" {
+		t.Fatalf("selection after Down = screen %q, list %q; want beta", c.s.selected, c.s.selectedName())
+	}
+	return cmd
+}
+
+func checkProviderClearWorkerResult(t *testing.T, c *providerClearHopCase, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	background := cmd()
+	wrapped, ok := background.(tui.BackgroundMsg)
+	if !ok {
+		t.Fatalf("background result = %T, want tui.BackgroundMsg", background)
+	}
+	result, ok := wrapped.Value.(providerResultMsg)
+	if !ok || result.kind != "edit" || result.value != "alpha" || result.err != nil {
+		t.Fatal("clear worker did not return a successful result for its captured target")
+	}
+	if c.calledHome != c.h || c.calledName != "alpha" {
+		t.Fatalf("ProviderUpdate target home=%q name=%q, want %q alpha", c.calledHome, c.calledName, c.h)
+	}
+	checkProviderClearEditOptions(t, c)
+	return background
+}
+
+func checkProviderClearEditOptions(t *testing.T, c *providerClearHopCase) {
+	t.Helper()
+	if c.side == "pre" {
+		if edit := c.calledOptions.PreEdit; edit == nil || edit.Replace == nil || len(*edit.Replace) != 0 || c.calledOptions.PostEdit != nil || c.calledOptions.Pre != nil || c.calledOptions.Post != nil {
+			t.Fatal("clear-pre did not pass only an empty replacement PreEdit")
+		}
+	} else if edit := c.calledOptions.PostEdit; edit == nil || edit.Replace == nil || len(*edit.Replace) != 0 || c.calledOptions.PreEdit != nil || c.calledOptions.Pre != nil || c.calledOptions.Post != nil {
+		t.Fatal("clear-post did not pass only an empty replacement PostEdit")
+	}
+}
+
+func checkProviderClearReload(t *testing.T, c *providerClearHopCase, background tea.Msg) {
+	t.Helper()
+	_, load := c.s.Update(background)
+	if load == nil || c.s.pendingSelect != "alpha" {
+		t.Fatalf("successful edit pending selection = %q, load command = %v; want alpha and load", c.s.pendingSelect, load != nil)
+	}
+	_, loadResult := c.s.Update(load())
+	if loadResult != nil || c.s.selected != "alpha" {
+		t.Fatal("provider edit reload did not retain the edited selection")
+	}
+}
+
+func checkProviderClearSavedHops(t *testing.T, c *providerClearHopCase) {
+	t.Helper()
+	cfg, err := loadConfig(c.h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(map[string]config.Subscription, len(cfg.Subscriptions))
+	for _, sub := range cfg.Subscriptions {
+		got[sub.Name] = sub
+	}
+	if c.side == "pre" {
+		if len(got["alpha"].PreSOCKS5) != 0 || !slices.Equal(got["alpha"].PostSOCKS5, config.HopList{c.alphaPost}) {
+			t.Fatal("clear-pre changed the wrong alpha hop")
+		}
+	} else if len(got["alpha"].PostSOCKS5) != 0 || !slices.Equal(got["alpha"].PreSOCKS5, config.HopList{c.alphaPre}) {
+		t.Fatal("clear-post changed the wrong alpha hop")
+	}
+	if !slices.Equal(got["beta"].PreSOCKS5, config.HopList{c.betaPre}) || !slices.Equal(got["beta"].PostSOCKS5, config.HopList{c.betaPost}) {
+		t.Fatal("clear changed beta's hops")
+	}
+}
+
+func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
+	oldPre := "http://pre-user:pre-secret@pre.example:8080"      //nolint:gosec // G101: fake credential, test fixture only
+	oldPost := "https://post-user:post-secret@post.example:8443" //nolint:gosec // G101: fake credential, test fixture only
+	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid/path", PreSOCKS5: config.HopList{oldPre}, PostSOCKS5: config.HopList{oldPost}})
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
+	drainProvider(s, s.Init())
+	checkProviderHopAddDuplicateRejected(t, s, h, oldPre, oldPost)
+	checkProviderHopRemovePreOnly(t, s, h, oldPost)
+	checkProviderHopReplaceThenInherit(t, s, h, oldPost)
+}
+
+func checkProviderHopAddDuplicateRejected(t *testing.T, s *providersScreen, h, oldPre, oldPost string) {
+	t.Helper()
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
 	if s.prompt == nil || s.prompt.Value != "" || strings.Contains(ansi.Strip(s.View(100, 30)), "pre.example") || strings.Contains(ansi.Strip(s.View(100, 30)), "pre-secret") {
@@ -330,7 +397,10 @@ func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
 		t.Fatalf("duplicate-add failure changed provider hops: err=%v", err)
 	}
 	_, _ = s.Update(tui.PromptResultMsg{Canceled: true})
+}
 
+func checkProviderHopRemovePreOnly(t *testing.T, s *providersScreen, h, oldPost string) {
+	t.Helper()
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
 	for _, option := range s.prompt.Options {
@@ -338,19 +408,22 @@ func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
 			t.Fatal("unsafe remove option label")
 		}
 	}
-	cmd = providerChooseHopOperation(t, s, "remove:1")
+	cmd := providerChooseHopOperation(t, s, "remove:1")
 	drainProvider(s, cmd)
-	cfg, err = loadConfig(h)
+	cfg, err := loadConfig(h)
 	if err != nil || len(cfg.Subscriptions[0].PreSOCKS5) != 0 || !slices.Equal(cfg.Subscriptions[0].PostSOCKS5, config.HopList{oldPost}) {
 		t.Fatalf("remove did not edit only pre list: err=%v", err)
 	}
+}
 
+func checkProviderHopReplaceThenInherit(t *testing.T, s *providersScreen, h, oldPost string) {
+	t.Helper()
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
 	_ = providerChooseHopOperation(t, s, "replace")
-	replacement := "https://replace-user:replace-secret@replace.example:443"
+	replacement := "https://replace-user:replace-secret@replace.example:443" //nolint:gosec // G101: fake credential, test fixture only
 	providerType(s, replacement)
-	_, cmd = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	drainProvider(s, cmd)
 	selectProviderCardLine(t, s, "pre")
 	_, _ = s.activateCard()
@@ -365,7 +438,7 @@ func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
 	}
 	cmd = providerChooseHopOperation(t, s, "inherit")
 	drainProvider(s, cmd)
-	cfg, err = loadConfig(h)
+	cfg, err := loadConfig(h)
 	if err != nil || len(cfg.Subscriptions[0].PreSOCKS5) != 0 || !slices.Equal(cfg.Subscriptions[0].PostSOCKS5, config.HopList{oldPost}) {
 		t.Fatalf("Inherit did not clear only provider pre-hop: err=%v", err)
 	}
@@ -378,9 +451,9 @@ func TestProviderHopListPickerAddRemoveAndInherit(t *testing.T) {
 }
 
 func TestProviderHopPickerCancelAndSentinelInputAreNoOps(t *testing.T) {
-	oldPre := "http://picker-user:picker-secret@picker.example:8080"
+	oldPre := "http://picker-user:picker-secret@picker.example:8080" //nolint:gosec // G101: fake credential, test fixture only
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid", PreSOCKS5: config.HopList{oldPre}})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 
 	selectProviderCardLine(t, s, "pre")
@@ -420,13 +493,13 @@ func TestProviderHopPickerCancelAndSentinelInputAreNoOps(t *testing.T) {
 
 func TestProviderHopPickerAcceptsValidAdd(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 
 	selectProviderCardLine(t, s, "post")
 	_, _ = s.activateCard()
 	_ = providerChooseHopOperation(t, s, "add")
-	replacement := "https://replacement-user:replacement-secret@replacement.example:443"
+	replacement := "https://replacement-user:replacement-secret@replacement.example:443" //nolint:gosec // G101: fake credential, test fixture only
 	providerType(s, replacement)
 	_, cmd := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	drainProvider(s, cmd)
@@ -442,7 +515,7 @@ func TestProviderHopPickerAcceptsValidAdd(t *testing.T) {
 func TestProviderHopPickerRejectsTypedSentinelsAndKeepsLegacyNone(t *testing.T) {
 	oldPre := "http://old.invalid:8080"
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid", PreSOCKS5: config.HopList{oldPre}})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 
 	selectProviderCardLine(t, s, "pre")
@@ -498,7 +571,7 @@ func TestProviderHopPickerRejectsTypedSentinelsAndKeepsLegacyNone(t *testing.T) 
 
 func TestProviderHopPickerRejectsInvalidChoicesWithoutSaving(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid", PreSOCKS5: config.HopList{"http://valid.invalid:8080"}})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 
 	for _, choice := range []string{"remove:0", "remove:bad", "unknown"} {
@@ -517,7 +590,7 @@ func TestProviderHopPickerRejectsInvalidChoicesWithoutSaving(t *testing.T) {
 }
 
 func TestProviderHopListCardShowsSafeOrderedAlternatives(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.selected = "main"
 	s.setProviders(ProviderListResult{Providers: []ProviderInfo{{
 		Name: "main",
@@ -540,7 +613,7 @@ func TestProviderHopListCardShowsSafeOrderedAlternatives(t *testing.T) {
 
 func TestProviderHopRejectsInvalidURLAndKeepsPromptOpen(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://main.invalid/path"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	selectProviderCardLine(t, s, "post")
 	_, _ = s.activateCard()

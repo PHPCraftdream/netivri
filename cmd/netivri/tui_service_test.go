@@ -16,6 +16,7 @@ import (
 var serviceNow = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
 type serviceFixture struct {
+	t       testing.TB
 	s       *serviceScreen
 	running bool
 	starts  int
@@ -28,14 +29,14 @@ type serviceFixture struct {
 
 func newServiceFixture(t *testing.T, running bool) *serviceFixture {
 	t.Helper()
-	f := &serviceFixture{running: running}
+	f := &serviceFixture{running: running, t: t}
 	env := tui.Env{
 		Home:       t.TempDir(),
 		Now:        func() time.Time { return serviceNow },
 		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
-	f.s = newServiceScreen(env.Home, env).(*serviceScreen)
+	f.s = mustAs[*serviceScreen](t, newServiceScreen(env.Home, env))
 	f.s.wait = func(time.Duration, func(time.Time) tea.Msg) tea.Cmd { return nil }
 	f.s.probe = func(string) (angel.Status, error) {
 		if !f.running {
@@ -67,7 +68,7 @@ func newServiceFixture(t *testing.T, running bool) *serviceFixture {
 }
 
 func (f *serviceFixture) drain(c tea.Cmd) {
-	f.s = parityDrain(f.s, c).(*serviceScreen)
+	f.s = mustAs[*serviceScreen](f.t, parityDrain(f.s, c))
 }
 
 func (f *serviceFixture) key(k string) {
@@ -75,7 +76,7 @@ func (f *serviceFixture) key(k string) {
 	var c tea.Cmd
 	var sc tui.Screen
 	sc, c = f.s.Update(tea.KeyPressMsg{Code: r[0], Text: k})
-	f.s = sc.(*serviceScreen)
+	f.s = mustAs[*serviceScreen](f.t, sc)
 	f.drain(c)
 }
 
@@ -336,7 +337,7 @@ func TestServiceAccountsCardShowsHopPools(t *testing.T) {
 	f.s.selected = "accounts"
 	f.s.refresh()
 	c := f.s.workspace.Card
-	var ids []string
+	ids := make([]string, 0, len(c.Lines))
 	for _, l := range c.Lines {
 		ids = append(ids, l.ID)
 	}

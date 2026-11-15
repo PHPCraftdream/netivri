@@ -124,8 +124,22 @@ func TestGenerationProxyNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	var proxyNames, planNames []string
+	if len(proxies) > 0 {
+		proxyNames = make([]string, 0, len(proxies))
+	}
+	planTotal := 0
+	for _, plan := range plans {
+		planTotal += len(plan.names)
+	}
+	if planTotal > 0 {
+		planNames = make([]string, 0, planTotal)
+	}
 	for _, p := range proxies {
-		proxyNames = append(proxyNames, p["name"].(string))
+		name, ok := p["name"].(string)
+		if !ok {
+			t.Fatalf("proxy name is %T, want string", p["name"])
+		}
+		proxyNames = append(proxyNames, name)
 	}
 	for i, plan := range plans {
 		planNames = append(planNames, plan.names...)
@@ -383,7 +397,7 @@ func TestThroughputPollerFollowsSetTargets(t *testing.T) {
 	held := &fakeTracker{id: "t1", info: &statistic.TrackerInfo{Chain: C.Chain{"netivri-r0-0"}, Start: base.Add(-time.Minute)}}
 	source := &fakeTrackerSource{trackers: []throughputTracker{held}}
 	poller.source = source
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 
 	newHealth := newHealthTable()
 	poller.setTargets(newHealth, map[string]string{"netivri-r0-0": "p/a", "netivri-g1-r0-0": "p/b"})
@@ -391,7 +405,7 @@ func TestThroughputPollerFollowsSetTargets(t *testing.T) {
 	source.trackers = append(source.trackers, fresh)
 	held.info.UploadTotal.Add(1 << 20)
 	fresh.info.DownloadTotal.Add(1 << 20)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 
 	got := map[string]int64{}
 	for _, s := range obs.throughputSamples() {

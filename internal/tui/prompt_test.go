@@ -147,10 +147,10 @@ func TestPromptMultiChoiceSpaceAndNumberBounds(t *testing.T) {
 	if got, _ := p.GetAnswer(); got != "a" {
 		t.Fatal(got)
 	}
-	min, max := 2, 5
+	minV, maxV := 2, 5
 	n := NewPrompt(NumberPrompt, "t", "n", "", "1")
-	n.Min = &min
-	n.Max = &max
+	n.Min = &minV
+	n.Max = &maxV
 	n.accept()
 	if n.Error == nil || !strings.Contains(n.Error.Error(), "at least") {
 		t.Fatal(n.Error)
@@ -193,7 +193,3 @@ func TestPromptBounds(t *testing.T) {
 		}
 	}
 }
-
-type assertErr struct{}
-
-func (assertErr) Error() string { return "invalid" }

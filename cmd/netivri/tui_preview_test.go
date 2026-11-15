@@ -50,7 +50,7 @@ func TestProviderPreviewStepShowsCountriesAndUnknown(t *testing.T) {
 	if s.previewState != "done" || s.wizard.Busy {
 		t.Fatalf("preview result not applied: state=%q busy=%v", s.previewState, s.wizard.Busy)
 	}
-	if via != "http://viauser:viasecret@proxy.invalid:8080" {
+	if via != "http://viauser:viasecret@proxy.invalid:8080" { //nolint:gosec // G101: fake credential, test fixture only
 		t.Fatalf("the fetch did not use the via proxy: %q", via)
 	}
 	v := ansi.Strip(s.View(100, 30))
@@ -126,7 +126,7 @@ func TestProviderPreviewEscCancelsTheFetch(t *testing.T) {
 func TestProviderPreviewFailureShowsMessageAndHintOnly(t *testing.T) {
 	h := providerSeed(t)
 	get := func(context.Context, string, fetch.Options) (*fetch.Result, error) {
-		return nil, &cli.Error{Code: "FETCH_FAILED", Message: "fetch of https://user:preview-secret@sub.invalid/link?token=preview-secret failed", Hint: "check https://user:preview-secret@sub.invalid/link or the proxy http://viauser:viasecret@proxy.invalid:8080"}
+		return nil, &cli.Error{Code: "FETCH_FAILED", Message: "fetch of https://user:preview-secret@sub.invalid/link?token=preview-secret failed", Hint: "check https://user:preview-secret@sub.invalid/link or the proxy http://viauser:viasecret@proxy.invalid:8080"} //nolint:gosec // G101: fake credential, test fixture only
 	}
 	s := newProvidersScreenWith(h, providerEnv(h), get, func() time.Time { return testNow })
 	s.startWizard()
@@ -195,7 +195,8 @@ func TestProviderPreviewBackAndRefetch(t *testing.T) {
 func TestProviderPreviewWizardFrameContract(t *testing.T) {
 	h := providerSeed(t)
 	codes := []string{"AD", "AE", "AF", "AG", "AI", "AL", "AM", "AO", "AQ", "AR", "AS", "AT", "AU"}
-	lines := []string{"proxies:"}
+	lines := make([]string, 0, 1+len(codes))
+	lines = append(lines, "proxies:")
 	for i, code := range codes {
 		lines = append(lines, fmt.Sprintf("  - {name: \"[%s] node %d\", type: ss, server: example.invalid, port: 8388, cipher: aes-128-gcm, password: pass}", code, i))
 	}
@@ -229,7 +230,7 @@ func TestProviderPreviewWizardFrameContract(t *testing.T) {
 }
 
 func TestProvidersCoverPreviewBodyStates(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	if lines := s.previewBody(60, 16); len(lines) != 1 || !strings.Contains(lines[0], "not been fetched yet") {
 		t.Fatalf("empty preview body: %v", lines)
 	}
@@ -261,7 +262,7 @@ func TestProvidersCoverPreviewBodyStates(t *testing.T) {
 }
 
 func TestProviderParityRefsIncludePreview(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	found := 0
 	for _, r := range s.ParityRefs() {
 		if r == "providers/preview" {

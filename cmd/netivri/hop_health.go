@@ -731,12 +731,13 @@ func (h *hopHealth) flushAndStop() {
 	inst, hook := h.core, h.activeHook
 	h.activeHook = 0
 	h.mu.Unlock()
-	if inst != nil && hook != 0 {
+	switch {
+	case inst != nil && hook != 0:
 		h.processForLocked(inst, hook)
 		h.saveCoreLocked(inst, true)
-	} else if inst != nil {
+	case inst != nil:
 		h.saveCoreLocked(inst, true)
-	} else if h.memoryValid {
+	case h.memoryValid:
 		h.saveMemoryLocked()
 	}
 	h.mu.Lock()

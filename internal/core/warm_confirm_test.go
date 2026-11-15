@@ -61,7 +61,7 @@ func TestConfirmProbeSavesANodeThatAnswersTheSecondTarget(t *testing.T) {
 	w, calls := confirmWarmer(t, WarmOptions{ConfirmProbe: true}, context.DeadlineExceeded, nil)
 	var rec probeRecorder
 	rec.attach(w)
-	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5}, 0)
+	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5})
 
 	if len(rec.alive) != 1 || !rec.alive[0] || len(rec.errs) != 0 {
 		t.Fatalf("result alive=%v errs=%v, want one success and no error", rec.alive, rec.errs)
@@ -80,9 +80,9 @@ func TestConfirmProbeFailsWhenBothTargetsFail(t *testing.T) {
 	w, calls := confirmWarmer(t, WarmOptions{ConfirmProbe: true}, context.DeadlineExceeded, second)
 	var rec probeRecorder
 	rec.attach(w)
-	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5}, 0)
+	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5})
 
-	if len(rec.alive) != 1 || rec.alive[0] || len(rec.errs) != 1 || rec.errs[0] != second {
+	if len(rec.alive) != 1 || rec.alive[0] || len(rec.errs) != 1 || !errors.Is(rec.errs[0], second) {
 		t.Fatalf("result alive=%v errs=%v, want one failure carrying the confirmation's error", rec.alive, rec.errs)
 	}
 	if len(*calls) != 2 {
@@ -95,13 +95,13 @@ func TestConfirmProbeFailsWhenBothTargetsFail(t *testing.T) {
 
 func TestConfirmProbeDoesNotRunForASuccessOrWhenOff(t *testing.T) {
 	w, calls := confirmWarmer(t, WarmOptions{ConfirmProbe: true}, nil)
-	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5}, 0)
+	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5})
 	if len(*calls) != 1 {
 		t.Errorf("a successful probe was confirmed: %+v", *calls)
 	}
 
 	w, calls = confirmWarmer(t, WarmOptions{}, context.DeadlineExceeded)
-	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5}, 0)
+	w.probeOne(context.Background(), testWarmProxy{name: "netivri-n", typ: C.Socks5})
 	if len(*calls) != 1 {
 		t.Errorf("a failure was confirmed with ConfirmProbe off: %+v", *calls)
 	}
@@ -117,7 +117,7 @@ func TestConfirmProbeIsSkippedOnShutdown(t *testing.T) {
 	}
 	var rec probeRecorder
 	rec.attach(w)
-	w.probeOne(ctx, testWarmProxy{name: "netivri-n", typ: C.Socks5}, 0)
+	w.probeOne(ctx, testWarmProxy{name: "netivri-n", typ: C.Socks5})
 	if len(*calls) != 1 || len(rec.alive) != 0 {
 		t.Errorf("calls=%+v alive=%v, want one call and nothing recorded", *calls, rec.alive)
 	}

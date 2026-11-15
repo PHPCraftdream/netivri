@@ -140,7 +140,7 @@ func TestShadowquicCoreRoutesPolicyRotationAndClose(t *testing.T) {
 		t.Fatal("close core:", err)
 	}
 	closed = true
-	probe, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	probe, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal("Close did not free UDP port:", err)
 	}
@@ -155,13 +155,13 @@ func shadowquicRoundtrip(t *testing.T, port int, username, password, host string
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(destinationPort)}
+	defer func() { _ = client.Close() }()
+	meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: servertest.MustUint16(t, destinationPort)}
 	conn, err := client.DialContext(ctx, meta)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(shadowquicTestTimeout)); err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func (r *shadowquicRecorder) snapshot() []string {
 
 func shadowquicStartRecorder(t *testing.T) (string, *shadowquicRecorder) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("SOCKS recorder listen:", err)
 	}
@@ -284,7 +284,7 @@ func shadowquicStartRecorder(t *testing.T) (string, *shadowquicRecorder) {
 }
 
 func (r *shadowquicRecorder) serve(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if conn.SetDeadline(time.Now().Add(shadowquicTestTimeout)) != nil {
 		return
 	}
@@ -320,7 +320,7 @@ func (r *shadowquicRecorder) serve(conn net.Conn) {
 		_, _ = conn.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if upstream.SetDeadline(time.Now().Add(shadowquicTestTimeout)) != nil {
 		return
 	}
@@ -373,7 +373,7 @@ func shadowquicReadSOCKSHost(conn net.Conn, addressType byte) (string, error) {
 
 func shadowquicStartEcho(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("echo listen:", err)
 	}
@@ -389,7 +389,7 @@ func shadowquicStartEcho(t *testing.T) string {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(shadowquicTestTimeout))
 				_, _ = io.Copy(conn, conn)
 			}()

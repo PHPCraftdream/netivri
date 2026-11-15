@@ -32,21 +32,21 @@ func cloneMetadata(m ProtocolMetadata) ProtocolMetadata {
 	return m
 }
 
-func parameter(name, label, description, kind string) Parameter {
-	return Parameter{Name: name, Label: label, Description: description, Kind: kind}
+func parameter(name, label, description string) Parameter {
+	return Parameter{Name: name, Label: label, Description: description, Kind: "text"}
 }
 
 var publicHostParameter = Parameter{Name: "public_host", Label: "Public host", Description: "Host advertised in generated links and used for generated TLS certificates; stored as top-level server metadata, not a protocol parameter.", Kind: "text"}
 
 var parameterMetadata = map[string]ProtocolMetadata{
 	"anytls": {Label: "AnyTLS", Description: "TLS-based multi-account TCP protocol.", PublicHost: publicHostParameter, Parameters: []Parameter{
-		parameter("sni", "Server name", "Advanced option; empty uses the effective TLS server name derived from the advertised host or localhost fallback.", "text"),
-		parameter("padding_scheme", "Padding scheme", "Advanced option; empty uses the AnyTLS library's built-in default padding scheme.", "text"),
-		parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file.", "text"),
+		parameter("sni", "Server name", "Advanced option; empty uses the effective TLS server name derived from the advertised host or localhost fallback."),
+		parameter("padding_scheme", "Padding scheme", "Advanced option; empty uses the AnyTLS library's built-in default padding scheme."),
+		parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file."),
 		{Name: "key_file", Label: "Private key file", Description: "Advanced option; leave empty to use generated TLS key material; specify together with cert_file.", Kind: "text", Secret: true},
 	}},
 	"hysteria2": {Label: "Hysteria 2", Description: "QUIC/UDP protocol with generated TLS material.", PublicHost: publicHostParameter, Parameters: []Parameter{
-		parameter("sni", "Server name", "Advanced option; empty uses localhost as the effective TLS server name.", "text"), parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file.", "text"),
+		parameter("sni", "Server name", "Advanced option; empty uses localhost as the effective TLS server name."), parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file."),
 		{Name: "key_file", Label: "Private key file", Description: "Advanced option; leave empty to use generated TLS key material; specify together with cert_file.", Kind: "text", Secret: true},
 		{Name: "obfs", Label: "Obfuscation", Description: "Advanced option; empty disables Salamander obfuscation.", Kind: "choice", Choices: []string{"salamander"}},
 		{Name: "up", Label: "Upload bandwidth", Description: "Advanced option; empty omits the upload bandwidth limit.", Kind: "number", Min: 1, Max: 9223372036854},
@@ -59,9 +59,9 @@ var parameterMetadata = map[string]ProtocolMetadata{
 		{Name: "multiplexing", Label: "Multiplexing", Description: "Mieru multiplexing level.", Default: "MULTIPLEXING_DEFAULT", Kind: "choice", Choices: []string{"MULTIPLEXING_DEFAULT", "MULTIPLEXING_OFF", "MULTIPLEXING_LOW", "MULTIPLEXING_MIDDLE", "MULTIPLEXING_HIGH"}},
 	}},
 	"shadowquic": {Label: "ShadowQUIC", Description: "QUIC/UDP protocol; emits Mihomo YAML.", PublicHost: publicHostParameter, Parameters: []Parameter{
-		parameter("sni", "Server name", "Advanced option; empty uses localhost as the effective TLS server name.", "text"), parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file.", "text"),
+		parameter("sni", "Server name", "Advanced option; empty uses localhost as the effective TLS server name."), parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file."),
 		{Name: "key_file", Label: "Private key file", Description: "Advanced option; leave empty to use generated TLS key material; specify together with cert_file.", Kind: "text", Secret: true},
-		parameter("alpn", "ALPN", "Advanced option; empty uses h3.", "text"), parameter("quic_versions", "QUIC versions", "Advanced option; empty uses QUIC version v1.", "text"),
+		parameter("alpn", "ALPN", "Advanced option; empty uses h3."), parameter("quic_versions", "QUIC versions", "Advanced option; empty uses QUIC version v1."),
 		// Default from internal/servers/shadowquic.go:225.
 		{Name: "max_idle_time", Label: "Maximum idle time", Description: "Idle timeout in milliseconds.", Default: "30000", Kind: "number", Min: 1, Max: 2147483647},
 		// Default from internal/servers/shadowquic.go:232.
@@ -86,7 +86,7 @@ var parameterMetadata = map[string]ProtocolMetadata{
 		{Name: "version", Label: "Protocol version", Description: "Snell version.", Default: "2", Kind: "choice", Choices: []string{"2", "3"}},
 		// Default from internal/servers/snell.go:88.
 		{Name: "obfs", Label: "Obfuscation", Description: "Optional HTTP or TLS obfuscation.", Default: "none", Kind: "choice", Choices: []string{"none", "http", "tls"}},
-		parameter("obfs_host", "Obfuscation host", "Advanced option; empty omits the obfuscation hostname.", "text"),
+		parameter("obfs_host", "Obfuscation host", "Advanced option; empty omits the obfuscation hostname."),
 	}},
 	"sudoku": {Label: "Sudoku", Description: "Single-account TCP protocol; link is Mihomo YAML.", PublicHost: publicHostParameter, Parameters: []Parameter{
 		// Empty table type uses the effective prefer_entropy fallback in third_party/mihomo/transport/sudoku/obfs/sudoku/ascii_mode.go:64.
@@ -102,7 +102,7 @@ var parameterMetadata = map[string]ProtocolMetadata{
 		// Default from third_party/mihomo/transport/sudoku/config.go:166.
 		{Name: "http-mask-mode", Label: "HTTP mask mode", Description: "HTTP masking mode.", Default: "legacy", Kind: "choice", Choices: []string{"legacy", "stream", "poll", "auto"}},
 	}},
-	"trojan": {Label: "Trojan", Description: "TLS-based multi-account TCP protocol.", PublicHost: publicHostParameter, Parameters: append(tlsParams(), parameter("alpn", "ALPN", "Advanced option; empty uses the protocol ALPN fallback.", "text"))},
+	"trojan": {Label: "Trojan", Description: "TLS-based multi-account TCP protocol.", PublicHost: publicHostParameter, Parameters: append(tlsParams(), parameter("alpn", "ALPN", "Advanced option; empty uses the protocol ALPN fallback."))},
 	"trusttunnel": {Label: "TrustTunnel", Description: "TLS/HTTP2 multi-account TCP protocol; Mihomo YAML.", PublicHost: publicHostParameter, Parameters: append(tlsParams(),
 		// Default from internal/servers/trusttunnel.go:212.
 		Parameter{Name: "alpn", Label: "ALPN", Description: "TrustTunnel effective ALPN is h2.", Default: "h2", Kind: "text"},
@@ -121,7 +121,7 @@ var parameterMetadata = map[string]ProtocolMetadata{
 	"vless-reality": {Label: "VLESS Reality", Description: "Multi-account TCP using Reality public-key material.", PublicHost: publicHostParameter, Parameters: []Parameter{
 		// Default from internal/servers/vless.go:26.
 		{Name: "dest", Label: "Reality destination", Description: "Destination host and port.", Default: "www.microsoft.com:443", Kind: "text"},
-		parameter("sni", "Server name", "DNS name; empty derives the effective server name from the Reality destination.", "text"),
+		parameter("sni", "Server name", "DNS name; empty derives the effective server name from the Reality destination."),
 		// Default from internal/servers/vless.go:28.
 		{Name: "flow", Label: "Flow", Description: "VLESS flow; defaults to the Reality vision flow.", Default: "xtls-rprx-vision", Kind: "choice", Choices: []string{"xtls-rprx-vision"}},
 		// Default from internal/servers/vless.go:27.
@@ -135,8 +135,8 @@ var parameterMetadata = map[string]ProtocolMetadata{
 
 func tlsParams() []Parameter {
 	return []Parameter{
-		parameter("sni", "Server name", "Advanced option; empty uses the effective TLS server name derived from the advertised host or localhost fallback.", "text"),
-		parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file.", "text"),
+		parameter("sni", "Server name", "Advanced option; empty uses the effective TLS server name derived from the advertised host or localhost fallback."),
+		parameter("cert_file", "Certificate file", "Advanced option; leave empty to use generated TLS certificate material; specify together with key_file."),
 		{Name: "key_file", Label: "Private key file", Description: "Advanced option; leave empty to use generated TLS key material; specify together with cert_file.", Kind: "text", Secret: true},
 	}
 }

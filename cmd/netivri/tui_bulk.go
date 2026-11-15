@@ -63,20 +63,19 @@ func (s *accountsScreen) markedLogins() []string {
 }
 
 // markAll marks every listed account (A).
-func (s *accountsScreen) markAll() tea.Cmd {
+func (s *accountsScreen) markAll() {
 	for _, a := range s.rows {
 		s.marked[a.Login] = true
 	}
 	s.syncRows(s.selectedLogin())
 	s.updateCard()
-	return nil
 }
 
 // toggleMark marks or unmarks the selected account (Space or m).
-func (s *accountsScreen) toggleMark() tea.Cmd {
+func (s *accountsScreen) toggleMark() {
 	login := s.selectedLogin()
 	if login == "" {
-		return nil
+		return
 	}
 	if s.marked[login] {
 		delete(s.marked, login)
@@ -85,18 +84,16 @@ func (s *accountsScreen) toggleMark() tea.Cmd {
 	}
 	s.syncRows(s.selectedLogin())
 	s.updateCard()
-	return nil
 }
 
 // clearMarks forgets every mark (M).
-func (s *accountsScreen) clearMarks() tea.Cmd {
+func (s *accountsScreen) clearMarks() {
 	if len(s.marked) == 0 {
-		return nil
+		return
 	}
 	s.marked = map[string]bool{}
 	s.syncRows(s.selectedLogin())
 	s.updateCard()
-	return nil
 }
 
 // pruneMarks drops the marks of accounts that disappeared in a reload.
@@ -115,18 +112,18 @@ func (s *accountsScreen) pruneMarks() {
 // accountBulkApply applies field=value to every marked login through the
 // operations of the account set-* commands; every account is checked before
 // anything is written, so a rejected account leaves the config untouched.
-func accountBulkApply(home, field string, logins []string, value string) ([]accountInfo, int, error) {
+func accountBulkApply(home, field string, logins []string, value string) (int, error) {
 	if len(logins) == 0 {
-		return nil, 0, &cli.Error{Code: "ACCOUNT_NOT_FOUND", Message: "no accounts are marked", Exit: cli.ExitNotFound}
+		return 0, &cli.Error{Code: "ACCOUNT_NOT_FOUND", Message: "no accounts are marked", Exit: cli.ExitNotFound}
 	}
 	c, err := loadConfig(home)
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 	spec := strings.Join(logins, ",")
 	targets, err := accountTargets(c, spec, false)
 	if err != nil {
-		return nil, 0, err
+		return 0, err
 	}
 	save := func() error { return saveAccountConfig(home, c) }
 	switch field {
@@ -137,11 +134,11 @@ func accountBulkApply(home, field string, logins []string, value string) ([]acco
 		if field == "clients" && strings.EqualFold(strings.TrimSpace(value), "everyone") {
 			value = "*"
 		}
-		out, err := updateAccountTargets(home, c, field, targets, spec, false, value, save)
-		return out, len(out), err
+		out, err := updateAccountTargets(home, c, field, targets, value, save)
+		return len(out), err
 	case "exit":
 		out, err := mutateAccountExit(home, c, targets, value, save)
-		return out, len(out), err
+		return len(out), err
 	case "pre", "post":
 		pre, post := "", ""
 		if field == "pre" {
@@ -150,9 +147,9 @@ func accountBulkApply(home, field string, logins []string, value string) ([]acco
 			post = value
 		}
 		out, err := mutateAccountSOCKS5(c, targets, field == "pre", field == "post", pre, post, save)
-		return out, len(out), err
+		return len(out), err
 	}
-	return nil, 0, cli.Usage("bulk: unknown field %q", field)
+	return 0, cli.Usage("bulk: unknown field %q", field)
 }
 
 // beginBulk opens the field picker for the marked accounts.
@@ -243,7 +240,7 @@ func (s *accountsScreen) bulkConfirmResult(m tui.ConfirmResultMsg) (tea.Cmd, boo
 func (s *accountsScreen) applyBulk(field, value string) tea.Cmd {
 	logins := s.markedLogins()
 	return s.bg("bulk accounts", func() tea.Msg {
-		_, n, e := accountBulkApply(s.env.Home, field, logins, value)
+		n, e := accountBulkApply(s.env.Home, field, logins, value)
 		if e != nil {
 			return accountsBulkDone{Err: e}
 		}

@@ -158,11 +158,11 @@ func ReadLog(home string, q LogQuery) ([]LogEntry, int64, error) {
 // up to the last complete line. It returns the data and the offset after it.
 // A file smaller than from restarts at 0, as after a rotation.
 func readLogRange(path string, from int64) ([]byte, int64, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // G304: log path is under the operator-owned state directory
 	if err != nil {
 		return nil, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, 0, err

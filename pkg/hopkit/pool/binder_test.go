@@ -281,13 +281,13 @@ func TestBinderConcurrentOperations(t *testing.T) {
 	b := NewBinder(BinderOptions{TTL: time.Hour, MaxEntries: 8, Clock: clock.Now})
 	start := make(chan struct{})
 	var wg sync.WaitGroup
-	for worker := 0; worker < 8; worker++ {
+	for worker := range 8 {
 		wg.Add(1)
 		go func(worker int) {
 			defer wg.Done()
 			<-start
-			for i := 0; i < 300; i++ {
-				login := string(rune('a' + worker/2))
+			for i := range 300 {
+				login := string(rune('a' + (worker/2)%4))
 				site := string(rune('A' + (i/4)%12))
 				key := "hop-0"
 				if (worker+i/4)%2 != 0 {

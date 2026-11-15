@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"errors"
 	"io"
@@ -72,7 +73,7 @@ func multiportClientHello(t *testing.T, serverName string, protocols []string) [
 	t.Helper()
 	conn := &multiportFakeConn{}
 	client := tls.Client(conn, &tls.Config{ServerName: serverName, NextProtos: protocols})
-	_ = client.Handshake()
+	_ = client.HandshakeContext(context.Background())
 	return append([]byte(nil), conn.written.Bytes()...)
 }
 
@@ -187,8 +188,8 @@ func multiportSeedLease(ep *socketEndpoint, sp servers.Spec) *socketLease {
 	if ep.members == nil {
 		ep.members = make(map[string]*socketLease)
 	}
-	copy := sp.Clone()
-	l := &socketLease{endpoint: ep, done: make(chan struct{}), tcp: make(chan net.Conn, 4), spec: &copy, name: copy.Name}
+	clone := sp.Clone()
+	l := &socketLease{endpoint: ep, done: make(chan struct{}), tcp: make(chan net.Conn, 4), spec: &clone, name: clone.Name}
 	ep.leases[l] = struct{}{}
 	ep.members[l.name] = l
 	return l

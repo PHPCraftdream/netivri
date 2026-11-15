@@ -37,7 +37,7 @@ func openBindingStore(t *testing.T, f *reloadFixture) *stats.Store {
 	if err != nil {
 		t.Fatalf("open stats store: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
@@ -57,11 +57,11 @@ func (f *reloadFixture) setSnap(inst *fakeCore, snap ...core.BindingRecord) {
 // real store write and returns the counter's address.
 func countWrites(f *reloadFixture) *int {
 	writes := 0
-	real := f.l.writeBindings
+	prev := f.l.writeBindings
 	f.l.mu.Lock()
 	f.l.writeBindings = func(store *stats.Store, rows []stats.Binding) error {
 		writes++
-		return real(store, rows)
+		return prev(store, rows)
 	}
 	f.l.mu.Unlock()
 	return &writes
@@ -273,7 +273,7 @@ func TestFinalWriteBeforeClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen read-only: %v", err)
 	}
-	t.Cleanup(func() { ro.Close() })
+	t.Cleanup(func() { _ = ro.Close() })
 	got, err := ro.LoadBindings(time.Now(), stats.BindingTTL, 0)
 	if err != nil {
 		t.Fatalf("LoadBindings: %v", err)

@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"sort"
@@ -47,11 +48,12 @@ type AccountStats struct {
 // trimPendingAcct bounds the account retry buffer like trimPending bounds
 // the node one.
 func (s *Store) trimPendingAcct(batch []AccountSample) []AccountSample {
-	if len(batch) <= maxPendingSamples {
+	excess := len(batch) - maxPendingSamples
+	if excess <= 0 {
 		return batch
 	}
-	s.dropped.Add(uint64(len(batch) - maxPendingSamples))
-	keep := batch[len(batch)-maxPendingSamples:]
+	s.dropped.Add(uint64(excess))
+	keep := batch[excess:]
 	out := make([]AccountSample, len(keep))
 	copy(out, keep)
 	return out
@@ -64,42 +66,42 @@ func (s *Store) writeAccountBatch(batch []AccountSample) error {
 	if len(batch) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	insertNode, err := tx.Prepare(
+	insertNode, err := tx.PrepareContext(context.Background(),
 		"INSERT INTO node (label, provider, country, first_seen, last_seen) VALUES (?, '', '', ?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare insert node: %w", err)
 	}
-	defer insertNode.Close()
-	touchNode, err := tx.Prepare(
+	defer func() { _ = insertNode.Close() }()
+	touchNode, err := tx.PrepareContext(context.Background(),
 		"UPDATE node SET last_seen = ? WHERE id = ? AND last_seen < ?")
 	if err != nil {
 		return fmt.Errorf("stats: prepare touch node: %w", err)
 	}
-	defer touchNode.Close()
-	insertAccount, err := tx.Prepare(
+	defer func() { _ = touchNode.Close() }()
+	insertAccount, err := tx.PrepareContext(context.Background(),
 		"INSERT INTO account (login, first_seen, last_seen) VALUES (?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare insert account: %w", err)
 	}
-	defer insertAccount.Close()
-	touchAccount, err := tx.Prepare(
+	defer func() { _ = insertAccount.Close() }()
+	touchAccount, err := tx.PrepareContext(context.Background(),
 		"UPDATE account SET last_seen = ? WHERE id = ? AND last_seen < ?")
 	if err != nil {
 		return fmt.Errorf("stats: prepare touch account: %w", err)
 	}
-	defer touchAccount.Close()
-	insertSample, err := tx.Prepare(
+	defer func() { _ = touchAccount.Close() }()
+	insertSample, err := tx.PrepareContext(context.Background(),
 		"INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare insert account sample: %w", err)
 	}
-	defer insertSample.Close()
+	defer func() { _ = insertSample.Close() }()
 
 	for _, sm := range batch {
 		accID, err := s.accountID(tx, insertAccount, sm.Login, sm.At)
@@ -111,17 +113,17 @@ func (s *Store) writeAccountBatch(batch []AccountSample) error {
 			return err
 		}
 		ts := sm.At.UTC().UnixMilli()
-		if _, err := touchAccount.Exec(ts, accID, ts); err != nil {
+		if _, err := touchAccount.ExecContext(context.Background(), ts, accID, ts); err != nil {
 			return fmt.Errorf("stats: touch account %s: %w", sm.Login, err)
 		}
-		if _, err := touchNode.Exec(ts, nodeID, ts); err != nil {
+		if _, err := touchNode.ExecContext(context.Background(), ts, nodeID, ts); err != nil {
 			return fmt.Errorf("stats: touch node %s: %w", sm.Label, err)
 		}
 		ok := 0
 		if sm.OK {
 			ok = 1
 		}
-		if _, err := insertSample.Exec(ts, accID, nodeID, int(sm.Kind), ok,
+		if _, err := insertSample.ExecContext(context.Background(), ts, accID, nodeID, int(sm.Kind), ok,
 			sm.Delay.Milliseconds(), sm.Bytes, sm.Up, sm.Down); err != nil {
 			return fmt.Errorf("stats: insert account sample for %s: %w", sm.Login, err)
 		}
@@ -135,29 +137,7 @@ func (s *Store) writeAccountBatch(batch []AccountSample) error {
 // accountID returns the id of the login, creating the account row with
 // first_seen = last_seen = at when it is unknown.
 func (s *Store) accountID(tx *sql.Tx, insertAccount *sql.Stmt, login string, at time.Time) (int64, error) {
-	if id, ok := s.accIDs[login]; ok {
-		return id, nil
-	}
-	var id int64
-	err := tx.QueryRow("SELECT id FROM account WHERE login = ?", login).Scan(&id)
-	if err == nil {
-		s.accIDs[login] = id
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("stats: select account %s: %w", login, err)
-	}
-	ts := at.UTC().UnixMilli()
-	res, err := insertAccount.Exec(login, ts, ts)
-	if err != nil {
-		return 0, fmt.Errorf("stats: insert account %s: %w", login, err)
-	}
-	id, err = res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("stats: account id for %s: %w", login, err)
-	}
-	s.accIDs[login] = id
-	return id, nil
+	return cachedID(tx, s.accIDs, "SELECT id FROM account WHERE login = ?", insertAccount, "account", login, at)
 }
 
 // Accounts aggregates the per-account samples of the window per login,
@@ -203,11 +183,11 @@ func (s *Store) Accounts(q Query) ([]AccountStats, error) {
 	// Begin the snapshot first, so every read below sees one consistent
 	// snapshot of the database. A read transaction is only rolled back, never
 	// committed: the deferred Rollback is the intended end of it.
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("stats: begin account read: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// A long window must also see the raw samples the fold has not reached
 	// yet, so both tables are read and accumulated into the same stats.
@@ -312,10 +292,10 @@ AND kind = ? GROUP BY account_sample.account`, append(args[:len(args):len(args)]
 	if err != nil {
 		return fmt.Errorf("stats: query counts: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, n, ok, msSum int64
 		if err := rows.Scan(&id, &n, &ok, &msSum); err != nil {
-			rows.Close()
 			return fmt.Errorf("stats: scan counts: %w", err)
 		}
 		st := get(id)
@@ -325,10 +305,8 @@ AND kind = ? GROUP BY account_sample.account`, append(args[:len(args):len(args)]
 		st.msOK += ok
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("stats: query counts: %w", err)
 	}
-	rows.Close()
 
 	if err := scanAccountSum(q, args, `
 SELECT account_sample.account, SUM(up), SUM(down) FROM account_sample `+join+` `+pred+`
@@ -368,10 +346,10 @@ AND kind = ? GROUP BY account_hourly.account`,
 	if err != nil {
 		return fmt.Errorf("stats: query hourly: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, n, ok, msSum int64
 		if err := rows.Scan(&id, &n, &ok, &msSum); err != nil {
-			rows.Close()
 			return fmt.Errorf("stats: scan hourly: %w", err)
 		}
 		st := get(id)
@@ -381,10 +359,8 @@ AND kind = ? GROUP BY account_hourly.account`,
 		st.msOK += ok
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("stats: query hourly: %w", err)
 	}
-	rows.Close()
 
 	if err := scanAccountSum(q, args, `
 SELECT account_hourly.account, SUM(up), SUM(down) FROM account_hourly `+join+` `+pred+`
@@ -410,7 +386,7 @@ func scanAccountPair(q querier, args []any, query string, fn func(id, v int64)) 
 	if err != nil {
 		return fmt.Errorf("stats: query aggregate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, v int64
 		if err := rows.Scan(&id, &v); err != nil {
@@ -428,7 +404,7 @@ func scanAccountSum(q querier, args []any, query string, fn func(id, v, w int64)
 	if err != nil {
 		return fmt.Errorf("stats: query aggregate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, v, w int64
 		if err := rows.Scan(&id, &v, &w); err != nil {
@@ -445,7 +421,7 @@ func accountLogins(q querier) (map[int64]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stats: query accounts: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[int64]string{}
 	for rows.Next() {
 		var id int64
@@ -472,31 +448,34 @@ func accountNodeIDs(q querier, from time.Time, tables []string, qy Query) (map[i
 		}
 		join, pred, args := accountWhere(table, tsCol, qy.Account, qy)
 		args = append(args, fromV)
-		rows, err := q.Query(`
+		if err := func() error {
+			rows, err := q.Query(`
 SELECT `+table+`.account, `+table+`.node FROM `+table+` `+join+` `+pred+`
 GROUP BY `+table+`.account, `+table+`.node`, args...)
-		if err != nil {
-			return nil, fmt.Errorf("stats: query account nodes: %w", err)
-		}
-		for rows.Next() {
-			var acc, node int64
-			if err := rows.Scan(&acc, &node); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("stats: scan account nodes: %w", err)
+			if err != nil {
+				return fmt.Errorf("stats: query account nodes: %w", err)
 			}
-			if seen[acc] == nil {
-				seen[acc] = map[int64]bool{}
+			defer func() { _ = rows.Close() }()
+			for rows.Next() {
+				var acc, node int64
+				if err := rows.Scan(&acc, &node); err != nil {
+					return fmt.Errorf("stats: scan account nodes: %w", err)
+				}
+				if seen[acc] == nil {
+					seen[acc] = map[int64]bool{}
+				}
+				if !seen[acc][node] {
+					seen[acc][node] = true
+					out[acc] = append(out[acc], node)
+				}
 			}
-			if !seen[acc][node] {
-				seen[acc][node] = true
-				out[acc] = append(out[acc], node)
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("stats: query account nodes: %w", err)
 			}
+			return nil
+		}(); err != nil {
+			return nil, err
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("stats: query account nodes: %w", err)
-		}
-		rows.Close()
 	}
 	return out, nil
 }
@@ -577,11 +556,11 @@ func (s *Store) AccountNodes(q Query) ([]NodeStats, error) {
 	// Same snapshot logic as Accounts: one read transaction, so the raw and
 	// hourly reads plus the node metadata lookups see one consistent
 	// snapshot. Rolled back, never committed.
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("stats: begin account nodes read: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if err := accountNodesRaw(tx, from.UnixMilli(), q, get); err != nil {
 		return nil, err
 	}
@@ -604,9 +583,9 @@ func (s *Store) AccountNodes(q Query) ([]NodeStats, error) {
 		sel += " FROM node WHERE id = ?"
 		var err error
 		if nameCol {
-			err = tx.QueryRow(sel, id).Scan(&label, &provider, &country, &nodeSeen, &name)
+			err = tx.QueryRowContext(context.Background(), sel, id).Scan(&label, &provider, &country, &nodeSeen, &name)
 		} else {
-			err = tx.QueryRow(sel, id).Scan(&label, &provider, &country, &nodeSeen)
+			err = tx.QueryRowContext(context.Background(), sel, id).Scan(&label, &provider, &country, &nodeSeen)
 		}
 		if err == sql.ErrNoRows {
 			continue
@@ -646,42 +625,16 @@ func accountNodesRaw(q querier, fromMS int64, qy Query, get func(int64) *account
 	join, pred, args := accountWhere("account_sample", "ts", qy.Account, qy)
 	args = append(args, fromMS)
 
-	rows, err := q.Query(`
+	if err := addAccountCounts(q, `
 SELECT account_sample.node, COUNT(*), SUM(ok), SUM(CASE WHEN ok = 1 THEN ms ELSE 0 END)
 FROM account_sample `+join+` `+pred+`
-AND kind = ? GROUP BY account_sample.node`, append(args[:len(args):len(args)], int(KindDial))...)
-	if err != nil {
-		return fmt.Errorf("stats: query counts: %w", err)
+AND kind = ? GROUP BY account_sample.node`, args, "counts", get); err != nil {
+		return err
 	}
-	for rows.Next() {
-		var id, n, ok, msSum int64
-		if err := rows.Scan(&id, &n, &ok, &msSum); err != nil {
-			rows.Close()
-			return fmt.Errorf("stats: scan counts: %w", err)
-		}
-		agg := get(id)
-		agg.dials += int(n)
-		agg.dialsOK += int(ok)
-		agg.msSum += msSum
-		agg.msOK += ok
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("stats: query counts: %w", err)
-	}
-	rows.Close()
-
 	return scanAccountNodePair(q, args, `
 SELECT account_sample.node, SUM(up) + SUM(down), MAX(ts) FROM account_sample `+join+` `+pred+`
 GROUP BY account_sample.node`,
-		false,
-		func(id, bytes int64, at time.Time) {
-			agg := get(id)
-			agg.bytes += bytes
-			if at.After(agg.lastSeen) {
-				agg.lastSeen = at
-			}
-		})
+		false, accountBytesAdder(get))
 }
 
 // accountNodesHourly adds the per-node aggregates of the account hourly table.
@@ -689,18 +642,29 @@ func accountNodesHourly(q querier, fromHour int64, qy Query, get func(int64) *ac
 	join, pred, args := accountWhere("account_hourly", "hour", qy.Account, qy)
 	args = append(args, fromHour)
 
-	rows, err := q.Query(`
+	if err := addAccountCounts(q, `
 SELECT account_hourly.node, SUM(n), SUM(ok), SUM(ms_sum) FROM account_hourly `+join+` `+pred+`
-AND kind = ? GROUP BY account_hourly.node`,
-		append(args[:len(args):len(args)], int(KindDial))...)
-	if err != nil {
-		return fmt.Errorf("stats: query hourly: %w", err)
+AND kind = ? GROUP BY account_hourly.node`, args, "hourly", get); err != nil {
+		return err
 	}
+	return scanAccountNodePair(q, args, `
+SELECT account_hourly.node, SUM(up) + SUM(down), MAX(hour) FROM account_hourly `+join+` `+pred+`
+GROUP BY account_hourly.node`,
+		true, accountBytesAdder(get))
+}
+
+// addAccountCounts runs a per-node dial count query with args plus KindDial and
+// adds its counts to the nodes returned by get. what names the read in errors.
+func addAccountCounts(q querier, query string, args []any, what string, get func(int64) *accountNodeAgg) error {
+	rows, err := q.Query(query, append(args[:len(args):len(args)], int(KindDial))...)
+	if err != nil {
+		return fmt.Errorf("stats: query %s: %w", what, err)
+	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, n, ok, msSum int64
 		if err := rows.Scan(&id, &n, &ok, &msSum); err != nil {
-			rows.Close()
-			return fmt.Errorf("stats: scan hourly: %w", err)
+			return fmt.Errorf("stats: scan %s: %w", what, err)
 		}
 		agg := get(id)
 		agg.dials += int(n)
@@ -709,22 +673,21 @@ AND kind = ? GROUP BY account_hourly.node`,
 		agg.msOK += ok
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
-		return fmt.Errorf("stats: query hourly: %w", err)
+		return fmt.Errorf("stats: query %s: %w", what, err)
 	}
-	rows.Close()
+	return nil
+}
 
-	return scanAccountNodePair(q, args, `
-SELECT account_hourly.node, SUM(up) + SUM(down), MAX(hour) FROM account_hourly `+join+` `+pred+`
-GROUP BY account_hourly.node`,
-		true,
-		func(id, bytes int64, at time.Time) {
-			agg := get(id)
-			agg.bytes += bytes
-			if at.After(agg.lastSeen) {
-				agg.lastSeen = at
-			}
-		})
+// accountBytesAdder returns the scanAccountNodePair callback that adds a node's
+// bytes and advances its last-seen time.
+func accountBytesAdder(get func(int64) *accountNodeAgg) func(id, bytes int64, at time.Time) {
+	return func(id, bytes int64, at time.Time) {
+		agg := get(id)
+		agg.bytes += bytes
+		if at.After(agg.lastSeen) {
+			agg.lastSeen = at
+		}
+	}
 }
 
 // scanAccountNodePair runs a (node, value, time) query and applies fn per
@@ -735,7 +698,7 @@ func scanAccountNodePair(q querier, args []any, query string, hourly bool, fn fu
 	if err != nil {
 		return fmt.Errorf("stats: query aggregate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, v, t int64
 		if err := rows.Scan(&id, &v, &t); err != nil {

@@ -1,14 +1,10 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"io"
-	"os"
-	"sort"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/subscription"
 )
 
 func (a *subApp) countries(args []string) error {
@@ -67,21 +63,4 @@ func (a *subApp) countriesAll() error {
 	}
 	cli.Success(a.stdout, map[string]any{"providers": ps, "countries": r.Countries})
 	return nil
-}
-func snapshotEntry(key, name string, snap *subscription.Snapshot, e error) (map[string]any, error) {
-	m := map[string]any{key: name, "nodes": nil, "countries": nil, "unknown": nil}
-	if e != nil {
-		if errors.Is(e, os.ErrNotExist) {
-			return m, nil
-		}
-		return nil, snapshotError(name)
-	}
-	cs, u := subscription.CountryCounts(snap.Nodes)
-	m["nodes"] = len(snap.Nodes)
-	m["countries"] = cs
-	m["unknown"] = u
-	return m, nil
-}
-func sortCountryCounts(cs []subscription.CountryCount) {
-	sort.Slice(cs, func(i, j int) bool { return cs[i].Code < cs[j].Code })
 }

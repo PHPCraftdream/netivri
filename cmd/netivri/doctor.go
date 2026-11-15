@@ -110,12 +110,8 @@ type doctorContext struct {
 func doctorRun(home string) []doctorCheck {
 	d := &doctorContext{home: home, now: doctorNow()}
 	d.probeAngel()
-	checks := []doctorCheck{
-		d.checkConfig(),
-		d.checkAngel(),
-		d.checkListen(),
-		d.checkSubscriptions(),
-	}
+	checks := make([]doctorCheck, 0, 4+len(d.cfgAccounts()))
+	checks = append(checks, d.checkConfig(), d.checkAngel(), d.checkListen(), d.checkSubscriptions())
 	for i := range d.cfgAccounts() {
 		checks = append(checks, d.checkAccount(&d.cfg.Accounts[i]))
 	}
@@ -326,8 +322,8 @@ func (d *doctorContext) checkAccount(a *config.Account) doctorCheck {
 		total += len(t.Nodes)
 	}
 	if total == 0 {
-		ne, ok := noNodesError(providers, countries).(*cli.Error)
-		if !ok {
+		var ne *cli.Error
+		if !errors.As(noNodesError(providers, countries), &ne) {
 			return doctorCheck{name, doctorFail, "no nodes available on the route"}
 		}
 		return doctorCheck{name, doctorFail, ne.Message}
@@ -390,6 +386,7 @@ func (d *doctorContext) exitDirectAccountCheck(a *config.Account) doctorCheck {
 	if public {
 		detail += "; mixed proxy is bound to a non-loopback address"
 	}
+	var servedBy strings.Builder
 	if d.cfg != nil {
 		for _, server := range d.cfg.Servers {
 			accounts := strings.Split(server.Accounts, ",")
@@ -425,10 +422,11 @@ func (d *doctorContext) exitDirectAccountCheck(a *config.Account) doctorCheck {
 			}
 			if !isLoopbackHost(bind) {
 				public = true
-				detail += "; served by public/non-loopback server " + server.Name
+				servedBy.WriteString("; served by public/non-loopback server " + server.Name)
 			}
 		}
 	}
+	detail += servedBy.String()
 	if public {
 		return doctorCheck{name, doctorWarn, detail}
 	}

@@ -21,16 +21,15 @@ func ctlRequest(t *testing.T, s *Server, method, path, host, auth string) *httpt
 	return rec
 }
 
-func newTestServer(t *testing.T) (*Server, *int32) {
+func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	var calls int32
-	s := &Server{addr: "127.0.0.1:12345", token: "secret", status: func() Status { return Status{Angel: "running", PID: 7, Listen: "127.0.0.1:7890"} }, stop: func() { atomic.AddInt32(&calls, 1) }}
+	s := &Server{addr: "127.0.0.1:12345", token: "secret", status: func() Status { return Status{Angel: "running", PID: 7, Listen: "127.0.0.1:7890"} }, stop: func() {}}
 	t.Cleanup(func() { _ = s.Close() })
-	return s, &calls
+	return s
 }
 
 func TestControlUnauthorized(t *testing.T) {
-	s, _ := newTestServer(t)
+	s := newTestServer(t)
 	for _, auth := range []string{"", "Basic secret", "Bearer nope", "Bearer "} {
 		rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, auth)
 		if rec.Code != http.StatusUnauthorized {
@@ -47,14 +46,14 @@ func TestControlUnauthorized(t *testing.T) {
 }
 
 func TestControlHostCheck(t *testing.T) {
-	s, _ := newTestServer(t)
+	s := newTestServer(t)
 	if rec := ctlRequest(t, s, http.MethodGet, "/v1/status", "evil.example:12345", "Bearer secret"); rec.Code != http.StatusForbidden {
 		t.Errorf("status=%d want 403", rec.Code)
 	}
 }
 
 func TestControlRouting(t *testing.T) {
-	s, _ := newTestServer(t)
+	s := newTestServer(t)
 	for _, tc := range []struct {
 		method, path string
 		want         int
@@ -66,7 +65,7 @@ func TestControlRouting(t *testing.T) {
 }
 
 func TestControlStatusBody(t *testing.T) {
-	s, _ := newTestServer(t)
+	s := newTestServer(t)
 	s.status = func() Status {
 		return Status{Angel: "running", PID: 7, Listen: "127.0.0.1:7890", Accounts: []AccountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}}
 	}
@@ -84,7 +83,7 @@ func TestControlStatusBody(t *testing.T) {
 }
 
 func TestControlStatusOmissionAndEmptyCountry(t *testing.T) {
-	s, _ := newTestServer(t)
+	s := newTestServer(t)
 	s.status = func() Status { return Status{Accounts: []AccountInfo{{Login: "alice"}}} }
 	rec := ctlRequest(t, s, http.MethodGet, "/v1/status", s.addr, "Bearer secret")
 	if !strings.Contains(rec.Body.String(), `"accounts":[{"login":"alice","provider":"","exit_country":"","allowed_clients":""}]`) {
@@ -119,7 +118,7 @@ func TestControlStopCalledOnce(t *testing.T) {
 	if rec.Code != http.StatusAccepted || !rec.Flushed || rec.Body.String() != "{\"stopping\":true}\n" {
 		t.Errorf("first response: code=%d flushed=%v body=%q", rec.Code, rec.Flushed, rec.Body.String())
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "http://"+s.addr+"/v1/stop", nil)
 		req.Host = s.addr

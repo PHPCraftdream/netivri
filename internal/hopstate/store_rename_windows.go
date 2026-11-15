@@ -21,7 +21,7 @@ func renameReplace(from, to string) error {
 	if err != nil {
 		return err
 	}
-	for i := 0; i < renameAttempts; i++ {
+	for i := range renameAttempts {
 		err = windows.MoveFileEx(fromPtr, toPtr, windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH)
 		if err == nil || !transientRenameError(err) {
 			return err
@@ -39,6 +39,7 @@ func transientRenameError(err error) bool {
 	switch errno {
 	case syscall.Errno(5), syscall.Errno(32), syscall.Errno(33):
 		return true
+	default:
+		return false
 	}
-	return false
 }

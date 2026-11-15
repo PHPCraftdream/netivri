@@ -22,7 +22,7 @@ func TestConnLogHourlySummaryNamesTheSleepItCovers(t *testing.T) {
 	f.beatAt(26*time.Hour + 46*time.Minute)
 	var asked [2]time.Time
 	f.log.asleep = sleeping(26*time.Hour+21*time.Minute+38*time.Second, &asked)
-	f.endedUp("alice", "main/us", 300, 900, 5)
+	f.endedUp("alice", 300, 900, 5)
 	f.log.heartbeat()
 	want := "INFO account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: 5 connections ended, 0 broken"
 	if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], want) {
@@ -34,7 +34,7 @@ func TestConnLogHourlySummaryNamesTheSleepItCovers(t *testing.T) {
 	// The next tally begins where this one ended and, without a sleep, is an hour.
 	f.lines = nil
 	f.log.asleep = nil
-	f.endedUp("alice", "main/us", 300, 900, 2)
+	f.endedUp("alice", 300, 900, 2)
 	f.log.heartbeat()
 	if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], "INFO account alice: last hour: 2 connections ended") {
 		t.Errorf("lines after the sleep = %q", f.lines)
@@ -44,7 +44,7 @@ func TestConnLogHourlySummaryNamesTheSleepItCovers(t *testing.T) {
 func TestConnLogHourlySummaryTellsASleepTheWatchHasNotSeenYet(t *testing.T) {
 	f := newConnLogFixture()
 	f.beatAt(26*time.Hour + 46*time.Minute) // the tick comes at the wake, before the watch notices it
-	f.endedUp("alice", "main/us", 300, 900, 3)
+	f.endedUp("alice", 300, 900, 3)
 	f.log.heartbeat()
 	want := "INFO account alice: since 2026-11-13T12:50:18Z, the computer slept in between: 3 connections ended"
 	if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], want) {
@@ -65,7 +65,7 @@ func TestConnLogHourlySummaryOfAnOrdinaryHourIsLastHour(t *testing.T) {
 		f.beatAt(tc.after)
 		var asked [2]time.Time
 		f.log.asleep = sleeping(tc.asleep, &asked)
-		f.endedUp("alice", "main/us", 300, 900, 1)
+		f.endedUp("alice", 300, 900, 1)
 		f.log.heartbeat()
 		if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], "INFO account alice: last hour: 1 connection ended") {
 			t.Errorf("%s: lines = %q", name, f.lines)
@@ -86,7 +86,7 @@ func TestConnLogRunTakesTheBeatFromItsArgument(t *testing.T) {
 	}
 	// A tally that is three hours long on a three-hour beat is no sleep.
 	f.beatAt(3 * time.Hour)
-	f.endedUp("alice", "main/us", 300, 900, 1)
+	f.endedUp("alice", 300, 900, 1)
 	f.log.heartbeat()
 	if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], "INFO account alice: last hour: 1 connection ended") {
 		t.Errorf("lines = %q", f.lines)

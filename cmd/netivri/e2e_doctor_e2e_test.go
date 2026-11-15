@@ -35,7 +35,7 @@ type e2eDoctorEnvelope struct {
 
 func e2eDoctorRun(t *testing.T, home string) (int, e2eDoctorDoc, string) {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "doctor")
+	code, out, stderr := accountsRun(t.Context(), t, home, "doctor")
 	var env e2eDoctorEnvelope
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("decode doctor output %q (stderr %s): %v", out, stderr, err)
@@ -63,7 +63,15 @@ func e2eDoctorFind(t *testing.T, doc e2eDoctorDoc, name string) e2eDoctorCheck {
 // required to be present with a detail and a decidable status.
 func TestE2EDoctor(t *testing.T) {
 	h := newAngelHome(t)
-	home := h.dir
+	setupDoctorHome(t, h.dir)
+	checkDoctorWithAngel(t, h)
+	checkDoctorAfterDown(t, h.dir)
+	checkDoctorWithoutConfig(t)
+}
+
+// setupDoctorHome writes the fixture config and the stored snapshot.
+func setupDoctorHome(t *testing.T, home string) {
+	t.Helper()
 	hash, err := auth.Hash(accountsDEPass)
 	if err != nil {
 		t.Fatal(err)
@@ -74,19 +82,30 @@ func TestE2EDoctor(t *testing.T) {
 		cfg.Subscriptions = []config.Subscription{{Name: "p", URL: "https://p.invalid/sub"}}
 	})
 	accountsSaveSnapshot(t, home, "p", []subscription.Node{accountsSocksNode("de-p", "DE", accountsServer(t))})
+}
 
-	// With the angel running: config, angel and listen are ok, and the
-	// account check exists with a non-empty detail.
-	code, stdout, stderr := angelRun(t, home, "up", "--port", "0")
+// checkDoctorWithAngel runs `up`, then `doctor` against the running angel.
+func checkDoctorWithAngel(t *testing.T, h *angelHome) {
+	t.Helper()
+	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	h.pid = int(angelData(t, stdout)["pid"].(float64))
-	code, doc, dstderr := e2eDoctorRun(t, home)
+	h.pid = angelPID(t, angelData(t, stdout))
+	code, doc, dstderr := e2eDoctorRun(t, h.dir)
 	// A completed warm probe that found no live node makes the account check
 	// fail, which is legitimate here; whether the probe completed before this
 	// call is timing. So both outcomes are accepted, but the exit code and the
 	// stderr envelope must agree with the document.
+	nFail := checkDoctorStatuses(t, doc)
+	checkDoctorExit(t, code, nFail, dstderr)
+	checkDoctorRunning(t, doc)
+}
+
+// checkDoctorStatuses checks that every status is decidable, only the account
+// check may fail and the summary matches the checks. It returns the failed count.
+func checkDoctorStatuses(t *testing.T, doc e2eDoctorDoc) int {
+	t.Helper()
 	var nOK, nWarn, nFail int
 	for _, c := range doc.Checks {
 		switch c.Status {
@@ -106,6 +125,12 @@ func TestE2EDoctor(t *testing.T) {
 	if s := doc.Summary; s.Ok != nOK || s.Warn != nWarn || s.Fail != nFail {
 		t.Errorf("summary %+v does not match the checks (ok %d, warn %d, fail %d)", s, nOK, nWarn, nFail)
 	}
+	return nFail
+}
+
+// checkDoctorExit checks the exit code and the stderr envelope against the failed count.
+func checkDoctorExit(t *testing.T, code, nFail int, dstderr string) {
+	t.Helper()
 	if nFail == 0 {
 		if code != 0 {
 			t.Fatalf("doctor exit = %d with no failed check (stderr %s)", code, dstderr)
@@ -113,6 +138,12 @@ func TestE2EDoctor(t *testing.T) {
 	} else if code != cli.ExitCheckFailed || !strings.Contains(dstderr, "DOCTOR_FAILED") {
 		t.Fatalf("doctor with a failed check: exit %d, stderr %s; want exit %d and DOCTOR_FAILED", code, dstderr, cli.ExitCheckFailed)
 	}
+}
+
+// checkDoctorRunning checks config, angel and listen, and that the account
+// check exists with a non-empty detail.
+func checkDoctorRunning(t *testing.T, doc e2eDoctorDoc) {
+	t.Helper()
 	if c := e2eDoctorFind(t, doc, "config"); c.Status != "ok" {
 		t.Errorf("config = %+v", c)
 	}
@@ -131,10 +162,13 @@ func TestE2EDoctor(t *testing.T) {
 	if acc.Detail == "" {
 		t.Error("account check has no detail")
 	}
+}
 
-	// After `down`: the angel check warns, the account still counts its
-	// stored nodes, and the command succeeds (nothing failed).
-	code, stdout, stderr = angelRun(t, home, "down")
+// checkDoctorAfterDown runs `down`, then `doctor`: the angel check warns, the
+// account still counts its stored nodes, and the command succeeds.
+func checkDoctorAfterDown(t *testing.T, home string) {
+	t.Helper()
+	code, stdout, stderr := angelRun(t, home, "down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -151,8 +185,12 @@ func TestE2EDoctor(t *testing.T) {
 	if ddoc.Summary.Fail != 0 {
 		t.Errorf("summary = %+v", ddoc.Summary)
 	}
+}
 
-	// A home without a configuration: the defaults apply, exit 0.
+// checkDoctorWithoutConfig runs `doctor` in a home without a configuration:
+// the defaults apply, exit 0.
+func checkDoctorWithoutConfig(t *testing.T) {
+	t.Helper()
 	empty := t.TempDir()
 	ecode, edoc, estderr := e2eDoctorRun(t, empty)
 	if ecode != 0 {

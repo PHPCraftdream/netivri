@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -23,7 +24,8 @@ func TestCovServerParseShapes(t *testing.T) {
 			if err == nil || got != nil {
 				t.Fatalf("config=%#v error=%v", got, err)
 			}
-			if e, ok := err.(*cli.Error); !ok || e.Code != CodeConfigInvalid || !strings.Contains(err.Error(), tc.want) {
+			var e *cli.Error
+			if !errors.As(err, &e) || e.Code != CodeConfigInvalid || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error class=%T %v", err, err)
 			}
 		})
@@ -139,7 +141,8 @@ func TestCovServerValidationErrors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error=%v, want %q", err, tc.want)
 			}
-			if e, ok := err.(*cli.Error); !ok || e.Code != CodeConfigInvalid {
+			var e *cli.Error
+			if !errors.As(err, &e) || e.Code != CodeConfigInvalid {
 				t.Fatalf("error class=%T %v", err, err)
 			}
 			if c != nil && !reflect.DeepEqual(c.Servers, before) {
@@ -201,7 +204,8 @@ func TestCovServerResolution(t *testing.T) {
 			if err == nil || got != nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("resolved=%#v error=%v, want %q", got, err, tc.want)
 			}
-			if e, ok := err.(*cli.Error); !ok || e.Code != CodeConfigInvalid {
+			var e *cli.Error
+			if !errors.As(err, &e) || e.Code != CodeConfigInvalid {
 				t.Fatalf("error class=%T %v", err, err)
 			}
 		})

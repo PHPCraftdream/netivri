@@ -167,12 +167,12 @@ func TestPostPoolBindsAndReusesTheNativeSiteChoice(t *testing.T) {
 		t.Fatal("successful post dial did not bind site")
 	}
 	servers := map[string]*nativeLoopbackProxy{hopPoolKey(firstProxy.uri): firstProxy, hopPoolKey(secondProxy.uri): secondProxy}
-	beforeBound, beforeOther := servers[bound].requests.Load(), int32(0)
+	beforeBound := servers[bound].requests.Load()
 	other := spec.keys[0]
 	if other == bound {
 		other = spec.keys[1]
 	}
-	beforeOther = servers[other].requests.Load()
+	beforeOther := servers[other].requests.Load()
 	second := newHopPoolAdapter("post-2", postHopPool, spec, p, binder, carrier, func() time.Time { return now })
 	setNativeCarrier(second, nil, true)
 	conn, err = second.DialContext(context.Background(), metadata)

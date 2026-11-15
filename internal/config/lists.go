@@ -39,7 +39,7 @@ func ParseCountryList(s string) (codes []string, ok bool) {
 // bare comma.
 func JoinList(items []string) string { return strings.Join(items, ",") }
 
-func parseList(s string, max int, norm func(string) (string, bool)) ([]string, bool) {
+func parseList(s string, limit int, norm func(string) (string, bool)) ([]string, bool) {
 	if strings.TrimSpace(s) == "" {
 		return nil, true
 	}
@@ -56,7 +56,7 @@ func parseList(s string, max int, norm func(string) (string, bool)) ([]string, b
 		seen[item] = true
 		out = append(out, item)
 	}
-	if len(out) > max {
+	if len(out) > limit {
 		return nil, false
 	}
 	return out, true

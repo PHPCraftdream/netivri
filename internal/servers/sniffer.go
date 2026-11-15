@@ -3,8 +3,8 @@ package servers
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -204,7 +204,7 @@ func normalizeListenAddress(s Spec) string {
 	if ip != nil {
 		bind = ip.String()
 	}
-	return net.JoinHostPort(strings.ToLower(bind), fmt.Sprint(s.Port))
+	return net.JoinHostPort(strings.ToLower(bind), strconv.Itoa(s.Port))
 }
 
 func ParseClientHello(data []byte) (ClientHello, error) {
@@ -212,143 +212,190 @@ func ParseClientHello(data []byte) (ClientHello, error) {
 	if len(data) > MaxClientHelloBytes {
 		return result, errors.New("TLS ClientHello exceeds limit")
 	}
+	handshake, err := reassembleClientHello(data)
+	if err != nil {
+		return result, err
+	}
+	b, err := clientHelloBody(handshake)
+	if err != nil {
+		return result, err
+	}
+	o, err := skipClientHelloPrefix(b)
+	if err != nil {
+		return result, err
+	}
+	if o == len(b) {
+		return result, nil
+	}
+	err = parseClientHelloExtensions(b, o, &result)
+	return result, err
+}
+
+// reassembleClientHello concatenates TLS handshake records until one full handshake message is buffered.
+func reassembleClientHello(data []byte) ([]byte, error) {
 	var handshake []byte
 	for offset := 0; ; {
 		if len(handshake) >= 4 {
 			hlen := int(handshake[1])<<16 | int(handshake[2])<<8 | int(handshake[3])
 			if hlen > MaxClientHelloBytes {
-				return result, errors.New("TLS ClientHello exceeds limit")
+				return nil, errors.New("TLS ClientHello exceeds limit")
 			}
 			if len(handshake) >= 4+hlen {
 				break
 			}
 		}
 		if offset == len(data) {
-			return result, ErrClientHelloIncomplete
+			return nil, ErrClientHelloIncomplete
 		}
 		if len(data)-offset < 5 {
-			return result, ErrClientHelloIncomplete
+			return nil, ErrClientHelloIncomplete
 		}
 		if data[offset] != 22 || data[offset+1] != 3 {
-			return result, errors.New("invalid TLS record")
+			return nil, errors.New("invalid TLS record")
 		}
 		n := int(binary.BigEndian.Uint16(data[offset+3 : offset+5]))
 		if n == 0 {
-			return result, errors.New("invalid TLS record length")
+			return nil, errors.New("invalid TLS record length")
 		}
 		if len(data)-offset-5 < n {
-			return result, ErrClientHelloIncomplete
+			return nil, ErrClientHelloIncomplete
 		}
 		handshake = append(handshake, data[offset+5:offset+5+n]...)
 		offset += 5 + n
 		if offset > MaxClientHelloBytes {
-			return result, errors.New("TLS ClientHello exceeds limit")
+			return nil, errors.New("TLS ClientHello exceeds limit")
 		}
 	}
+	return handshake, nil
+}
+
+// clientHelloBody checks the handshake header and returns the ClientHello body.
+func clientHelloBody(handshake []byte) ([]byte, error) {
 	if len(handshake) < 4 {
-		return result, ErrClientHelloIncomplete
+		return nil, ErrClientHelloIncomplete
 	}
 	if handshake[0] != 1 {
-		return result, errors.New("not a TLS ClientHello")
+		return nil, errors.New("not a TLS ClientHello")
 	}
 	hlen := int(handshake[1])<<16 | int(handshake[2])<<8 | int(handshake[3])
 	if hlen > MaxClientHelloBytes {
-		return result, errors.New("TLS ClientHello exceeds limit")
+		return nil, errors.New("TLS ClientHello exceeds limit")
 	}
 	if len(handshake)-4 < hlen {
-		return result, ErrClientHelloIncomplete
+		return nil, ErrClientHelloIncomplete
 	}
 	b := handshake[4 : 4+hlen]
 	if len(b) < 2+32+1 {
-		return result, errors.New("malformed TLS ClientHello")
+		return nil, errors.New("malformed TLS ClientHello")
 	}
+	return b, nil
+}
+
+// skipClientHelloPrefix skips session id, cipher suites and compression methods,
+// returning the offset of the extensions block (len(b) when absent).
+func skipClientHelloPrefix(b []byte) (int, error) {
 	o := 34
 	sid := int(b[o])
 	o++
 	if o+sid+2 > len(b) {
-		return result, errors.New("malformed TLS ClientHello")
+		return 0, errors.New("malformed TLS ClientHello")
 	}
 	o += sid
 	cs := int(binary.BigEndian.Uint16(b[o : o+2]))
 	o += 2
 	if cs == 0 || cs%2 != 0 || o+cs+1 > len(b) {
-		return result, errors.New("malformed TLS ClientHello")
+		return 0, errors.New("malformed TLS ClientHello")
 	}
 	o += cs
 	comp := int(b[o])
 	o++
 	if comp == 0 || o+comp > len(b) {
-		return result, errors.New("malformed TLS ClientHello")
+		return 0, errors.New("malformed TLS ClientHello")
 	}
 	o += comp
-	if o == len(b) {
-		return result, nil
-	}
+	return o, nil
+}
+
+func parseClientHelloExtensions(b []byte, o int, result *ClientHello) error {
 	if o+2 > len(b) {
-		return result, errors.New("malformed TLS ClientHello")
+		return errors.New("malformed TLS ClientHello")
 	}
 	extLen := int(binary.BigEndian.Uint16(b[o : o+2]))
 	o += 2
 	if o+extLen != len(b) {
-		return result, errors.New("malformed TLS extensions")
+		return errors.New("malformed TLS extensions")
 	}
 	end := o + extLen
 	seenExtensions := make(map[uint16]bool)
 	for o < end {
 		if o+4 > end {
-			return result, errors.New("malformed TLS extension")
+			return errors.New("malformed TLS extension")
 		}
 		typ, n := binary.BigEndian.Uint16(b[o:o+2]), int(binary.BigEndian.Uint16(b[o+2:o+4]))
 		o += 4
 		if o+n > end {
-			return result, errors.New("malformed TLS extension")
+			return errors.New("malformed TLS extension")
 		}
 		e := b[o : o+n]
 		o += n
 		if seenExtensions[typ] {
-			return result, errors.New("duplicate TLS extension")
+			return errors.New("duplicate TLS extension")
 		}
 		seenExtensions[typ] = true
+		var err error
 		switch typ {
 		case 0:
-			if len(e) < 2 || int(binary.BigEndian.Uint16(e[:2])) != len(e)-2 {
-				return result, errors.New("malformed SNI extension")
-			}
-			p := 2
-			for p < len(e) {
-				if p+3 > len(e) {
-					return result, errors.New("malformed SNI name")
-				}
-				kind := e[p]
-				l := int(binary.BigEndian.Uint16(e[p+1 : p+3]))
-				p += 3
-				if p+l > len(e) {
-					return result, errors.New("malformed SNI name")
-				}
-				if kind == 0 {
-					name := string(e[p : p+l])
-					if l == 0 || strings.ContainsAny(name, "\x00\r\n") || result.SNI != "" {
-						return result, errors.New("invalid or duplicate SNI hostname")
-					}
-					result.SNI = strings.ToLower(name)
-				}
-				p += l
-			}
+			err = parseSNIExtension(e, result)
 		case 16:
-			if len(e) < 2 || int(binary.BigEndian.Uint16(e[:2])) != len(e)-2 {
-				return result, errors.New("malformed ALPN extension")
-			}
-			p := 2
-			for p < len(e) {
-				l := int(e[p])
-				p++
-				if l == 0 || p+l > len(e) {
-					return result, errors.New("malformed ALPN protocol")
-				}
-				result.ALPN = append(result.ALPN, string(e[p:p+l]))
-				p += l
-			}
+			err = parseALPNExtension(e, result)
+		}
+		if err != nil {
+			return err
 		}
 	}
-	return result, nil
+	return nil
+}
+
+func parseSNIExtension(e []byte, result *ClientHello) error {
+	if len(e) < 2 || int(binary.BigEndian.Uint16(e[:2])) != len(e)-2 {
+		return errors.New("malformed SNI extension")
+	}
+	p := 2
+	for p < len(e) {
+		if p+3 > len(e) {
+			return errors.New("malformed SNI name")
+		}
+		kind := e[p]
+		l := int(binary.BigEndian.Uint16(e[p+1 : p+3]))
+		p += 3
+		if p+l > len(e) {
+			return errors.New("malformed SNI name")
+		}
+		if kind == 0 {
+			name := string(e[p : p+l])
+			if l == 0 || strings.ContainsAny(name, "\x00\r\n") || result.SNI != "" {
+				return errors.New("invalid or duplicate SNI hostname")
+			}
+			result.SNI = strings.ToLower(name)
+		}
+		p += l
+	}
+	return nil
+}
+
+func parseALPNExtension(e []byte, result *ClientHello) error {
+	if len(e) < 2 || int(binary.BigEndian.Uint16(e[:2])) != len(e)-2 {
+		return errors.New("malformed ALPN extension")
+	}
+	p := 2
+	for p < len(e) {
+		l := int(e[p])
+		p++
+		if l == 0 || p+l > len(e) {
+			return errors.New("malformed ALPN protocol")
+		}
+		result.ALPN = append(result.ALPN, string(e[p:p+l]))
+		p += l
+	}
+	return nil
 }

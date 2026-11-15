@@ -52,7 +52,7 @@ func TestConnEventsOverARealRelay(t *testing.T) {
 
 	domain := "events.invalid"
 	live.mapDomain(domain, backend)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		connection, err := openAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword)
 		if err != nil {
 			t.Fatalf("connection %d: %v", i, err)
@@ -91,7 +91,7 @@ func TestConnEventsOverARealRelay(t *testing.T) {
 func TestConnEventsForADeadNodeAndTheFailover(t *testing.T) {
 	live, liveAddress := startFakeUpstream(t)
 	backend, _ := countEchoServer(t)
-	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	deadListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -219,7 +219,7 @@ type Server struct {
 // StartServer starts the control server. stop is invoked at most once, by
 // the first POST /v1/stop.
 func StartServer(token string, status func() Status, stop func()) (*Server, error) {
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", "0"))
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", "0"))
 	if err != nil {
 		return nil, fmt.Errorf("listen control port: %w", err)
 	}
@@ -295,7 +295,10 @@ func (s *Server) authorized(r *http.Request) bool {
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		// The status line is already written: a failed write means the client went away.
+		return
+	}
 }
 
 func writeCtlErr(w http.ResponseWriter, code int, errCode, msg string) {
@@ -341,7 +344,7 @@ func parseControlStatus(data []byte, code int) (Status, error) {
 		return Status{
 				Angel: h.Angel, Foreground: h.Foreground, PID: h.PID, Listen: h.Listen,
 				Protocols: h.Protocols, Auth: h.Auth, StartedAt: h.StartedAt, Version: h.Version,
-			}, fmt.Errorf("%w (pid %d, version %s); restart it: netivri down, then netivri up (decode status answer: %v)",
+			}, fmt.Errorf("%w (pid %d, version %s); restart it: netivri down, then netivri up (decode status answer: %w)",
 				ErrStatusShape, h.PID, v, err)
 	}
 	return st, nil

@@ -106,86 +106,100 @@ func (c *Card) ensureVisible() {
 func (c *Card) Update(msg tea.Msg) bool {
 	switch m := msg.(type) {
 	case tea.KeyPressMsg:
-		s := m.String()
-		for i, l := range c.Lines {
-			if l.Hotkey != "" && s == l.Hotkey && c.eligible(i) {
-				c.Selected = i
-				c.ensureVisible()
-				return true
-			}
-		}
-		switch s {
-		case "up", "k":
-			c.Selected = c.next(c.Selected, -1)
-		case "down", "j":
-			c.Selected = c.next(c.Selected, 1)
-		case "pgup":
-			for i := 0; i < max(1, c.visibleRows()); i++ {
-				c.Selected = c.next(c.Selected, -1)
-			}
-		case "pgdown":
-			for i := 0; i < max(1, c.visibleRows()); i++ {
-				c.Selected = c.next(c.Selected, 1)
-			}
-		case "home":
-			for i := range c.Lines {
-				if c.eligible(i) {
-					c.Selected = i
-					break
-				}
-			}
-		case "end":
-			for i := len(c.Lines) - 1; i >= 0; i-- {
-				if c.eligible(i) {
-					c.Selected = i
-					break
-				}
-			}
-		case "enter":
-			return c.eligible(c.Selected)
-		default:
-			return false
-		}
-		c.ensureVisible()
+		return c.handleKey(m.String())
 	case tea.MouseWheelMsg:
-		mouse := tea.Mouse(m)
-		switch mouse.Button {
-		case tea.MouseWheelUp:
-			c.Scroll = max(0, c.Scroll-1)
-		case tea.MouseWheelDown:
-			c.Scroll = min(max(0, c.contentRows()-c.visibleRows()), c.Scroll+1)
-		default:
-			return false
-		}
-		return false
+		c.handleWheel(m)
 	case tea.MouseClickMsg:
-		mouse := tea.Mouse(m)
-		if mouse.Button != tea.MouseLeft {
-			return false
-		}
-		if mouse.X < 1 || mouse.X >= c.width-1 || mouse.Y < 1 || mouse.Y >= c.height-1 {
-			return false
-		}
-		absolute := c.Scroll + mouse.Y - 1
-		idx := absolute - boolInt(c.Title != "") - len(c.Info)
-		if idx < 0 || idx >= len(c.Lines) {
-			return false
-		}
-		if idx == c.Selected && idx == c.lastClick {
-			c.lastClick = -1
-			return c.eligible(idx)
-		}
-		c.lastClick = idx
-		if c.eligible(idx) {
-			c.Selected = idx
+		return c.handleClick(m)
+	}
+	return false
+}
+func (c *Card) handleKey(s string) bool {
+	for i, l := range c.Lines {
+		if l.Hotkey != "" && s == l.Hotkey && c.eligible(i) {
+			c.Selected = i
 			c.ensureVisible()
-			if c.Lines[idx].Kind != CardField {
-				return false
-			}
-			start, end := c.editRange(c.Lines[idx])
-			return mouse.X >= start && mouse.X < end
+			return true
 		}
+	}
+	if s == "enter" {
+		return c.eligible(c.Selected)
+	}
+	if c.navigate(s) {
+		c.ensureVisible()
+	}
+	return false
+}
+
+// navigate moves the selection for a navigation key; false when s is not one.
+func (c *Card) navigate(s string) bool {
+	switch s {
+	case "up", "k":
+		c.Selected = c.next(c.Selected, -1)
+	case "down", "j":
+		c.Selected = c.next(c.Selected, 1)
+	case "pgup":
+		for range max(1, c.visibleRows()) {
+			c.Selected = c.next(c.Selected, -1)
+		}
+	case "pgdown":
+		for range max(1, c.visibleRows()) {
+			c.Selected = c.next(c.Selected, 1)
+		}
+	case "home":
+		for i := range c.Lines {
+			if c.eligible(i) {
+				c.Selected = i
+				break
+			}
+		}
+	case "end":
+		for i := len(c.Lines) - 1; i >= 0; i-- {
+			if c.eligible(i) {
+				c.Selected = i
+				break
+			}
+		}
+	default:
 		return false
+	}
+	return true
+}
+func (c *Card) handleWheel(m tea.MouseWheelMsg) {
+	mouse := tea.Mouse(m)
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		c.Scroll = max(0, c.Scroll-1)
+	case tea.MouseWheelDown:
+		c.Scroll = min(max(0, c.contentRows()-c.visibleRows()), c.Scroll+1)
+	}
+}
+func (c *Card) handleClick(m tea.MouseClickMsg) bool {
+	mouse := tea.Mouse(m)
+	if mouse.Button != tea.MouseLeft {
+		return false
+	}
+	if mouse.X < 1 || mouse.X >= c.width-1 || mouse.Y < 1 || mouse.Y >= c.height-1 {
+		return false
+	}
+	absolute := c.Scroll + mouse.Y - 1
+	idx := absolute - boolInt(c.Title != "") - len(c.Info)
+	if idx < 0 || idx >= len(c.Lines) {
+		return false
+	}
+	if idx == c.Selected && c.Selected == c.lastClick {
+		c.lastClick = -1
+		return c.eligible(idx)
+	}
+	c.lastClick = idx
+	if c.eligible(idx) {
+		c.Selected = idx
+		c.ensureVisible()
+		if c.Lines[idx].Kind != CardField {
+			return false
+		}
+		start, end := c.editRange(c.Lines[idx])
+		return mouse.X >= start && mouse.X < end
 	}
 	return false
 }
@@ -246,7 +260,7 @@ func (c *Card) View(w, h int) string {
 	inner := max(0, w-2)
 	lines := make([]string, 0, h)
 	lines = append(lines, b.TopLeft+strings.Repeat(b.Top, inner)+b.TopRight)
-	for i := 0; i < h-2; i++ {
+	for i := range h - 2 {
 		cell := ""
 		if i < len(body) {
 			cell = body[i]

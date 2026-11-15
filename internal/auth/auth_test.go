@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-
-	mihauth "github.com/metacubex/mihomo/component/auth"
 )
 
 // persistRecorder is a thread-safe Persist callback.
@@ -49,7 +47,11 @@ func mustNew(t *testing.T, o Options) *authenticator {
 	if a == nil {
 		t.Fatal("New returned nil authenticator")
 	}
-	return a.(*authenticator)
+	au, ok := a.(*authenticator)
+	if !ok {
+		t.Fatalf("New returned %T, want *authenticator", a)
+	}
+	return au
 }
 
 func TestNewDisabledReturnsTrueNil(t *testing.T) {
@@ -60,7 +62,7 @@ func TestNewDisabledReturnsTrueNil(t *testing.T) {
 	if a != nil {
 		t.Fatal("New with empty options must return a true nil interface")
 	}
-	var i mihauth.Authenticator = a
+	var i = a
 	if i != nil {
 		t.Fatal("typed nil leaked into the interface")
 	}
@@ -85,7 +87,7 @@ func TestNewInvalidCombinations(t *testing.T) {
 		{"password without login", Options{Password: hash}, true},
 		{"login without password", Options{Login: "user"}, true},
 		{"plaintext password", Options{Login: "user", Password: "hunter2"}, true},
-		{"malformed hash", Options{Login: "user", Password: "$argon2id$v=19$m=8,t=1,p=1$short$alsoshort"}, true},
+		{"malformed hash", Options{Login: "user", Password: "$argon2id$v=19$m=8,t=1,p=1$short$alsoshort"}, true}, //nolint:gosec // G101: malformed hash fixture, not a credential
 		{"init without persist", Options{Login: "user", Password: InitPlaceholder}, true},
 		{"init login without persist", Options{Login: InitPlaceholder, Password: hash}, true},
 		{"init pair without persist", Options{Login: InitPlaceholder, Password: InitPlaceholder}, true},
@@ -456,7 +458,7 @@ func TestConcurrentFirstUse(t *testing.T) {
 		var accepted int32
 		var wg sync.WaitGroup
 		start := make(chan struct{})
-		for i := 0; i < n; i++ {
+		for range n {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -489,14 +491,14 @@ func TestConcurrentFirstUse(t *testing.T) {
 		var winner int32 = -1
 		var wg sync.WaitGroup
 		start := make(chan struct{})
-		for i := 0; i < n; i++ {
+		for i := range int32(n) {
 			wg.Add(1)
-			go func(i int) {
+			go func(i int32) {
 				defer wg.Done()
 				<-start
 				if a.Verify(pairs[i].user, pairs[i].pass) {
 					atomic.AddInt32(&accepted, 1)
-					atomic.StoreInt32(&winner, int32(i))
+					atomic.StoreInt32(&winner, i)
 				}
 			}(i)
 		}
@@ -533,15 +535,15 @@ func TestConcurrentFirstUse(t *testing.T) {
 		var winner int32 = -1
 		var wg sync.WaitGroup
 		start := make(chan struct{})
-		for i := 0; i < n; i++ {
+		for i := range int32(n) {
 			wg.Add(1)
-			go func(i int) {
+			go func(i int32) {
 				defer wg.Done()
 				<-start
 				user := fmt.Sprintf("u%d", i)
 				if a.Verify(user, "hunter2") {
 					atomic.AddInt32(&accepted, 1)
-					atomic.StoreInt32(&winner, int32(i))
+					atomic.StoreInt32(&winner, i)
 				}
 			}(i)
 		}
@@ -559,7 +561,7 @@ func TestConcurrentFirstUse(t *testing.T) {
 			t.Fatalf("persisted (%q, hash ok: %v), want winner u%d", login, storedHash == hash, w)
 		}
 		// Distinct users: everyone else is rejected afterwards.
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if i == int(w) {
 				continue
 			}

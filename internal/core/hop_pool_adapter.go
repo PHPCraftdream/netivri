@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
@@ -53,7 +54,7 @@ type mihomoPoolHop struct {
 
 func (h *mihomoPoolHop) Key() string { return h.key }
 
-func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.Conn, error) {
+func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.Conn, error) { //nolint:contextcheck // nil ctx fallback only; a caller ctx is always inherited
 	if h == nil {
 		return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: errors.New("hop proxy unavailable")}
 	}
@@ -74,9 +75,13 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 	var chain C.Chain
 	var providerChain C.Chain
 	negotiationEnds := time.Now().Add(hopNegotiationBudget)
-	if h.role == postHopPool && !h.directCarrier {
+	switch {
+	case h.role == postHopPool && !h.directCarrier:
 		if h.carrierMember == nil {
 			return nil, &hopdial.StageError{Stage: hopdial.Unknown, Err: &poolCarrierError{cause: errors.New("carrier unavailable")}}
+		}
+		if h.proxyConfig.Port < 0 || h.proxyConfig.Port > math.MaxUint16 {
+			return nil, &hopdial.StageError{Stage: hopdial.Connect, Err: errUnusableHop}
 		}
 		metadata := &C.Metadata{Type: C.INNER, NetWork: C.TCP, Host: h.proxyConfig.Host, DstPort: uint16(h.proxyConfig.Port)}
 		conn, err = h.carrierMember.DialContext(ctx, metadata)
@@ -98,7 +103,7 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		}
 		chain = append(C.Chain(nil), carrierConn.Chains()...)
 		providerChain = append(C.Chain(nil), carrierConn.ProviderChains()...)
-	} else if h.role == postHopPool && h.directCarrier {
+	case h.role == postHopPool && h.directCarrier:
 		connectCtx, cancel := context.WithDeadline(ctx, negotiationEnds)
 		directConn, directErr := directPostCarrier.DialContext(connectCtx, proxyCarrierMetadata(h.proxyConfig))
 		expired := connectCtx.Err() != nil
@@ -115,7 +120,7 @@ func (h *mihomoPoolHop) DialContext(ctx context.Context, _, target string) (net.
 		}
 		chain = append(C.Chain(nil), directConn.Chains()...)
 		providerChain = append(C.Chain(nil), directConn.ProviderChains()...)
-	} else {
+	default:
 		// Pre-hop proxies intentionally use the bare dialer, without DIRECT policy.
 		connectCtx, cancel := context.WithDeadline(ctx, negotiationEnds)
 		conn, err = dialer.NewDialer().DialContext(connectCtx, "tcp", net.JoinHostPort(h.proxyConfig.Host, strconv.Itoa(h.proxyConfig.Port)))
@@ -326,7 +331,7 @@ func bindLogin(login string) string {
 	return login
 }
 
-func (a *hopPoolAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) {
+func (a *hopPoolAdapter) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, error) { //nolint:contextcheck // nil ctx fallback only; a caller ctx is always inherited
 	if ctx == nil {
 		ctx = context.Background()
 	}

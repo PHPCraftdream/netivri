@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -476,7 +477,7 @@ func TestStickyGroupConcurrentChooseSameMember(t *testing.T) {
 	const workers = 8
 	start := make(chan struct{})
 	results := make(chan int, workers)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func() {
 			<-start
 			member, _ := g.choose("alice", "example.com")
@@ -520,7 +521,7 @@ func TestStickyGroupConcurrentRebindOnce(t *testing.T) {
 	const workers = 8
 	start := make(chan struct{})
 	results := make(chan int, workers)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		go func() {
 			<-start
 			member, _ := g.choose("alice", "example.com")
@@ -528,7 +529,7 @@ func TestStickyGroupConcurrentRebindOnce(t *testing.T) {
 		}()
 	}
 	close(start)
-	for i := 0; i < workers; i++ {
+	for range workers {
 		if member := <-results; member != 0 {
 			t.Fatalf("choose returned member %d, want the healthy member 0", member)
 		}
@@ -573,7 +574,7 @@ func TestThroughputPollerCollectsAndPrunes(t *testing.T) {
 	poller.source = source
 
 	trackerA.info.UploadTotal.Add(1 << 20)
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 	if len(obs.throughputSamples()) != 0 {
 		t.Fatalf("the baselining read reported movement: %+v", obs.throughputSamples())
 	}
@@ -581,7 +582,7 @@ func TestThroughputPollerCollectsAndPrunes(t *testing.T) {
 	// Second read: 2 MiB moved on a, nothing on b; the window is the real
 	// elapsed time.
 	trackerA.info.UploadTotal.Add(2 << 20)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 	samples := obs.throughputSamples()
 	if len(samples) != 1 || samples[0].label != "a" || samples[0].bytes != 2<<20 || samples[0].window != 5*time.Second {
 		t.Fatalf("throughput samples = %+v, want one {a, 2 MiB, 5s}", samples)
@@ -593,7 +594,7 @@ func TestThroughputPollerCollectsAndPrunes(t *testing.T) {
 	// The tracker of a disappears: its id is pruned, no leak, no sample.
 	trackerA.info.UploadTotal.Add(2 << 20)
 	source.trackers = []throughputTracker{trackerB, trackerOther}
-	poller.collectAt(base.Add(10*time.Second), base.Add(15*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(10*time.Second), 5*time.Second)
 	if len(obs.throughputSamples()) != 1 {
 		t.Fatalf("throughput samples after prune = %+v, want no new samples", obs.throughputSamples())
 	}
@@ -619,7 +620,7 @@ func TestThroughputPollerCountsFirstWindowOfNewTracker(t *testing.T) {
 	tracker := &fakeTracker{id: "t1", info: &statistic.TrackerInfo{Chain: C.Chain{"netivri-r0-0"}, Start: base.Add(time.Second)}}
 	tracker.info.UploadTotal.Add(2 << 20)
 	poller.source = &fakeTrackerSource{trackers: []throughputTracker{tracker}}
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 
 	samples := obs.throughputSamples()
 	if len(samples) != 1 || samples[0].label != "a" || samples[0].bytes != 2<<20 || samples[0].window != 5*time.Second {
@@ -638,7 +639,7 @@ func TestThroughputPollerBaselinesPreExistingTrackers(t *testing.T) {
 	tracker := &fakeTracker{id: "t1", info: &statistic.TrackerInfo{Chain: C.Chain{"netivri-r0-0"}, Start: base.Add(-time.Hour)}}
 	tracker.info.DownloadTotal.Add(2 << 20)
 	poller.source = &fakeTrackerSource{trackers: []throughputTracker{tracker}}
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 	if len(obs.throughputSamples()) != 0 {
 		t.Fatalf("pre-existing tracker was counted: %+v", obs.throughputSamples())
 	}
@@ -653,9 +654,9 @@ func TestThroughputPollerIgnoresSmallWindows(t *testing.T) {
 	poller.source = &fakeTrackerSource{trackers: []throughputTracker{tracker}}
 	base := time.Unix(0, 0)
 	tracker.info.DownloadTotal.Add(8 << 10) // below 16 KiB
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 	tracker.info.DownloadTotal.Add(8 << 10)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 	if len(obs.throughputSamples()) != 0 {
 		t.Fatalf("small windows were reported: %+v", obs.throughputSamples())
 	}
@@ -684,12 +685,12 @@ func TestStickyGroupConcurrentUse(t *testing.T) {
 	g, table, health := newTestGroup(t, []*fakeMember{a, b}, obs)
 
 	var wg sync.WaitGroup
-	for worker := 0; worker < 8; worker++ {
+	for worker := range 8 {
 		wg.Add(1)
 		go func(worker int) {
 			defer wg.Done()
-			login := "user" + string(rune('0'+worker))
-			for i := 0; i < 50; i++ {
+			login := "user" + strconv.Itoa(worker)
+			for i := range 50 {
 				md := dialMetadata(login, "site"+string(rune('a'+i%3))+".example")
 				if _, err := g.DialContext(context.Background(), md); err != nil {
 					t.Errorf("dial: %v", err)

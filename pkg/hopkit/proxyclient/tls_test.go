@@ -236,7 +236,7 @@ func TestHTTPSConnectTLSValidationAndPayload(t *testing.T) {
 	})
 	go func() {
 		defer close(peerFinished)
-		err := server.Handshake()
+		err := server.HandshakeContext(context.Background())
 		if err == nil {
 			state := server.ConnectionState()
 			if state.ServerName != "proxy.example" {
@@ -291,7 +291,7 @@ func TestHTTPSConnectRejectsWrongCAAndIgnoresInsecureOverride(t *testing.T) {
 	_, leaf := testTLSConfig(t)
 	wrongRoots := x509.NewCertPool()
 	wrongRoots.AddCert(mustParseCert(t, mustSelfSigned(t)))
-	config := &tls.Config{RootCAs: wrongRoots, InsecureSkipVerify: true, ServerName: "caller-name.invalid"}
+	config := &tls.Config{RootCAs: wrongRoots, InsecureSkipVerify: true, ServerName: "caller-name.invalid"} //nolint:gosec // G402: the test sets the override on purpose to prove the client ignores it
 	originalServerName := config.ServerName
 	client, rawServer := bufferedTLSPipePair()
 	server := tls.Server(rawServer, &tls.Config{Certificates: []tls.Certificate{*leaf}})
@@ -304,7 +304,7 @@ func TestHTTPSConnectRejectsWrongCAAndIgnoresInsecureOverride(t *testing.T) {
 	})
 	go func() {
 		defer close(peerFinished)
-		err := server.Handshake()
+		err := server.HandshakeContext(context.Background())
 		peerDone(peer, err)
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -330,7 +330,7 @@ func TestHTTPSConnectRejectsWrongCAAndIgnoresInsecureOverride(t *testing.T) {
 		if !errors.As(peerErr, &remoteError) || remoteError.Op != "remote error" || remoteError.Err == nil {
 			t.Fatal("TLS peer error did not identify a remote alert")
 		}
-		if alert, ok := remoteError.Err.(interface{ Error() string }); !ok || alert.Error() != "tls: bad certificate" {
+		if remoteError.Err.Error() != "tls: bad certificate" {
 			t.Fatal("TLS peer received an unexpected TLS alert")
 		}
 		if errors.Is(peerErr, io.EOF) || errors.Is(peerErr, io.ErrUnexpectedEOF) {

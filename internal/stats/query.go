@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,7 +50,7 @@ func (s *Store) Nodes(q Query) ([]NodeStats, error) {
 	// Keep the node metadata and aggregates on one database snapshot, so a
 	// concurrent retention fold cannot make the same samples disappear from
 	// both reads or appear in both.
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("stats: begin node read: %w", err)
 	}
@@ -145,7 +146,7 @@ func (s *Store) filteredNodes(q querier, filters Query) ([]*nodeMeta, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stats: query nodes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var metas []*nodeMeta
 	for rows.Next() {
 		m := &nodeMeta{}
@@ -175,10 +176,10 @@ FROM sample `+join+where+` GROUP BY sample.node, sample.kind`, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query counts: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, kind, n, ok, msSum int64
 		if err := rows.Scan(&id, &kind, &n, &ok, &msSum); err != nil {
-			rows.Close()
 			return fmt.Errorf("stats: scan counts: %w", err)
 		}
 		st := get(id)
@@ -199,10 +200,8 @@ FROM sample `+join+where+` GROUP BY sample.node, sample.kind`, args...)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("stats: query counts: %w", err)
 	}
-	rows.Close()
 
 	if includeSamples {
 		join, where, args = nodeWhere("sample", "ts", fromMS, filters, "sample.kind = ? AND sample.ok = 1", int(KindProbe))
@@ -279,10 +278,10 @@ FROM hourly `+join+where+` GROUP BY hourly.node, hourly.kind`, args...)
 	if err != nil {
 		return fmt.Errorf("stats: query hourly: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, kind, n, ok, msSum int64
 		if err := rows.Scan(&id, &kind, &n, &ok, &msSum); err != nil {
-			rows.Close()
 			return fmt.Errorf("stats: scan hourly: %w", err)
 		}
 		st := accFor(id)
@@ -307,10 +306,8 @@ FROM hourly `+join+where+` GROUP BY hourly.node, hourly.kind`, args...)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("stats: query hourly: %w", err)
 	}
-	rows.Close()
 
 	join, where, args = nodeWhere("hourly", "hour", fromHour, filters, "")
 	if err := scanSum(q, args, `SELECT hourly.node, SUM(hourly.bytes) FROM hourly `+join+where+` GROUP BY hourly.node`,
@@ -358,7 +355,7 @@ func collectInts(q querier, out map[int64][]int64, query string, args ...any) er
 	if err != nil {
 		return fmt.Errorf("stats: query samples: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, v int64
 		if err := rows.Scan(&id, &v); err != nil {
@@ -375,7 +372,7 @@ func scanSum(q querier, args []any, query string, fn func(id, v int64)) error {
 	if err != nil {
 		return fmt.Errorf("stats: query aggregate: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id, v int64
 		if err := rows.Scan(&id, &v); err != nil {

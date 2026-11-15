@@ -11,11 +11,11 @@ import (
 )
 
 func TestDoctorServerTCPChecksUseTCPProbe(t *testing.T) {
-	portListener, err := net.Listen("tcp", "127.0.0.1:0")
+	portListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := portListener.Addr().(*net.TCPAddr).Port
+	port := mustAs[*net.TCPAddr](t, portListener.Addr()).Port
 	if err := portListener.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,11 +57,11 @@ func TestDoctorServerTCPChecksUseTCPProbe(t *testing.T) {
 func TestDoctorServerUDPChecksUseUDPProbe(t *testing.T) {
 	for _, protocol := range []string{"hysteria2", "tuic"} {
 		t.Run(protocol, func(t *testing.T) {
-			portListener, err := net.Listen("tcp", "127.0.0.1:0")
+			portListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
-			port := portListener.Addr().(*net.TCPAddr).Port
+			port := mustAs[*net.TCPAddr](t, portListener.Addr()).Port
 			if err := portListener.Close(); err != nil {
 				t.Fatal(err)
 			}
@@ -131,7 +131,7 @@ func TestDoctorServerUDPChecksUseUDPProbe(t *testing.T) {
 }
 
 func TestDoctorServerProbeClosesListeners(t *testing.T) {
-	tcp, err := net.Listen("tcp", "127.0.0.1:0")
+	tcp, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestDoctorServerProbeClosesListeners(t *testing.T) {
 	if err := doctorServerListenTCP(tcpAddr); err != nil {
 		t.Fatalf("TCP probe failed to bind and close %s: %v", tcpAddr, err)
 	}
-	tcpAgain, err := net.Listen("tcp", tcpAddr)
+	tcpAgain, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", tcpAddr)
 	if err != nil {
 		t.Fatalf("TCP probe left %s bound: %v", tcpAddr, err)
 	}
@@ -150,7 +150,7 @@ func TestDoctorServerProbeClosesListeners(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	udp, err := net.ListenPacket("udp", "127.0.0.1:0")
+	udp, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestDoctorServerProbeClosesListeners(t *testing.T) {
 	if err := doctorServerListenUDP(udpAddr); err != nil {
 		t.Fatalf("UDP probe failed to bind and close %s: %v", udpAddr, err)
 	}
-	udpAgain, err := net.ListenPacket("udp", udpAddr)
+	udpAgain, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", udpAddr)
 	if err != nil {
 		t.Fatalf("UDP probe left %s bound: %v", udpAddr, err)
 	}

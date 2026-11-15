@@ -42,7 +42,7 @@ func statusPoolSnapshot(role, route, identity, key, state string, trips int) cor
 	return core.HopPoolSnapshot{Role: role, RouteKey: route, PoolIdentity: identity, Key: key, State: state, Trips: trips}
 }
 
-func newLiveHopStatusFixture(t *testing.T) (*liveAngel, *liveStatusHopCore, time.Time) {
+func newLiveHopStatusFixture(t *testing.T) *liveAngel {
 	t.Helper()
 	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
 	routeA, routeB := "provider~DE~route-a", "provider~NL~route-b"
@@ -101,7 +101,7 @@ func newLiveHopStatusFixture(t *testing.T) (*liveAngel, *liveStatusHopCore, time
 		}}},
 		inst: inst,
 	}
-	return live, inst, now
+	return live
 }
 
 func TestLiveStatusOmitsHopPoolsForCoreFakesWithoutOptionalSource(t *testing.T) {
@@ -118,17 +118,34 @@ func TestLiveStatusOmitsHopPoolsForCoreFakesWithoutOptionalSource(t *testing.T) 
 	}
 }
 
+// liveHopPoolsState carries the status snapshot between the phases of the hop pool test.
+type liveHopPoolsState struct {
+	st      angel.Status
+	byLogin map[string]angel.AccountInfo
+}
+
 func TestLiveStatusHopPoolsAreRoleScopedDeduplicatedAndSafe(t *testing.T) {
-	live, _, _ := newLiveHopStatusFixture(t)
-	st := live.status("")
-	byLogin := make(map[string]angel.AccountInfo, len(st.Accounts))
-	for _, account := range st.Accounts {
-		byLogin[account.Login] = account
+	live := newLiveHopStatusFixture(t)
+	s := &liveHopPoolsState{st: live.status("")}
+	s.byLogin = make(map[string]angel.AccountInfo, len(s.st.Accounts))
+	for _, account := range s.st.Accounts {
+		s.byLogin[account.Login] = account
 	}
+	checkLiveHopPoolGrouping(t, s)
+	preLarge, preDown, post := findLiveHopPoolsByShape(s.byLogin["alice"].HopPools)
+	checkLivePreLargeHopPool(t, preLarge)
+	checkLivePreDownHopPool(t, preDown)
+	checkLivePostHopPool(t, post)
+	checkLiveHopPoolsRedacted(t, s.st)
+}
+
+func checkLiveHopPoolGrouping(t *testing.T, s *liveHopPoolsState) {
+	t.Helper()
+	byLogin := s.byLogin
 	if len(byLogin["alice"].HopPools) != 3 {
 		t.Fatalf("alice pools = %#v; want separate pre provider pools and post pool", byLogin["alice"].HopPools)
 	}
-	var roles []string
+	roles := make([]string, 0, len(byLogin["alice"].HopPools))
 	for _, pool := range byLogin["alice"].HopPools {
 		roles = append(roles, pool.Role)
 	}
@@ -153,10 +170,13 @@ func TestLiveStatusHopPoolsAreRoleScopedDeduplicatedAndSafe(t *testing.T) {
 	if len(byLogin["single"].HopPools) != 0 {
 		t.Fatalf("singleton account pools = %#v", byLogin["single"].HopPools)
 	}
+}
 
+// findLiveHopPoolsByShape picks alice's 4-hop pre pool, 2-hop pre pool and post pool.
+func findLiveHopPoolsByShape(pools []angel.HopPoolInfo) (*angel.HopPoolInfo, *angel.HopPoolInfo, *angel.HopPoolInfo) {
 	var preLarge, preDown, post *angel.HopPoolInfo
-	for i := range byLogin["alice"].HopPools {
-		pool := &byLogin["alice"].HopPools[i]
+	for i := range pools {
+		pool := &pools[i]
 		switch {
 		case pool.Role == "pre" && pool.HopCount == 4:
 			preLarge = pool
@@ -166,6 +186,11 @@ func TestLiveStatusHopPoolsAreRoleScopedDeduplicatedAndSafe(t *testing.T) {
 			post = pool
 		}
 	}
+	return preLarge, preDown, post
+}
+
+func checkLivePreLargeHopPool(t *testing.T, preLarge *angel.HopPoolInfo) {
+	t.Helper()
 	if preLarge == nil || preLarge.ActiveCount != 1 || preLarge.QuarantinedCount != 3 || preLarge.UnpersistableCount != 1 {
 		t.Fatalf("pre pool counts = %#v", preLarge)
 	}
@@ -181,16 +206,27 @@ func TestLiveStatusHopPoolsAreRoleScopedDeduplicatedAndSafe(t *testing.T) {
 	if preLarge.Hops[3].State != "probing" || preLarge.Hops[3].ID != "" || preLarge.Hops[3].NextRevivalSeconds != nil {
 		t.Fatalf("unsafe probing entry = %#v", preLarge.Hops[3])
 	}
+}
+
+func checkLivePreDownHopPool(t *testing.T, preDown *angel.HopPoolInfo) {
+	t.Helper()
 	if preDown == nil || preDown.ActiveCount != 0 || preDown.QuarantinedCount != 2 {
 		t.Fatalf("second provider pool was combined into misleading health counts: %#v", preDown)
 	}
 	if preDown.Hops[0].NextRevivalSeconds == nil || *preDown.Hops[0].NextRevivalSeconds != 30 || preDown.Hops[1].NextRevivalSeconds == nil || *preDown.Hops[1].NextRevivalSeconds != 60 {
 		t.Fatalf("stale exports were joined across pool identities: %#v", preDown.Hops)
 	}
+}
+
+func checkLivePostHopPool(t *testing.T, post *angel.HopPoolInfo) {
+	t.Helper()
 	if post == nil || post.ActiveCount != 1 || post.QuarantinedCount != 1 || post.Hops[0].NextRevivalSeconds == nil || *post.Hops[0].NextRevivalSeconds != 0 {
 		t.Fatalf("post role pool = %#v", post)
 	}
+}
 
+func checkLiveHopPoolsRedacted(t *testing.T, st angel.Status) {
+	t.Helper()
 	raw := mustJSON(t, st)
 	for _, secret := range []string{"hop-secret.example", "do-not-print", "route-a", statusPoolID('f')} {
 		if strings.Contains(raw, secret) {
@@ -203,17 +239,17 @@ func TestLiveStatusHopPoolsAreRoleScopedDeduplicatedAndSafe(t *testing.T) {
 }
 
 func TestStatusHopPoolsReachShortAndFullJSONAndKtav(t *testing.T) {
-	live, _, _ := newLiveHopStatusFixture(t)
+	live := newLiveHopStatusFixture(t)
 	status := live.status("2026-11-12T12:00:00Z")
 	for _, args := range [][]string{{"--json"}, {"--json", "--full"}} {
 		stubStatus(t, status)
 		data := runStatusData(t, args...)
-		accounts := data["accounts"].([]any)
-		alice := accounts[0].(map[string]any)
-		if alice["login"] != "alice" || len(alice["hop_pools"].([]any)) != 3 {
+		accounts := mustAs[[]any](t, data["accounts"])
+		alice := mustAs[map[string]any](t, accounts[0])
+		if alice["login"] != "alice" || len(mustAs[[]any](t, alice["hop_pools"])) != 3 {
 			t.Fatalf("JSON args %v omitted live pool status: %#v", args, alice)
 		}
-		single := accounts[3].(map[string]any)
+		single := mustAs[map[string]any](t, accounts[3])
 		if _, ok := single["hop_pools"]; ok {
 			t.Fatalf("JSON args %v included singleton pool status: %#v", args, single)
 		}
@@ -223,18 +259,18 @@ func TestStatusHopPoolsReachShortAndFullJSONAndKtav(t *testing.T) {
 	for _, args := range [][]string{nil, {"--full"}} {
 		stubStatus(t, status)
 		doc := runStatusKtavDoc(t, args...)
-		data := doc["data"].(map[string]any)
-		accounts := data["accounts"].([]any)
-		alice := accounts[0].(map[string]any)
-		pools := alice["hop_pools"].([]any)
+		data := mustAs[map[string]any](t, doc["data"])
+		accounts := mustAs[[]any](t, data["accounts"])
+		alice := mustAs[map[string]any](t, accounts[0])
+		pools := mustAs[[]any](t, alice["hop_pools"])
 		if len(pools) != 3 {
 			t.Fatalf("Ktav args %v pools = %#v", args, pools)
 		}
-		single := accounts[3].(map[string]any)
+		single := mustAs[map[string]any](t, accounts[3])
 		if _, ok := single["hop_pools"]; ok {
 			t.Fatalf("Ktav args %v included singleton pool status: %#v", args, single)
 		}
-		first := pools[0].(map[string]any)
+		first := mustAs[map[string]any](t, pools[0])
 		if first["role"] == "" || first["hop_count"] == nil {
 			t.Fatalf("Ktav pool shape = %#v", first)
 		}
@@ -283,7 +319,7 @@ func TestLiveStatusShowsTheDefaultRoutePoolAtTopLevel(t *testing.T) {
 }
 
 func TestLiveStatusWithoutDefaultRoutePoolOmitsTheField(t *testing.T) {
-	live, _, _ := newLiveHopStatusFixture(t)
+	live := newLiveHopStatusFixture(t)
 	st := live.status("")
 	if st.HopPools != nil {
 		t.Fatalf("default route pools = %#v, want none", st.HopPools)

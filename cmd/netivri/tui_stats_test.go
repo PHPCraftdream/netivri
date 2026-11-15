@@ -7,12 +7,14 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 type statsFixture struct {
+	t      testing.TB
 	s      *statsScreen
 	home   string
 	toasts []string
@@ -22,7 +24,7 @@ type statsFixture struct {
 
 func newStatsFixture(t *testing.T, seed bool) *statsFixture {
 	t.Helper()
-	f := &statsFixture{home: t.TempDir()}
+	f := &statsFixture{home: t.TempDir(), t: t}
 	if seed {
 		seedStats(t, f.home)
 	}
@@ -31,7 +33,7 @@ func newStatsFixture(t *testing.T, seed bool) *statsFixture {
 		Background: inlineBackground,
 		Toast:      func(text string) tea.Cmd { f.toasts = append(f.toasts, text); return nil },
 	}
-	f.s = newStatsScreen(f.home, env).(*statsScreen)
+	f.s = mustAs[*statsScreen](t, newStatsScreen(f.home, env))
 	f.base = f.s.read
 	f.s.read = func(home string, o StatsOptions) (StatsResult, error) {
 		f.reads = append(f.reads, o)
@@ -42,12 +44,12 @@ func newStatsFixture(t *testing.T, seed bool) *statsFixture {
 }
 
 func (f *statsFixture) drain(c tea.Cmd) {
-	f.s = parityDrain(f.s, c).(*statsScreen)
+	f.s = mustAs[*statsScreen](f.t, parityDrain(f.s, c))
 }
 
 func (f *statsFixture) msg(m tea.Msg) {
 	sc, c := f.s.Update(m)
-	f.s = sc.(*statsScreen)
+	f.s = mustAs[*statsScreen](f.t, sc)
 	f.drain(c)
 }
 
@@ -56,11 +58,11 @@ func (f *statsFixture) key(k string) {
 	f.msg(tea.KeyPressMsg{Code: r[0], Text: k})
 }
 
-func (f *statsFixture) size(w, h int) { f.msg(tea.WindowSizeMsg{Width: w, Height: h}) }
+func (f *statsFixture) size(w int) { f.msg(tea.WindowSizeMsg{Width: w, Height: 24}) }
 
 // cardFocus focuses the card pane at a wide size, as the frame does on tab focus.
 func (f *statsFixture) cardFocus() {
-	f.size(100, 24)
+	f.size(100)
 	f.s.SetPaneFocus(tui.PaneCard)
 }
 
@@ -139,7 +141,7 @@ func TestStatsEmptyState(t *testing.T) {
 	if !strings.Contains(c.Info[1], statsPath(f.home)) {
 		t.Fatalf("info = %v", c.Info)
 	}
-	f.size(100, 24)
+	f.size(100)
 	if v := ansi.Strip(f.s.View(100, 24)); !strings.Contains(v, "No statistics yet") {
 		t.Fatalf("view =\n%s", v)
 	}
@@ -211,7 +213,7 @@ func TestStatsSincePromptValidatesAndApplies(t *testing.T) {
 	if f.s.promptMode != "since" {
 		t.Fatalf("mode = %q", f.s.promptMode)
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.msg(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	f.key("2")
@@ -227,7 +229,7 @@ func TestStatsSincePromptValidatesAndApplies(t *testing.T) {
 		t.Fatalf("since line = %+v", l)
 	}
 	f.msg(tea.KeyPressMsg{Code: tea.KeyEnter})
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		f.msg(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	f.msg(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -250,7 +252,7 @@ func TestStatsFilterPromptsApplyAndClear(t *testing.T) {
 		t.Run(tc.field, func(t *testing.T) {
 			f := newStatsFixture(t, true)
 			f.cardFocus()
-			for i := 0; i < tc.down; i++ {
+			for range tc.down {
 				f.msg(tea.KeyPressMsg{Code: tea.KeyDown})
 			}
 			f.msg(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -338,7 +340,7 @@ func TestStatsReloadKey(t *testing.T) {
 func TestStatsGroupByCardAction(t *testing.T) {
 	f := newStatsFixture(t, true)
 	f.cardFocus()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f.msg(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	f.msg(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -359,7 +361,7 @@ func TestStatsReadErrorsShownByMessageOnly(t *testing.T) {
 	if got := f.toasts[len(f.toasts)-1]; got != "statistics operation failed" {
 		t.Fatalf("toast = %q", got)
 	}
-	f.size(100, 24)
+	f.size(100)
 	v := ansi.Strip(f.s.View(100, 24))
 	if strings.Contains(v, "secret-looking") || strings.Contains(v, "10.0.0.1") {
 		t.Fatalf("a foreign error must not be echoed:\n%s", v)
@@ -423,7 +425,7 @@ func TestStatsPanesAndHints(t *testing.T) {
 	if f.s.FocusPane(false) {
 		t.Fatal("focus must not move below 100 columns")
 	}
-	f.size(100, 24)
+	f.size(100)
 	if !f.s.FocusPane(false) || f.s.workspace.Focus() != tui.PaneCard {
 		t.Fatal("focus must move to the card")
 	}
@@ -441,7 +443,7 @@ func TestStatsPanesAndHints(t *testing.T) {
 		t.Fatal("SetPaneFocus did not select the card")
 	}
 	f.s.workspace.Drilled = true
-	f.size(80, 24)
+	f.size(80)
 	if got := f.s.Breadcrumb(); got != "Stats / alt/b" {
 		t.Fatalf("breadcrumb = %q", got)
 	}
@@ -486,7 +488,7 @@ func newDeferredStatsFixture(t *testing.T) *deferredStatsFixture {
 			return nil
 		},
 	}
-	f.s = newStatsScreen(t.TempDir(), env).(*statsScreen)
+	f.s = mustAs[*statsScreen](t, newStatsScreen(t.TempDir(), env))
 	return f
 }
 
@@ -496,7 +498,7 @@ func (f *deferredStatsFixture) deliver(t *testing.T, cmd tea.Cmd) {
 		t.Fatal("expected a deferred stats command")
 	}
 	screen, _ := f.s.Update(cmd())
-	f.s = screen.(*statsScreen)
+	f.s = mustAs[*statsScreen](t, screen)
 }
 
 func statsTestResult(by, key string) StatsResult {
@@ -560,7 +562,7 @@ func TestStatsReloadDiscardsStaleFilterErrorAndSuccess(t *testing.T) {
 	}
 	f.s.openPrompt("sub")
 	screen, newResult := f.s.applyPrompt(tui.PromptResultMsg{Value: "new"})
-	f.s = screen.(*statsScreen)
+	f.s = mustAs[*statsScreen](t, screen)
 
 	f.deliver(t, staleError)
 	if f.s.busy != "Loading statistics" || f.s.errText != "previous error" || !f.s.loaded ||

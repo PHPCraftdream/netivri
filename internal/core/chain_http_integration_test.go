@@ -39,7 +39,7 @@ type httpHop struct {
 func startHTTPHop(t *testing.T, wantAuth string) (*httpHop, string) {
 	t.Helper()
 	h := &httpHop{wantAuth: wantAuth}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("http hop listen: %v", err)
 	}
@@ -63,7 +63,7 @@ func (h *httpHop) snapshot() (targets, auths []string) {
 }
 
 func (h *httpHop) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(testTimeout))
 	br := bufio.NewReader(c)
 	req, err := http.ReadRequest(br)
@@ -80,12 +80,12 @@ func (h *httpHop) serve(c net.Conn) {
 		_, _ = io.WriteString(c, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"hop\"\r\n\r\n")
 		return
 	}
-	up, err := net.DialTimeout("tcp", req.Host, testTimeout)
+	up, err := (&net.Dialer{Timeout: testTimeout}).DialContext(context.Background(), "tcp", req.Host) //nolint:gosec // G704: test CONNECT fixture dials the target the test client asked for, by design
 	if err != nil {
 		_, _ = io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	if _, err = io.WriteString(c, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
 		return
 	}
@@ -202,7 +202,7 @@ func startTLSHTTPHopCert(t *testing.T) (*httpHop, string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	raw, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

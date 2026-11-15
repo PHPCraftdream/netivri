@@ -28,7 +28,7 @@ func TestNodeListAll(t *testing.T) {
 	// Stable order: subscription order, then provider order.
 	wantSubs := []string{"a", "a", "a", "b"}
 	for i, w := range wantSubs {
-		n := nodes[i].(map[string]any)
+		n := mustAs[map[string]any](t, nodes[i])
 		if n["sub"] != w {
 			t.Errorf("nodes[%d].sub = %v, want %v", i, n["sub"], w)
 		}
@@ -38,9 +38,9 @@ func TestNodeListAll(t *testing.T) {
 			}
 		}
 	}
-	if nodes[0].(map[string]any)["country"] != "DE" ||
-		nodes[3].(map[string]any)["country"] != "FI" {
-		t.Errorf("countries = %v / %v, want DE / FI", nodes[0].(map[string]any)["country"], nodes[3].(map[string]any)["country"])
+	if mustAs[map[string]any](t, nodes[0])["country"] != "DE" ||
+		mustAs[map[string]any](t, nodes[3])["country"] != "FI" {
+		t.Errorf("countries = %v / %v, want DE / FI", mustAs[map[string]any](t, nodes[0])["country"], mustAs[map[string]any](t, nodes[3])["country"])
 	}
 	// Credentials from the raw proxy mappings must never appear.
 	for _, secret := range []string{"pass", "00000000-0000", "cipher"} {

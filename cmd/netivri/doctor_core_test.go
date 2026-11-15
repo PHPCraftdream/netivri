@@ -17,7 +17,7 @@ import (
 func TestDoctorCoreDownFailsAngelAndListen(t *testing.T) {
 	doctorFixTime(t)
 	doctorStubListen(t, nil)
-	const secretURL = "https://provider.example/sub/doctor-secret"
+	const secretURL = "https://provider.example/sub/doctor-secret" //nolint:gosec // G101: fake credential, test fixture only
 	secretHash, err := auth.Hash("doctor-secret-password")
 	if err != nil {
 		t.Fatal(err)

@@ -44,7 +44,7 @@ func logsRun(t *testing.T, home string, args ...string) ([]map[string]any, error
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, r := range raw {
-		items = append(items, r.(map[string]any))
+		items = append(items, mustAs[map[string]any](t, r))
 	}
 	return items, nil
 }
@@ -100,7 +100,7 @@ func TestLogsTail(t *testing.T) {
 func TestLogsDefaultTailIsBounded(t *testing.T) {
 	home := t.TempDir()
 	var b strings.Builder
-	for i := 0; i < defaultLogTail+25; i++ {
+	for range defaultLogTail + 25 {
 		b.WriteString("2026-10-24T10:00:00Z INFO line\n")
 	}
 	seedLog(t, home, b.String())
@@ -232,7 +232,7 @@ func appendLogFile(t *testing.T, home, text string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(text); err != nil {
 		t.Fatal(err)
 	}

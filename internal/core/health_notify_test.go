@@ -48,7 +48,7 @@ func TestHealthNotifiesWhenAProbeFailureStreakTakesTheNodeDown(t *testing.T) {
 
 func TestHealthNotifiesOnDialFailuresAndRecovery(t *testing.T) {
 	table, events := notifyingTable("p/a", "p/b")
-	for i := 0; i < downDialFailures-1; i++ {
+	for range downDialFailures - 1 {
 		table.recordDial("p/a", false, 0)
 	}
 	if got := events(); len(got) != 0 {

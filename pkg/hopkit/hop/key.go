@@ -20,7 +20,7 @@ func Key(rawURL string) (string, bool) {
 		return "", false
 	}
 	scheme := strings.ToLower(u.Scheme)
-	defaultPort := ""
+	var defaultPort string
 	switch scheme {
 	case "socks5":
 		defaultPort = "1080"

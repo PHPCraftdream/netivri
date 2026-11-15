@@ -13,7 +13,7 @@ import (
 func TestServerProtocolDocumentation(t *testing.T) {
 	read := func(t *testing.T, path string) string {
 		t.Helper()
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
@@ -42,7 +42,7 @@ func TestServerProtocolDocumentation(t *testing.T) {
 	}
 
 	for _, name := range servers.Names() {
-		name := name
+
 		t.Run(name, func(t *testing.T) {
 			pagePath := filepath.Join(docsDir, name+".md")
 			page := read(t, pagePath)

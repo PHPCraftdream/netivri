@@ -37,7 +37,7 @@ func (r *snellSOCKSRecorder) snapshot() []string {
 }
 func snellRecorderStart(t *testing.T) (*snellSOCKSRecorder, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func snellRecorderStart(t *testing.T) (*snellSOCKSRecorder, string) {
 	return r, ln.Addr().String()
 }
 func snellRecorderServe(r *snellSOCKSRecorder, c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(snellIntegrationTimeout))
 	br := bufio.NewReader(c)
 	h := make([]byte, 2)
@@ -90,7 +90,7 @@ func snellRecorderServe(r *snellSOCKSRecorder, c net.Conn) {
 	if _, e := io.ReadFull(br, req); e != nil || req[1] != 1 {
 		return
 	}
-	host := ""
+	var host string
 	switch req[3] {
 	case 1:
 		b := make([]byte, 4)
@@ -130,7 +130,7 @@ func snellRecorderServe(r *snellSOCKSRecorder, c net.Conn) {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(snellIntegrationTimeout))
 	if _, e = c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); e != nil {
 		return
@@ -175,13 +175,53 @@ func snellIntegrationWait(t *testing.T, i *core.Instance) {
 		}
 	}
 }
+
+// snellRouteRun holds the state shared by the phases of TestSnellIntegrationRoutePoliciesRotation.
+type snellRouteRun struct {
+	t       *testing.T
+	p       servers.Protocol
+	rec     *snellSOCKSRecorder
+	recAddr string
+	home    string
+	dst     string
+	ip      netip.Addr
+	dstPort int
+	port    int
+	spec    servers.Spec
+	current servers.Spec
+	inst    *core.Instance
+	closed  bool
+}
+
 func TestSnellIntegrationRoutePoliciesRotation(t *testing.T) {
 	p, ok := servers.Lookup("snell")
 	if !ok {
 		t.Fatal("Snell not registered")
 	}
 	rec, recAddr := snellRecorderStart(t)
-	echo, e := net.Listen("tcp", "127.0.0.1:0")
+	r := &snellRouteRun{t: t, p: p, rec: rec, recAddr: recAddr}
+	r.dst, r.ip, r.dstPort = snellEchoTarget(t)
+	r.home = testutil.TempHome(t)
+	r.spec = r.makeSpec(r.key(), "2", "", "")
+	r.start()
+	if e := r.dial(r.spec.Users["alice"]["psk"], "2", "", ""); e != nil {
+		t.Fatalf("echo failed: %v", e)
+	}
+	r.drain()
+	targets := rec.snapshot()
+	if len(targets) != 1 || targets[0] != r.dst {
+		t.Fatal("route recorder destination mismatch")
+	}
+	r.rotateVersionsAndObfs()
+	r.checkWrongPSK()
+	r.checkPolicies()
+	r.checkRotationAndClose()
+}
+
+// snellEchoTarget starts a TCP echo server, registers its cleanup and returns the dial target.
+func snellEchoTarget(t *testing.T) (string, netip.Addr, int) {
+	t.Helper()
+	echo, e := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -197,7 +237,7 @@ func TestSnellIntegrationRoutePoliciesRotation(t *testing.T) {
 			ew.Add(1)
 			go func() {
 				defer ew.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(snellIntegrationTimeout))
 				_, _ = io.Copy(c, c)
 			}()
@@ -222,142 +262,156 @@ func TestSnellIntegrationRoutePoliciesRotation(t *testing.T) {
 	dst := net.JoinHostPort(hostText, portText)
 	ip := netip.MustParseAddr(hostText)
 	dstPort, _ := strconv.Atoi(portText)
-	key := func() string {
-		v, x := p.NewSecret("alice", nil)
-		if x != nil {
-			t.Fatal("PSK generation failed")
-		}
-		return v["psk"]
+	return dst, ip, dstPort
+}
+
+func (r *snellRouteRun) key() string {
+	v, x := r.p.NewSecret("alice", nil)
+	if x != nil {
+		r.t.Fatal("PSK generation failed")
 	}
-	home := testutil.TempHome(t)
-	port := 0
-	makeSpec := func(k, v, o, h string) servers.Spec {
-		params := map[string]string{}
-		if v != "" {
-			params["version"] = v
-		}
-		if o != "" {
-			params["obfs"] = o
-		}
-		if h != "" {
-			params["obfs_host"] = h
-		}
-		return servers.Spec{Name: "snell-entry", Protocol: "snell", Bind: "127.0.0.1", Port: port, Accounts: []string{"alice"}, Params: params, Users: servers.UserSecrets{"alice": {"psk": k}}}
+	return v["psk"]
+}
+
+func (r *snellRouteRun) makeSpec(k, v, o, h string) servers.Spec {
+	params := map[string]string{}
+	if v != "" {
+		params["version"] = v
 	}
-	spec := makeSpec(key(), "2", "", "")
-	options := func(s servers.Spec, g, a []netip.Prefix) core.Options {
-		return snellIntegrationOptions(home, s, recAddr, g, a)
+	if o != "" {
+		params["obfs"] = o
 	}
-	var inst *core.Instance
-	port = servertest.StartOnFreePort(t, func(candidate int) error {
-		port = candidate
-		spec.Port = candidate
+	if h != "" {
+		params["obfs_host"] = h
+	}
+	return servers.Spec{Name: "snell-entry", Protocol: "snell", Bind: "127.0.0.1", Port: r.port, Accounts: []string{"alice"}, Params: params, Users: servers.UserSecrets{"alice": {"psk": k}}}
+}
+
+func (r *snellRouteRun) options(s servers.Spec, g, a []netip.Prefix) core.Options {
+	return snellIntegrationOptions(r.home, s, r.recAddr, g, a)
+}
+
+func (r *snellRouteRun) reconfigure(s servers.Spec, g, a []netip.Prefix) error {
+	return r.inst.Reconfigure(r.options(s, g, a))
+}
+
+func (r *snellRouteRun) drain() {
+	snellIntegrationWait(r.t, r.inst)
+}
+
+func (r *snellRouteRun) start() {
+	r.port = servertest.StartOnFreePort(r.t, func(candidate int) error {
+		r.port = candidate
+		r.spec.Port = candidate
 		var x error
-		inst, x = core.Start(context.Background(), options(spec, nil, nil))
+		r.inst, x = core.Start(context.Background(), r.options(r.spec, nil, nil))
 		return x
 	})
-	closed := false
-	drain := func() { snellIntegrationWait(t, inst) }
-	t.Cleanup(func() {
-		if !closed {
-			defer func() { _ = inst.Close() }()
-			drain()
+	r.t.Cleanup(func() {
+		if !r.closed {
+			defer func() { _ = r.inst.Close() }()
+			r.drain()
 		}
 	})
-	dial := func(k, v, o, h string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), snellIntegrationTimeout)
-		defer cancel()
-		ver := 2
-		if v == "3" {
-			ver = 3
-		}
-		client, x := outbound.NewSnell(outbound.SnellOption{Name: "snell-client", Server: "127.0.0.1", Port: port, Psk: k, Version: ver, ObfsOpts: map[string]any{"mode": o, "host": h}})
-		if x != nil {
-			return x
-		}
-		defer client.Close()
-		raw, x := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-		if x != nil {
-			return x
-		}
-		defer raw.Close()
-		if x = raw.SetDeadline(time.Now().Add(snellIntegrationTimeout)); x != nil {
-			return x
-		}
-		conn, x := client.StreamConnContext(ctx, raw, &C.Metadata{NetWork: C.TCP, DstIP: ip, DstPort: uint16(dstPort)})
-		if x != nil {
-			return x
-		}
-		payload := []byte("snell-echo")
-		if _, x = conn.Write(payload); x != nil {
-			return x
-		}
-		got := make([]byte, len(payload))
-		if _, x = io.ReadFull(conn, got); x != nil {
-			return x
-		}
-		if string(got) != string(payload) {
-			return io.ErrUnexpectedEOF
-		}
-		return nil
+}
+
+func (r *snellRouteRun) dial(k, v, o, h string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), snellIntegrationTimeout)
+	defer cancel()
+	ver := 2
+	if v == "3" {
+		ver = 3
 	}
-	if e = dial(spec.Users["alice"]["psk"], "2", "", ""); e != nil {
-		t.Fatalf("echo failed: %v", e)
+	client, x := outbound.NewSnell(outbound.SnellOption{Name: "snell-client", Server: "127.0.0.1", Port: r.port, Psk: k, Version: ver, ObfsOpts: map[string]any{"mode": o, "host": h}})
+	if x != nil {
+		return x
 	}
-	drain()
-	targets := rec.snapshot()
-	if len(targets) != 1 || targets[0] != dst {
-		t.Fatal("route recorder destination mismatch")
+	defer func() { _ = client.Close() }()
+	raw, x := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
+	if x != nil {
+		return x
 	}
+	defer func() { _ = raw.Close() }()
+	if x = raw.SetDeadline(time.Now().Add(snellIntegrationTimeout)); x != nil {
+		return x
+	}
+	conn, x := client.StreamConnContext(ctx, raw, &C.Metadata{NetWork: C.TCP, DstIP: r.ip, DstPort: servertest.MustUint16(r.t, r.dstPort)})
+	if x != nil {
+		return x
+	}
+	payload := []byte("snell-echo")
+	if _, x = conn.Write(payload); x != nil {
+		return x
+	}
+	got := make([]byte, len(payload))
+	if _, x = io.ReadFull(conn, got); x != nil {
+		return x
+	}
+	if string(got) != string(payload) {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func (r *snellRouteRun) rotateVersionsAndObfs() {
 	for _, tc := range []struct{ v, o, h string }{{"2", "", ""}, {"2", "http", "proxy.test"}, {"2", "tls", "proxy.test"}, {"3", "", ""}, {"3", "http", "proxy.test"}, {"3", "tls", "proxy.test"}} {
-		next := makeSpec(key(), tc.v, tc.o, tc.h)
-		if e = inst.Reconfigure(options(next, nil, nil)); e != nil {
-			t.Fatal("reconfigure failed")
+		next := r.makeSpec(r.key(), tc.v, tc.o, tc.h)
+		if e := r.reconfigure(next, nil, nil); e != nil {
+			r.t.Fatal("reconfigure failed")
 		}
-		if e = dial(next.Users["alice"]["psk"], tc.v, tc.o, tc.h); e != nil {
-			t.Fatalf("version/obfs case failed: %v", e)
+		if e := r.dial(next.Users["alice"]["psk"], tc.v, tc.o, tc.h); e != nil {
+			r.t.Fatalf("version/obfs case failed: %v", e)
 		}
-		drain()
+		r.drain()
 	}
-	current := makeSpec(spec.Users["alice"]["psk"], "2", "", "")
-	if e = inst.Reconfigure(options(current, nil, nil)); e != nil {
-		t.Fatal(e)
+}
+
+func (r *snellRouteRun) checkWrongPSK() {
+	r.current = r.makeSpec(r.spec.Users["alice"]["psk"], "2", "", "")
+	if e := r.reconfigure(r.current, nil, nil); e != nil {
+		r.t.Fatal(e)
 	}
-	if e = dial(key(), "2", "", ""); e == nil {
-		t.Fatal("wrong PSK accepted")
+	if e := r.dial(r.key(), "2", "", ""); e == nil {
+		r.t.Fatal("wrong PSK accepted")
 	}
-	drain()
+	r.drain()
+}
+
+func (r *snellRouteRun) checkPolicies() {
 	for _, pol := range []struct{ g, a []netip.Prefix }{{[]netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil}, {nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}} {
-		if e = inst.Reconfigure(options(current, pol.g, pol.a)); e != nil {
-			t.Fatal(e)
+		if e := r.reconfigure(r.current, pol.g, pol.a); e != nil {
+			r.t.Fatal(e)
 		}
-		if e = dial(current.Users["alice"]["psk"], "2", "", ""); e == nil {
-			t.Fatal("disallowed client accepted")
+		if e := r.dial(r.current.Users["alice"]["psk"], "2", "", ""); e == nil {
+			r.t.Fatal("disallowed client accepted")
 		}
-		drain()
-		if inst.Servers()[0].DroppedClients == 0 {
-			t.Fatal("drop not counted")
+		r.drain()
+		if r.inst.Servers()[0].DroppedClients == 0 {
+			r.t.Fatal("drop not counted")
 		}
 	}
-	rotated := makeSpec(key(), "2", "", "")
-	if e = inst.Reconfigure(options(rotated, nil, nil)); e != nil {
-		t.Fatal(e)
+}
+
+func (r *snellRouteRun) checkRotationAndClose() {
+	rotated := r.makeSpec(r.key(), "2", "", "")
+	if e := r.reconfigure(rotated, nil, nil); e != nil {
+		r.t.Fatal(e)
 	}
-	if e = dial(rotated.Users["alice"]["psk"], "2", "", ""); e != nil {
-		t.Fatalf("rotated PSK rejected: %v", e)
+	if e := r.dial(rotated.Users["alice"]["psk"], "2", "", ""); e != nil {
+		r.t.Fatalf("rotated PSK rejected: %v", e)
 	}
-	drain()
-	if e = dial(current.Users["alice"]["psk"], "2", "", ""); e == nil {
-		t.Fatal("old PSK accepted")
+	r.drain()
+	if e := r.dial(r.current.Users["alice"]["psk"], "2", "", ""); e == nil {
+		r.t.Fatal("old PSK accepted")
 	}
-	drain()
-	if e = inst.Close(); e != nil {
-		t.Fatal(e)
+	r.drain()
+	if e := r.inst.Close(); e != nil {
+		r.t.Fatal(e)
 	}
-	closed = true
-	ln, e := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	r.closed = true
+	ln, e := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
 	if e != nil {
-		t.Fatalf("Close did not free port: %v", e)
+		r.t.Fatalf("Close did not free port: %v", e)
 	}
 	_ = ln.Close()
 }

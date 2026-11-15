@@ -210,11 +210,15 @@ func reconfigureWarmOptions(server servers.Spec) Options {
 
 func reconfigureWarmTestPort(t *testing.T) int {
 	t.Helper()
-	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	conn, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("reserve dynamic fake UDP port:", err)
 	}
-	port := conn.LocalAddr().(*net.UDPAddr).Port
+	udpAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("UDP address is %T, want *net.UDPAddr", conn.LocalAddr())
+	}
+	port := udpAddr.Port
 	if err := conn.Close(); err != nil {
 		t.Fatal("release dynamic fake UDP port:", err)
 	}

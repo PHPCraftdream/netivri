@@ -28,7 +28,7 @@ func TestE2ESubQuota(t *testing.T) {
 		cfg.Subscriptions = []config.Subscription{{Name: "main", URL: srv.URL}}
 	})
 
-	code, out, stderr := accountsRun(t, home, "sub", "update", "main")
+	code, out, stderr := accountsRun(t.Context(), t, home, "sub", "update", "main")
 	if code != 0 {
 		t.Fatalf("sub update: %s%s", out, stderr)
 	}
@@ -61,7 +61,7 @@ func TestE2ESubQuota(t *testing.T) {
 		t.Errorf("update quota = %+v, want used 123 total 1000 expire %s", q, wantExpire)
 	}
 
-	code, out, stderr = accountsRun(t, home, "sub", "list")
+	code, out, stderr = accountsRun(t.Context(), t, home, "sub", "list")
 	if code != 0 {
 		t.Fatalf("sub list: %s%s", out, stderr)
 	}

@@ -104,7 +104,7 @@ func (mieru) Start(spec Spec, env Env) (io.Closer, error) {
 		BaseOption: inbound.BaseOption{
 			NameStr:            spec.Name,
 			Listen:             listen,
-			Port:               fmt.Sprint(spec.Port),
+			Port:               strconv.Itoa(spec.Port),
 			ListenConfigForAPI: prepared,
 		},
 		Transport: "TCP",

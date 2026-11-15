@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -59,7 +61,7 @@ func TestMain(m *testing.M) {
 		_ = os.RemoveAll(tmp)
 		os.Exit(1)
 	}
-	build := exec.Command("go", "build", "-trimpath", "-o", netivriBin, ".")
+	build := exec.CommandContext(context.Background(), "go", "build", "-trimpath", "-o", netivriBin, ".") //nolint:gosec // G204: fixed build flags and the temp binary path made above
 	build.Dir = pkgDir
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "e2e: go build failed: %v\n%s\n", err, out)
@@ -174,7 +176,7 @@ func upProcReport(home string) string {
 // angel failed: how the process ended, the tail of its log (a foreground angel
 // logs to stderr), the crash dumps of the home and its live status, all
 // redacted. It must not fail the test and must not wait long.
-func e2eAngelFailureReport(home string, p *upProc) string {
+func e2eAngelFailureReport(ctx context.Context, home string, p *upProc) string {
 	p.exitMu.Lock()
 	state := "running"
 	if p.exited {
@@ -189,7 +191,7 @@ func e2eAngelFailureReport(home string, p *upProc) string {
 	b.WriteString(e2eHeadTail("angel log (stderr)", p.Stderr(), 40, 200))
 	b.WriteString("\n" + e2eTail("stdout", p.Stdout(), 10))
 	b.WriteString("\ncrash dumps: " + e2eRedactDiagnostic(e2eCrashDumps(home)))
-	code, out, errOut, err := angelExec(home, "status", "--full")
+	code, out, errOut, err := angelExec(ctx, home, "status", "--full")
 	switch {
 	case err != nil:
 		fmt.Fprintf(&b, "\nstatus --full: %v", err)
@@ -221,7 +223,7 @@ func e2eCrashDumps(home string) string {
 	if newest == "" {
 		return out
 	}
-	data, err := os.ReadFile(filepath.Join(dir, newest))
+	data, err := os.ReadFile(filepath.Join(dir, newest)) //nolint:gosec // G304: crash dump inside the test's own angel home
 	if err != nil {
 		return out
 	}
@@ -319,7 +321,7 @@ func TestE2ECrashHead(t *testing.T) {
 	b.WriteString("\tgithub.com/metacubex/http@v1.2.3/transport.go:10 +0x1 fp=0x2 sp=0x3 pc=0x4\n")
 	b.WriteString("dial https://sub.example.invalid/feed?token=abc failed\n")
 	b.WriteString("user password hunter2\n")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		fmt.Fprintf(&b, "tail line %d\n", i)
 	}
 	got := e2eCrashHead(b.String())
@@ -367,8 +369,15 @@ func e2eTail(name, text string, n int) string {
 // registers Stop as cleanup. Sequential use only: no t.Parallel.
 func startUp(t *testing.T, home string, args ...string) *upProc {
 	t.Helper()
+	return startUpCtx(context.WithoutCancel(t.Context()), t, home, args...)
+}
+
+// startUpCtx is startUp for a caller that holds a context: the process is not
+// killed by ctx (its lifetime is the cleanup's), only the log report derives from it.
+func startUpCtx(ctx context.Context, t *testing.T, home string, args ...string) *upProc {
+	t.Helper()
 	full := append([]string{"up", "--foreground"}, args...)
-	cmd := exec.Command(netivriBin, full...)
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), netivriBin, full...) //nolint:gosec // G204: args are test-fixed plus the caller's listed args, binary built by TestMain
 	// The angel log goes to stderr, so a failure report can show what the
 	// angel did (a foreground run has no log file).
 	// GOTRACEBACK=all: a panic of the angel dumps every goroutine, not only the
@@ -410,7 +419,7 @@ func startUp(t *testing.T, home string, args ...string) *upProc {
 	// not leave the child running.
 	t.Cleanup(p.Stop)
 	// Registered after Stop, so it runs first, while the angel can still answer.
-	testutil.LogOnFail(t, "angel diagnostics ("+filepath.Base(home)+")", func() string { return e2eAngelFailureReport(home, p) })
+	testutil.LogOnFail(t, "angel diagnostics ("+filepath.Base(home)+")", func() string { return e2eAngelFailureReport(context.WithoutCancel(ctx), home, p) })
 	upProcsMu.Lock()
 	upProcs[home] = p
 	upProcsMu.Unlock()
@@ -547,7 +556,7 @@ func runNetivri(t *testing.T, home string, args ...string) (int, string, string)
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), e2eFirstLineTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, append([]string{"up", "--foreground"}, args...)...)
+	cmd := exec.CommandContext(ctx, netivriBin, append([]string{"up", "--foreground"}, args...)...) //nolint:gosec // G204: args come from the test, binary built by TestMain
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf
@@ -666,15 +675,53 @@ func assertNoSecrets(t *testing.T, stdout, stderr string, secrets ...string) {
 // freePort reserves and immediately releases a loopback port.
 func freePort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve port: %v", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
+	port := listenerPort(t, l)
 	if err := l.Close(); err != nil {
 		t.Fatalf("release port: %v", err)
 	}
 	return port
+}
+
+// listenerPort returns the TCP port of a listener.
+func listenerPort(t testing.TB, l net.Listener) int {
+	t.Helper()
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address %v is %T, want *net.TCPAddr", l.Addr(), l.Addr())
+	}
+	return addr.Port
+}
+
+// e2eByte converts a test value to a byte, failing the test when it does not fit.
+func e2eByte(t testing.TB, v int) byte {
+	t.Helper()
+	if v < 0 {
+		t.Fatalf("value %d does not fit a byte", v)
+		return 0
+	}
+	if v > math.MaxUint8 {
+		t.Fatalf("value %d does not fit a byte", v)
+		return 0
+	}
+	return byte(v)
+}
+
+// e2eUint16 converts a test value to uint16, failing the test when it does not fit.
+func e2eUint16(t testing.TB, v int) uint16 {
+	t.Helper()
+	if v < 0 {
+		t.Fatalf("value %d does not fit uint16", v)
+		return 0
+	}
+	if v > math.MaxUint16 {
+		t.Fatalf("value %d does not fit uint16", v)
+		return 0
+	}
+	return uint16(v)
 }
 
 // ---- loopback servers and hand-written proxy clients ----
@@ -713,7 +760,7 @@ func (s *connSet) closeAll() {
 // outlives the test and -race stays clean.
 func echoServer(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("echo listen: %v", err)
 	}
@@ -771,7 +818,7 @@ func echoServer(t *testing.T) string {
 
 func dialProxy(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, e2eIOTimeout)
+	c, err := (&net.Dialer{Timeout: e2eIOTimeout}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)
 	}
@@ -807,7 +854,8 @@ func echoRoundTrip(t *testing.T, w io.Writer, r io.Reader) {
 // method byte.
 func socks5Greet(t *testing.T, c net.Conn, methods ...byte) byte {
 	t.Helper()
-	buf := []byte{5, byte(len(methods))}
+	buf := make([]byte, 0, 2+len(methods))
+	buf = append(buf, 5, e2eByte(t, len(methods)))
 	buf = append(buf, methods...)
 	if _, err := c.Write(buf); err != nil {
 		t.Fatalf("greeting write: %v", err)
@@ -823,9 +871,10 @@ func socks5Greet(t *testing.T, c net.Conn, methods ...byte) byte {
 // status byte (0 = accepted).
 func socks5AuthReply(t *testing.T, c net.Conn, user, pass string) byte {
 	t.Helper()
-	buf := []byte{1, byte(len(user))}
+	buf := make([]byte, 0, 2+len(user)+1+len(pass))
+	buf = append(buf, 1, e2eByte(t, len(user)))
 	buf = append(buf, user...)
-	buf = append(buf, byte(len(pass)))
+	buf = append(buf, e2eByte(t, len(pass)))
 	buf = append(buf, pass...)
 	if _, err := c.Write(buf); err != nil {
 		t.Fatalf("socks5 auth write: %v", err)
@@ -855,7 +904,8 @@ func socks5ConnectRequest(t *testing.T, c net.Conn, target string) {
 	} else {
 		t.Fatalf("target %q is not an IPv4 literal", target)
 	}
-	req[8], req[9] = byte(port>>8), byte(port)
+	p16 := e2eUint16(t, port)
+	binary.BigEndian.PutUint16(req[8:10], p16)
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("socks5 request write: %v", err)
 	}

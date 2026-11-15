@@ -15,15 +15,24 @@ func TestConfirmDefaultNoAndResults(t *testing.T) {
 		{tea.KeyPressMsg{Code: 'y', Text: "y"}, true, false},
 		{tea.KeyPressMsg{Code: tea.KeyEscape}, false, true},
 	} {
-		c := &Confirm{Prompt: "Remove?"}
-		_, cmd := c.Update(tc.key)
-		if cmd == nil {
-			t.Fatalf("key %v: expected a result command", tc.key)
-		}
-		got := cmd().(ConfirmResultMsg)
-		if got.Confirmed != tc.yes || got.Canceled != tc.cancel {
-			t.Fatalf("key %v: %+v", tc.key, got)
-		}
+		assertConfirmKey(t, tc.key, tc.yes, tc.cancel)
+	}
+}
+
+// assertConfirmKey checks that key on a fresh Confirm yields a ConfirmResultMsg with the given outcome.
+func assertConfirmKey(t *testing.T, key tea.KeyPressMsg, confirmed, canceled bool) {
+	t.Helper()
+	c := &Confirm{Prompt: "Remove?"}
+	_, cmd := c.Update(key)
+	if cmd == nil {
+		t.Fatalf("key %v: expected a result command", key)
+	}
+	got, ok := cmd().(ConfirmResultMsg)
+	if !ok {
+		t.Fatalf("key %v: result is %T, want ConfirmResultMsg", key, cmd())
+	}
+	if got.Confirmed != confirmed || got.Canceled != canceled {
+		t.Fatalf("key %v: %+v", key, got)
 	}
 }
 
@@ -34,7 +43,10 @@ func TestConfirmFocusAndMouseActions(t *testing.T) {
 		t.Fatal("Tab should focus Remove without selecting")
 	}
 	_, cmd = c.Update(tea.MouseClickMsg{X: 20, Y: 2, Button: tea.MouseLeft})
-	if cmd == nil || !cmd().(ConfirmResultMsg).Confirmed {
+	if cmd == nil {
+		t.Fatal("Remove click should confirm")
+	}
+	if got, ok := cmd().(ConfirmResultMsg); !ok || !got.Confirmed {
 		t.Fatal("Remove click should confirm")
 	}
 }

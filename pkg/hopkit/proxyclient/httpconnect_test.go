@@ -402,7 +402,7 @@ func TestHTTPConnectBufferedPrefixConcurrentReaders(t *testing.T) {
 		err  error
 	}
 	results := make(chan readResult, readerCount)
-	for i := 0; i < readerCount; i++ {
+	for range readerCount {
 		go func() {
 			data := make([]byte, bytesPerReader)
 			<-start
@@ -413,7 +413,7 @@ func TestHTTPConnectBufferedPrefixConcurrentReaders(t *testing.T) {
 	close(start)
 	counts := [256]int{}
 	var readerErr error
-	for i := 0; i < readerCount; i++ {
+	for range readerCount {
 		select {
 		case result := <-results:
 			if result.err != nil && readerErr == nil {

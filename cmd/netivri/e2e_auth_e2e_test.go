@@ -90,7 +90,7 @@ func TestE2EUpLiteralAuth(t *testing.T) {
 
 	t.Run("socks5-wrong-password", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -103,7 +103,7 @@ func TestE2EUpLiteralAuth(t *testing.T) {
 	// the RFC 1929 subnegotiation; the client cannot proceed.
 	t.Run("socks5-noauth-offer-refused", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02 (server demands auth)", m)
 		}
@@ -111,7 +111,7 @@ func TestE2EUpLiteralAuth(t *testing.T) {
 
 	t.Run("http-without-credentials-407", func(t *testing.T) {
 		c, _, line := httpConnect(t, st.Data.Listen, backend, "", "")
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if !strings.HasPrefix(line, "HTTP/1.1 407") {
 			t.Fatalf("CONNECT status = %q, want HTTP/1.1 407", strings.TrimRight(line, "\r\n"))
 		}
@@ -154,7 +154,7 @@ func TestE2EUpInitPasswordFlow(t *testing.T) {
 	// is rejected and the claimed credential still works (cache path).
 	t.Run("live-wrong-password-rejected", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -232,7 +232,7 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 	// rejected and the winner still works (cache path).
 	t.Run("live-different-user-rejected", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -247,7 +247,7 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 	})
 	t.Run("live-claimed-login-wrong-password-rejected", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -286,7 +286,7 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 	})
 	t.Run("restart-different-user-rejected", func(t *testing.T) {
 		c := dialProxy(t, st2.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -296,7 +296,7 @@ func TestE2EUpInitBothPlaceholders(t *testing.T) {
 	})
 	t.Run("restart-different-password-rejected", func(t *testing.T) {
 		c := dialProxy(t, st2.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -331,7 +331,7 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 
 	t.Run("wrong-password-does-not-claim", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -354,7 +354,7 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 	// and the claimed credential still works (cache path).
 	t.Run("live-wrong-password-still-rejected", func(t *testing.T) {
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -371,7 +371,7 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 		// The correct password under a different user must not pass once
 		// carol claimed the login: the login is compared, not only the hash.
 		c := dialProxy(t, st.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -410,7 +410,7 @@ func TestE2EUpInitLoginPlaceholder(t *testing.T) {
 	})
 	t.Run("restart-different-user-rejected", func(t *testing.T) {
 		c := dialProxy(t, st2.Data.Listen)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 			t.Fatalf("greeting method = %#x, want 0x02", m)
 		}
@@ -481,12 +481,12 @@ func mustHash(t *testing.T, password string) string {
 // Scenario 7: port already in use.
 func TestE2EUpPortInUse(t *testing.T) {
 	requireKtav(t)
-	held, err := net.Listen("tcp", "127.0.0.1:0")
+	held, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("hold port: %v", err)
 	}
 	t.Cleanup(func() { _ = held.Close() })
-	port := held.Addr().(*net.TCPAddr).Port
+	port := listenerPort(t, held)
 	code, stdout, stderr := runNetivri(t, t.TempDir(), "--port", strconv.Itoa(port))
 	if code != 6 {
 		t.Fatalf("exit code = %d, want 6 (stdout %q, stderr %q)", code, stdout, stderr)

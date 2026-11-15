@@ -92,7 +92,7 @@ func TestDirectPostUsesStableDirectPolicyForLoopbackCarrier(t *testing.T) {
 	if err := loopbackMetadata.SetRemoteAddress(proxy.listener.Addr().String()); err != nil {
 		t.Fatal(err)
 	}
-	loopbackMetadata.SrcIP, loopbackMetadata.SrcPort = localIP, uint16(localPort)
+	loopbackMetadata.SrcIP, loopbackMetadata.SrcPort = localIP, toUint16(t, localPort)
 	detectorConn, detectorErr := directPostCarrier.DialContext(ctx, loopbackMetadata)
 	if !errors.Is(detectorErr, loopback.ErrReject) {
 		if detectorConn != nil {

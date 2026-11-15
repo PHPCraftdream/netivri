@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -28,211 +30,313 @@ import (
 func TestE2ESnellLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	const pass = "snell-e2e-account-password"
-	backend := accountsEcho(t)
-	aliceUp, bobUp := accountsServer(t), accountsServer(t)
+	st := &e2eSnellState{ctx: ctx}
+	setupSnellServerA(t, st)
+	aliceURL, bobURL := setupSnellFeeds(t, st)
+	setupSnellClientB(t, st, aliceURL, bobURL)
+	aliceLink := checkSnellInitialRoutes(t, st)
+	rotatedLink := rotateSnellAlice(t, st, aliceLink)
+	updateSnellSubscription(t, st)
+	restrictSnellAlice(t, st, rotatedLink)
+	clearSnellRestriction(t, st)
+	restartSnellServer(t, st, rotatedLink)
+	removeSnellServices(t, st)
+}
+
+// e2eSnellState is the shared state of TestE2ESnellLifecycle. secretCheck grows
+// as PSKs are created, and the cleanups read the current angels at teardown.
+type e2eSnellState struct {
+	ctx         context.Context
+	pass        string
+	backend     string
+	aliceUp     *accountsUpstream
+	bobUp       *accountsUpstream
+	homeA       string
+	homeB       string
+	ports       []int
+	secretCheck []string
+	aliceFeed   *e2eSnellFeed
+	serverProc  *upProc
+	clientProc  *upProc
+}
+
+// setupSnellServerA writes A's fixture, starts A's angel and adds one Snell
+// edge per account.
+func setupSnellServerA(t *testing.T, st *e2eSnellState) {
+	t.Helper()
+	const pass = "snell-e2e-account-password" //nolint:gosec // G101: fixture password of a test account, not a credential
+	st.pass = pass
+	st.backend = accountsEcho(t)
+	st.aliceUp, st.bobUp = accountsServer(t), accountsServer(t)
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal("hash account password")
 	}
-	homeA := t.TempDir()
-	writeConfig(t, homeA, func(cfg *config.Config) {
+	st.homeA = t.TempDir()
+	writeConfig(t, st.homeA, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: hash, Provider: "alice-route"}, {Login: "bob", Password: hash, Provider: "bob-route"}}
 		cfg.Subscriptions = []config.Subscription{{Name: "alice-route", URL: "http://alice.invalid/sub"}, {Name: "bob-route", URL: "http://bob.invalid/sub"}}
 	})
-	accountsSaveSnapshot(t, homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", aliceUp)})
-	accountsSaveSnapshot(t, homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", bobUp)})
-	serverProc := startUp(t, homeA, "--port", "0")
-	assertStatusSuccess(t, serverProc.Status())
-	secretCheck := []string{pass, hash}
+	accountsSaveSnapshot(t, st.homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", st.aliceUp)})
+	accountsSaveSnapshot(t, st.homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", st.bobUp)})
+	st.serverProc = startUp(t, st.homeA, "--port", "0")
+	assertStatusSuccess(t, st.serverProc.Status())
+	st.secretCheck = []string{pass, hash}
 	t.Cleanup(func() {
-		serverProc.Stop()
-		assertNoSecrets(t, serverProc.Stdout(), serverProc.Stderr(), secretCheck...)
+		st.serverProc.Stop()
+		assertNoSecrets(t, st.serverProc.Stdout(), st.serverProc.Stderr(), st.secretCheck...)
 	})
-	ports := []int{freePort(t)}
+	st.ports = []int{freePort(t)}
 	for i, account := range []string{"alice", "bob"} {
 		name := "snell-" + account
-		code, out, stderr := serverRun(t, homeA, "add", "--protocol", "snell", "--name", name, "--account", account, "--port", strconv.Itoa(ports[i]), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1", "--param", "version=2", "--param", "obfs=none")
+		code, out, stderr := serverRun(t, st.homeA, "add", "--protocol", "snell", "--name", name, "--account", account, "--port", strconv.Itoa(st.ports[i]), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1", "--param", "version=2", "--param", "obfs=none")
 		if code != 0 {
 			t.Fatalf("Snell server add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secretCheck...)
-		waitStatusReload(t, ctx, homeA, uint64(i+1))
+		assertNoSecrets(t, out, stderr, st.secretCheck...)
+		waitStatusReload(t, st.ctx, st.homeA, uint64(i+1))
 		if i == 0 {
-			ports = append(ports, freePort(t))
+			st.ports = append(st.ports, freePort(t))
 		}
 	}
 	for _, name := range []string{"snell-alice", "snell-bob"} {
-		e2eSnellWaitStatus(t, ctx, homeA, name, true)
+		e2eSnellWaitStatus(t, st.ctx, st.homeA, name, true)
 	}
-	getLink := func(name, account string) string {
-		t.Helper()
-		code, out, stderr := serverRun(t, homeA, "link", name, "--account", account, "--format", "mihomo")
-		if code != 0 {
-			t.Fatalf("Snell link failed: %s", serverErrorSummary(out, stderr))
-		}
-		var env struct {
-			Data struct {
-				Link string `json:"link"`
-			} `json:"data"`
-		}
-		if json.Unmarshal([]byte(out), &env) != nil || env.Data.Link == "" {
-			t.Fatal("Snell link response invalid")
-		}
-		assertNoSecrets(t, stderr, stderr, secretCheck...)
-		return env.Data.Link
+}
+
+// getSnellLink returns the mihomo Snell link of account on the named edge.
+func getSnellLink(t *testing.T, st *e2eSnellState, name, account string) string {
+	t.Helper()
+	code, out, stderr := serverRun(t, st.homeA, "link", name, "--account", account, "--format", "mihomo")
+	if code != 0 {
+		t.Fatalf("Snell link failed: %s", serverErrorSummary(out, stderr))
 	}
-	aliceFeed := &e2eSnellFeed{body: getLink("snell-alice", "alice")}
-	bobFeed := &e2eSnellFeed{body: getLink("snell-bob", "bob")}
-	secretCheck = append(secretCheck, e2eSnellPSK(t, aliceFeed.get()), e2eSnellPSK(t, bobFeed.get()))
-	aliceURL, bobURL := aliceFeed.start(t), bobFeed.start(t)
-	homeB := t.TempDir()
+	var env struct {
+		Data struct {
+			Link string `json:"link"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(out), &env) != nil || env.Data.Link == "" {
+		t.Fatal("Snell link response invalid")
+	}
+	assertNoSecrets(t, stderr, stderr, st.secretCheck...)
+	return env.Data.Link
+}
+
+// setupSnellFeeds serves alice's and bob's links as subscription feeds and
+// returns their URLs.
+func setupSnellFeeds(t *testing.T, st *e2eSnellState) (string, string) {
+	t.Helper()
+	st.aliceFeed = &e2eSnellFeed{body: getSnellLink(t, st, "snell-alice", "alice")}
+	bobFeed := &e2eSnellFeed{body: getSnellLink(t, st, "snell-bob", "bob")}
+	st.secretCheck = append(st.secretCheck, e2eSnellPSK(t, st.aliceFeed.get()), e2eSnellPSK(t, bobFeed.get()))
+	return st.aliceFeed.start(t), bobFeed.start(t)
+}
+
+// setupSnellClientB imports both feeds into B, adds one account per provider
+// and starts B's angel.
+func setupSnellClientB(t *testing.T, st *e2eSnellState, aliceURL, bobURL string) {
+	t.Helper()
+	st.homeB = t.TempDir()
 	for _, item := range []struct{ name, url string }{{"alice-edge", aliceURL}, {"bob-edge", bobURL}} {
-		code, out, stderr := accountsRun(t, homeB, "sub", "add", item.url, "--name", item.name)
+		code, out, stderr := accountsRun(t.Context(), t, st.homeB, "sub", "add", item.url, "--name", item.name)
 		if code != 0 {
 			t.Fatalf("subscription add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secretCheck...)
+		assertNoSecrets(t, out, stderr, st.secretCheck...)
 	}
 	for _, item := range []struct{ account, provider string }{{"alice", "alice-edge"}, {"bob", "bob-edge"}} {
-		code, out, stderr := accountsRun(t, homeB, "account", "add", item.account, "--provider", item.provider)
+		code, out, stderr := accountsRun(t.Context(), t, st.homeB, "account", "add", item.account, "--provider", item.provider)
 		if code != 0 {
 			t.Fatalf("client account add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secretCheck...)
+		assertNoSecrets(t, out, stderr, st.secretCheck...)
 	}
-	clientProc := startUp(t, homeB, "--port", "0")
-	assertStatusSuccess(t, clientProc.Status())
+	st.clientProc = startUp(t, st.homeB, "--port", "0")
+	assertStatusSuccess(t, st.clientProc.Status())
 	t.Cleanup(func() {
-		clientProc.Stop()
-		assertNoSecrets(t, clientProc.Stdout(), clientProc.Stderr(), secretCheck...)
+		st.clientProc.Stop()
+		assertNoSecrets(t, st.clientProc.Stdout(), st.clientProc.Stderr(), st.secretCheck...)
 	})
-	diagnostic := func() string { return e2eSnellDiagnostics(t, homeA, homeB, secretCheck...) }
-	driveAccount := func(account string, retry bool) error {
-		beforeA, beforeB := aliceUp.count.Load(), bobUp.count.Load()
-		deadline := time.Now().Add(30 * time.Second)
-		if !retry {
-			deadline = time.Now()
-		}
-		for {
-			err := e2eSnellAccountsEcho(clientProc.Status().Data.Listen, account, pass, backend)
-			if err == nil {
-				if account == "alice" && (aliceUp.count.Load() <= beforeA || bobUp.count.Load() != beforeB) {
-					return errors.New("Alice recorder routing mismatch")
-				}
-				if account == "bob" && (bobUp.count.Load() <= beforeB || aliceUp.count.Load() != beforeA) {
-					return errors.New("Bob recorder routing mismatch")
-				}
-				return nil
+}
+
+// snellDiagnostic returns the redacted diagnostics of both homes.
+func snellDiagnostic(t *testing.T, st *e2eSnellState) string {
+	return e2eSnellDiagnostics(t, st.homeA, st.homeB, st.secretCheck...)
+}
+
+// driveSnellAccount sends one echo through B as account and checks that only
+// that account's upstream recorded it. With retry it keeps trying for 30 s.
+func driveSnellAccount(st *e2eSnellState, account string, retry bool) error {
+	beforeA, beforeB := st.aliceUp.count.Load(), st.bobUp.count.Load()
+	deadline := time.Now().Add(30 * time.Second)
+	if !retry {
+		deadline = time.Now()
+	}
+	for {
+		err := e2eSnellAccountsEcho(st.ctx, st.clientProc.Status().Data.Listen, account, st.pass, st.backend)
+		if err == nil {
+			if account == "alice" && (st.aliceUp.count.Load() <= beforeA || st.bobUp.count.Load() != beforeB) {
+				return errors.New("Alice recorder routing mismatch")
 			}
-			if !retry || time.Now().After(deadline) {
-				return errors.New("account echo failed")
+			if account == "bob" && (st.bobUp.count.Load() <= beforeB || st.aliceUp.count.Load() != beforeA) {
+				return errors.New("Bob recorder routing mismatch")
 			}
-			select {
-			case <-ctx.Done():
-				return errors.New("account echo deadline expired")
-			case <-time.After(250 * time.Millisecond):
-			}
+			return nil
+		}
+		if !retry || time.Now().After(deadline) {
+			return errors.New("account echo failed")
+		}
+		select {
+		case <-st.ctx.Done():
+			return errors.New("account echo deadline expired")
+		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	drive := func(retry bool) error {
-		if err := driveAccount("alice", retry); err != nil {
-			return err
-		}
-		return driveAccount("bob", retry)
+}
+
+// driveSnellPair drives alice and then bob through B without retries.
+func driveSnellPair(st *e2eSnellState) error {
+	if err := driveSnellAccount(st, "alice", false); err != nil {
+		return err
 	}
-	if err := drive(false); err != nil {
-		t.Fatalf("initial drive failed: %v\n%s", err, diagnostic())
+	return driveSnellAccount(st, "bob", false)
+}
+
+// checkSnellInitialRoutes drives both accounts, then checks alice's link: a
+// valid PSK connects and a wrong one is rejected. It returns alice's link.
+func checkSnellInitialRoutes(t *testing.T, st *e2eSnellState) string {
+	t.Helper()
+	if err := driveSnellPair(st); err != nil {
+		t.Fatalf("initial drive failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	aliceLink := getLink("snell-alice", "alice")
-	if err := e2eSnellProbe(ctx, aliceLink, backend, ""); err != nil {
-		t.Fatalf("valid Snell probe failed\n%s", diagnostic())
+	aliceLink := getSnellLink(t, st, "snell-alice", "alice")
+	if err := e2eSnellProbe(st.ctx, aliceLink, st.backend, ""); err != nil {
+		t.Fatalf("valid Snell probe failed\n%s", snellDiagnostic(t, st))
 	}
-	if err := e2eSnellProbe(ctx, aliceLink, backend, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); !e2eSnellAuthRejected(err) {
-		t.Fatalf("wrong PSK rejection failed\n%s", diagnostic())
+	if err := e2eSnellProbe(st.ctx, aliceLink, st.backend, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); !e2eSnellAuthRejected(err) {
+		t.Fatalf("wrong PSK rejection failed\n%s", snellDiagnostic(t, st))
 	}
-	code, out, stderr := serverRun(t, homeA, "rotate", "snell-alice", "--account", "alice")
+	return aliceLink
+}
+
+// rotateSnellAlice rotates alice's PSK, checks that the old link is refused and
+// publishes the rotated link to alice's feed. It returns the rotated link.
+func rotateSnellAlice(t *testing.T, st *e2eSnellState, aliceLink string) string {
+	t.Helper()
+	code, out, stderr := serverRun(t, st.homeA, "rotate", "snell-alice", "--account", "alice")
 	if code != 0 {
 		t.Fatalf("rotation failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 3)
-	if err := e2eSnellProbe(ctx, aliceLink, backend, ""); !e2eSnellAuthRejected(err) {
-		t.Fatalf("old PSK rejection failed\n%s", diagnostic())
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 3)
+	if err := e2eSnellProbe(st.ctx, aliceLink, st.backend, ""); !e2eSnellAuthRejected(err) {
+		t.Fatalf("old PSK rejection failed\n%s", snellDiagnostic(t, st))
 	}
-	rotatedLink := getLink("snell-alice", "alice")
+	rotatedLink := getSnellLink(t, st, "snell-alice", "alice")
 	rotatedPSK := e2eSnellPSK(t, rotatedLink)
-	secretCheck = append(secretCheck, rotatedPSK)
-	aliceFeed.set(rotatedLink)
-	code, out, stderr = accountsRun(t, homeB, "sub", "update", "alice-edge")
+	st.secretCheck = append(st.secretCheck, rotatedPSK)
+	st.aliceFeed.set(rotatedLink)
+	return rotatedLink
+}
+
+// updateSnellSubscription refreshes B's alice feed and drives both accounts
+// through the refreshed subscription.
+func updateSnellSubscription(t *testing.T, st *e2eSnellState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeB, "sub", "update", "alice-edge")
 	if code != 0 {
 		t.Fatalf("subscription update failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeB, 1)
-	if err := drive(false); err != nil {
-		t.Fatalf("post-rotation drive failed: %v\n%s", err, diagnostic())
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeB, 1)
+	if err := driveSnellPair(st); err != nil {
+		t.Fatalf("post-rotation drive failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "192.0.2.0/24")
+}
+
+// restrictSnellAlice limits alice to 192.0.2.0/24: the rotated link is refused,
+// and bob still routes after B restarts.
+func restrictSnellAlice(t *testing.T, st *e2eSnellState, rotatedLink string) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "192.0.2.0/24")
 	if code != 0 {
 		t.Fatalf("client restriction failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 4)
-	if err := e2eSnellProbe(ctx, rotatedLink, backend, ""); !e2eSnellAuthRejected(err) {
-		t.Fatalf("restricted Alice probe failed\n%s", diagnostic())
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 4)
+	if err := e2eSnellProbe(st.ctx, rotatedLink, st.backend, ""); !e2eSnellAuthRejected(err) {
+		t.Fatalf("restricted Alice probe failed\n%s", snellDiagnostic(t, st))
 	}
-	e2eSnellRestartClient(t, homeB, &clientProc, secretCheck...)
-	if err := driveAccount("bob", true); err != nil {
-		t.Fatalf("restricted Bob echo failed: %v\n%s", err, diagnostic())
+	e2eSnellRestartClient(t, st.homeB, &st.clientProc, st.secretCheck...)
+	if err := driveSnellAccount(st, "bob", true); err != nil {
+		t.Fatalf("restricted Bob echo failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
+}
+
+// clearSnellRestriction clears alice's client filter and checks that both
+// accounts route again after B restarts.
+func clearSnellRestriction(t *testing.T, st *e2eSnellState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "--none")
 	if code != 0 {
 		t.Fatalf("clear restriction failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 5)
-	e2eSnellRestartClient(t, homeB, &clientProc, secretCheck...)
-	if err := driveAccount("alice", true); err != nil {
-		t.Fatalf("post-clear Alice echo failed: %v\n%s", err, diagnostic())
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 5)
+	e2eSnellRestartClient(t, st.homeB, &st.clientProc, st.secretCheck...)
+	if err := driveSnellAccount(st, "alice", true); err != nil {
+		t.Fatalf("post-clear Alice echo failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	if err := driveAccount("bob", true); err != nil {
-		t.Fatalf("post-clear Bob echo failed: %v\n%s", err, diagnostic())
+	if err := driveSnellAccount(st, "bob", true); err != nil {
+		t.Fatalf("post-clear Bob echo failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	code, out, stderr = accountsRun(t, homeA, "down")
+}
+
+// restartSnellServer restarts A's angel and checks that the rotated link
+// persisted and both accounts route again.
+func restartSnellServer(t *testing.T, st *e2eSnellState, rotatedLink string) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "down")
 	if code != 0 {
 		t.Fatalf("server down failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	oldServer := serverProc
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	oldServer := st.serverProc
 	oldServer.Stop()
-	assertNoSecrets(t, oldServer.Stdout(), oldServer.Stderr(), secretCheck...)
-	serverProc = startUp(t, homeA, "--port", "0")
-	assertStatusSuccess(t, serverProc.Status())
-	e2eSnellRestartClient(t, homeB, &clientProc, secretCheck...)
-	if got := getLink("snell-alice", "alice"); got != rotatedLink {
-		t.Fatalf("link persistence failed\n%s", diagnostic())
+	assertNoSecrets(t, oldServer.Stdout(), oldServer.Stderr(), st.secretCheck...)
+	st.serverProc = startUp(t, st.homeA, "--port", "0")
+	assertStatusSuccess(t, st.serverProc.Status())
+	e2eSnellRestartClient(t, st.homeB, &st.clientProc, st.secretCheck...)
+	if got := getSnellLink(t, st, "snell-alice", "alice"); got != rotatedLink {
+		t.Fatalf("link persistence failed\n%s", snellDiagnostic(t, st))
 	}
-	if err := driveAccount("alice", true); err != nil {
-		t.Fatalf("post-A-restart Alice echo failed: %v\n%s", err, diagnostic())
+	if err := driveSnellAccount(st, "alice", true); err != nil {
+		t.Fatalf("post-A-restart Alice echo failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
-	if err := driveAccount("bob", true); err != nil {
-		t.Fatalf("post-A-restart Bob echo failed: %v\n%s", err, diagnostic())
+	if err := driveSnellAccount(st, "bob", true); err != nil {
+		t.Fatalf("post-A-restart Bob echo failed: %v\n%s", err, snellDiagnostic(t, st))
 	}
+}
+
+// removeSnellServices removes both Snell edges and checks that their ports are
+// released.
+func removeSnellServices(t *testing.T, st *e2eSnellState) {
+	t.Helper()
 	for i, name := range []string{"snell-alice", "snell-bob"} {
-		code, out, stderr = serverRun(t, homeA, "remove", name)
+		code, out, stderr := serverRun(t, st.homeA, "remove", name)
 		if code != 0 {
 			t.Fatalf("remove failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secretCheck...)
-		waitStatusReload(t, ctx, homeA, uint64(i+1))
+		assertNoSecrets(t, out, stderr, st.secretCheck...)
+		waitStatusReload(t, st.ctx, st.homeA, uint64(i+1))
 	}
 	for _, name := range []string{"snell-alice", "snell-bob"} {
-		e2eSnellWaitStatus(t, ctx, homeA, name, false)
+		e2eSnellWaitStatus(t, st.ctx, st.homeA, name, false)
 	}
-	for _, port := range ports {
-		if err := waitServerPort(ctx, port, false); err != nil {
-			t.Fatalf("removed port check failed\n%s", diagnostic())
+	for _, port := range st.ports {
+		if err := waitServerPort(st.ctx, port, false); err != nil {
+			t.Fatalf("removed port check failed\n%s", snellDiagnostic(t, st))
 		}
 	}
 }
@@ -271,7 +375,7 @@ func (f *e2eSnellFeed) start(t *testing.T) string {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/subscription", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, f.get()) })
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("subscription listen")
 	}
@@ -311,18 +415,24 @@ func e2eSnellProbe(parent context.Context, link, target, wrongPSK string) error 
 	if err != nil {
 		return errors.New("invalid echo target port")
 	}
+	if dp < 0 {
+		return errors.New("invalid echo target port")
+	}
+	if dp > math.MaxUint16 {
+		return errors.New("invalid echo target port")
+	}
 	client, err := outbound.NewSnell(outbound.SnellOption{Name: "e2e-snell-probe", Server: n.Server, Port: n.Port, Psk: psk, Version: version, UDP: false})
 	if err != nil {
 		return errors.New("construct Snell probe")
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	ctx, cancel := context.WithTimeout(parent, 4*time.Second)
 	defer cancel()
 	raw, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", net.JoinHostPort(n.Server, strconv.Itoa(n.Port)))
 	if err != nil {
 		return err
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	_ = raw.SetDeadline(time.Now().Add(4 * time.Second))
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
@@ -332,7 +442,7 @@ func e2eSnellProbe(parent context.Context, link, target, wrongPSK string) error 
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	const msg = "snell-e2e-probe"
 	if _, err = io.WriteString(conn, msg); err != nil {
 		return err
@@ -361,14 +471,14 @@ func e2eSnellAuthRejected(err error) bool {
 	// A connection the server closes before its reply (denied client) comes back as Snell error 101 "Remote EOF".
 	return strings.Contains(s, "forcibly closed") || strings.Contains(s, "connection reset") || strings.Contains(s, "connection was aborted") || strings.Contains(s, "server reported code: 101")
 }
-func e2eSnellAccountsEcho(proxy, user, pass, target string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+func e2eSnellAccountsEcho(parent context.Context, proxy, user, pass, target string) error {
+	ctx, cancel := context.WithTimeout(parent, 3*time.Second)
 	defer cancel()
 	c, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", proxy)
 	if err != nil {
 		return errors.New("SOCKS connect failed")
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 	if _, err = c.Write([]byte{5, 1, 2}); err != nil {
 		return err
@@ -377,8 +487,16 @@ func e2eSnellAccountsEcho(proxy, user, pass, target string) error {
 	if _, err = io.ReadFull(c, method[:]); err != nil || method != [2]byte{5, 2} {
 		return errors.New("SOCKS method negotiation failed")
 	}
-	credentials := append([]byte{1, byte(len(user))}, []byte(user)...)
-	credentials = append(credentials, byte(len(pass)))
+	userLen := len(user)
+	if userLen > 255 {
+		return errors.New("SOCKS credentials too long")
+	}
+	passLen := len(pass)
+	if passLen > 255 {
+		return errors.New("SOCKS credentials too long")
+	}
+	credentials := append([]byte{1, byte(userLen)}, []byte(user)...)
+	credentials = append(credentials, byte(passLen))
 	credentials = append(credentials, []byte(pass)...)
 	if _, err = c.Write(credentials); err != nil {
 		return err
@@ -393,12 +511,19 @@ func e2eSnellAccountsEcho(proxy, user, pass, target string) error {
 	}
 	ip := net.ParseIP(host).To4()
 	port, err := strconv.Atoi(portText)
-	if err != nil || ip == nil || port < 1 || port > 65535 {
+	if err != nil || ip == nil {
 		return errors.New("invalid echo destination")
 	}
-	req := []byte{5, 1, 0, 1}
+	if port < 1 {
+		return errors.New("invalid echo destination")
+	}
+	if port > math.MaxUint16 {
+		return errors.New("invalid echo destination")
+	}
+	req := make([]byte, 0, 4+len(ip)+2)
+	req = append(req, 5, 1, 0, 1)
 	req = append(req, ip...)
-	req = append(req, byte(port>>8), byte(port))
+	req = binary.BigEndian.AppendUint16(req, uint16(port))
 	if _, err = c.Write(req); err != nil {
 		return err
 	}
@@ -406,7 +531,7 @@ func e2eSnellAccountsEcho(proxy, user, pass, target string) error {
 	if _, err = io.ReadFull(c, hdr[:]); err != nil || hdr[0] != 5 || hdr[1] != 0 {
 		return errors.New("SOCKS CONNECT failed")
 	}
-	length := 0
+	var length int
 	switch hdr[3] {
 	case 1:
 		length = net.IPv4len
@@ -436,7 +561,7 @@ func e2eSnellAccountsEcho(proxy, user, pass, target string) error {
 }
 func e2eSnellDiagnostics(t *testing.T, homeA, homeB string, secrets ...string) string {
 	t.Helper()
-	code, out, stderr := accountsRun(t, homeA, "status")
+	code, out, stderr := accountsRun(t.Context(), t, homeA, "status")
 	status := serverErrorSummary(out, stderr)
 	if code == 0 {
 		var env struct {
@@ -451,15 +576,15 @@ func e2eSnellDiagnostics(t *testing.T, homeA, homeB string, secrets ...string) s
 			} `json:"data"`
 		}
 		if json.Unmarshal([]byte(out), &env) == nil {
-			var rows []string
+			rows := make([]string, 0, len(env.Data.Servers))
 			for _, s := range env.Data.Servers {
 				rows = append(rows, fmt.Sprintf("%s %s %s connections=%d dropped=%d", s.Name, s.Protocol, s.Listen, s.Connections, s.Dropped))
 			}
 			status = strings.Join(rows, "; ")
 		}
 	}
-	logs := serverE2ELogTail(t, homeA)
-	codeB, outB, stderrB := accountsRun(t, homeB, "status", "--full")
+	logs := serverE2ELogTail(t.Context(), t, homeA)
+	codeB, outB, stderrB := accountsRun(t.Context(), t, homeB, "status", "--full")
 	health := serverErrorSummary(outB, stderrB)
 	if codeB == 0 {
 		var env struct {
@@ -475,7 +600,7 @@ func e2eSnellDiagnostics(t *testing.T, homeA, homeB string, secrets ...string) s
 			} `json:"data"`
 		}
 		if json.Unmarshal([]byte(outB), &env) == nil {
-			var rows []string
+			rows := make([]string, 0, len(env.Data.Warm.Nodes))
 			for _, node := range env.Data.Warm.Nodes {
 				rows = append(rows, fmt.Sprintf("%s %s alive=%t delay_ms=%d", node.Name, node.Label, node.Alive, node.DelayMS))
 			}
@@ -494,7 +619,7 @@ func e2eSnellWaitStatus(t *testing.T, ctx context.Context, home, name string, wa
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		code, out, stderr := accountsRun(t, home, "status")
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		if code == 0 {
 			var env struct {
 				Data struct {
@@ -534,7 +659,7 @@ func e2eSnellWaitStatus(t *testing.T, ctx context.Context, home, name string, wa
 		}
 		select {
 		case <-ctx.Done():
-			serverE2EFailureDiagnostics(t, home, "Snell status wait expired")
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "Snell status wait expired")
 			t.Fatalf("Snell status did not converge for %s", name)
 		case <-tick.C:
 		}
@@ -542,7 +667,7 @@ func e2eSnellWaitStatus(t *testing.T, ctx context.Context, home, name string, wa
 }
 func e2eSnellRestartClient(t *testing.T, home string, p **upProc, secrets ...string) {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "down")
+	code, out, stderr := accountsRun(t.Context(), t, home, "down")
 	if code != 0 {
 		t.Fatalf("client down failed: %s", serverErrorSummary(out, stderr))
 	}

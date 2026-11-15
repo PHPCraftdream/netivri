@@ -1,7 +1,9 @@
 package stats
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -92,11 +94,12 @@ func (s *Store) writerLoop() {
 // trimPending bounds the retry buffer: when the batch exceeds
 // maxPendingSamples the oldest excess samples are dropped and counted.
 func (s *Store) trimPending(batch []Sample) []Sample {
-	if len(batch) <= maxPendingSamples {
+	excess := len(batch) - maxPendingSamples
+	if excess <= 0 {
 		return batch
 	}
-	s.dropped.Add(uint64(len(batch) - maxPendingSamples))
-	keep := batch[len(batch)-maxPendingSamples:]
+	s.dropped.Add(uint64(excess))
+	keep := batch[excess:]
 	out := make([]Sample, len(keep))
 	copy(out, keep)
 	return out
@@ -109,30 +112,30 @@ func (s *Store) writeBatch(batch []Sample) error {
 	if len(batch) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
-	insertNode, err := tx.Prepare(
+	insertNode, err := tx.PrepareContext(context.Background(),
 		"INSERT INTO node (label, provider, country, first_seen, last_seen) VALUES (?, '', '', ?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare insert node: %w", err)
 	}
-	defer insertNode.Close()
-	touchNode, err := tx.Prepare(
+	defer func() { _ = insertNode.Close() }()
+	touchNode, err := tx.PrepareContext(context.Background(),
 		"UPDATE node SET last_seen = ? WHERE id = ? AND last_seen < ?")
 	if err != nil {
 		return fmt.Errorf("stats: prepare touch node: %w", err)
 	}
-	defer touchNode.Close()
-	insertSample, err := tx.Prepare(
+	defer func() { _ = touchNode.Close() }()
+	insertSample, err := tx.PrepareContext(context.Background(),
 		"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare insert sample: %w", err)
 	}
-	defer insertSample.Close()
+	defer func() { _ = insertSample.Close() }()
 
 	for _, sm := range batch {
 		id, err := s.nodeID(tx, insertNode, sm.Label, sm.At)
@@ -140,14 +143,14 @@ func (s *Store) writeBatch(batch []Sample) error {
 			return err
 		}
 		ts := sm.At.UTC().UnixMilli()
-		if _, err := touchNode.Exec(ts, id, ts); err != nil {
+		if _, err := touchNode.ExecContext(context.Background(), ts, id, ts); err != nil {
 			return fmt.Errorf("stats: touch node %s: %w", sm.Label, err)
 		}
 		ok := 0
 		if sm.OK {
 			ok = 1
 		}
-		if _, err := insertSample.Exec(ts, id, int(sm.Kind), ok, sm.Delay.Milliseconds(), sm.Bytes); err != nil {
+		if _, err := insertSample.ExecContext(context.Background(), ts, id, int(sm.Kind), ok, sm.Delay.Milliseconds(), sm.Bytes); err != nil {
 			return fmt.Errorf("stats: insert sample for %s: %w", sm.Label, err)
 		}
 	}
@@ -160,28 +163,35 @@ func (s *Store) writeBatch(batch []Sample) error {
 // nodeID returns the id of the label, creating the node row with
 // first_seen = last_seen = at when it is unknown.
 func (s *Store) nodeID(tx *sql.Tx, insertNode *sql.Stmt, label string, at time.Time) (int64, error) {
-	if id, ok := s.ids[label]; ok {
+	return cachedID(tx, s.ids, "SELECT id FROM node WHERE label = ?", insertNode, "node", label, at)
+}
+
+// cachedID returns the id of key from cache, or selects it with selectSQL and
+// inserts it through insert when unknown. kind ("node" or "account") names the
+// row in error messages.
+func cachedID(tx *sql.Tx, cache map[string]int64, selectSQL string, insert *sql.Stmt, kind, key string, at time.Time) (int64, error) {
+	if id, ok := cache[key]; ok {
 		return id, nil
 	}
 	var id int64
-	err := tx.QueryRow("SELECT id FROM node WHERE label = ?", label).Scan(&id)
+	err := tx.QueryRowContext(context.Background(), selectSQL, key).Scan(&id)
 	if err == nil {
-		s.ids[label] = id
+		cache[key] = id
 		return id, nil
 	}
-	if err != sql.ErrNoRows {
-		return 0, fmt.Errorf("stats: select node %s: %w", label, err)
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("stats: select %s %s: %w", kind, key, err)
 	}
 	ts := at.UTC().UnixMilli()
-	res, err := insertNode.Exec(label, ts, ts)
+	res, err := insert.ExecContext(context.Background(), key, ts, ts)
 	if err != nil {
-		return 0, fmt.Errorf("stats: insert node %s: %w", label, err)
+		return 0, fmt.Errorf("stats: insert %s %s: %w", kind, key, err)
 	}
 	id, err = res.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("stats: node id for %s: %w", label, err)
+		return 0, fmt.Errorf("stats: %s id for %s: %w", kind, key, err)
 	}
-	s.ids[label] = id
+	cache[key] = id
 	return id, nil
 }
 
@@ -195,27 +205,27 @@ func (s *Store) writeNodes(infos []NodeInfo) (err error) {
 			s.accIDs = map[string]int64{}
 		}
 	}()
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now := s.now().UTC().UnixMilli()
-	upsert, err := tx.Prepare(`
+	upsert, err := tx.PrepareContext(context.Background(), `
 INSERT INTO node (label, provider, country, name, first_seen, last_seen)
 VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(label) DO UPDATE SET provider = excluded.provider, country = excluded.country, name = excluded.name`)
 	if err != nil {
 		return fmt.Errorf("stats: prepare upsert node: %w", err)
 	}
-	defer upsert.Close()
+	defer func() { _ = upsert.Close() }()
 
 	for _, info := range infos {
-		if _, err := upsert.Exec(info.Label, info.Provider, info.Country, info.Name, now, now); err != nil {
+		if _, err := upsert.ExecContext(context.Background(), info.Label, info.Provider, info.Country, info.Name, now, now); err != nil {
 			return fmt.Errorf("stats: upsert node %s: %w", info.Label, err)
 		}
 		var id int64
-		if err := tx.QueryRow("SELECT id FROM node WHERE label = ?", info.Label).Scan(&id); err != nil {
+		if err := tx.QueryRowContext(context.Background(), "SELECT id FROM node WHERE label = ?", info.Label).Scan(&id); err != nil {
 			return fmt.Errorf("stats: select node %s: %w", info.Label, err)
 		}
 		s.ids[info.Label] = id

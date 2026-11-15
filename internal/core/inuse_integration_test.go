@@ -9,13 +9,13 @@ import (
 )
 
 func TestIsAddrInUse(t *testing.T) {
-	l1, err := net.Listen("tcp", "127.0.0.1:0")
+	l1, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("first listen: %v", err)
 	}
-	defer l1.Close()
+	defer func() { _ = l1.Close() }()
 
-	l2, err := net.Listen("tcp", l1.Addr().String())
+	l2, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", l1.Addr().String())
 	if err == nil {
 		_ = l2.Close()
 		t.Fatal("second listen on the same address unexpectedly succeeded")

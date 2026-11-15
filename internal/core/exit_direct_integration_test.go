@@ -68,12 +68,12 @@ func TestExitDirectAccountBypassesNodeWithoutAffectingRoutedAccount(t *testing.T
 		if err != nil {
 			return err
 		}
-		defer client.Close()
-		conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)})
+		defer func() { _ = client.Close() }()
+		conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: toUint16(t, backendPort)})
 		if err != nil {
 			return err
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		if err := conn.SetDeadline(time.Now().Add(testTimeout)); err != nil {
 			return err
 		}

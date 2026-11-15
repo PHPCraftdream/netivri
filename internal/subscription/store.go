@@ -100,8 +100,14 @@ func ktavText(d diskSnapshot) (string, error) {
 	if err := config.KtavLoadsInto(text, &back); err != nil {
 		return "", err
 	}
-	want, _ := json.Marshal(d)
-	got, _ := json.Marshal(back)
+	want, err := json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+	got, err := json.Marshal(back)
+	if err != nil {
+		return "", err
+	}
 	if !bytes.Equal(want, got) {
 		return "", errors.New("the snapshot does not survive a round trip through Ktav")
 	}
@@ -117,7 +123,7 @@ func (s *Store) Save(name string, snap Snapshot) error {
 	}
 	d := diskSnapshot{FetchedAt: snap.FetchedAt, Skipped: snap.Skipped, Quota: snap.Quota, Nodes: make([]diskNode, 0, len(snap.Nodes))}
 	for _, n := range snap.Nodes {
-		d.Nodes = append(d.Nodes, diskNode{ID: n.ID, Name: n.Name, Type: n.Type, Server: n.Server, Port: n.Port, Country: n.Country, Raw: n.Raw})
+		d.Nodes = append(d.Nodes, diskNode(n))
 	}
 	storeMu.Lock()
 	defer storeMu.Unlock()
@@ -164,7 +170,7 @@ func (s *Store) Load(name string) (*Snapshot, error) {
 	case err == nil:
 		// The error text is the structured summary only: the source holds credentials.
 		if err := config.KtavLoadsInto(string(data), &d); err != nil {
-			return nil, fmt.Errorf("subscription %q is corrupt: %s", name, err)
+			return nil, fmt.Errorf("subscription %q is corrupt: %w", name, err)
 		}
 	case errors.Is(err, os.ErrNotExist):
 		data, err = os.ReadFile(s.legacyPath(name))
@@ -182,7 +188,7 @@ func (s *Store) Load(name string) (*Snapshot, error) {
 	}
 	snap := &Snapshot{FetchedAt: d.FetchedAt, Skipped: d.Skipped, Quota: d.Quota, Nodes: make([]Node, 0, len(d.Nodes))}
 	for _, n := range d.Nodes {
-		snap.Nodes = append(snap.Nodes, Node{ID: n.ID, Name: n.Name, Type: n.Type, Server: n.Server, Port: n.Port, Country: n.Country, Raw: n.Raw})
+		snap.Nodes = append(snap.Nodes, Node(n))
 	}
 	return snap, nil
 }
@@ -266,11 +272,11 @@ func writeFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("sync subscription: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = os.Remove(name) //nolint:gosec // G703: name is the temp file CreateTemp made in the operator subscriptions directory
 		return fmt.Errorf("close subscription: %w", err)
 	}
 	if err := renameReplace(name, path); err != nil {
-		_ = os.Remove(name)
+		_ = os.Remove(name) //nolint:gosec // G703: name is the temp file CreateTemp made in the operator subscriptions directory
 		return fmt.Errorf("replace subscription: %w", err)
 	}
 	return nil

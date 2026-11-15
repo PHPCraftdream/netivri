@@ -74,7 +74,7 @@ func TestServerSetCommitFailureRestoresPolicy(t *testing.T) {
 	stagedClosed := p.closed.Load()
 	s.broker.close()
 	stageTx.policy = failedPolicy
-	if err := stageTx.commit(); err != net.ErrClosed {
+	if err := stageTx.commit(); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("commit on closed broker error = %v", err)
 	}
 	if s.policy.Load() != previousPolicy {
@@ -219,8 +219,8 @@ func TestServerSetValidationAndRollback(t *testing.T) {
 }
 
 func TestServerClientPolicyUnit(t *testing.T) {
-	pfx := func(s string) netip.Prefix { return netip.MustParsePrefix(s) }
-	addr := func(s string) netip.Addr { return netip.MustParseAddr(s) }
+	pfx := netip.MustParsePrefix
+	addr := netip.MustParseAddr
 	cases := []struct {
 		name   string
 		policy *clientPolicy

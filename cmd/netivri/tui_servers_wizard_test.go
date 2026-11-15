@@ -9,10 +9,11 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/PHPCraftdream/netivri/internal/config"
-	"github.com/PHPCraftdream/netivri/internal/tui"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/ktav-lang/golang/pure"
+
+	"github.com/PHPCraftdream/netivri/internal/config"
+	"github.com/PHPCraftdream/netivri/internal/tui"
 )
 
 // serversWizardHome builds a temp home with two accounts and no servers.
@@ -21,8 +22,8 @@ func serversWizardHome(t *testing.T) string {
 	h := t.TempDir()
 	c := config.Default()
 	c.Accounts = []config.Account{
-		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
-		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
+		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}, //nolint:gosec // G101: fake credential, test fixture only
+		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},   //nolint:gosec // G101: fake credential, test fixture only
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("invalid fixture: %v", err)
@@ -43,12 +44,12 @@ func serversEnterKey(s *serversScreen) tea.Cmd {
 	return c
 }
 func serversDownKeys(s *serversScreen, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		_, _ = s.Update(serversKey(tea.KeyDown, ""))
 	}
 }
-func serversBackspaces(s *serversScreen, n int) {
-	for i := 0; i < n; i++ {
+func serversBackspaces(s *serversScreen) {
+	for range 4 {
 		_, _ = s.Update(serversKey(tea.KeyBackspace, ""))
 	}
 }
@@ -123,7 +124,7 @@ func serversWizardParamStep(t *testing.T, w *tui.Wizard, key string) int {
 // stored value of at least 10 characters, i.e. generated key material.
 func serversSecretValues(t *testing.T, home string) []string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(home, "server-secrets.ktav"))
+	b, err := os.ReadFile(filepath.Clean(filepath.Join(home, "server-secrets.ktav")))
 	if err != nil {
 		t.Fatalf("secrets store: %v", err)
 	}
@@ -175,28 +176,55 @@ func serversAssertNoLeaks(t *testing.T, home, link string, frames []string) {
 	}
 }
 
+// serversWizardFlow carries the screen, the open wizard dialog and the captured frames
+// between the phases of TestServersAddWizardRealKeysCreatesTwoProtocols.
+type serversWizardFlow struct {
+	home   string
+	s      *serversScreen
+	d      *serversDialog
+	frames []string
+}
+
 func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	home := serversWizardHome(t)
 	s := newServersTestScreen(t, home)
 	serversRun(t, s, s.Init())
-	var frames []string
-	snap := func() { frames = append(frames, s.View(120, 30)) }
-	snap()
+	w := &serversWizardFlow{home: home, s: s}
+	snapServersFrame(w)
+	openServersAddWizard(t, w)
+	walkServersShadowsocksWizard(t, w)
+	createServersShadowsocksWizard(t, w)
+	checkServersShadowsocksStored(t, w)
+	walkServersMieruWizard(t, w)
+	createServersMieruWizard(t, w)
+	checkServersWizardSecretsAndLink(t, w)
+}
 
-	// Open the wizard with the "a" hotkey (tui_servers.go key handler "a").
-	if _, c := s.Update(serversKey('a', "a")); c != nil {
+func snapServersFrame(w *serversWizardFlow) {
+	w.frames = append(w.frames, w.s.View(120, 30))
+}
+
+// Open the wizard with the "a" hotkey (tui_servers.go key handler "a").
+func openServersAddWizard(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	if _, c := w.s.Update(serversKey('a', "a")); c != nil {
 		t.Fatal("opening the wizard produced a command")
 	}
-	d := s.dialog
-	if d == nil || d.wizard == nil || d.wizard.Index != 0 {
+	w.d = w.s.dialog
+	if w.d == nil || w.d.wizard == nil || w.d.wizard.Index != 0 {
 		t.Fatal("hotkey a did not open the add wizard")
 	}
-	snap()
+	snapServersFrame(w)
+}
 
-	// Shadowsocks walk.
+// Shadowsocks walk up to the review step.
+func walkServersShadowsocksWizard(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	s := w.s
 	serversWizardProtocol(t, s, "shadowsocks")
-	d = s.dialog
-	snap()
+	w.d = s.dialog
+	d := w.d
+	snapServersFrame(w)
 	if got := serversWizardParamStep(t, d.wizard, "param:cipher"); got != 5 {
 		t.Fatalf("cipher step index = %d, steps=%v", got, serversWizardStepKeys(d.wizard))
 	}
@@ -237,12 +265,18 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 		t.Fatal("last step enter did not reach review")
 	}
 	review := s.View(120, 30)
-	snap()
+	snapServersFrame(w)
 	for _, want := range []string{"Review", "Create", "Name: wss01", "Port: 45701", "Bind address: 0.0.0.0", "Account: alice"} {
 		if !strings.Contains(review, want) {
 			t.Fatalf("review missing %q: %q", want, review)
 		}
 	}
+}
+
+// Review Enter creates the shadowsocks server; Esc closes the result modal.
+func createServersShadowsocksWizard(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	s, d := w.s, w.d
 
 	// Review Enter focuses [Create] and returns the wrapped wizard result.
 	c := serversEnterKey(s)
@@ -262,7 +296,7 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	if s.dialog == nil || s.dialog.modal == nil {
 		t.Fatal("successful add did not open the result modal")
 	}
-	snap()
+	snapServersFrame(w)
 	added := s.View(120, 30)
 	for _, want := range []string{"Server added", "Name: wss01", "Protocol: shadowsocks", "Port: 45701", "Accounts: alice", "Server secrets were generated and stored securely."} {
 		if !strings.Contains(added, want) {
@@ -275,8 +309,11 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	if s.dialog != nil {
 		t.Fatal("esc did not close the added modal")
 	}
+}
 
-	cfg, err := loadConfig(home)
+func checkServersShadowsocksStored(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	cfg, err := loadConfig(w.home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,13 +324,18 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	if entry.Params["cipher"] != "2022-blake3-aes-128-gcm" || entry.Params["udp"] != "false" {
 		t.Fatalf("stored params wrong: %#v", entry.Params)
 	}
+}
 
-	// Mieru walk against the same home.
+// Mieru walk against the same home, up to the review step.
+func walkServersMieruWizard(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	s := w.s
 	if _, c := s.Update(serversKey('a', "a")); c != nil {
 		t.Fatal("reopening the wizard produced a command")
 	}
 	serversWizardProtocol(t, s, "mieru")
-	d = s.dialog
+	w.d = s.dialog
+	d := w.d
 	if serversWizardParamStep(t, d.wizard, "param:transport") != 5 || serversWizardParamStep(t, d.wizard, "param:multiplexing") != 6 {
 		t.Fatalf("mieru steps wrong: %v", serversWizardStepKeys(d.wizard))
 	}
@@ -315,33 +357,43 @@ func TestServersAddWizardRealKeysCreatesTwoProtocols(t *testing.T) {
 	if !d.wizard.Review {
 		t.Fatal("mieru walk did not reach review")
 	}
-	snap()
-	if c = serversEnterKey(s); c == nil {
+}
+
+func createServersMieruWizard(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	s := w.s
+	snapServersFrame(w)
+	c := serversEnterKey(s)
+	if c == nil {
 		t.Fatal("mieru review create did not return a command")
 	}
-	if msg = c(); msg == nil {
+	msg := c()
+	if msg == nil {
 		t.Fatal("mieru review produced no message")
 	}
 	if _, c = s.Update(msg); c == nil {
 		t.Fatal("mieru dialog result did not start creation")
 	}
 	serversRun(t, s, c)
-	snap()
-	cfg, err = loadConfig(home)
+	snapServersFrame(w)
+	cfg, err := loadConfig(w.home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, _ = cfg.GetServer("wmieru01")
+	entry, _ := cfg.GetServer("wmieru01")
 	if entry == nil || entry.Protocol != "mieru" || entry.Port != 45702 || entry.Params["transport"] != "TCP" || entry.Params["multiplexing"] != "MULTIPLEXING_DEFAULT" {
 		t.Fatalf("stored mieru server wrong: %#v", entry)
 	}
+}
 
-	// The secrets store holds generated material for both servers.
-	linkSS, err := ServerLink(home, "wss01", ServerLinkOptions{Account: "alice", Format: "uri"})
+// The secrets store holds generated material for both servers.
+func checkServersWizardSecretsAndLink(t *testing.T, w *serversWizardFlow) {
+	t.Helper()
+	linkSS, err := ServerLink(w.home, "wss01", ServerLinkOptions{Account: "alice", Format: "uri"})
 	if err != nil || linkSS == "" {
 		t.Fatalf("client link: %v", err)
 	}
-	serversAssertNoLeaks(t, home, linkSS, frames)
+	serversAssertNoLeaks(t, w.home, linkSS, w.frames)
 }
 
 func TestServersWizardBackChangesProtocolAndRebuildsSteps(t *testing.T) {
@@ -363,7 +415,7 @@ func TestServersWizardBackChangesProtocolAndRebuildsSteps(t *testing.T) {
 	// keeps activating the still-focused Back button (wizard.go activate(0)
 	// decrements Index without validation and does not reset button focus).
 	_, _ = s.Update(serversKey(tea.KeyTab, ""))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		if serversEnterKey(s) != nil {
 			t.Fatal("back produced a command")
 		}
@@ -433,10 +485,9 @@ func TestServersWizardInvalidNameRetainsAnswerAndStaysOpen(t *testing.T) {
 	s := newServersTestScreen(t, home)
 	serversRun(t, s, s.Init())
 	_, _ = s.Update(serversKey('a', "a"))
-	d := s.dialog
 	// Accept the default protocol; the dialog rebuilds onto the Name step.
 	serversEnterKey(s)
-	d = s.dialog
+	d := s.dialog
 	serversTypeKeys(s, "bad name")
 	if serversEnterKey(s) != nil {
 		t.Fatal("invalid name advance produced a command")
@@ -489,7 +540,7 @@ func TestServersEditPortViaMouseClickSavesThroughPrompt(t *testing.T) {
 	if s.dialog.prompt.Kind != tui.NumberPrompt || s.dialog.prompt.Value != "1234" {
 		t.Fatalf("port prompt = %v %q", s.dialog.prompt.Kind, s.dialog.prompt.Value)
 	}
-	serversBackspaces(s, 4)
+	serversBackspaces(s)
 	serversTypeKeys(s, "4599")
 	if s.dialog.prompt.Value != "4599" {
 		t.Fatalf("prompt value = %q", s.dialog.prompt.Value)
@@ -685,14 +736,14 @@ func TestServersAngelStoppedEditSavesAndReportsPendingApply(t *testing.T) {
 	}
 	// Edit the port with card focus: Down selects the port line, Enter opens it.
 	_, _ = s.Update(serversKey(tea.KeyDown, ""))
-	_, cmd := s.Update(serversKey(tea.KeyEnter, ""))
+	_, _ = s.Update(serversKey(tea.KeyEnter, ""))
 	if s.dialog == nil || s.dialog.prompt == nil {
 		t.Fatalf("enter did not open the port prompt: %+v", s.dialog)
 	}
-	serversBackspaces(s, 4)
+	serversBackspaces(s)
 	serversTypeKeys(s, "4600")
 	_ = s.View(120, 26)
-	_, cmd = s.Update(tea.MouseClickMsg{X: 4, Y: 25, Button: tea.MouseLeft})
+	_, cmd := s.Update(tea.MouseClickMsg{X: 4, Y: 25, Button: tea.MouseLeft})
 	if cmd == nil {
 		t.Fatal("save click produced no command")
 	}

@@ -46,7 +46,7 @@ func TestProbeLiveKeepRunning(t *testing.T) {
 // ErrNotRunning. Every accepted connection is closed at the end and the
 // accept goroutine's exit is awaited.
 func TestProbeLiveKeepControlTimeoutKeepsState(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestProbeLiveKeepControlTimeoutKeepsState(t *testing.T) {
 // control port (the angel crashed and left its state file). That is
 // ErrNotRunning for the watch, and the state file stays.
 func TestProbeLiveKeepConnRefusedKeepsState(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestProbeLiveKeepStateMissing(t *testing.T) {
 // ErrNotRunning, and the state file survives. Before, the first slow answer
 // deleted the state file of a live angel and status, down and up lost it.
 func TestProbeLiveControlTimeoutKeepsState(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestProbeLiveControlTimeoutKeepsState(t *testing.T) {
 // TestProbeLiveConnRefusedRemovesState: nothing listens on the recorded
 // control port, the angel is gone and its stale state file is cleaned up.
 func TestProbeLiveConnRefusedRemovesState(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

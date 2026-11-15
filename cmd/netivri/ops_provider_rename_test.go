@@ -93,13 +93,13 @@ func TestProviderRenameSameNameRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := config.ConfigPath(home)
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = ProviderRename(home, "p", "p")
 	renameAssertCode(t, err, "USAGE", cli.ExitUsage)
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,12 +133,12 @@ func TestProviderRenameCaseOnlyRejectedWithoutWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath := config.ConfigPath(home)
-	beforeConfig, err := os.ReadFile(configPath)
+	beforeConfig, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshotPath := filepath.Join(home, "subscriptions", "p.ktav")
-	beforeSnapshot, err := os.ReadFile(snapshotPath)
+	beforeSnapshot, err := os.ReadFile(filepath.Clean(snapshotPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,14 +146,14 @@ func TestProviderRenameCaseOnlyRejectedWithoutWrites(t *testing.T) {
 	err = ProviderRename(home, "p", "P")
 	renameAssertCode(t, err, "USAGE", cli.ExitUsage)
 
-	afterConfig, err := os.ReadFile(configPath)
+	afterConfig, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(afterConfig) != string(beforeConfig) {
 		t.Fatal("case-only rename changed the config")
 	}
-	afterSnapshot, err := os.ReadFile(snapshotPath)
+	afterSnapshot, err := os.ReadFile(filepath.Clean(snapshotPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,14 +180,14 @@ func TestProviderRenameSnapshotWriteFailureLeavesEverything(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(blocker) })
 	path := config.ConfigPath(home)
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = ProviderRename(home, "p", "renamed"); err == nil {
 		t.Fatal("rename with a failing snapshot write succeeded")
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,22 +211,22 @@ func TestProviderRenameConfigSaveFailureLeavesOldState(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("needs a chmod-respecting, non-root filesystem")
 	}
-	if err := os.Chmod(home, 0o500); err != nil {
+	if err := os.Chmod(home, 0o500); err != nil { //nolint:gosec // G302: test makes the state dir read-only on purpose; a directory needs the owner x bit
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(home, 0o700) })
+	t.Cleanup(func() { _ = os.Chmod(home, 0o700) }) //nolint:gosec // G302: test makes the state dir read-only on purpose; a directory needs the owner x bit
 	path := config.ConfigPath(home)
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err = ProviderRename(home, "p", "renamed"); err == nil {
 		t.Fatal("rename with a failing config save succeeded")
 	}
-	if err = os.Chmod(home, 0o700); err != nil {
+	if err = os.Chmod(home, 0o700); err != nil { //nolint:gosec // G302: test makes the state dir read-only on purpose; a directory needs the owner x bit
 		t.Fatal(err)
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}

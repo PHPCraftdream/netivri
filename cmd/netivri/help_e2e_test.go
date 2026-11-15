@@ -20,7 +20,7 @@ func runHelpBinary(t *testing.T, home string, args ...string) (int, string, stri
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), e2eFirstLineTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, args...)
+	cmd := exec.CommandContext(ctx, netivriBin, args...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
 	var outBuf, errBuf bytes.Buffer
 	cmd.Stdout = &outBuf

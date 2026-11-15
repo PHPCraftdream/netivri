@@ -153,12 +153,12 @@ func (g *stickyGroup) hedgeable(index int) bool {
 // member is hedgeable, plain otherwise. recorded is false when the caller's
 // context ended the dial before any attempt completed; the caller then makes
 // no health or observer record and no budget refill.
-func (g *stickyGroup) dialMember(ctx context.Context, index int, metadata *C.Metadata) (C.Conn, error, time.Duration, bool) {
+func (g *stickyGroup) dialMember(ctx context.Context, index int, metadata *C.Metadata) (C.Conn, time.Duration, bool, error) {
 	m := g.members[index]
 	if !g.hedgeable(index) {
 		start := time.Now()
 		conn, err := m.DialContext(ctx, metadata)
-		return conn, err, time.Since(start), true
+		return conn, time.Since(start), true, err
 	}
 	h := g.healths[index]
 	threshold := hedgeThresholdDefault
@@ -175,7 +175,7 @@ func (g *stickyGroup) dialMember(ctx context.Context, index int, metadata *C.Met
 // it may still return. The primary may use the original metadata and runs in
 // its own goroutine so the winner can be selected. recorded is false only
 // when the caller cancelled the logical dial (a deadline still counts).
-func (g *stickyGroup) dialHedged(ctx context.Context, m member, metadata *C.Metadata, threshold time.Duration, h *nodeHealth) (C.Conn, error, time.Duration, bool) {
+func (g *stickyGroup) dialHedged(ctx context.Context, m member, metadata *C.Metadata, threshold time.Duration, h *nodeHealth) (C.Conn, time.Duration, bool, error) {
 	start := time.Now()
 	actx, acancel := context.WithCancel(ctx)
 	defer acancel()
@@ -219,7 +219,7 @@ func (g *stickyGroup) dialHedged(ctx context.Context, m member, metadata *C.Meta
 				hcancel()
 				go collectHedge(hedge)
 			}
-			return nil, ctx.Err(), time.Since(start), recordable()
+			return nil, time.Since(start), recordable(), ctx.Err()
 		case <-timer.C():
 			if hedgeDone || hcancel != nil {
 				continue
@@ -245,12 +245,12 @@ func (g *stickyGroup) dialHedged(ctx context.Context, m member, metadata *C.Meta
 					go collectHedge(primary)
 				}
 				g.table.hedgeWins.Add(1)
-				return r.conn, nil, time.Since(start), true
+				return r.conn, time.Since(start), true, nil
 			}
 			if primaryDone {
 				// Every started attempt failed: the primary error is
 				// returned and recorded as the one logical failure.
-				return nil, primaryResult.err, time.Since(start), recordable()
+				return nil, time.Since(start), recordable(), primaryResult.err
 			}
 			// The hedge failed first: keep waiting for the primary.
 		case r := <-primary:
@@ -261,15 +261,15 @@ func (g *stickyGroup) dialHedged(ctx context.Context, m member, metadata *C.Meta
 					hcancel()
 					go collectHedge(hedge)
 				}
-				return r.conn, nil, time.Since(start), true
+				return r.conn, time.Since(start), true, nil
 			}
 			if hcancel == nil {
 				// Failed before the threshold: no hedge is started and the
 				// existing retry-on-down logic applies.
-				return nil, r.err, time.Since(start), recordable()
+				return nil, time.Since(start), recordable(), r.err
 			}
 			if hedgeDone {
-				return nil, r.err, time.Since(start), recordable()
+				return nil, time.Since(start), recordable(), r.err
 			}
 			// The hedge is still running; wait for it.
 		}

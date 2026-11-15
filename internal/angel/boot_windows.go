@@ -3,6 +3,7 @@
 package angel
 
 import (
+	"math"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -18,8 +19,9 @@ func osBootTime() (time.Time, bool) {
 		return time.Time{}, false
 	}
 	ms, _, _ := procGetTickCount64.Call()
-	if ms == 0 {
+	ms64 := uint64(ms)
+	if ms64 == 0 || ms64 > math.MaxInt64/uint64(time.Millisecond) {
 		return time.Time{}, false
 	}
-	return time.Now().Round(0).Add(-time.Duration(ms) * time.Millisecond).UTC(), true
+	return time.Now().Round(0).Add(-time.Duration(int64(ms64)) * time.Millisecond).UTC(), true
 }

@@ -25,12 +25,12 @@ import (
 
 // accountsRun runs any netivri subcommand against home. Failure messages
 // never echo the arguments: they can carry a subscription URL.
-func accountsRun(t *testing.T, home string, args ...string) (int, string, string) {
+func accountsRun(parent context.Context, t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), e2eIOTimeout)
+	ctx, cancel := context.WithTimeout(parent, e2eIOTimeout)
 	defer cancel()
 	full := append(append([]string{}, args...), "--home", home, "--json")
-	cmd := exec.CommandContext(ctx, netivriBin, full...)
+	cmd := exec.CommandContext(ctx, netivriBin, full...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home)
 	var out, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &stderr
@@ -84,7 +84,7 @@ func accountsSaveSnapshot(t *testing.T, home, name string, nodes []subscription.
 
 func TestE2EAccountsProviderRouting(t *testing.T) {
 	home := t.TempDir()
-	pass := "provider-e2e-password"
+	pass := "provider-e2e-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestE2EAccountsProviderRouting(t *testing.T) {
 	accountsSaveSnapshot(t, home, "p2", []subscription.Node{accountsSocksNode("nl-p2", "NL", p2Up), accountsSocksNode("de-p2", "DE", p2Up)})
 
 	// dave's provider has no JP node: `up` must fail closed before binding.
-	code, out, stderr := runNetivri(t, home, "--port", "0")
+	code, _, stderr := runNetivri(t, home, "--port", "0")
 	if code != 5 {
 		t.Fatalf("up exit = %d, want 5 (stderr %s)", code, stderr)
 	}
@@ -117,7 +117,7 @@ func TestE2EAccountsProviderRouting(t *testing.T) {
 	}
 
 	// Drop dave and start the angel.
-	code, out, stderr = accountsCommand(t, home, "rm", "dave")
+	code, out, stderr := accountsCommand(t, home, "rm", "dave")
 	if code != 0 {
 		t.Fatalf("account rm: %s%s", out, stderr)
 	}
@@ -162,9 +162,16 @@ func TestE2ESubCountriesProviderForms(t *testing.T) {
 		{ID: "2", Name: "Amsterdam 02", Type: "ss", Server: "example.invalid", Port: 8389, Country: "NL"},
 		{ID: "3", Name: "Mystery", Type: "ss", Server: "example.invalid", Port: 8390},
 	})
+	checkSubCountriesNameForm(t, home)
+	checkSubCountriesAllForm(t, home)
+	checkSubCountriesUnknownName(t, home)
+	checkSubCountriesURLForm(t, home)
+}
 
-	// NAME form: the stored snapshot, no network.
-	code, out, stderr := accountsRun(t, home, "sub", "countries", "main")
+// checkSubCountriesNameForm checks the NAME form: the stored snapshot, no network.
+func checkSubCountriesNameForm(t *testing.T, home string) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, home, "sub", "countries", "main")
 	if code != 0 {
 		t.Fatalf("sub countries main: %s%s", out, stderr)
 	}
@@ -187,9 +194,13 @@ func TestE2ESubCountriesProviderForms(t *testing.T) {
 		named.Data.Countries[1].Code != "NL" || named.Data.Countries[1].Nodes != 1 {
 		t.Fatalf("unexpected data: %s", out)
 	}
+}
 
-	// No-argument form: every configured provider plus the union.
-	code, out, stderr = accountsRun(t, home, "sub", "countries")
+// checkSubCountriesAllForm checks the no-argument form: every configured
+// provider plus the union.
+func checkSubCountriesAllForm(t *testing.T, home string) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, home, "sub", "countries")
 	if code != 0 {
 		t.Fatalf("sub countries: %s%s", out, stderr)
 	}
@@ -215,17 +226,24 @@ func TestE2ESubCountriesProviderForms(t *testing.T) {
 		all.Data.Countries[1].Code != "NL" || all.Data.Countries[1].Nodes != 1 {
 		t.Fatalf("unexpected union: %s", out)
 	}
+}
 
-	// Unknown name: SUB_NOT_FOUND, exit 5.
-	code, out, stderr = accountsRun(t, home, "sub", "countries", "ghost")
+// checkSubCountriesUnknownName checks an unknown name: SUB_NOT_FOUND, exit 5.
+func checkSubCountriesUnknownName(t *testing.T, home string) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, home, "sub", "countries", "ghost")
 	if code != 5 {
 		t.Fatalf("sub countries ghost exit = %d (stdout %s stderr %s)", code, out, stderr)
 	}
 	if got := decodeErrEnvelope(t, stderr).Error.Code; got != "SUB_NOT_FOUND" {
 		t.Errorf("error code = %q, want SUB_NOT_FOUND", got)
 	}
+}
 
-	// --url form against a local HTTP server: fetch, parse, store nothing.
+// checkSubCountriesURLForm checks the --url form against a local HTTP server:
+// fetch, parse, store nothing.
+func checkSubCountriesURLForm(t *testing.T, home string) {
+	t.Helper()
 	const subBody = `proxies:
   - {name: "Frankfurt 01", type: ss, server: example.invalid, port: 8388, cipher: aes-128-gcm, password: pass}
   - {name: "Amsterdam 02", type: ss, server: example.invalid, port: 8389, cipher: aes-128-gcm, password: pass}
@@ -236,7 +254,7 @@ func TestE2ESubCountriesProviderForms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, out, stderr = accountsRun(t, home, "sub", "countries", "--url", url)
+	code, out, stderr := accountsRun(t.Context(), t, home, "sub", "countries", "--url", url)
 	if code != 0 {
 		t.Fatalf("sub countries --url: %s%s", out, stderr)
 	}

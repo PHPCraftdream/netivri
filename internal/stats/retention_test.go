@@ -21,7 +21,7 @@ func TestPruneFoldsAndDeletes(t *testing.T) {
 	}
 	mustFlush(t, s)
 	// An hourly row that is already past the 90 day horizon.
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO hourly (hour, node, kind, n, ok, ms_sum, ms_max, bytes) VALUES (?, 1, 1, 1, 1, 0, 0, 0)",
 		oldHour-90*24); err != nil {
 		t.Fatalf("insert stale hourly: %v", err)
@@ -38,7 +38,7 @@ func TestPruneFoldsAndDeletes(t *testing.T) {
 	// Counts preserved: 3 probes folded (2 ok), sum 400, max 300, split by
 	// hour: the failed probe sits in its own hour row.
 	var n, ok, msSum, msMax int64
-	if err := raw.QueryRow(
+	if err := raw.QueryRowContext(t.Context(),
 		"SELECT n, ok, ms_sum, ms_max FROM hourly WHERE hour = ? AND kind = 1", oldHour,
 	).Scan(&n, &ok, &msSum, &msMax); err != nil {
 		t.Fatalf("folded hourly row: %v", err)
@@ -47,7 +47,7 @@ func TestPruneFoldsAndDeletes(t *testing.T) {
 		t.Fatalf("folded row = n %d ok %d ms_sum %d ms_max %d, want 2/2/400/300", n, ok, msSum, msMax)
 	}
 	var stale int64
-	if err := raw.QueryRow("SELECT COUNT(*) FROM hourly WHERE hour < ?",
+	if err := raw.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM hourly WHERE hour < ?",
 		base.Unix()/3600-90*24).Scan(&stale); err != nil {
 		t.Fatalf("count stale hourly: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestLongWindowReadsHourly(t *testing.T) {
 		probe(at.Add(time.Second), "p1/a", true, 300),
 		probe(at.Add(2*time.Second), "p1/a", false, 50),
 		dial(at.Add(3*time.Second), "p1/a", true, 200),
-		throughput(at.Add(4*time.Second), "p1/a", 20480, 1000),
+		throughput(at.Add(4*time.Second), "p1/a", 20480),
 	} {
 		s.Record(sm)
 	}
@@ -118,7 +118,7 @@ func TestLongWindowIncludesRawSamplesOnFreshDB(t *testing.T) {
 		probe(at, "p1/a", true, 100),
 		probe(at.Add(time.Second), "p1/a", true, 300),
 		dial(at.Add(2*time.Second), "p1/a", true, 400),
-		throughput(at.Add(3*time.Second), "p1/a", 4096, 1000),
+		throughput(at.Add(3*time.Second), "p1/a", 4096),
 	} {
 		s.Record(sm)
 	}
@@ -153,10 +153,10 @@ func TestLongWindowCombinesHourlyAndRawSamples(t *testing.T) {
 	for _, sm := range []Sample{
 		probe(old, "p1/a", true, 100),
 		dial(old.Add(time.Second), "p1/a", true, 100),
-		throughput(old.Add(2*time.Second), "p1/a", 1024, 1000),
+		throughput(old.Add(2*time.Second), "p1/a", 1024),
 		probe(recent, "p1/a", true, 300),
 		dial(recent.Add(time.Second), "p1/a", true, 400),
-		throughput(recent.Add(2*time.Second), "p1/a", 2048, 1000),
+		throughput(recent.Add(2*time.Second), "p1/a", 2048),
 	} {
 		s.Record(sm)
 	}
@@ -199,7 +199,7 @@ func TestLongWindowThroughputOnlyNode(t *testing.T) {
 	s := newTestStore(t, nil)
 	at := base.Add(-time.Hour).Truncate(time.Hour)
 	s.Record(probe(at, "p1/a", true, 100))
-	s.Record(throughput(at, "p1/only", 4096, 1000))
+	s.Record(throughput(at, "p1/only", 4096))
 	mustFlush(t, s)
 	if err := s.prune(base.Add(8 * 24 * time.Hour)); err != nil {
 		t.Fatalf("prune: %v", err)
@@ -245,7 +245,7 @@ func TestPruneKeepsPendingBatches(t *testing.T) {
 		_ = s.Close()
 	})
 	s.Record(probe(base, "pending-node", true, 100))
-	s.RecordAccount(acct(base, "pending-login", "pending-account-node", KindDial, true, 200))
+	s.RecordAccount(acct(base, "pending-login", "pending-account-node", true, 200))
 	pruneDone := make(chan error, 1)
 	go func() { pruneDone <- s.prune(base) }()
 	waitState(t, "queued prune after pending samples", func() bool { return len(s.queue) == 3 })
@@ -280,7 +280,7 @@ func TestPruneKeepsPendingBatches(t *testing.T) {
 func TestPruneEvictsBothIDCaches(t *testing.T) {
 	s := newTestStore(t, nil)
 	s.Record(probe(base, "cache-node", true, 100))
-	s.RecordAccount(acct(base, "cache-login", "cache-account-node", KindDial, true, 200))
+	s.RecordAccount(acct(base, "cache-login", "cache-account-node", true, 200))
 	mustFlush(t, s)
 	if err := s.prune(base); err != nil {
 		t.Fatalf("prune: %v", err)
@@ -301,11 +301,11 @@ func TestPruneDeletesUnusedIdentitiesAndRefreshesCaches(t *testing.T) {
 	s := newTestStore(t, nil)
 	old := base.Add(-100 * 24 * time.Hour)
 	s.Record(probe(old, "stale-node", true, 100))
-	s.RecordAccount(acct(old, "stale-login", "stale-account-node", KindDial, true, 200))
+	s.RecordAccount(acct(old, "stale-login", "stale-account-node", true, 200))
 	if err := s.SetNodes([]NodeInfo{{Label: "metadata-only-node"}}); err != nil {
 		t.Fatalf("SetNodes: %v", err)
 	}
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO account (login, first_seen, last_seen) VALUES (?, ?, ?)",
 		"metadata-only-login", base.UnixMilli(), base.UnixMilli()); err != nil {
 		t.Fatalf("insert metadata-only account: %v", err)
@@ -325,10 +325,10 @@ func TestPruneDeletesUnusedIdentitiesAndRefreshesCaches(t *testing.T) {
 	// login return. A stale cache would attribute their measurements to these
 	// replacements instead of recreating the old identities.
 	s.Record(probe(base, "replacement-node", true, 300))
-	s.RecordAccount(acct(base, "replacement-login", "replacement-account-node", KindDial, true, 400))
+	s.RecordAccount(acct(base, "replacement-login", "replacement-account-node", true, 400))
 	mustFlush(t, s)
 	s.Record(probe(base, "stale-node", true, 500))
-	s.RecordAccount(acct(base, "stale-login", "stale-account-node", KindDial, true, 600))
+	s.RecordAccount(acct(base, "stale-login", "stale-account-node", true, 600))
 	mustFlush(t, s)
 
 	nodes, err := s.Nodes(Query{Since: 24 * time.Hour})
@@ -364,40 +364,40 @@ func TestPruneKeepsEveryMeasurementAndBindingReference(t *testing.T) {
 	s := newTestStore(t, nil)
 	old := base.Add(-100 * 24 * time.Hour).UnixMilli()
 	for i, label := range []string{"sample-node", "hourly-node", "account-sample-node", "account-hourly-node", "binding-node", "metadata-only-node"} {
-		if _, err := s.db.Exec(`
+		if _, err := s.db.ExecContext(t.Context(), `
 INSERT INTO node (id, label, provider, country, name, first_seen, last_seen)
 VALUES (?, ?, '', '', '', ?, ?)`, i+1, label, old, old); err != nil {
 			t.Fatalf("insert node %s: %v", label, err)
 		}
 	}
 	for i, login := range []string{"account-sample-login", "account-hourly-login", "binding-login", "metadata-only-login"} {
-		if _, err := s.db.Exec(
+		if _, err := s.db.ExecContext(t.Context(),
 			"INSERT INTO account (id, login, first_seen, last_seen) VALUES (?, ?, ?, ?)",
 			11+i, login, old, old); err != nil {
 			t.Fatalf("insert account %s: %v", login, err)
 		}
 	}
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)",
 		base.Add(-time.Hour).UnixMilli()); err != nil {
 		t.Fatalf("insert raw sample: %v", err)
 	}
 	hour := base.Unix() / 3600
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO hourly (hour, node, kind, n, ok, ms_sum, ms_max, bytes) VALUES (?, 2, 1, 1, 1, 100, 100, 0)", hour); err != nil {
 		t.Fatalf("insert hourly row: %v", err)
 	}
-	if _, err := s.db.Exec(`
+	if _, err := s.db.ExecContext(t.Context(), `
 INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down)
 VALUES (?, 11, 3, 2, 1, 100, 0, 0, 0)`, base.Add(-time.Hour).UnixMilli()); err != nil {
 		t.Fatalf("insert account sample: %v", err)
 	}
-	if _, err := s.db.Exec(`
+	if _, err := s.db.ExecContext(t.Context(), `
 INSERT INTO account_hourly (hour, account, node, kind, n, ok, ms_sum, ms_max, bytes, up, down)
 VALUES (?, 12, 4, 2, 1, 1, 100, 100, 0, 0, 0)`, hour); err != nil {
 		t.Fatalf("insert account hourly row: %v", err)
 	}
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES (?, ?, ?, ?, ?)",
 		"binding-login", "example.com", "binding-node", old, old); err != nil {
 		t.Fatalf("insert binding: %v", err)
@@ -420,7 +420,7 @@ VALUES (?, 12, 4, 2, 1, 1, 100, 100, 0, 0, 0)`, hour); err != nil {
 	} {
 		var got int
 		query := "SELECT COUNT(*) FROM " + tc.table + " WHERE " + tc.column + " = ?"
-		if err := s.db.QueryRow(query, tc.value).Scan(&got); err != nil {
+		if err := s.db.QueryRowContext(t.Context(), query, tc.value).Scan(&got); err != nil {
 			t.Fatalf("count %s %s: %v", tc.table, tc.value, err)
 		}
 		if got != 1 {
@@ -436,7 +436,7 @@ VALUES (?, 12, 4, 2, 1, 1, 100, 100, 0, 0, 0)`, hour); err != nil {
 			column = "login"
 		}
 		var got int
-		if err := s.db.QueryRow("SELECT COUNT(*) FROM "+tc.table+" WHERE "+column+" = ?", tc.name).Scan(&got); err != nil {
+		if err := s.db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+tc.table+" WHERE "+column+" = ?", tc.name).Scan(&got); err != nil {
 			t.Fatalf("count unreferenced %s %s: %v", tc.table, tc.name, err)
 		}
 		if got != 0 {
@@ -464,27 +464,27 @@ func TestOpenPrunesExpiredIdentitiesSynchronously(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stats.db")
 	raw := openRaw(t, path)
 	for _, ddl := range []string{schemaV1, schemaV2, schemaV3, schemaV4, "PRAGMA user_version = 4"} {
-		if _, err := raw.Exec(ddl); err != nil {
+		if _, err := raw.ExecContext(t.Context(), ddl); err != nil {
 			t.Fatalf("create schema: %v", err)
 		}
 	}
 	old := base.Add(-100 * 24 * time.Hour).UnixMilli()
-	if _, err := raw.Exec(`
+	if _, err := raw.ExecContext(t.Context(), `
 INSERT INTO node (id, label, provider, country, name, first_seen, last_seen)
 VALUES (1, 'expired-node', '', '', '', ?, ?), (2, 'metadata-only-node', '', '', '', ?, ?)`,
 		old, old, base.UnixMilli(), base.UnixMilli()); err != nil {
 		t.Fatalf("insert nodes: %v", err)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO account (id, login, first_seen, last_seen) VALUES (1, 'expired-login', ?, ?), (2, 'metadata-only-login', ?, ?)",
 		old, old, base.UnixMilli(), base.UnixMilli()); err != nil {
 		t.Fatalf("insert accounts: %v", err)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)", old); err != nil {
 		t.Fatalf("insert old sample: %v", err)
 	}
-	if _, err := raw.Exec(`
+	if _, err := raw.ExecContext(t.Context(), `
 INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down)
 VALUES (?, 1, 1, 2, 1, 100, 0, 0, 0)`, old); err != nil {
 		t.Fatalf("insert old account sample: %v", err)

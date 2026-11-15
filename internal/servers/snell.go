@@ -69,10 +69,10 @@ func (p snell) Start(spec Spec, env Env) (io.Closer, error) {
 		return nil, err
 	}
 	if spec.Protocol != p.Name() {
-		return nil, errors.New("Snell protocol mismatch")
+		return nil, errors.New("snell protocol mismatch")
 	}
 	if env.Tunnel == nil || env.ListenConfig == nil {
-		return nil, errors.New("Snell start requires tunnel and listen config")
+		return nil, errors.New("snell start requires tunnel and listen config")
 	}
 	login := spec.Accounts[0]
 	key := spec.Users[login]["psk"]
@@ -159,17 +159,17 @@ func (e snellStartError) GoString() string     { return e.Error() }
 func (e snellStartError) Is(target error) bool { return errors.Is(e.cause, target) }
 
 func (snell) Link(Spec, string, string) (string, error) {
-	return "", errors.New("Snell has no standard share URI; use the Mihomo YAML snippet")
+	return "", errors.New("snell has no standard share URI; use the Mihomo YAML snippet")
 }
 func (p snell) Mihomo(spec Spec, login, host string) (string, error) {
 	if err := spec.Validate(); err != nil {
 		return "", err
 	}
 	if spec.Protocol != p.Name() {
-		return "", errors.New("Snell protocol mismatch")
+		return "", errors.New("snell protocol mismatch")
 	}
 	if len(spec.Accounts) != 1 || spec.Accounts[0] != login {
-		return "", errors.New("Snell requires its configured account")
+		return "", errors.New("snell requires its configured account")
 	}
 	key := spec.Users[login]["psk"]
 	if !snellPSKValid(key) || host == "" {

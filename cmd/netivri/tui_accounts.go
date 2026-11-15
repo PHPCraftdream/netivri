@@ -52,11 +52,10 @@ type accountsDialogResult struct {
 	Canceled bool
 }
 type accountsDialog struct {
-	prompt      *tui.Prompt
-	wizard      *tui.Wizard
-	onResult    func(map[string]string) tea.Cmd
-	validate    func(map[string]string) error
-	removeLogin string
+	prompt   *tui.Prompt
+	wizard   *tui.Wizard
+	onResult func(map[string]string) tea.Cmd
+	validate func(map[string]string) error
 }
 
 func (d *accountsDialog) SetTheme(t tui.Theme) {
@@ -80,7 +79,9 @@ func (d *accountsDialog) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 			return d, nil
 		}
 		m, c := d.wizard.Update(msg)
-		d.wizard = m.(*tui.Wizard)
+		if w, ok := m.(*tui.Wizard); ok {
+			d.wizard = w
+		}
 		if c != nil {
 			return d, func() tea.Msg {
 				v := c()
@@ -96,7 +97,9 @@ func (d *accountsDialog) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 		return d, nil
 	}
 	m, c := d.prompt.Update(msg)
-	d.prompt = m.(*tui.Prompt)
+	if pr, ok := m.(*tui.Prompt); ok {
+		d.prompt = pr
+	}
 	if c != nil {
 		return d, func() tea.Msg {
 			v := c()
@@ -159,7 +162,7 @@ func newAccountsScreen(home string, env tui.Env) tui.Screen {
 	l.AddLabel = "+ Add account [a]"
 	s.workspace = tui.NewWorkspace(l, tui.NewCard("Account", nil))
 	s.workspace.SetTheme(s.theme)
-	s.configureColumns(0)
+	s.configureColumns()
 	return s
 }
 func (s *accountsScreen) Title() string { return "Accounts" }
@@ -278,177 +281,221 @@ func (s *accountsScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
 			d, cmd := s.dialog.Update(msg)
-			s.dialog = d.(*accountsDialog)
+			if ad, ok := d.(*accountsDialog); ok {
+				s.dialog = ad
+			}
 			return s, cmd
 		}
 	}
-	switch m := msg.(type) {
-	case tea.WindowSizeMsg:
-		s.width = max(0, m.Width)
-		s.height = max(0, m.Height)
-		s.workspace.SetSize(s.width, s.height)
-		s.configureColumns(s.width)
-		if s.workspace.Card != nil {
-			s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
-		}
-		if s.workspace.List != nil {
-			s.workspace.List.Focused = s.workspace.Focus() == tui.PaneList
-		}
-		return s, nil
-	case tui.ThemeMsg:
-		s.theme = m.Theme
-		s.workspace.SetTheme(m.Theme)
-		if s.workspace.Card != nil {
-			s.workspace.Card.SetTheme(m.Theme)
-		}
-		if s.dialog != nil {
-			s.dialog.SetTheme(m.Theme)
-		}
-		return s, nil
-	case tui.BackgroundMsg:
-		return s, s.updateBackground(m.Value)
-	case tui.RegionFocusMsg:
-		if m.Tabs {
-			s.workspace.SetFocus(tui.PaneList)
-		}
-		return s, nil
-	case accountsDialogResult:
-		if s.dialog == nil {
-			return s, nil
-		}
-		if m.Canceled {
-			s.dialog = nil
-			return s, nil
-		}
-		d := s.dialog
-		if d.onResult == nil {
-			s.dialog = nil
-			return s, nil
-		}
-		if d.validate != nil {
-			if err := d.validate(m.Values); err != nil {
-				d.validationError(err)
-				return s, nil
-			}
-		}
-		if d.prompt != nil {
-			d.prompt.SetSaving(true)
-		}
-		if d.wizard != nil {
-			d.wizard.SetSaving(true)
-		}
-		return s, d.onResult(m.Values)
-	case accountsRateTick:
-		if s.polling {
-			return s, nil
-		}
-		s.polling = true
-		s.pollGeneration++
-		g := s.pollGeneration
-		return s, s.bg("account activity", func() tea.Msg { st, e := s.status(s.env.Home); return accountsPollResult{st, e, s.now(), g} })
-	case accountsLoaded:
-		if m.Generation != s.loadGeneration {
-			return s, nil
-		}
-		s.loading = false
-		if m.Err != nil {
-			s.message = accountsErrorText(m.Err)
-			return s, s.notice(s.message)
-		}
-		selected := s.selectedLogin()
-		s.rows = m.Rows
-		s.pruneMarks()
-		s.syncRows(selected)
-		return s, s.loadDetail(s.selectedLogin())
-	case accountsPollResult:
-		if m.Generation != s.pollGeneration {
-			return s, nil
-		}
-		s.polling = false
-		s.applyStatus(m.Status, m.Err, m.At)
-		s.updateLiveRows()
-		return s, s.rateTick()
-	case accountsDetailLoaded:
-		if m.Generation != s.detailGeneration {
-			return s, nil
-		}
-		if m.Err != nil {
-			s.message = accountsErrorText(m.Err)
-			return s, s.notice(s.message)
-		}
-		if m.Result.Login != s.selectedLogin() {
-			return s, nil
-		}
-		s.cardResult = &m.Result
-		s.updateCard()
-		return s, nil
-	case accountsRouteLoaded:
-		return s, s.applyRouteLoaded(m)
-	case accountsBulkDone:
-		return s, s.applyBulkDone(m)
-	case accountsChoicesLoaded:
-		if m.Err != nil {
-			s.message = accountsErrorText(m.Err)
-			return s, s.notice(s.message)
-		}
-		s.providers = m.Providers
-		s.providerNodes = m.Nodes
-		s.providerCountries = map[string][]string{}
-		for _, p := range m.Countries.Providers {
-			for _, c := range p.Countries {
-				s.providerCountries[p.Name] = append(s.providerCountries[p.Name], c.Code)
-			}
-		}
-		return s, nil
-	case accountsMutationDone:
-		s.loading = false
-		if m.Err != nil {
-			s.message = accountsErrorText(m.Err)
-			if s.dialog != nil {
-				s.dialog.promptError(m.Err)
-			}
-			return s, s.notice(s.safeNotice(s.message))
-		}
-		s.rows = m.Rows
-		s.message = m.Notice
-		s.pruneMarks()
-		s.dialog = nil
-		s.syncRows(m.Login)
-		s.refreshSelectedCard(true)
-		return s, tea.Batch(s.loadDetail(s.selectedLogin()), s.notice(s.message))
-	case tui.ConfirmResultMsg:
-		if c, handled := s.bulkConfirmResult(m); handled {
-			return s, c
-		}
-		login := s.pendingLogin
-		s.pendingLogin = ""
-		if !m.Confirmed || login == "" {
-			return s, nil
-		}
-		if _, exists := s.accountByLogin(login); !exists || login != s.selectedLogin() {
-			return s, nil
-		}
-		return s, s.mutateRemove(login)
-	case tea.MouseClickMsg, tea.MouseWheelMsg:
-		before := s.selectedLogin()
-		activated := s.workspace.Update(msg)
-		if activated && s.workspace.Focus() == tui.PaneCard {
-			return s, s.activateCard()
-		}
-		if s.selectedLogin() == before {
-			if activated && s.workspace.List.IsAdd() {
-				if len(s.providers) == 0 {
-					return s, s.switchProviders()
-				}
-				return s, s.beginAdd()
-			}
-			return s, nil
-		}
-		return s, s.selectionChanged()
-	case tea.KeyPressMsg:
-		return s.updateKey(m)
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		return s.updateKey(k)
+	}
+	if cmd, handled := s.updateMsg(msg); handled {
+		return s, cmd
 	}
 	return s, nil
+}
+
+// updateMsg reports false for messages that no case handles.
+func (s *accountsScreen) updateMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch m := msg.(type) {
+	case tea.WindowSizeMsg:
+		s.onWindowSize(m)
+		return nil, true
+	case tui.ThemeMsg:
+		s.onTheme(m)
+		return nil, true
+	case tui.BackgroundMsg:
+		return s.updateBackground(m.Value), true
+	case tui.RegionFocusMsg:
+		s.onRegionFocus(m)
+		return nil, true
+	case accountsDialogResult:
+		return s.onDialogResult(m), true
+	case accountsRateTick:
+		return s.onRateTick(), true
+	case accountsLoaded:
+		return s.onLoaded(m), true
+	case accountsPollResult:
+		return s.onPollResult(m), true
+	case accountsDetailLoaded:
+		return s.onDetailLoaded(m), true
+	case accountsRouteLoaded:
+		return s.applyRouteLoaded(m), true
+	case accountsBulkDone:
+		return s.applyBulkDone(m), true
+	case accountsChoicesLoaded:
+		return s.onChoicesLoaded(m), true
+	case accountsMutationDone:
+		return s.onMutationDone(m), true
+	case tui.ConfirmResultMsg:
+		return s.onConfirm(m), true
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		return s.onMouse(msg), true
+	}
+	return nil, false
+}
+func (s *accountsScreen) onWindowSize(m tea.WindowSizeMsg) {
+	s.width = max(0, m.Width)
+	s.height = max(0, m.Height)
+	s.workspace.SetSize(s.width, s.height)
+	s.configureColumns()
+	if s.workspace.Card != nil {
+		s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
+	}
+	if s.workspace.List != nil {
+		s.workspace.List.Focused = s.workspace.Focus() == tui.PaneList
+	}
+}
+func (s *accountsScreen) onTheme(m tui.ThemeMsg) {
+	s.theme = m.Theme
+	s.workspace.SetTheme(m.Theme)
+	if s.workspace.Card != nil {
+		s.workspace.Card.SetTheme(m.Theme)
+	}
+	if s.dialog != nil {
+		s.dialog.SetTheme(m.Theme)
+	}
+}
+func (s *accountsScreen) onRegionFocus(m tui.RegionFocusMsg) {
+	if m.Tabs {
+		s.workspace.SetFocus(tui.PaneList)
+	}
+}
+func (s *accountsScreen) onDialogResult(m accountsDialogResult) tea.Cmd {
+	if s.dialog == nil {
+		return nil
+	}
+	if m.Canceled {
+		s.dialog = nil
+		return nil
+	}
+	d := s.dialog
+	if d.onResult == nil {
+		s.dialog = nil
+		return nil
+	}
+	if d.validate != nil {
+		if err := d.validate(m.Values); err != nil {
+			d.validationError(err)
+			return nil
+		}
+	}
+	if d.prompt != nil {
+		d.prompt.SetSaving(true)
+	}
+	if d.wizard != nil {
+		d.wizard.SetSaving(true)
+	}
+	return d.onResult(m.Values)
+}
+func (s *accountsScreen) onRateTick() tea.Cmd {
+	if s.polling {
+		return nil
+	}
+	s.polling = true
+	s.pollGeneration++
+	g := s.pollGeneration
+	return s.bg("account activity", func() tea.Msg { st, e := s.status(s.env.Home); return accountsPollResult{st, e, s.now(), g} })
+}
+func (s *accountsScreen) onLoaded(m accountsLoaded) tea.Cmd {
+	if m.Generation != s.loadGeneration {
+		return nil
+	}
+	s.loading = false
+	if m.Err != nil {
+		s.message = accountsErrorText(m.Err)
+		return s.notice(s.message)
+	}
+	selected := s.selectedLogin()
+	s.rows = m.Rows
+	s.pruneMarks()
+	s.syncRows(selected)
+	return s.loadDetail(s.selectedLogin())
+}
+func (s *accountsScreen) onPollResult(m accountsPollResult) tea.Cmd {
+	if m.Generation != s.pollGeneration {
+		return nil
+	}
+	s.polling = false
+	s.applyStatus(m.Status, m.Err, m.At)
+	s.updateLiveRows()
+	return s.rateTick()
+}
+func (s *accountsScreen) onDetailLoaded(m accountsDetailLoaded) tea.Cmd {
+	if m.Generation != s.detailGeneration {
+		return nil
+	}
+	if m.Err != nil {
+		s.message = accountsErrorText(m.Err)
+		return s.notice(s.message)
+	}
+	if m.Result.Login != s.selectedLogin() {
+		return nil
+	}
+	s.cardResult = &m.Result
+	s.updateCard()
+	return nil
+}
+func (s *accountsScreen) onChoicesLoaded(m accountsChoicesLoaded) tea.Cmd {
+	if m.Err != nil {
+		s.message = accountsErrorText(m.Err)
+		return s.notice(s.message)
+	}
+	s.providers = m.Providers
+	s.providerNodes = m.Nodes
+	s.providerCountries = map[string][]string{}
+	for _, p := range m.Countries.Providers {
+		for _, c := range p.Countries {
+			s.providerCountries[p.Name] = append(s.providerCountries[p.Name], c.Code)
+		}
+	}
+	return nil
+}
+func (s *accountsScreen) onMutationDone(m accountsMutationDone) tea.Cmd {
+	s.loading = false
+	if m.Err != nil {
+		s.message = accountsErrorText(m.Err)
+		if s.dialog != nil {
+			s.dialog.promptError(m.Err)
+		}
+		return s.notice(s.safeNotice(s.message))
+	}
+	s.rows = m.Rows
+	s.message = m.Notice
+	s.pruneMarks()
+	s.dialog = nil
+	s.syncRows(m.Login)
+	s.refreshSelectedCard()
+	return tea.Batch(s.loadDetail(s.selectedLogin()), s.notice(s.message))
+}
+func (s *accountsScreen) onConfirm(m tui.ConfirmResultMsg) tea.Cmd {
+	if c, handled := s.bulkConfirmResult(m); handled {
+		return c
+	}
+	login := s.pendingLogin
+	s.pendingLogin = ""
+	if !m.Confirmed || login == "" {
+		return nil
+	}
+	if _, exists := s.accountByLogin(login); !exists || login != s.selectedLogin() {
+		return nil
+	}
+	return s.mutateRemove(login)
+}
+func (s *accountsScreen) onMouse(msg tea.Msg) tea.Cmd {
+	before := s.selectedLogin()
+	activated := s.workspace.Update(msg)
+	if activated && s.workspace.Focus() == tui.PaneCard {
+		return s.activateCard()
+	}
+	if s.selectedLogin() == before {
+		if activated && s.workspace.List.IsAdd() {
+			return s.beginAddOrSwitch()
+		}
+		return nil
+	}
+	return s.selectionChanged()
 }
 func keyMatchesAccounts(msg tea.KeyPressMsg, binding bubbleskey.Binding) bool {
 	return bubbleskey.Matches(msg, binding)
@@ -457,116 +504,147 @@ func keyMatchesAccounts(msg tea.KeyPressMsg, binding bubbleskey.Binding) bool {
 func (s *accountsScreen) updateKey(m tea.KeyPressMsg) (tui.Screen, tea.Cmd) {
 	if s.dialog != nil {
 		d, c := s.dialog.Update(m)
-		s.dialog = d.(*accountsDialog)
+		if ad, ok := d.(*accountsDialog); ok {
+			s.dialog = ad
+		}
 		return s, c
 	}
 	k := m.String()
 	if s.workspace.List != nil && s.workspace.List.Filtering {
 		// The filter line owns the keyboard: esc clears it, enter keeps it,
 		// letters append; no hotkeys, pane cycling or drill-back may fire.
-		if s.workspace.List.Update(m) {
-			return s, s.selectionChanged()
-		}
-		return s, nil
+		return s, s.filterKey(m)
 	}
-	if k == "tab" && s.width >= 100 {
-		s.workspace.CycleFocus(1)
+	if s.focusKey(k) {
 		return s, nil
-	}
-	if k == "shift+tab" && s.width >= 100 {
-		s.workspace.CycleFocus(-1)
-		return s, nil
-	}
-	if k == "esc" {
-		if s.workspace.Drilled || s.workspace.Focus() == tui.PaneCard {
-			s.workspace.Drilled = false
-			s.workspace.SetFocus(tui.PaneList)
-			return s, nil
-		}
 	}
 	if keyMatchesAccounts(m, accountsActionBindings[4]) && s.workspace.Focus() == tui.PaneList {
 		return s, tea.Batch(s.reload(), s.loadChoices())
 	}
-	if keyMatchesAccounts(m, accountsActionBindings[0]) || keyMatchesAccounts(m, accountsActionBindings[1]) || keyMatchesAccounts(m, accountsActionBindings[2]) || keyMatchesAccounts(m, accountsActionBindings[3]) {
-		if keyMatchesAccounts(m, accountsActionBindings[0]) {
-			if len(s.providers) == 0 {
-				return s, s.switchProviders()
-			}
-			return s, s.beginAdd()
-		}
-		a, ok := s.selectedAccount()
-		if !ok {
-			return s, nil
-		}
-		switch {
-		case keyMatchesAccounts(m, accountsActionBindings[1]):
-			return s, s.openEdit(a, "provider")
-		case keyMatchesAccounts(m, accountsActionBindings[2]):
-			return s, s.beginClone(a)
-		case keyMatchesAccounts(m, accountsActionBindings[3]):
-			if s.env.OpenModal != nil {
-				s.pendingLogin = a.Login
-				return s, s.env.OpenModal(&tui.Confirm{Prompt: "Remove account " + a.Login + "?"})
-			}
-		}
+	if cmd, handled := s.actionBindingKey(m); handled {
+		return s, cmd
 	}
-	if k == "enter" && s.workspace.List.IsAdd() {
-		if len(s.providers) == 0 {
-			return s, s.switchProviders()
-		}
-		return s, s.beginAdd()
+	if cmd, handled := s.enterKey(k); handled {
+		return s, cmd
 	}
-	if k == "enter" && s.width < 100 && !s.workspace.Drilled {
-		s.workspace.Drilled = true
-		s.workspace.SetFocus(tui.PaneCard)
-		return s, s.loadDetail(s.selectedLogin())
-	}
-	if k == "enter" && s.width >= 100 && s.workspace.Focus() == tui.PaneList {
-		s.workspace.SetFocus(tui.PaneCard)
-		return s, s.loadDetail(s.selectedLogin())
-	}
-	if k == "space" || k == "m" {
-		return s, s.toggleMark()
-	}
-	if k == "M" {
-		return s, s.clearMarks()
-	}
-	if k == "A" {
-		return s, s.markAll()
-	}
-	if k == "v" {
-		return s, s.openRoute()
-	}
-	if k == "b" {
-		return s, s.beginBulk()
+	if cmd, handled := s.markKey(k); handled {
+		return s, cmd
 	}
 	if s.workspace.Focus() == tui.PaneCard && (s.width >= 100 || s.workspace.Drilled) {
-		if s.workspace.Card.Update(m) {
-			return s, s.activateCard()
-		}
-		return s, nil
+		return s, s.cardKey(m)
 	}
+	return s, s.listKey(m)
+}
+func (s *accountsScreen) beginAddOrSwitch() tea.Cmd {
+	if len(s.providers) == 0 {
+		return s.switchProviders()
+	}
+	return s.beginAdd()
+}
+func (s *accountsScreen) filterKey(m tea.KeyPressMsg) tea.Cmd {
+	if s.workspace.List.Update(m) {
+		return s.selectionChanged()
+	}
+	return nil
+}
+
+// focusKey handles tab, shift+tab and esc, which move focus between panes.
+func (s *accountsScreen) focusKey(k string) bool {
+	switch {
+	case k == "tab" && s.width >= 100:
+		s.workspace.CycleFocus(1)
+		return true
+	case k == "shift+tab" && s.width >= 100:
+		s.workspace.CycleFocus(-1)
+		return true
+	case k == "esc" && (s.workspace.Drilled || s.workspace.Focus() == tui.PaneCard):
+		s.workspace.Drilled = false
+		s.workspace.SetFocus(tui.PaneList)
+		return true
+	}
+	return false
+}
+func (s *accountsScreen) actionBindingKey(m tea.KeyPressMsg) (tea.Cmd, bool) {
+	if keyMatchesAccounts(m, accountsActionBindings[0]) {
+		return s.beginAddOrSwitch(), true
+	}
+	if !keyMatchesAccounts(m, accountsActionBindings[1]) && !keyMatchesAccounts(m, accountsActionBindings[2]) && !keyMatchesAccounts(m, accountsActionBindings[3]) {
+		return nil, false
+	}
+	a, ok := s.selectedAccount()
+	if !ok {
+		return nil, true
+	}
+	switch {
+	case keyMatchesAccounts(m, accountsActionBindings[1]):
+		return s.openEdit(a, "provider"), true
+	case keyMatchesAccounts(m, accountsActionBindings[2]):
+		return s.beginClone(a), true
+	case keyMatchesAccounts(m, accountsActionBindings[3]):
+		if s.env.OpenModal != nil {
+			s.pendingLogin = a.Login
+			return s.env.OpenModal(&tui.Confirm{Prompt: "Remove account " + a.Login + "?"}), true
+		}
+	}
+	return nil, false
+}
+func (s *accountsScreen) enterKey(k string) (tea.Cmd, bool) {
+	switch {
+	case k == "enter" && s.workspace.List.IsAdd():
+		return s.beginAddOrSwitch(), true
+	case k == "enter" && s.width < 100 && !s.workspace.Drilled:
+		s.workspace.Drilled = true
+		s.workspace.SetFocus(tui.PaneCard)
+		return s.loadDetail(s.selectedLogin()), true
+	case k == "enter" && s.width >= 100 && s.workspace.Focus() == tui.PaneList:
+		s.workspace.SetFocus(tui.PaneCard)
+		return s.loadDetail(s.selectedLogin()), true
+	}
+	return nil, false
+}
+func (s *accountsScreen) markKey(k string) (tea.Cmd, bool) {
+	switch k {
+	case "space", "m":
+		s.toggleMark()
+		return nil, true
+	case "M":
+		s.clearMarks()
+		return nil, true
+	case "A":
+		s.markAll()
+		return nil, true
+	case "v":
+		return s.openRoute(), true
+	case "b":
+		return s.beginBulk(), true
+	}
+	return nil, false
+}
+func (s *accountsScreen) cardKey(m tea.KeyPressMsg) tea.Cmd {
+	if s.workspace.Card.Update(m) {
+		return s.activateCard()
+	}
+	return nil
+}
+func (s *accountsScreen) listKey(m tea.KeyPressMsg) tea.Cmd {
 	before := -1
 	if s.workspace.List != nil {
 		before = s.workspace.List.Selected
 	}
 	if s.workspace.List.Update(m) {
 		if s.workspace.List.IsAdd() {
-			if len(s.providers) == 0 {
-				return s, s.switchProviders()
-			}
-			return s, s.beginAdd()
+			return s.beginAddOrSwitch()
 		}
-		return s, s.selectionChanged()
+		return s.selectionChanged()
 	}
 	if before >= 0 && s.workspace.List.Selected != before && !s.workspace.List.IsAdd() {
-		s.refreshSelectedCard(true)
-		return s, s.loadDetail(s.selectedLogin())
+		s.refreshSelectedCard()
+		return s.loadDetail(s.selectedLogin())
 	}
-	return s, nil
+	return nil
 }
 func (s *accountsScreen) selectionChanged() tea.Cmd {
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	return s.loadDetail(s.selectedLogin())
 }
 func (d *accountsDialog) validationError(e error) {
@@ -667,7 +745,7 @@ func (s *accountsScreen) updateLiveCardInfo() {
 		s.workspace.Card.Info = append([]string{line}, info...)
 	}
 }
-func (s *accountsScreen) configureColumns(width int) {
+func (s *accountsScreen) configureColumns() {
 	s.workspace.List.Columns = []tui.ListColumn{{Title: "LOGIN", Min: 4, Flex: 2}, {Title: "PROVIDER", Min: 4, Flex: 2}, {Title: "EXIT", Min: 2, Flex: 1}, {Title: "CONN", Min: 2, Flex: 1}, {Title: "UP/s", Min: 3, Flex: 1}, {Title: "DOWN", Min: 3, Flex: 1}}
 }
 
@@ -676,7 +754,7 @@ func (s *accountsScreen) syncRows(preferred string) {
 		s.workspace.Card.Focused = s.workspace.Focus() == tui.PaneCard
 	}
 	selected := s.selectedLogin()
-	rs := []tui.Row{}
+	rs := make([]tui.Row, 0, len(s.rows))
 	for _, a := range s.rows {
 		provider := displayAny(a.Provider)
 		exit := displayAny(a.Exit)
@@ -696,7 +774,7 @@ func (s *accountsScreen) syncRows(preferred string) {
 		})
 	}
 	if s.selectedLogin() != selected {
-		s.refreshSelectedCard(true)
+		s.refreshSelectedCard()
 	}
 }
 func (s *accountsScreen) updateCard() {
@@ -704,24 +782,19 @@ func (s *accountsScreen) updateCard() {
 	if s.workspace.Card != nil {
 		selected, scroll, focused = s.workspace.Card.Selected, s.workspace.Card.Scroll, s.workspace.Card.Focused
 	}
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	if s.workspace.Card != nil {
 		s.workspace.Card.Selected = min(selected, max(0, len(s.workspace.Card.Lines)-1))
 		s.workspace.Card.Scroll = scroll
 		s.workspace.Card.Focused = focused
 	}
 }
-func (s *accountsScreen) refreshSelectedCard(force bool) {
+func (s *accountsScreen) refreshSelectedCard() {
 	a, ok := s.selectedAccount()
 	if !ok {
-		if force || s.workspace.Card == nil || s.workspace.Card.Title != "Account" {
-			s.workspace.Card = tui.NewCard("Account", []tui.CardLine{{ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: true}})
-			s.workspace.Card.SetTheme(s.theme)
-			s.workspace.Card.Info = []string{"Select an account to see details."}
-		}
-		return
-	}
-	if !force && s.workspace.Card != nil && s.workspace.Card.Title == "Account "+a.Login {
+		s.workspace.Card = tui.NewCard("Account", []tui.CardLine{{ID: "bulk", Label: "Apply to marked...", Kind: tui.CardAction, Action: true, Hotkey: "b", Disabled: true}})
+		s.workspace.Card.SetTheme(s.theme)
+		s.workspace.Card.Info = []string{"Select an account to see details."}
 		return
 	}
 	pw := "waiting for the first login"
@@ -1026,7 +1099,7 @@ func choicePrompt(label, hint string, opts []tui.PromptOption, value string) *tu
 	return p
 }
 func (s *accountsScreen) providerOptions() []tui.PromptOption {
-	out := []tui.PromptOption{}
+	out := make([]tui.PromptOption, 0, len(s.providers))
 	for _, p := range s.providers {
 		out = append(out, tui.PromptOption{Label: p, Value: p, Description: s.providerNodes[p] + " nodes"})
 	}
@@ -1104,7 +1177,8 @@ func (s *accountsScreen) openEdit(a accountInfo, id string) tea.Cmd {
 	return nil
 }
 func (s *accountsScreen) openHopPicker(a accountInfo, id string) tea.Cmd {
-	side, own := "pre", config.HopList(nil)
+	side := "pre"
+	var own config.HopList
 	if id == "post" {
 		side = "post"
 	}

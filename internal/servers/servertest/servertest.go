@@ -2,8 +2,11 @@
 package servertest
 
 import (
+	"context"
+	crand "crypto/rand"
 	"errors"
-	"math/rand/v2"
+	"math"
+	"math/big"
 	"net"
 	"os"
 	"strconv"
@@ -49,7 +52,11 @@ func freePortCandidate(attempt int) int {
 	if attempt < freePortOSAttempts {
 		return 0
 	}
-	return 20000 + rand.IntN(20000)
+	n, err := crand.Int(crand.Reader, big.NewInt(20000))
+	if err != nil {
+		return 0
+	}
+	return 20000 + int(n.Int64())
 }
 
 // FreePort briefly binds loopback TCP and returns the port, provided the same
@@ -62,9 +69,9 @@ func freePortCandidate(attempt int) int {
 func FreePort(t testing.TB) int {
 	t.Helper()
 	var lastErr error
-	for attempt := 0; attempt < freePortAttempts; attempt++ {
+	for attempt := range freePortAttempts {
 		candidate := freePortCandidate(attempt)
-		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate)))
+		listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate)))
 		if err != nil {
 			if candidate == 0 {
 				t.Fatalf("could not reserve a test port: %v", err)
@@ -72,11 +79,16 @@ func FreePort(t testing.TB) int {
 			lastErr = err
 			continue
 		}
-		port := listener.Addr().(*net.TCPAddr).Port
+		addr, ok := listener.Addr().(*net.TCPAddr)
+		if !ok {
+			_ = listener.Close()
+			t.Fatalf("test port listener has address type %T", listener.Addr())
+		}
+		port := addr.Port
 		if err := listener.Close(); err != nil {
 			t.Fatal("could not release a test port")
 		}
-		packet, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		packet, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			lastErr = err
 			continue
@@ -86,6 +98,25 @@ func FreePort(t testing.TB) int {
 	}
 	t.Fatalf("could not reserve a test port free for TCP and UDP (last error: %v)", lastErr)
 	return 0
+}
+
+// Uint16 converts n to uint16 (ports, wire lengths); ok is false outside 0..65535.
+func Uint16(n int) (uint16, bool) {
+	if n < 0 || n > math.MaxUint16 {
+		return 0, false
+	}
+	return uint16(n), true
+}
+
+// MustUint16 is Uint16 for test code: an out-of-range value fails the test.
+func MustUint16(t testing.TB, port int) uint16 {
+	t.Helper()
+	p, ok := Uint16(port)
+	if !ok {
+		t.Fatalf("port %d is outside 0..65535", port)
+		return 0
+	}
+	return p
 }
 
 // IsAddrInUse reports whether err means the listen address is already taken:
@@ -114,7 +145,7 @@ func IsAddrInUse(err error) bool {
 // servers' start errors keep free of secrets.
 func StartOnFreePort(t testing.TB, start func(port int) error) int {
 	t.Helper()
-	for attempt := 0; attempt < 5; attempt++ {
+	for range 5 {
 		port := FreePort(t)
 		err := start(port)
 		if err == nil {

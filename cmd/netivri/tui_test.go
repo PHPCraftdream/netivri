@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
@@ -187,8 +188,8 @@ func TestInteractiveUsageErrorsHaveEntryHint(t *testing.T) {
 	t.Setenv("NETIVRI_OUTPUT", "")
 	for _, args := range [][]string{{"wat", "-i"}, {"sub", "add", "-i"}, {"account", "list", "-i"}, {"server", "list", "-i"}, {"-i", "--home"}, {"-i", "--local=maybe"}, {"-i", "--home", "{DIR}", "--local"}, {"-i", "--", "--local"}, {"-i", "--json"}, {"-i", "--interactive=bad"}, {"-i", "--quiet"}, {"-i", "--no-color"}} {
 		err := interactiveUsageHint(dispatch(args, io.Discard))
-		ce, ok := err.(*cli.Error)
-		if !ok || ce.Code != "USAGE" || !strings.Contains(ce.Hint, interactiveEntryHint) {
+		var ce *cli.Error
+		if !errors.As(err, &ce) || ce.Code != "USAGE" || !strings.Contains(ce.Hint, interactiveEntryHint) {
 			t.Errorf("dispatch(%v) error=%#v", args, err)
 		}
 	}
@@ -203,15 +204,14 @@ func TestInteractiveRequiresBothTerminalsAndJSONErrors(t *testing.T) {
 	cli.UseJSON()
 	t.Cleanup(cli.UseJSON)
 	err := dispatch([]string{"-i"}, io.Discard)
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "NOT_A_TERMINAL" || ce.Exit != 2 {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "NOT_A_TERMINAL" || ce.Exit != 2 {
 		t.Fatalf("stdin terminal error=%#v", err)
 	}
 	interactiveInputTerminal = func(io.Reader) bool { return true }
 	interactiveOutputTerminal = func(io.Writer) bool { return false }
 	err = dispatch([]string{"-i"}, io.Discard)
-	ce, ok = err.(*cli.Error)
-	if !ok || ce.Code != "NOT_A_TERMINAL" || ce.Exit != 2 {
+	if !errors.As(err, &ce) || ce.Code != "NOT_A_TERMINAL" || ce.Exit != 2 {
 		t.Fatalf("stdout terminal error=%#v", err)
 	}
 	var out bytes.Buffer
@@ -219,13 +219,12 @@ func TestInteractiveRequiresBothTerminalsAndJSONErrors(t *testing.T) {
 		t.Fatal("wrong terminal error exit")
 	}
 	var terminalEnvelope map[string]any
-	if json.Unmarshal(out.Bytes(), &terminalEnvelope) != nil || terminalEnvelope["error"].(map[string]any)["code"] != "NOT_A_TERMINAL" {
+	if json.Unmarshal(out.Bytes(), &terminalEnvelope) != nil || mustAs[map[string]any](t, terminalEnvelope["error"])["code"] != "NOT_A_TERMINAL" {
 		t.Fatalf("bad terminal JSON: %s", out.String())
 	}
 	t.Setenv("NETIVRI_OUTPUT", "json")
 	err = dispatch([]string{"-i"}, io.Discard)
-	ce, ok = err.(*cli.Error)
-	if !ok || ce.Code != "USAGE" {
+	if !errors.As(err, &ce) || ce.Code != "USAGE" {
 		t.Fatalf("json error=%#v", err)
 	}
 	out.Reset()
@@ -233,7 +232,7 @@ func TestInteractiveRequiresBothTerminalsAndJSONErrors(t *testing.T) {
 		t.Fatal("wrong JSON usage error exit")
 	}
 	var envelope map[string]any
-	if json.Unmarshal(out.Bytes(), &envelope) != nil || envelope["ok"] != false || envelope["error"].(map[string]any)["code"] != "USAGE" {
+	if json.Unmarshal(out.Bytes(), &envelope) != nil || envelope["ok"] != false || mustAs[map[string]any](t, envelope["error"])["code"] != "USAGE" {
 		t.Fatalf("bad JSON error: %s", out.String())
 	}
 }

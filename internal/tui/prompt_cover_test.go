@@ -26,9 +26,9 @@ func promptButtonX(t *testing.T, labels []string, index int) int {
 	return -1
 }
 
-func promptClick(t *testing.T, p *Prompt, w, h int, labels []string, index int) tea.Cmd {
+func promptClick(t *testing.T, p *Prompt, labels []string, index int) tea.Cmd {
 	t.Helper()
-	p.View(w, h) // render first so p.buttonY is set
+	p.View(80, 20) // render first so p.buttonY is set
 	x := promptButtonX(t, labels, index)
 	_, cmd := p.Update(tea.MouseClickMsg{X: x, Y: p.buttonY, Button: tea.MouseLeft})
 	return cmd
@@ -37,7 +37,7 @@ func promptClick(t *testing.T, p *Prompt, w, h int, labels []string, index int) 
 func TestPromptMouseClickButtonRows(t *testing.T) {
 	t.Run("save accepts value", func(t *testing.T) {
 		p := NewPrompt(TextPrompt, "T", "L", "H", "hello")
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 0)
+		cmd := promptClick(t, p, p.Buttons.Labels, 0)
 		m := promptMsg(t, cmd)
 		if m.Canceled || m.Value != "hello" {
 			t.Fatalf("save click: got %+v, want Value=hello not canceled", m)
@@ -45,7 +45,7 @@ func TestPromptMouseClickButtonRows(t *testing.T) {
 	})
 	t.Run("cancel emits canceled result", func(t *testing.T) {
 		p := NewPrompt(TextPrompt, "T", "L", "H", "hello")
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 1)
+		cmd := promptClick(t, p, p.Buttons.Labels, 1)
 		m := promptMsg(t, cmd)
 		if !m.Canceled || m.Value != "" {
 			t.Fatalf("cancel click: got %+v, want canceled empty value", m)
@@ -53,7 +53,7 @@ func TestPromptMouseClickButtonRows(t *testing.T) {
 	})
 	t.Run("confirm remove via mouse click", func(t *testing.T) {
 		p := NewPrompt(ConfirmPrompt, "T", "Delete?", "H", "")
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 1)
+		cmd := promptClick(t, p, p.Buttons.Labels, 1)
 		m := promptMsg(t, cmd)
 		if m.Canceled {
 			t.Fatalf("confirm click canceled: %+v", m)
@@ -61,7 +61,7 @@ func TestPromptMouseClickButtonRows(t *testing.T) {
 	})
 	t.Run("confirm cancel via mouse click on index 0", func(t *testing.T) {
 		p := NewPrompt(ConfirmPrompt, "T", "Delete?", "H", "")
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 0)
+		cmd := promptClick(t, p, p.Buttons.Labels, 0)
 		m := promptMsg(t, cmd)
 		if !m.Canceled {
 			t.Fatalf("cancel-index click not canceled: %+v", m)
@@ -132,7 +132,7 @@ func TestPromptDiscardFlowMouseAndKeys(t *testing.T) {
 	}
 	t.Run("discard button click emits canceled result", func(t *testing.T) {
 		p := enterDiscard(t)
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 1)
+		cmd := promptClick(t, p, p.Buttons.Labels, 1)
 		m := promptMsg(t, cmd)
 		if !m.Canceled {
 			t.Fatalf("discard click not canceled: %+v", m)
@@ -140,7 +140,7 @@ func TestPromptDiscardFlowMouseAndKeys(t *testing.T) {
 	})
 	t.Run("continue button click resumes", func(t *testing.T) {
 		p := enterDiscard(t)
-		cmd := promptClick(t, p, 80, 20, p.Buttons.Labels, 0)
+		cmd := promptClick(t, p, p.Buttons.Labels, 0)
 		if cmd != nil {
 			t.Fatalf("continue click produced cmd %v", cmd)
 		}
@@ -394,7 +394,7 @@ func TestPromptYesNoKeys(t *testing.T) {
 }
 
 func TestPromptNumberValidationMessages(t *testing.T) {
-	min, max := 2, 5
+	minV, maxV := 2, 5
 	cases := []struct {
 		name    string
 		value   string
@@ -408,8 +408,8 @@ func TestPromptNumberValidationMessages(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewPrompt(NumberPrompt, "T", "n", "", tc.value)
-			p.Min = &min
-			p.Max = &max
+			p.Min = &minV
+			p.Max = &maxV
 			_, cmd := p.Update(promptKey("enter"))
 			if cmd != nil {
 				t.Fatalf("invalid number produced cmd %v", cmd)
@@ -421,8 +421,8 @@ func TestPromptNumberValidationMessages(t *testing.T) {
 	}
 	t.Run("valid number accepted", func(t *testing.T) {
 		p := NewPrompt(NumberPrompt, "T", "n", "", "3")
-		p.Min = &min
-		p.Max = &max
+		p.Min = &minV
+		p.Max = &maxV
 		_, cmd := p.Update(promptKey("enter"))
 		m := promptMsg(t, cmd)
 		if m.Canceled || m.Value != "3" {

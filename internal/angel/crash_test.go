@@ -1,6 +1,7 @@
 package angel
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -81,7 +82,7 @@ func TestStartCrashDumpArmsAndCloseRemoves(t *testing.T) {
 
 func TestStartCrashDumpRefusedOutputLeavesNoFile(t *testing.T) {
 	crashSeams(t)
-	setCrashOutput = func(*os.File) error { return fmt.Errorf("no") }
+	setCrashOutput = func(*os.File) error { return errors.New("no") }
 	home := t.TempDir()
 	if _, err := StartCrashDump(home, "v", time.Now()); err == nil {
 		t.Fatal("want an error")
@@ -153,7 +154,7 @@ func TestReportCrashesNoDirectory(t *testing.T) {
 
 func TestReportCrashesPrunesOldKeptDumps(t *testing.T) {
 	home := t.TempDir()
-	for i := 0; i < MaxCrashDumps+3; i++ {
+	for i := range MaxCrashDumps + 3 {
 		writeCrashFile(t, home, fmt.Sprintf("crash-202611%02dT000000Z-%d.txt", i+1, i+1), "panic: x\n", time.Now())
 	}
 	ReportCrashes(home)

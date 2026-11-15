@@ -11,7 +11,7 @@ import (
 )
 
 func TestRenderContractPromptKinds(t *testing.T) {
-	min, max := 1, 10
+	minV, maxV := 1, 10
 	kinds := []struct {
 		name  string
 		kind  PromptKind
@@ -26,7 +26,7 @@ func TestRenderContractPromptKinds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p := NewPrompt(tc.kind, "Contract", "Value", "Hint", tc.value)
 			p.Theme = NewThemeFor(false)
-			p.Min, p.Max = &min, &max
+			p.Min, p.Max = &minV, &maxV
 			p.Options = []PromptOption{{Label: "a", Value: "a"}, {Label: "b", Value: "b"}, {Label: "A deliberately long option", Value: "long", Description: "A deliberately long description"}}
 			p.Selected = []string{"a"}
 			for _, size := range [][2]int{{60, 16}, {80, 24}, {100, 30}, {120, 40}, {1, 1}} {
@@ -36,7 +36,10 @@ func TestRenderContractPromptKinds(t *testing.T) {
 			}
 			if tc.kind == ConfirmPrompt {
 				_, cmd := p.Update(promptKey("enter"))
-				if cmd == nil || !cmd().(PromptResultMsg).Canceled {
+				if cmd == nil {
+					t.Fatal("default confirm Enter must cancel")
+				}
+				if got, ok := cmd().(PromptResultMsg); !ok || !got.Canceled {
 					t.Fatal("default confirm Enter must cancel")
 				}
 			}
@@ -77,8 +80,8 @@ func TestRenderContractWizardNavigationReviewAndBounds(t *testing.T) {
 	choice := NewPrompt(ChoicePrompt, "", "Choice", "", "b")
 	choice.Options = []PromptOption{{Label: "A", Value: "a"}, {Label: "B", Value: "b"}}
 	number := NewPrompt(NumberPrompt, "", "Number", "", "3")
-	min, max := 1, 10
-	number.Min, number.Max = &min, &max
+	minV, maxV := 1, 10
+	number.Min, number.Max = &minV, &maxV
 	w := NewWizard("Contract", []WizardStep{
 		{Key: "name", Prompt: NewPrompt(TextPrompt, "", "Name", "", "alice")},
 		{Key: "secret", Prompt: NewPrompt(SecretPrompt, "", "Secret", "", "fake-secret")},
@@ -161,7 +164,11 @@ func TestRenderContractThemePreservesContentAndCellPositions(t *testing.T) {
 			p.Options = []PromptOption{{Label: "a", Value: "a", Description: "description"}}
 			p.SetTheme(theme)
 			lines := strings.Split(p.View(80, 24), "\n")
-			if lipgloss.Width(lines[3][:strings.Index(lines[3], "a")]) < 2 {
+			markerAt := strings.Index(lines[3], "a")
+			if markerAt < 0 {
+				t.Fatal("choice label is missing from the rendered line")
+			}
+			if lipgloss.Width(lines[3][:markerAt]) < 2 {
 				t.Fatal("choice marker displaced its label")
 			}
 			w := NewWizard("Theme", []WizardStep{{Key: "a", Prompt: NewPrompt(TextPrompt, "", "A", "", "a")}})

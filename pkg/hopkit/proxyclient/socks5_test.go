@@ -371,15 +371,17 @@ func TestSOCKS5RejectedMethodsAndAuthentication(t *testing.T) {
 					_ = server.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 					var unexpected [1]byte
 					n, readErr := server.Read(unexpected[:])
-					if n != 0 {
+					var timeout net.Error
+					switch {
+					case n != 0:
 						err = errors.New("client sent data after rejected SOCKS reply")
-					} else if timeout, ok := readErr.(net.Error); ok && timeout.Timeout() {
+					case errors.As(readErr, &timeout) && timeout.Timeout():
 						err = nil
-					} else if errors.Is(readErr, io.EOF) || errors.Is(readErr, net.ErrClosed) {
+					case errors.Is(readErr, io.EOF) || errors.Is(readErr, net.ErrClosed):
 						err = nil
-					} else if readErr != nil {
+					case readErr != nil:
 						err = readErr
-					} else {
+					default:
 						err = errors.New("unexpected zero-byte peer read")
 					}
 				}

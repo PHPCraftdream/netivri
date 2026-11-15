@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -46,8 +47,8 @@ func TestLiveNodeLoggerBuilderDoesNotReplaceActiveLogger(t *testing.T) {
 
 func TestLiveNodeLoggerReconfigureKeepsOutageState(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
-	var nodes []subscription.Node
-	for i := 0; i < 7; i++ {
+	nodes := make([]subscription.Node, 0, 7)
+	for i := range 7 {
 		name, server := fmt.Sprintf("node-%d", i), fmt.Sprintf("192.0.2.%d", i+1)
 		nodes = append(nodes, subscription.Node{ID: fmt.Sprintf("n%d", i), Name: name, Type: "socks5", Server: server, Port: 1080, Country: "DE",
 			Raw: map[string]any{"name": name, "type": "socks5", "server": server, "port": 1080}})
@@ -84,7 +85,7 @@ func TestLiveNodeLoggerReconfigureKeepsOutageState(t *testing.T) {
 	active.debug = func(format string, args ...any) { logLine("DEBUG ", format, args...) }
 	clock := time.Now().Add(10 * time.Minute)
 	active.now = func() time.Time { return clock }
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		active.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, Reason: "timeout"})
 		clock = clock.Add(time.Minute)
 	}
@@ -116,7 +117,7 @@ func TestLiveNodeLoggerReconfigureKeepsOutageState(t *testing.T) {
 	// or discard any active outage state.
 	beforeDown := len(active.downNow)
 	f.script.inst(0).mu.Lock()
-	f.script.inst(0).reconfErr = fmt.Errorf("reconfigure rejected")
+	f.script.inst(0).reconfErr = errors.New("reconfigure rejected")
 	f.script.inst(0).mu.Unlock()
 	f.l.mu.Lock()
 	rejected := f.l.applied
@@ -136,7 +137,7 @@ func TestLiveNodeLoggerReconfigureKeepsOutageState(t *testing.T) {
 	if got := strings.Count(f.logText(), "WARN "); got != priorWarns {
 		t.Fatalf("down during retained outage added a warning: before=%d after=%d logs=%q", priorWarns, got, f.logText())
 	}
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		hook(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Downtime: time.Minute})
 	}
 	lines := strings.Split(f.logText(), "\n")
@@ -176,7 +177,7 @@ func (f *reconfigureEventCore) Reconfigure(o core.Options) error {
 func TestLiveReloadQueuesNewNodeEventsUntilMetadataRefresh(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
 	nodes := make([]subscription.Node, 0, 9)
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		name, server := fmt.Sprintf("node-%d", i), fmt.Sprintf("192.0.2.%d", i+1)
 		nodes = append(nodes, subscription.Node{ID: fmt.Sprintf("n%d", i), Name: name, Type: "socks5", Server: server, Port: 1080, Country: "DE",
 			Raw: map[string]any{"name": name, "type": "socks5", "server": server, "port": 1080}})
@@ -256,7 +257,7 @@ func TestLiveReloadQueuesNewNodeEventsUntilMetadataRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inst.configure(core.NodeEvent{Label: "p/n8", Down: true, NeverOK: true, Reason: "timeout"}, fmt.Errorf("reconfigure rejected"))
+	inst.configure(core.NodeEvent{Label: "p/n8", Down: true, NeverOK: true, Reason: "timeout"}, errors.New("reconfigure rejected"))
 	beforeLines := len(nodeLines)
 	if f.l.reconfigure(rejected) {
 		t.Fatal("rejected route candidate was reported as applied")
@@ -286,7 +287,7 @@ func TestLiveNodeLoggerInstallAndFlushUseActiveLogger(t *testing.T) {
 	old := mk()
 	l := &liveAngel{}
 	l.installNodeLogger(old)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		old.event(core.NodeEvent{Label: fmt.Sprintf("p/%c", 'a'+i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	if old.neverSummary != 3 {

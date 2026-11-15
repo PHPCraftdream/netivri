@@ -40,7 +40,7 @@ func TestTLSMaterialLoopbackVerification(t *testing.T) {
 		if err != nil {
 			t.Fatal("pin verifier setup failed")
 		}
-		config := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error { return verifier(state.PeerCertificates, "localhost") }}
+		config := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error { return verifier(state.PeerCertificates, "localhost") }} //nolint:gosec // G402: pinned verifier in VerifyConnection checks the chain and fingerprint
 		clientErr, serverErr := exchangeTLS(t, cert, config)
 		if clientErr != nil || serverErr != nil {
 			t.Fatal("pinned TLS handshake failed")
@@ -53,7 +53,7 @@ func TestTLSMaterialLoopbackVerification(t *testing.T) {
 		}
 		called := false
 		var verifierErr error
-		config := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error {
+		config := &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, VerifyConnection: func(state tls.ConnectionState) error { //nolint:gosec // G402: pinned verifier in VerifyConnection checks the chain and fingerprint
 			called = true
 			verifierErr = verifier(state.PeerCertificates, "localhost")
 			return verifierErr
@@ -79,13 +79,17 @@ func TestTLSMaterialLoopbackVerification(t *testing.T) {
 
 func exchangeTLS(t *testing.T, certificate tls.Certificate, clientConfig *tls.Config) (clientErr, serverErr error) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return errors.New("listener setup failed"), errors.New("listener setup failed")
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	deadline := time.Now().Add(8 * time.Second)
-	if err := listener.(*net.TCPListener).SetDeadline(deadline); err != nil {
+	tcpListener, ok := listener.(*net.TCPListener)
+	if !ok {
+		return errors.New("listener is not TCP"), errors.New("listener is not TCP")
+	}
+	if err := tcpListener.SetDeadline(deadline); err != nil {
 		return errors.New("listener deadline failed"), errors.New("listener deadline failed")
 	}
 	serverDone := make(chan error, 1)
@@ -100,7 +104,7 @@ func exchangeTLS(t *testing.T, certificate tls.Certificate, clientConfig *tls.Co
 			serverDone <- deadlineErr
 			return
 		}
-		handshakeErr := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}).Handshake()
+		handshakeErr := tls.Server(raw, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}).HandshakeContext(context.Background())
 		_ = raw.Close()
 		serverDone <- handshakeErr
 	}()
@@ -116,7 +120,7 @@ func exchangeTLS(t *testing.T, certificate tls.Certificate, clientConfig *tls.Co
 		_ = listener.Close()
 		return errors.New("client deadline failed"), <-serverDone
 	}
-	clientErr = tls.Client(raw, clientConfig).Handshake()
+	clientErr = tls.Client(raw, clientConfig).HandshakeContext(context.Background())
 	_ = raw.Close()
 	serverErr = <-serverDone
 	return clientErr, serverErr

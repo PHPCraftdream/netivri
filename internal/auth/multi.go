@@ -7,17 +7,18 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/config"
 	mihauth "github.com/metacubex/mihomo/component/auth"
 	"golang.org/x/sync/singleflight"
+
+	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
 // AccountSpec configures a named account. Password is an argon2id PHC hash
 // or InitPlaceholder.
 type AccountSpec struct {
 	Login    string
-	Password string
+	Password string //nolint:gosec // G117: the operator-supplied credential is the input of this API
 	// AllowedClients optionally restricts the client addresses this account
 	// may authenticate from (allowed_clients.go in internal/config). nil
 	// means no account restriction.
@@ -119,9 +120,9 @@ func validAccountLogin(s string) bool {
 	if len(s) < 1 || len(s) > 64 || s == InitPlaceholder {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		c := s[i]
-		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '@' || c == '-') {
+		if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '@' && c != '-' {
 			return false
 		}
 	}

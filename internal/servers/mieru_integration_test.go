@@ -25,6 +25,27 @@ import (
 
 const mieruTimeout = 8 * time.Second
 
+// mieruRouteRun holds the state shared by the phases of TestMieruTCPRoutesRotationFiltersAndClose.
+type mieruRouteRun struct {
+	t               *testing.T
+	protocol        servers.Protocol
+	aliceRecorder   *mieruRecorder
+	bobRecorder     *mieruRecorder
+	aliceAddress    string
+	bobAddress      string
+	echoHost        string
+	echoPortText    string
+	echoPort        int
+	home            string
+	port            int
+	alicePassword   string
+	bobPassword     string
+	rotatedPassword string
+	current         servers.Spec
+	inst            *core.Instance
+	closed          bool
+}
+
 func TestMieruTCPRoutesRotationFiltersAndClose(t *testing.T) {
 	protocol, ok := servers.Lookup("mieru")
 	if !ok {
@@ -41,200 +62,235 @@ func TestMieruTCPRoutesRotationFiltersAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatal("invalid echo port")
 	}
-	newPassword := func() string {
-		secret, err := protocol.NewSecret("alice", nil)
-		if err != nil {
-			t.Fatal("secret generation failed")
-		}
-		return secret["password"]
+	r := &mieruRouteRun{
+		t: t, protocol: protocol,
+		aliceRecorder: aliceRecorder, bobRecorder: bobRecorder,
+		aliceAddress: aliceAddress, bobAddress: bobAddress,
+		echoHost: echoHost, echoPortText: echoPortText, echoPort: echoPort,
 	}
-	alicePassword, bobPassword := newPassword(), newPassword()
-	port := 0
-	makeSpec := func(alice string) servers.Spec {
-		return servers.Spec{
-			Name: "entry", Protocol: "mieru", Bind: "127.0.0.1", Port: port,
-			Accounts: []string{"alice", "bob"},
-			Params:   map[string]string{"transport": "TCP", "multiplexing": "MULTIPLEXING_OFF"},
-			Users: servers.UserSecrets{
-				"alice": {"password": alice},
-				"bob":   {"password": bobPassword},
-			},
+	r.alicePassword, r.bobPassword = r.newPassword(), r.newPassword()
+	r.home = testutil.TempHome(t)
+	r.start()
+	defer func() {
+		if !r.closed {
+			defer func() { _ = r.inst.Close() }()
+			mieruWaitConnections(t, r.inst)
 		}
+	}()
+	r.checkBaseRoutes()
+	r.checkRotation()
+	r.checkGlobalFilter()
+	r.checkAccountFilter()
+	r.checkConflictPort()
+	r.checkCloseReleasesPort()
+}
+
+func (r *mieruRouteRun) newPassword() string {
+	secret, err := r.protocol.NewSecret("alice", nil)
+	if err != nil {
+		r.t.Fatal("secret generation failed")
 	}
-	home := testutil.TempHome(t)
-	options := func(spec servers.Spec, global, aliceAllowed []netip.Prefix) core.Options {
-		return core.Options{
-			HomeDir: home, Servers: []servers.Spec{spec},
-			RouteNodes: map[string][]map[string]any{
-				"alice": {mieruNode(aliceAddress)},
-				"bob":   {mieruNode(bobAddress)},
-			},
-			AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
-			AllowedClients:        global,
-			AccountAllowedClients: map[string][]netip.Prefix{"alice": aliceAllowed},
-		}
+	return secret["password"]
+}
+
+func (r *mieruRouteRun) makeSpec(alice string) servers.Spec {
+	return servers.Spec{
+		Name: "entry", Protocol: "mieru", Bind: "127.0.0.1", Port: r.port,
+		Accounts: []string{"alice", "bob"},
+		Params:   map[string]string{"transport": "TCP", "multiplexing": "MULTIPLEXING_OFF"},
+		Users: servers.UserSecrets{
+			"alice": {"password": alice},
+			"bob":   {"password": r.bobPassword},
+		},
 	}
-	var inst *core.Instance
-	port = servertest.StartOnFreePort(t, func(candidate int) error {
-		port = candidate
+}
+
+func (r *mieruRouteRun) options(spec servers.Spec, global, aliceAllowed []netip.Prefix) core.Options {
+	return core.Options{
+		HomeDir: r.home, Servers: []servers.Spec{spec},
+		RouteNodes: map[string][]map[string]any{
+			"alice": {mieruNode(r.aliceAddress)},
+			"bob":   {mieruNode(r.bobAddress)},
+		},
+		AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
+		AllowedClients:        global,
+		AccountAllowedClients: map[string][]netip.Prefix{"alice": aliceAllowed},
+	}
+}
+
+func (r *mieruRouteRun) start() {
+	r.port = servertest.StartOnFreePort(r.t, func(candidate int) error {
+		r.port = candidate
 		var startErr error
-		inst, startErr = core.Start(context.Background(), options(makeSpec(alicePassword), nil, nil))
+		r.inst, startErr = core.Start(context.Background(), r.options(r.makeSpec(r.alicePassword), nil, nil))
 		var coreErr *cli.Error
 		if errors.As(startErr, &coreErr) && coreErr.Code == "PORT_IN_USE" {
 			return syscall.EADDRINUSE
 		}
 		return startErr
 	})
-	current := makeSpec(alicePassword)
-	closed := false
-	defer func() {
-		if !closed {
-			defer inst.Close()
-			mieruWaitConnections(t, inst)
-		}
-	}()
-	connect := func(user, password string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), mieruTimeout)
-		defer cancel()
-		client, err := outbound.NewMieru(outbound.MieruOption{
-			Name: "mieru-test", Server: "127.0.0.1", Port: port, Transport: "TCP",
-			UserName: user, Password: password, Multiplexing: "MULTIPLEXING_OFF",
-		})
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		conn, err := client.DialContext(ctx, &C.Metadata{
-			NetWork: C.TCP, DstIP: netip.MustParseAddr(echoHost), DstPort: uint16(echoPort),
-		})
-		if err != nil {
-			return err
-		}
-		defer conn.Close()
-		if err := conn.SetDeadline(time.Now().Add(mieruTimeout)); err != nil {
-			return err
-		}
-		payload := []byte("mieru-route-check")
-		if _, err := conn.Write(payload); err != nil {
-			return err
-		}
-		got := make([]byte, len(payload))
-		if _, err := io.ReadFull(conn, got); err != nil {
-			return err
-		}
-		if string(got) != string(payload) {
-			return io.ErrUnexpectedEOF
-		}
-		return nil
-	}
-	checkRoutes := func(wantAlice, wantBob int) {
-		t.Helper()
-		mieruWaitConnections(t, inst)
-		aliceTargets := aliceRecorder.snapshot()
-		bobTargets := bobRecorder.snapshot()
-		if len(aliceTargets) != wantAlice || len(bobTargets) != wantBob {
-			t.Fatalf("route counts = %d/%d, want %d/%d", len(aliceTargets), len(bobTargets), wantAlice, wantBob)
-		}
-		wantTarget := net.JoinHostPort(echoHost, echoPortText)
-		for _, target := range append(aliceTargets, bobTargets...) {
-			if target != wantTarget {
-				t.Fatalf("recorder observed target %q, want %q", target, wantTarget)
-			}
-		}
-	}
-	if err := connect("alice", alicePassword); err != nil {
-		t.Fatalf("Alice connection failed: %v", err)
-	}
-	checkRoutes(1, 0)
-	if err := connect("bob", bobPassword); err != nil {
-		t.Fatalf("Bob connection failed: %v", err)
-	}
-	checkRoutes(1, 1)
-	if err := connect("alice", newPassword()); err == nil {
-		t.Fatal("wrong password accepted")
-	}
-	checkRoutes(1, 1)
+	r.current = r.makeSpec(r.alicePassword)
+}
 
-	rotatedPassword := newPassword()
-	rotatedSpec := current.Clone()
-	rotatedSpec.Users["alice"]["password"] = rotatedPassword
-	mieruWaitConnections(t, inst)
-	if err := inst.Reconfigure(options(rotatedSpec, nil, nil)); err != nil {
-		t.Fatal("rotation reconfigure failed")
-	}
-	current = rotatedSpec
-	if err := connect("alice", alicePassword); err == nil {
-		t.Fatal("old password accepted after rotation")
-	}
-	checkRoutes(1, 1)
-	if err := connect("alice", rotatedPassword); err != nil {
-		t.Fatalf("rotated password failed: %v", err)
-	}
-	if err := connect("bob", bobPassword); err != nil {
-		t.Fatalf("Bob changed during rotation: %v", err)
-	}
-	checkRoutes(2, 2)
-
-	globalDenied := options(current, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
-	mieruWaitConnections(t, inst)
-	if err := inst.Reconfigure(globalDenied); err != nil {
-		t.Fatal("global filter reconfigure failed")
-	}
-	baseline := mieruDrops(inst)
-	if err := connect("alice", rotatedPassword); err == nil {
-		t.Fatal("global filter allowed loopback client")
-	}
-	checkRoutes(2, 2)
-	if mieruDrops(inst) <= baseline {
-		t.Fatal("global filter denial was not counted")
-	}
-
-	accountDenied := options(current, nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
-	mieruWaitConnections(t, inst)
-	if err := inst.Reconfigure(accountDenied); err != nil {
-		t.Fatal("account filter reconfigure failed")
-	}
-	baseline = mieruDrops(inst)
-	if err := connect("alice", rotatedPassword); err == nil {
-		t.Fatal("Alice account filter allowed loopback client")
-	}
-	checkRoutes(2, 2)
-	if mieruDrops(inst) <= baseline {
-		t.Fatal("account filter denial was not counted")
-	}
-	if err := connect("bob", bobPassword); err != nil {
-		t.Fatalf("Alice filter denied Bob: %v", err)
-	}
-	checkRoutes(2, 3)
-
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+func (r *mieruRouteRun) connect(user, password string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), mieruTimeout)
+	defer cancel()
+	client, err := outbound.NewMieru(outbound.MieruOption{
+		Name: "mieru-test", Server: "127.0.0.1", Port: r.port, Transport: "TCP",
+		UserName: user, Password: password, Multiplexing: "MULTIPLEXING_OFF",
+	})
 	if err != nil {
-		t.Fatal("could not reserve conflict port")
+		return err
 	}
-	occupiedPort := occupied.Addr().(*net.TCPAddr).Port
-	defer occupied.Close()
-	conflictingSpec := current.Clone()
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{
+		NetWork: C.TCP, DstIP: netip.MustParseAddr(r.echoHost), DstPort: servertest.MustUint16(r.t, r.echoPort),
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(mieruTimeout)); err != nil {
+		return err
+	}
+	payload := []byte("mieru-route-check")
+	if _, err := conn.Write(payload); err != nil {
+		return err
+	}
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, got); err != nil {
+		return err
+	}
+	if string(got) != string(payload) {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func (r *mieruRouteRun) checkRoutes(wantAlice, wantBob int) {
+	r.t.Helper()
+	mieruWaitConnections(r.t, r.inst)
+	aliceTargets := r.aliceRecorder.snapshot()
+	bobTargets := r.bobRecorder.snapshot()
+	if len(aliceTargets) != wantAlice || len(bobTargets) != wantBob {
+		r.t.Fatalf("route counts = %d/%d, want %d/%d", len(aliceTargets), len(bobTargets), wantAlice, wantBob)
+	}
+	wantTarget := net.JoinHostPort(r.echoHost, r.echoPortText)
+	for _, target := range append(aliceTargets, bobTargets...) {
+		if target != wantTarget {
+			r.t.Fatalf("recorder observed target %q, want %q", target, wantTarget)
+		}
+	}
+}
+
+func (r *mieruRouteRun) checkBaseRoutes() {
+	if err := r.connect("alice", r.alicePassword); err != nil {
+		r.t.Fatalf("Alice connection failed: %v", err)
+	}
+	r.checkRoutes(1, 0)
+	if err := r.connect("bob", r.bobPassword); err != nil {
+		r.t.Fatalf("Bob connection failed: %v", err)
+	}
+	r.checkRoutes(1, 1)
+	if err := r.connect("alice", r.newPassword()); err == nil {
+		r.t.Fatal("wrong password accepted")
+	}
+	r.checkRoutes(1, 1)
+}
+
+func (r *mieruRouteRun) checkRotation() {
+	r.rotatedPassword = r.newPassword()
+	rotatedSpec := r.current.Clone()
+	rotatedSpec.Users["alice"]["password"] = r.rotatedPassword
+	mieruWaitConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(r.options(rotatedSpec, nil, nil)); err != nil {
+		r.t.Fatal("rotation reconfigure failed")
+	}
+	r.current = rotatedSpec
+	if err := r.connect("alice", r.alicePassword); err == nil {
+		r.t.Fatal("old password accepted after rotation")
+	}
+	r.checkRoutes(1, 1)
+	if err := r.connect("alice", r.rotatedPassword); err != nil {
+		r.t.Fatalf("rotated password failed: %v", err)
+	}
+	if err := r.connect("bob", r.bobPassword); err != nil {
+		r.t.Fatalf("Bob changed during rotation: %v", err)
+	}
+	r.checkRoutes(2, 2)
+}
+
+func (r *mieruRouteRun) checkGlobalFilter() {
+	globalDenied := r.options(r.current, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
+	mieruWaitConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(globalDenied); err != nil {
+		r.t.Fatal("global filter reconfigure failed")
+	}
+	baseline := mieruDrops(r.inst)
+	if err := r.connect("alice", r.rotatedPassword); err == nil {
+		r.t.Fatal("global filter allowed loopback client")
+	}
+	r.checkRoutes(2, 2)
+	if mieruDrops(r.inst) <= baseline {
+		r.t.Fatal("global filter denial was not counted")
+	}
+}
+
+func (r *mieruRouteRun) checkAccountFilter() {
+	accountDenied := r.options(r.current, nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
+	mieruWaitConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(accountDenied); err != nil {
+		r.t.Fatal("account filter reconfigure failed")
+	}
+	baseline := mieruDrops(r.inst)
+	if err := r.connect("alice", r.rotatedPassword); err == nil {
+		r.t.Fatal("Alice account filter allowed loopback client")
+	}
+	r.checkRoutes(2, 2)
+	if mieruDrops(r.inst) <= baseline {
+		r.t.Fatal("account filter denial was not counted")
+	}
+	if err := r.connect("bob", r.bobPassword); err != nil {
+		r.t.Fatalf("Alice filter denied Bob: %v", err)
+	}
+	r.checkRoutes(2, 3)
+}
+
+func (r *mieruRouteRun) checkConflictPort() {
+	occupied, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		r.t.Fatal("could not reserve conflict port")
+	}
+	defer func() { _ = occupied.Close() }()
+	occupiedAddr, ok := occupied.Addr().(*net.TCPAddr)
+	if !ok {
+		r.t.Fatalf("occupied listener address is %T", occupied.Addr())
+	}
+	occupiedPort := occupiedAddr.Port
+	conflictingSpec := r.current.Clone()
 	conflictingSpec.Port = occupiedPort
-	mieruWaitConnections(t, inst)
-	if err := inst.Reconfigure(options(conflictingSpec, nil, nil)); err == nil {
-		t.Fatal("occupied replacement port unexpectedly succeeded")
+	mieruWaitConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(r.options(conflictingSpec, nil, nil)); err == nil {
+		r.t.Fatal("occupied replacement port unexpectedly succeeded")
 	}
 	if err := occupied.Close(); err != nil {
-		t.Fatal("could not release conflict port")
+		r.t.Fatal("could not release conflict port")
 	}
-	if err := connect("bob", bobPassword); err != nil {
-		t.Fatalf("original listener did not survive failed stage: %v", err)
+	if err := r.connect("bob", r.bobPassword); err != nil {
+		r.t.Fatalf("original listener did not survive failed stage: %v", err)
 	}
-	checkRoutes(2, 4)
+	r.checkRoutes(2, 4)
+}
 
-	mieruWaitConnections(t, inst)
-	if err := inst.Close(); err != nil {
-		t.Fatal("core close failed")
+func (r *mieruRouteRun) checkCloseReleasesPort() {
+	mieruWaitConnections(r.t, r.inst)
+	if err := r.inst.Close(); err != nil {
+		r.t.Fatal("core close failed")
 	}
-	closed = true
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	r.closed = true
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
 	if err != nil {
-		t.Fatal("listener port remained bound after Close")
+		r.t.Fatal("listener port remained bound after Close")
 	}
 	_ = listener.Close()
 }
@@ -266,7 +322,7 @@ func (r *mieruRecorder) snapshot() []string {
 func mieruStartRecorder(t *testing.T) (*mieruRecorder, string) {
 	t.Helper()
 	recorder := &mieruRecorder{}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listen failed")
 	}
@@ -294,7 +350,7 @@ func mieruStartRecorder(t *testing.T) (*mieruRecorder, string) {
 }
 
 func mieruServeRecorderConn(recorder *mieruRecorder, conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(mieruTimeout))
 	var greeting [2]byte
 	if _, err := io.ReadFull(conn, greeting[:]); err != nil || greeting[0] != 5 {
@@ -346,7 +402,7 @@ func mieruServeRecorderConn(recorder *mieruRecorder, conn net.Conn) {
 	recorder.mu.Lock()
 	recorder.targets = append(recorder.targets, target)
 	recorder.mu.Unlock()
-	upstream, err := net.DialTimeout("tcp", target, mieruTimeout)
+	upstream, err := (&net.Dialer{Timeout: mieruTimeout}).DialContext(context.Background(), "tcp", target)
 	if err != nil {
 		_, _ = conn.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
@@ -380,7 +436,7 @@ func mieruServeRecorderConn(recorder *mieruRecorder, conn net.Conn) {
 
 func mieruStartEcho(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("echo listen failed")
 	}
@@ -396,7 +452,7 @@ func mieruStartEcho(t *testing.T) string {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(mieruTimeout))
 				_, _ = io.Copy(conn, conn)
 			}()

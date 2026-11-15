@@ -33,7 +33,7 @@ func angelTestState() angel.State {
 }
 
 // stubAngels swaps the angel seams; restore is registered as cleanup.
-func stubAngels(t *testing.T, probe func(context.Context, string) (angel.State, error), spawn func(context.Context, angel.SpawnOptions) (angel.State, error)) *[]angel.SpawnOptions {
+func stubAngels(t *testing.T, probe func(context.Context, string) (angel.State, error), spawn func(context.Context, angel.SpawnOptions) (angel.State, error)) {
 	t.Helper()
 	oldProbe, oldLive, oldSpawn := angelProbe, angelProbeLive, angelSpawn
 	angelProbe, angelProbeLive, angelSpawn = probe, func(ctx context.Context, home string) (angel.State, angel.Status, error) {
@@ -41,7 +41,6 @@ func stubAngels(t *testing.T, probe func(context.Context, string) (angel.State, 
 		return x, angel.Status{Angel: "running", PID: x.PID, Listen: x.Listen, Auth: x.Auth, Foreground: x.Foreground, Protocols: x.Protocols, Route: x.Route, StartedAt: x.StartedAt, Version: x.Version}, err
 	}, spawn
 	t.Cleanup(func() { angelProbe, angelProbeLive, angelSpawn = oldProbe, oldLive, oldSpawn })
-	return &[]angel.SpawnOptions{}
 }
 
 func probeRunning(st angel.State) func(context.Context, string) (angel.State, error) {
@@ -67,7 +66,7 @@ func decodeUpData(t *testing.T, out bytes.Buffer) (map[string]any, bool) {
 func TestRunUpAngelAlreadyRunningIdentical(t *testing.T) {
 	st := angelTestState()
 	var spawns []angel.SpawnOptions
-	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		spawns = append(spawns, angel.SpawnOptions{})
 		return angel.State{}, errors.New("must not spawn")
 	})
@@ -90,13 +89,13 @@ func TestRunUpAngelAlreadyRunningIdentical(t *testing.T) {
 
 func TestRunUpAngelAlreadyRunningDifferentPort(t *testing.T) {
 	st := angelTestState()
-	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		return angel.State{}, errors.New("must not spawn")
 	})
 	testutil.TempHome(t)
 	err := runUp([]string{"--port", "9999"}, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "ALREADY_RUNNING" || ce.Exit != cli.ExitConflict {
@@ -107,7 +106,7 @@ func TestRunUpAngelAlreadyRunningDifferentPort(t *testing.T) {
 func TestRunUpAngelAlreadyRunningPortZero(t *testing.T) {
 	// Explicit --port 0 means "don't care": idempotent success.
 	st := angelTestState()
-	_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		return angel.State{}, errors.New("must not spawn")
 	})
 	testutil.TempHome(t)
@@ -133,7 +132,7 @@ func TestRunUpAngelAlreadyRunningBindVariants(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			st := angelTestState()
-			_ = stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
+			stubAngels(t, probeRunning(st), func(context.Context, angel.SpawnOptions) (angel.State, error) {
 				return angel.State{}, errors.New("must not spawn")
 			})
 			testutil.TempHome(t)
@@ -151,7 +150,7 @@ func TestRunUpAngelAlreadyRunningBindVariants(t *testing.T) {
 func TestRunUpAngelNotRunningSpawns(t *testing.T) {
 	home := t.TempDir()
 	spawned := angel.State{}
-	_ = stubAngels(t, probeNotRunning, func(ctx context.Context, o angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeNotRunning, func(ctx context.Context, o angel.SpawnOptions) (angel.State, error) {
 		st := angelTestState()
 		spawned = st
 		if len(o.Args) < 4 || o.Args[0] != "up" || o.Args[len(o.Args)-1] != home {
@@ -219,7 +218,7 @@ func TestConflictsWithRunning(t *testing.T) {
 }
 
 func TestRunDownNotRunning(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, nil)
+	stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	var out bytes.Buffer
 	if err := runDown(nil, &out); err != nil {
@@ -237,7 +236,7 @@ func TestRunDownNotRunning(t *testing.T) {
 func TestRunDownStopsAngel(t *testing.T) {
 	st := angelTestState()
 	stopped := make(chan struct{}, 1)
-	_ = stubAngels(t, probeRunning(st), nil)
+	stubAngels(t, probeRunning(st), nil)
 	oldStop := angelControlStop
 	probeCalls := 0
 	angelControlStop = func(ctx context.Context, addr, token string) error {
@@ -274,14 +273,14 @@ func TestRunDownStopsAngel(t *testing.T) {
 
 func TestRunDownStopRequestFails(t *testing.T) {
 	st := angelTestState()
-	_ = stubAngels(t, probeRunning(st), nil)
+	stubAngels(t, probeRunning(st), nil)
 	oldStop := angelControlStop
 	angelControlStop = func(context.Context, string, string) error { return errors.New("boom") }
 	t.Cleanup(func() { angelControlStop = oldStop })
 	testutil.TempHome(t)
 	err := runDown(nil, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "INTERNAL" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "INTERNAL" {
 		t.Fatalf("err = %v, want INTERNAL", err)
 	}
 }
@@ -291,14 +290,14 @@ func TestRunDownTimeout(t *testing.T) {
 	oldWait := downStopWait
 	downStopWait = 50 * time.Millisecond
 	t.Cleanup(func() { downStopWait = oldWait })
-	_ = stubAngels(t, probeRunning(st), nil)
+	stubAngels(t, probeRunning(st), nil)
 	oldStop := angelControlStop
 	angelControlStop = func(context.Context, string, string) error { return nil }
 	t.Cleanup(func() { angelControlStop = oldStop })
 	testutil.TempHome(t)
 	err := runDown(nil, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "ANGEL_STOP_TIMEOUT" || ce.Exit != cli.ExitInternal {
@@ -307,21 +306,21 @@ func TestRunDownTimeout(t *testing.T) {
 }
 
 func TestRunDownUnexpectedArg(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, nil)
+	stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runDown([]string{"extra"}, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "USAGE" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "USAGE" {
 		t.Fatalf("err = %v, want USAGE", err)
 	}
 }
 
 func TestRunStatusNotRunning(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, nil)
+	stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runStatus(nil, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "ANGEL_NOT_RUNNING" || ce.Exit != cli.ExitNoAngel {
@@ -341,7 +340,7 @@ func TestRunStatusRunning(t *testing.T) {
 	st := angelTestState()
 	st.StartedAt = time.Now().UTC().Add(-90 * time.Second).Format(time.RFC3339)
 	st.Version = "1.2.3"
-	_ = stubAngels(t, probeRunning(st), nil)
+	stubAngels(t, probeRunning(st), nil)
 	testutil.TempHome(t)
 	var out bytes.Buffer
 	if err := runStatus(nil, &out); err != nil {
@@ -378,11 +377,11 @@ func TestRunStatusRunning(t *testing.T) {
 }
 
 func TestRunStatusUnexpectedArg(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, nil)
+	stubAngels(t, probeNotRunning, nil)
 	testutil.TempHome(t)
 	err := runStatus([]string{"--wat"}, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "USAGE" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "USAGE" {
 		t.Fatalf("err = %v, want USAGE", err)
 	}
 }
@@ -417,7 +416,7 @@ func TestForegroundFailureWritesHandshake(t *testing.T) {
 		OK    bool            `json:"ok"`
 		Error json.RawMessage `json:"error"`
 	}
-	data, readErr := os.ReadFile(path)
+	data, readErr := os.ReadFile(filepath.Clean(path))
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
@@ -425,9 +424,9 @@ func TestForegroundFailureWritesHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	var herr struct {
-		Code    string
-		Message string
-		Exit    int
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Exit    int    `json:"exit"`
 	}
 	if err := json.Unmarshal(h.Error, &herr); err != nil {
 		t.Fatalf("decode handshake error: %v", err)
@@ -496,8 +495,8 @@ func TestRunUpAngelLiveStatusConflictUsesLiveListen(t *testing.T) {
 	}
 	t.Cleanup(func() { angelProbe, angelProbeLive, angelSpawn = oldProbe, oldLive, oldSpawn })
 	err := runUp([]string{"--home", home, "--port", "7890"}, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "ALREADY_RUNNING" || ce.Exit != cli.ExitConflict {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "ALREADY_RUNNING" || ce.Exit != cli.ExitConflict {
 		t.Fatalf("error = %v, want live-listen conflict", err)
 	}
 }
@@ -544,11 +543,11 @@ func probeControlTimeout(context.Context, string) (angel.State, error) {
 // down and up must not call it "not running", stop it blindly or spawn a
 // second one (a state file deleted on a timeout once did exactly that).
 func TestRunStatusControlTimeoutIsNotNotRunning(t *testing.T) {
-	_ = stubAngels(t, probeControlTimeout, nil)
+	stubAngels(t, probeControlTimeout, nil)
 	testutil.TempHome(t)
 	err := runStatus(nil, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "ANGEL_NOT_RESPONDING" || ce.Exit == cli.ExitNoAngel || ce.Hint == "" {
@@ -557,7 +556,7 @@ func TestRunStatusControlTimeoutIsNotNotRunning(t *testing.T) {
 }
 
 func TestRunDownControlTimeoutDoesNotClaimStopped(t *testing.T) {
-	_ = stubAngels(t, probeControlTimeout, nil)
+	stubAngels(t, probeControlTimeout, nil)
 	testutil.TempHome(t)
 	oldStop := angelControlStop
 	angelControlStop = func(context.Context, string, string) error {
@@ -567,8 +566,8 @@ func TestRunDownControlTimeoutDoesNotClaimStopped(t *testing.T) {
 	t.Cleanup(func() { angelControlStop = oldStop })
 	var out bytes.Buffer
 	err := runDown(nil, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "ANGEL_NOT_RESPONDING" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RESPONDING" {
 		t.Fatalf("runDown err = %v, want ANGEL_NOT_RESPONDING", err)
 	}
 	if out.Len() != 0 {
@@ -577,14 +576,14 @@ func TestRunDownControlTimeoutDoesNotClaimStopped(t *testing.T) {
 }
 
 func TestRunUpAngelControlTimeoutDoesNotSpawn(t *testing.T) {
-	_ = stubAngels(t, probeControlTimeout, func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeControlTimeout, func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		t.Error("up spawned a second angel while the first only answered slowly")
 		return angel.State{}, errors.New("must not spawn")
 	})
 	var out bytes.Buffer
 	err := runUpAngel(upOptions{Home: t.TempDir()}, []string{"--json"}, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "ANGEL_NOT_RESPONDING" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "ANGEL_NOT_RESPONDING" {
 		t.Fatalf("runUpAngel err = %v, want ANGEL_NOT_RESPONDING", err)
 	}
 	if out.Len() != 0 {

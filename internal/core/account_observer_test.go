@@ -108,7 +108,7 @@ func TestThroughputPollerAccountThroughput(t *testing.T) {
 	// Baseline read.
 	tracker.info.UploadTotal.Add(1 << 20)
 	tracker.info.DownloadTotal.Add(1 << 20)
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 	if len(obs.throughputSamples()) != 0 || len(obs.accountTrafficSamples()) != 0 {
 		t.Fatalf("the baselining read reported movement")
 	}
@@ -116,7 +116,7 @@ func TestThroughputPollerAccountThroughput(t *testing.T) {
 	// Second read: the deltas are reported per account.
 	tracker.info.UploadTotal.Add(3 << 20)
 	tracker.info.DownloadTotal.Add(1 << 20)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 
 	account := obs.accountTrafficSamples()
 	if len(account) != 1 {
@@ -135,7 +135,7 @@ func TestThroughputPollerAccountThroughput(t *testing.T) {
 
 	// A login-less tracker with movement must not produce an account sample.
 	loginLess.info.UploadTotal.Add(2 << 20)
-	poller.collectAt(base.Add(10*time.Second), base.Add(15*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(10*time.Second), 5*time.Second)
 	account = obs.accountTrafficSamples()
 	if len(account) != 1 {
 		t.Fatalf("account throughput samples after login-less tracker = %+v, want still one", account)
@@ -169,7 +169,7 @@ func TestCollectAtNodeTotalSpansAccounts(t *testing.T) {
 	// Baseline read.
 	alice.info.UploadTotal.Add(1 << 20)
 	bob.info.UploadTotal.Add(1 << 20)
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 	if len(obs.throughputSamples()) != 0 || len(obs.accountTrafficSamples()) != 0 {
 		t.Fatalf("the baselining read reported movement")
 	}
@@ -177,7 +177,7 @@ func TestCollectAtNodeTotalSpansAccounts(t *testing.T) {
 	// Each account moves 10 KiB through the same node between ticks.
 	alice.info.UploadTotal.Add(10 << 10)
 	bob.info.UploadTotal.Add(10 << 10)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 
 	// The node total (20 KiB) passes the 16 KiB node gate and must be a
 	// single merged sample, not two 10 KiB samples.
@@ -218,11 +218,11 @@ func TestCollectAtNodeTotalMergesLargeAccounts(t *testing.T) {
 
 	alice.info.UploadTotal.Add(1 << 20)
 	bob.info.UploadTotal.Add(1 << 20)
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	poller.collectAt(base, 5*time.Second)
 
 	alice.info.UploadTotal.Add(1 << 20)
 	bob.info.UploadTotal.Add(1 << 20)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 
 	node := obs.throughputSamples()
 	if len(node) != 1 {

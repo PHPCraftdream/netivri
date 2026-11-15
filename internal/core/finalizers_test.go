@@ -25,7 +25,7 @@ func TestDrainFinalizersRunsPendingFinalizers(t *testing.T) {
 // member adapters.
 type chainHead struct {
 	member *[128]byte
-	pad    [128]byte
+	_      [128]byte // keeps the object out of the tiny allocator
 }
 
 // The finalizer of an object that is only reachable from another finalizable

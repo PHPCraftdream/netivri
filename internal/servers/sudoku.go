@@ -37,22 +37,22 @@ func (sudokuServer) Validate(params map[string]string) error {
 			return errors.New("invalid table-type")
 		}
 	}
-	min, max := 10, 30
+	minPad, maxPad := 10, 30
 	if value, ok := params["padding-min"]; ok {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 100 {
 			return errors.New("invalid padding-min")
 		}
-		min = n
+		minPad = n
 	}
 	if value, ok := params["padding-max"]; ok {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 100 {
 			return errors.New("invalid padding-max")
 		}
-		max = n
+		maxPad = n
 	}
-	if min > max {
+	if minPad > maxPad {
 		return errors.New("invalid padding-min: exceeds effective padding-max")
 	}
 	for _, key := range []string{"enable-pure-downlink", "disable-http-mask"} {
@@ -183,7 +183,7 @@ func (e sudokuSafeStartError) Is(target error) bool { return errors.Is(e.cause, 
 func (e sudokuSafeStartError) String() string       { return e.Error() }
 func (e sudokuSafeStartError) GoString() string     { return e.Error() }
 func (sudokuServer) Link(Spec, string, string) (string, error) {
-	return "", errors.New("Sudoku has no standard URI; use --format mihomo")
+	return "", errors.New("sudoku has no standard URI; use --format mihomo")
 }
 func (sudokuServer) Mihomo(spec Spec, login, host string) (string, error) {
 	if err := spec.Validate(); err != nil {

@@ -20,7 +20,7 @@ type Proxy struct {
 	// Username is an optional proxy credential.
 	Username string
 	// Password is an optional proxy credential.
-	Password string
+	Password string //nolint:gosec // G117: the optional proxy credential is part of this API's input
 }
 
 var errInvalidProxyURL = errors.New("invalid proxy URL")
@@ -93,18 +93,18 @@ func (p Proxy) String() string {
 func urlPort(authority string) (int, bool, bool) {
 	var i int
 	if strings.HasPrefix(authority, "[") {
-		close := strings.IndexByte(authority, ']')
-		if close < 0 {
+		closeIdx := strings.IndexByte(authority, ']')
+		if closeIdx < 0 {
 			return 0, false, false
 		}
-		suffix := authority[close+1:]
+		suffix := authority[closeIdx+1:]
 		if suffix == "" {
 			return 0, false, true
 		}
 		if !strings.HasPrefix(suffix, ":") {
 			return 0, false, false
 		}
-		i = close + 1
+		i = closeIdx + 1
 	} else {
 		n := strings.Count(authority, ":")
 		if n > 1 {

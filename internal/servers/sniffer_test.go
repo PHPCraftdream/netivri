@@ -1,8 +1,11 @@
 package servers
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"io"
+	"math"
 	"net"
 	"reflect"
 	"testing"
@@ -33,10 +36,20 @@ type snifferDummyAddr string
 func (a snifferDummyAddr) Network() string { return string(a) }
 func (a snifferDummyAddr) String() string  { return string(a) }
 
+// wireByte returns n as one TLS record header byte; n must fit in a byte.
+func wireByte(t testing.TB, n int) byte {
+	t.Helper()
+	if n < 0 || n > math.MaxUint8 {
+		t.Fatalf("%d does not fit in a byte", n)
+		return 0
+	}
+	return byte(n)
+}
+
 func TestSnifferParseClientHelloTLSClient(t *testing.T) {
 	conn := &snifferHelloConn{}
-	client := tls.Client(conn, &tls.Config{ServerName: "Test.Example", NextProtos: []string{"h2", "http/1.1"}, InsecureSkipVerify: true})
-	_ = client.Handshake()
+	client := tls.Client(conn, &tls.Config{ServerName: "Test.Example", NextProtos: []string{"h2", "http/1.1"}, InsecureSkipVerify: true}) //nolint:gosec // G402: client only emits a ClientHello to the in-memory sniffer; no certificate is validated
+	_ = client.HandshakeContext(context.Background())
 	got, err := ParseClientHello(conn.captured)
 	if err != nil {
 		t.Fatal(err)
@@ -46,12 +59,12 @@ func TestSnifferParseClientHelloTLSClient(t *testing.T) {
 	}
 }
 func TestSnifferParseClientHelloAbsentSNIAndALPN(t *testing.T) {
-	body := []byte{3, 3}
+	body := append(make([]byte, 0, 41), 3, 3)
 	body = append(body, make([]byte, 32)...)
 	body = append(body, 0, 0, 2, 0, 2, 1, 0)
-	handshake := []byte{1, 0, 0, byte(len(body))}
+	handshake := append(make([]byte, 0, 4+len(body)), 1, 0, 0, wireByte(t, len(body)))
 	handshake = append(handshake, body...)
-	wire := []byte{22, 3, 3, byte(len(handshake) >> 8), byte(len(handshake))}
+	wire := append(make([]byte, 0, 5+len(handshake)), 22, 3, 3, wireByte(t, len(handshake)>>8), wireByte(t, len(handshake)))
 	wire = append(wire, handshake...)
 	got, err := ParseClientHello(wire)
 	if err != nil {
@@ -62,15 +75,15 @@ func TestSnifferParseClientHelloAbsentSNIAndALPN(t *testing.T) {
 	}
 }
 func TestSnifferParseClientHelloGREASEAndMultiRecord(t *testing.T) {
-	body := []byte{3, 3}
+	body := append(make([]byte, 0, 47), 3, 3)
 	body = append(body, make([]byte, 32)...)
 	body = append(body, 0, 0, 2, 0, 2, 1, 0, 0, 4, 0x0a, 0x0a, 0, 0)
-	handshake := []byte{1, 0, 0, byte(len(body))}
+	handshake := append(make([]byte, 0, 4+len(body)), 1, 0, 0, wireByte(t, len(body)))
 	handshake = append(handshake, body...)
 	split := len(handshake) / 2
-	wire := []byte{22, 3, 3, byte(split >> 8), byte(split)}
+	wire := append(make([]byte, 0, 10+len(handshake)), 22, 3, 3, wireByte(t, split>>8), wireByte(t, split))
 	wire = append(wire, handshake[:split]...)
-	wire = append(wire, 22, 3, 3, byte((len(handshake)-split)>>8), byte(len(handshake)-split))
+	wire = append(wire, 22, 3, 3, wireByte(t, (len(handshake)-split)>>8), wireByte(t, len(handshake)-split))
 	wire = append(wire, handshake[split:]...)
 	if _, err := ParseClientHello(wire); err != nil {
 		t.Fatal(err)
@@ -159,7 +172,8 @@ func TestSnifferCustomMatchKeysCapability(t *testing.T) {
 	second.Params["custom_host"] = first.Params["custom_host"]
 	second.Params["custom_application"] = first.Params["custom_application"]
 	err := ValidateSharedPort([]Spec{first, second})
-	cliErr, isCLIError := err.(*cli.Error)
+	var cliErr *cli.Error
+	isCLIError := errors.As(err, &cliErr)
 	if !isCLIError || cliErr.Code != "SERVER_PORT_AMBIGUOUS" {
 		t.Fatalf("ValidateSharedPort() error = %v, want SERVER_PORT_AMBIGUOUS cli.Error", err)
 	}

@@ -152,88 +152,107 @@ func (r *Reviver) Round(ctx context.Context) error {
 			return err
 		}
 		// Determine whether at least one due hop is eligible before leasing.
-		eligible := false
-		for _, snapshot := range registration.Pool.Snapshot() {
-			if snapshot.State == pool.Quarantined && !snapshot.NextProbe.After(r.clock.Now()) &&
-				(registration.Eligible == nil || registration.Eligible(snapshot.Key)) {
-				eligible = true
-				break
-			}
-		}
-		if !eligible {
+		if !r.hasEligibleDue(registration) {
 			continue
 		}
 		leasedAt := r.clock.Now()
 		claims := registration.Pool.DueProbes(leasedAt)
 		r.rotateClaims(registrationIndex, claims)
-		for i, claim := range claims {
-			if registration.Eligible != nil && !registration.Eligible(claim.Key()) {
-				r.release(registration, claim)
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				r.release(registration, claim)
-				for _, remaining := range claims[i+1:] {
-					r.release(registration, remaining)
-				}
-				workers.Wait()
-				return err
-			}
-			// Bound the start time by the lease: after acquiring capacity, decline
-			// claims that cannot finish before their original lease expires.
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				r.release(registration, claim)
-				for _, remaining := range claims[i+1:] {
-					r.release(registration, remaining)
-				}
-				workers.Wait()
-				return ctx.Err()
-			}
-			hop := findHop(registration.Hops, claim.Key())
-			if hop == nil {
-				r.release(registration, claim)
-				<-sem
-				continue
-			}
-			if registration.Eligible != nil && !registration.Eligible(claim.Key()) {
-				r.release(registration, claim)
-				<-sem
-				continue
-			}
-			if r.clock.Now().Sub(leasedAt)+r.options.Timeout >= probeLeaseDuration {
-				r.release(registration, claim)
-				<-sem
-				continue
-			}
-			workers.Add(1)
-			go func(reg Registration, claimed pool.ProbeClaim, target dial.Hop, claimTime time.Time) {
-				defer workers.Done()
-				defer func() { <-sem }()
-				if ctx.Err() != nil || (reg.Eligible != nil && !reg.Eligible(claimed.Key())) ||
-					r.clock.Now().Sub(claimTime)+r.options.Timeout >= probeLeaseDuration {
-					r.release(reg, claimed)
-					return
-				}
-				probeCtx, cancel := context.WithTimeout(ctx, r.options.Timeout)
-				if probeCtx.Err() != nil {
-					cancel()
-					r.release(reg, claimed)
-					return
-				}
-				outcome := reg.Prober.Probe(probeCtx, target)
-				if probeCtx.Err() != nil {
-					outcome = pool.ProbeInconclusive
-				}
-				cancel()
-				r.report(reg, claimed, outcome)
-			}(registration, claim, hop, leasedAt)
+		if err := r.dispatchClaims(ctx, sem, &workers, registration, claims, leasedAt); err != nil {
+			workers.Wait()
+			return err
 		}
 		r.cursors[registrationIndex] = (r.cursors[registrationIndex] + 1) % len(registration.Hops)
 	}
 	workers.Wait()
 	return ctx.Err()
+}
+
+// hasEligibleDue reports whether registration has a due quarantined hop that may be probed.
+func (r *Reviver) hasEligibleDue(registration Registration) bool {
+	for _, snapshot := range registration.Pool.Snapshot() {
+		if snapshot.State == pool.Quarantined && !snapshot.NextProbe.After(r.clock.Now()) &&
+			(registration.Eligible == nil || registration.Eligible(snapshot.Key)) {
+			return true
+		}
+	}
+	return false
+}
+
+// dispatchClaims starts a probe for each claim that is still eligible and can finish within its
+// lease; claims that are declined or cannot start are released. A non-nil error means the
+// remaining claims were released and the caller must wait for the started probes.
+func (r *Reviver) dispatchClaims(ctx context.Context, sem chan struct{}, workers *sync.WaitGroup, registration Registration, claims []pool.ProbeClaim, leasedAt time.Time) error {
+	for i, claim := range claims {
+		if registration.Eligible != nil && !registration.Eligible(claim.Key()) {
+			r.release(registration, claim)
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			r.releaseFrom(registration, claims[i:])
+			return err
+		}
+		// Bound the start time by the lease: after acquiring capacity, decline
+		// claims that cannot finish before their original lease expires.
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			r.releaseFrom(registration, claims[i:])
+			return ctx.Err()
+		}
+		hop := findHop(registration.Hops, claim.Key())
+		if hop == nil {
+			r.release(registration, claim)
+			<-sem
+			continue
+		}
+		if registration.Eligible != nil && !registration.Eligible(claim.Key()) {
+			r.release(registration, claim)
+			<-sem
+			continue
+		}
+		if r.clock.Now().Sub(leasedAt)+r.options.Timeout >= probeLeaseDuration {
+			r.release(registration, claim)
+			<-sem
+			continue
+		}
+		workers.Add(1)
+		go func(reg Registration, claimed pool.ProbeClaim, target dial.Hop, claimTime time.Time) {
+			defer workers.Done()
+			defer func() { <-sem }()
+			r.probe(ctx, reg, claimed, target, claimTime)
+		}(registration, claim, hop, leasedAt)
+	}
+	return nil
+}
+
+// releaseFrom releases every claim in claims, which were not started.
+func (r *Reviver) releaseFrom(reg Registration, claims []pool.ProbeClaim) {
+	for _, claim := range claims {
+		r.release(reg, claim)
+	}
+}
+
+// probe runs one claimed probe under the probe timeout and reports its outcome. A claim that
+// can no longer start within its lease is released instead.
+func (r *Reviver) probe(ctx context.Context, reg Registration, claimed pool.ProbeClaim, target dial.Hop, claimTime time.Time) {
+	if ctx.Err() != nil || (reg.Eligible != nil && !reg.Eligible(claimed.Key())) ||
+		r.clock.Now().Sub(claimTime)+r.options.Timeout >= probeLeaseDuration {
+		r.release(reg, claimed)
+		return
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, r.options.Timeout)
+	if probeCtx.Err() != nil {
+		cancel()
+		r.release(reg, claimed)
+		return
+	}
+	outcome := reg.Prober.Probe(probeCtx, target)
+	if probeCtx.Err() != nil {
+		outcome = pool.ProbeInconclusive
+	}
+	cancel()
+	r.report(reg, claimed, outcome)
 }
 
 // Run blocks until cancellation, running one round immediately and then at each clock tick.
@@ -351,6 +370,8 @@ func (r *Reviver) report(reg Registration, claim pool.ProbeClaim, outcome pool.P
 			event = Event{Kind: Revived, Key: claim.Key(), Trips: trips}
 		case pool.ProbeHardFailure:
 			event = Event{Kind: Quarantined, Key: claim.Key(), Trips: trips}
+		case pool.ProbeInconclusive:
+			// No event: the lease stays active until it expires.
 		}
 	}
 	if reg.Mutate != nil {

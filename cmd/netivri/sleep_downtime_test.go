@@ -52,7 +52,7 @@ func TestSleepWatchKeepsTheNewestSleepsOnly(t *testing.T) {
 	t0 := time.Unix(1_000_000, 0)
 	w := &sleepWatch{now: func() time.Time { return t0 }, every: 5 * time.Second, gap: 30 * time.Second, grace: 2 * time.Minute}
 	at := t0
-	for i := 0; i < sleepSpansKept+8; i++ {
+	for range sleepSpansKept + 8 {
 		if _, ok := w.note(at, at.Add(time.Hour)); !ok {
 			t.Fatal("a sleep was not noticed")
 		}
@@ -122,11 +122,11 @@ func TestNodeLogBurstOverDoesNotCountTheSleep(t *testing.T) {
 	f := newBurstFixture(t, 6)
 	var asked [2]time.Time
 	f.log.asleep = sleeping(25*time.Hour, &asked)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	f.now = f.now.Add(30 * time.Hour)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.back(i, 30*time.Hour)
 	}
 	want := "INFO node burst over: 4 nodes were down, all back after 5h0m0s, not counting 25h0m0s asleep"
@@ -140,7 +140,7 @@ func TestNodeLogOutageOverDoesNotCountTheSleep(t *testing.T) {
 	var asked [2]time.Time
 	f.log.asleep = sleeping(3*time.Hour, &asked)
 	f.slowly(0, 9) // an outage of nine of twelve servers
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		f.back(i, time.Hour)
 	}
 	f.now = f.now.Add(10 * time.Hour)

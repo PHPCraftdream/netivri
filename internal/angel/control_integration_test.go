@@ -79,7 +79,7 @@ func TestControlServerClosed(t *testing.T) {
 
 func TestProbeUnreachableRemovesStaleState(t *testing.T) {
 	home := t.TempDir()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,19 +153,18 @@ func TestClientWithoutAuthRejectedLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	req, err := http.NewRequest(http.MethodGet, "http://"+s.Addr()+"/v1/status", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	req = req.WithContext(ctx)
-	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	resp, err := client.Do(req)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.Addr()+"/v1/status", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	resp, err := client.Do(req) //nolint:gosec // G704: target is the loopback test control server
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status=%d want 401", resp.StatusCode)
 	}

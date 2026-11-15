@@ -79,27 +79,27 @@ func ReadState(home string) (State, error) {
 		return st, fmt.Errorf("decode state file: %w", err)
 	}
 	if dec.More() {
-		return st, fmt.Errorf("decode state file: trailing data")
+		return st, errors.New("decode state file: trailing data")
 	}
 	if st.PID <= 0 || st.Control == "" || st.Token == "" {
-		return st, fmt.Errorf("state file is incomplete")
+		return st, errors.New("state file is incomplete")
 	}
 	return st, nil
 }
 
-// readCapped reads a whole file and refuses anything bigger than max.
-func readCapped(path string, max int64) ([]byte, error) {
-	f, err := os.Open(path)
+// readCapped reads a whole file and refuses anything bigger than limit.
+func readCapped(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path) //nolint:gosec // G304: state file path is under the operator-owned state directory
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if info.Size() > max {
-		return nil, fmt.Errorf("%s is %d bytes, more than the %d byte limit", filepath.Base(path), info.Size(), max)
+	if info.Size() > limit {
+		return nil, fmt.Errorf("%s is %d bytes, more than the %d byte limit", filepath.Base(path), info.Size(), limit)
 	}
 	data := make([]byte, info.Size())
 	if len(data) > 0 {

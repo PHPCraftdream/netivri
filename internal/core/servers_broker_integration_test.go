@@ -15,7 +15,7 @@ const brokerTestTimeout = 3 * time.Second
 
 func brokerTCPAddress(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func brokerTCPAddress(t *testing.T) string {
 
 func brokerUDPAddress(t *testing.T) string {
 	t.Helper()
-	conn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	conn, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,14 +42,18 @@ func brokerUDPAddress(t *testing.T) string {
 func brokerListenRetry(t *testing.T, b *socketBroker, preferred string) (*socketLease, *socketStage, string) {
 	t.Helper()
 	addr := preferred
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		if addr == "" {
 			addr = brokerTCPAddress(t)
 		}
 		stage := b.stage()
 		listener, err := stage.Listen(context.Background(), "tcp", addr)
 		if err == nil {
-			return listener.(*socketLease), stage, addr
+			lease, ok := listener.(*socketLease)
+			if !ok {
+				t.Fatalf("broker listener is %T, want *socketLease", listener)
+			}
+			return lease, stage, addr
 		}
 		stage.rollback()
 		if !isAddrInUse(err) {
@@ -93,7 +97,7 @@ func brokerAccept(t *testing.T, l net.Listener) net.Conn {
 
 func brokerDial(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, brokerTestTimeout)
+	c, err := (&net.Dialer{Timeout: brokerTestTimeout}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("DialTimeout: %v", err)
 	}
@@ -149,7 +153,7 @@ func TestSocketBrokerTCPStageReplacementAndRollback(t *testing.T) {
 	_ = server.Close()
 	_ = replacement.Close()
 
-	probe, err := net.Listen("tcp", addr)
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("physical TCP listener remained bound after final lease close: %v", err)
 	}
@@ -159,13 +163,13 @@ func TestSocketBrokerTCPStageReplacementAndRollback(t *testing.T) {
 func TestSocketBrokerListenPacketUnsupportedWithoutBinding(t *testing.T) {
 	b := newSocketBroker()
 	defer b.close()
-	for attempt := 0; attempt < 3; attempt++ {
+	for range 3 {
 		addr := brokerUDPAddress(t)
 		_, err := b.stage().ListenPacket(context.Background(), "udp", addr)
 		if err == nil || !strings.Contains(strings.ToLower(err.Error()), "unsupported") {
 			t.Fatalf("ListenPacket error = %v, want clear unsupported error", err)
 		}
-		probe, err := net.ListenPacket("udp", addr)
+		probe, err := (&net.ListenConfig{}).ListenPacket(t.Context(), "udp", addr)
 		if err != nil {
 			if isAddrInUse(err) {
 				continue
@@ -200,7 +204,7 @@ func TestSocketBrokerRollbackClosesLeaseAndUnblocksAccept(t *testing.T) {
 	case <-time.After(brokerTestTimeout):
 		t.Fatal("Accept remained blocked after rollback")
 	}
-	probe, err := net.Listen("tcp", addr)
+	probe, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("TCP listener remained bound after rollback: %v", err)
 	}

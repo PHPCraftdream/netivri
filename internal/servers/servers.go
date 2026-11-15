@@ -7,6 +7,7 @@ import (
 	"net"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -49,7 +50,7 @@ func (s Spec) ListenAddress() string {
 	if bind == "" {
 		bind = "0.0.0.0"
 	}
-	return net.JoinHostPort(bind, fmt.Sprint(s.Port))
+	return net.JoinHostPort(bind, strconv.Itoa(s.Port))
 }
 
 // Clone returns a deep copy of the spec and its maps/slices.

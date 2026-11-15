@@ -150,12 +150,12 @@ func attempt(ctx context.Context, rawURL string, o Options, tlsCfg *tls.Config) 
 	}
 	req.Header.Set("User-Agent", ua)
 
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: the URL is the operator-configured subscription source, fetching it is the purpose
 	if err != nil {
 		return nil, true, progress.annotate(classifyErr(err, target))
 	}
 	progress.set(phaseBody)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Status first: a non-2xx answer is FETCH_HTTP_STATUS regardless of
 	// its body; at most statusDrainLimit is drained before closing.
@@ -307,7 +307,8 @@ func isProxyFailure(err error) bool {
 		return true
 	}
 	for e := err; e != nil; e = errors.Unwrap(e) {
-		if op, ok := e.(*net.OpError); ok && (op.Op == "proxyconnect" || op.Op == "socks connect") {
+		var op *net.OpError
+		if errors.As(e, &op) && (op.Op == "proxyconnect" || op.Op == "socks connect") {
 			return true
 		}
 	}

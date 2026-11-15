@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/core"
@@ -175,104 +176,28 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 		return s, nil
 	}
 	if x, ok := m.(tui.ThemeMsg); ok {
-		s.workspace.SetTheme(x.Theme)
-		if s.wizard != nil {
-			s.wizard.SetTheme(x.Theme)
-		}
-		if s.prompt != nil {
-			s.prompt.SetTheme(x.Theme)
-		}
-		if s.confirm != nil {
-			s.confirm.SetTheme(x.Theme)
-		}
-		if s.nodesDlg != nil {
-			s.nodesDlg.SetTheme(x.Theme)
-		}
-		if s.diagDlg != nil {
-			s.diagDlg.SetTheme(x.Theme)
-		}
+		s.applyTheme(x)
 		return s, nil
 	}
 	if x, ok := m.(tui.BackgroundMsg); ok {
 		m = x.Value
 	}
 	if _, ok := m.(nodesCloseMsg); ok {
-		s.dialog = nil
-		s.nodesDlg = nil
-		s.diagDlg = nil
-		s.mode = ""
+		s.closeNodes()
 		return s, nil
 	}
 	if x, ok := m.(providerResultMsg); ok {
 		return s.result(x)
 	}
 	if x, ok := m.(tui.ConfirmResultMsg); ok {
-		if s.mode != "confirm-remove" {
-			return s, nil
-		}
-		s.dialog = nil
-		s.confirm = nil
-		s.mode = ""
-		if x.Confirmed && !x.Canceled {
-			return s, s.remove()
-		}
-		return s, nil
+		return s, s.updateConfirm(x)
 	}
 	if x, ok := m.(tui.WizardResultMsg); ok {
-		if x.Canceled {
-			if s.previewCancel != nil {
-				s.previewCancel()
-				s.previewCanceled = true
-				if s.wizard != nil {
-					s.wizard.BusyText = "Canceling..."
-				}
-				return s, nil
-			}
-			if s.addCancel != nil {
-				s.addCancel()
-				s.addCancelRequested = true
-				if s.wizard != nil {
-					s.wizard.SetError(errors.New("Cancel requested; waiting for provider operation to stop"))
-				}
-				return s, nil
-			}
-			s.clearPreview()
-			s.dialog = nil
-			s.wizard = nil
-			s.prompt = nil
-			s.mode = ""
-			return s, nil
-		}
-		if s.mode == "add-wizard" {
-			s.wizard.SetSaving(true)
-			s.busy = "Adding provider"
-			vals := x.Values
-			ctx, cancel := context.WithCancel(context.Background())
-			s.addCancel = cancel
-			s.addCancelRequested = false
-			return s, s.bg(s.busy, func() tea.Msg {
-				v, e := ProviderAdd(s.home, ProviderAddOptions{Name: vals["name"], URL: vals["url"], Via: vals["via"]}, func(_ context.Context, raw string, o fetch.Options) (*fetch.Result, error) {
-					return s.fetchSafe(ctx, raw, o)
-				}, s.now)
-				return providerResultMsg{"add", v, e}
-			})
-		}
-		return s, nil
+		return s, s.updateWizardResult(x)
 	}
 	if x, ok := m.(tui.PromptResultMsg); ok {
-		switch s.mode {
-		case "edit-prompt":
-			return s.applyEditPrompt(x)
-		case "rename-prompt":
-			return s.applyRenamePrompt(x)
-		case "countries-prompt":
-			return s.applyCountriesPrompt(x)
-		case "hop-picker":
-			return s.applyHopPickerPrompt(x)
-		case "diag-prompt-node":
-			return s.applyDiagNodePrompt(x)
-		case "diag-prompt-samples":
-			return s.applyDiagSamplesPrompt(x)
+		if scr, cmd, handled := s.updatePromptResult(x); handled {
+			return scr, cmd
 		}
 	}
 	if s.dialog != nil {
@@ -285,65 +210,197 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 	if len(s.refreshLines) > 0 && s.mode == "results" {
 		return s.updateResults(m)
 	}
-	if k, ok := m.(tea.KeyPressMsg); ok {
-		if !s.list.Filtering {
-			switch k.String() {
-			case "a":
-				s.startWizard()
-				return s, nil
-			case "r":
-				if row, ok := s.list.SelectedRow(); ok {
-					return s, s.refresh(row.Data.(string), false)
-				}
-				return s, s.load()
-			case "R":
-				return s, s.refresh("", true)
-			case "d":
-				if row, ok := s.list.SelectedRow(); ok {
-					return s, s.preflight(row.Data.(string))
-				}
-				return s, nil
-			case "c":
-				if row, ok := s.list.SelectedRow(); ok {
-					s.selected = row.Data.(string)
-					return s, s.countriesCmd()
-				}
-			case "n":
-				if row, ok := s.list.SelectedRow(); ok && s.nodeActionsEnabled(row.Data.(string)) {
-					s.selected = row.Data.(string)
-					return s, s.loadNodes("nodes-load")
-				}
-				return s, nil
-			case "g":
-				if row, ok := s.list.SelectedRow(); ok && s.nodeActionsEnabled(row.Data.(string)) {
-					s.selected = row.Data.(string)
-					return s, s.loadNodes("diag-load")
-				}
-				return s, nil
-			case "esc":
-				if s.mode == "diag-run" && s.diagCancel != nil {
-					s.diagCancel()
-					s.diagCanceled = true
-					return s, nil
-				}
-				if s.workspace.Drilled {
-					s.workspace.Update(m)
-					return s, nil
-				}
-			case "enter":
-				if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
-					if row, ok := s.list.SelectedRow(); ok {
-						s.selected = row.Data.(string)
-						s.updateCard()
-					}
-					return s, nil
-				}
-			}
+	if k, ok := m.(tea.KeyPressMsg); ok && !s.list.Filtering {
+		if cmd, handled := s.listKey(k, m); handled {
+			return s, cmd
 		}
 	}
+	return s.updateWorkspace(m)
+}
+func (s *providersScreen) applyTheme(x tui.ThemeMsg) {
+	s.workspace.SetTheme(x.Theme)
+	if s.wizard != nil {
+		s.wizard.SetTheme(x.Theme)
+	}
+	if s.prompt != nil {
+		s.prompt.SetTheme(x.Theme)
+	}
+	if s.confirm != nil {
+		s.confirm.SetTheme(x.Theme)
+	}
+	if s.nodesDlg != nil {
+		s.nodesDlg.SetTheme(x.Theme)
+	}
+	if s.diagDlg != nil {
+		s.diagDlg.SetTheme(x.Theme)
+	}
+}
+func (s *providersScreen) closeNodes() {
+	s.dialog = nil
+	s.nodesDlg = nil
+	s.diagDlg = nil
+	s.mode = ""
+}
+func (s *providersScreen) updateConfirm(x tui.ConfirmResultMsg) tea.Cmd {
+	if s.mode != "confirm-remove" {
+		return nil
+	}
+	s.dialog = nil
+	s.confirm = nil
+	s.mode = ""
+	if x.Confirmed && !x.Canceled {
+		return s.remove()
+	}
+	return nil
+}
+func (s *providersScreen) updateWizardResult(x tui.WizardResultMsg) tea.Cmd {
+	if x.Canceled {
+		s.cancelWizard()
+		return nil
+	}
+	if s.mode == "add-wizard" {
+		return s.submitAddWizard(x)
+	}
+	return nil
+}
+func (s *providersScreen) cancelWizard() {
+	if s.previewCancel != nil {
+		s.previewCancel()
+		s.previewCanceled = true
+		if s.wizard != nil {
+			s.wizard.BusyText = "Canceling..."
+		}
+		return
+	}
+	if s.addCancel != nil {
+		s.addCancel()
+		s.addCancelRequested = true
+		if s.wizard != nil {
+			s.wizard.SetError(errors.New("Cancel requested; waiting for provider operation to stop")) //nolint:staticcheck // ST1005: shown verbatim as a wizard sentence; the cover test asserts the capitalized text
+		}
+		return
+	}
+	s.clearPreview()
+	s.dialog = nil
+	s.wizard = nil
+	s.prompt = nil
+	s.mode = ""
+}
+func (s *providersScreen) submitAddWizard(x tui.WizardResultMsg) tea.Cmd {
+	s.wizard.SetSaving(true)
+	s.busy = "Adding provider"
+	vals := x.Values
+	ctx, cancel := context.WithCancel(context.Background())
+	s.addCancel = cancel
+	s.addCancelRequested = false
+	return s.bg(s.busy, func() tea.Msg {
+		v, e := providerAddCtx(ctx, s.home, ProviderAddOptions{Name: vals["name"], URL: vals["url"], Via: vals["via"]}, func(_ context.Context, raw string, o fetch.Options) (*fetch.Result, error) {
+			return s.fetchSafe(ctx, raw, o)
+		}, s.now)
+		return providerResultMsg{"add", v, e}
+	})
+}
+func (s *providersScreen) updatePromptResult(x tui.PromptResultMsg) (tui.Screen, tea.Cmd, bool) {
+	switch s.mode {
+	case "edit-prompt":
+		scr, cmd := s.applyEditPrompt(x)
+		return scr, cmd, true
+	case "rename-prompt":
+		scr, cmd := s.applyRenamePrompt(x)
+		return scr, cmd, true
+	case "countries-prompt":
+		scr, cmd := s.applyCountriesPrompt(x)
+		return scr, cmd, true
+	case "hop-picker":
+		scr, cmd := s.applyHopPickerPrompt(x)
+		return scr, cmd, true
+	case "diag-prompt-node":
+		s.applyDiagNodePrompt(x)
+		return s, nil, true
+	case "diag-prompt-samples":
+		scr, cmd := s.applyDiagSamplesPrompt(x)
+		return scr, cmd, true
+	}
+	return nil, nil, false
+}
+
+// listKey handles a key on the list pane; handled is false when the key falls through to the workspace.
+func (s *providersScreen) listKey(k tea.KeyPressMsg, m tea.Msg) (tea.Cmd, bool) {
+	switch k.String() {
+	case "a":
+		s.startWizard()
+		return nil, true
+	case "r":
+		return s.keyReload(), true
+	case "R":
+		return s.refresh("", true), true
+	case "d":
+		return s.keyPreflight(), true
+	case "c":
+		return s.keyCountries()
+	case "n":
+		return s.keyNodes("nodes-load"), true
+	case "g":
+		return s.keyNodes("diag-load"), true
+	case "esc":
+		return nil, s.keyEsc(m)
+	case "enter":
+		return nil, s.keyEnter()
+	}
+	return nil, false
+}
+func (s *providersScreen) keyReload() tea.Cmd {
+	if row, ok := s.list.SelectedRow(); ok {
+		return s.refresh(providerRowName(row), false)
+	}
+	return s.load()
+}
+func (s *providersScreen) keyPreflight() tea.Cmd {
+	if row, ok := s.list.SelectedRow(); ok {
+		return s.preflight(providerRowName(row))
+	}
+	return nil
+}
+func (s *providersScreen) keyCountries() (tea.Cmd, bool) {
+	if row, ok := s.list.SelectedRow(); ok {
+		s.selected = providerRowName(row)
+		return s.countriesCmd(), true
+	}
+	return nil, false
+}
+func (s *providersScreen) keyNodes(mode string) tea.Cmd {
+	if row, ok := s.list.SelectedRow(); ok && s.nodeActionsEnabled(providerRowName(row)) {
+		s.selected = providerRowName(row)
+		return s.loadNodes(mode)
+	}
+	return nil
+}
+func (s *providersScreen) keyEsc(m tea.Msg) bool {
+	if s.mode == "diag-run" && s.diagCancel != nil {
+		s.diagCancel()
+		s.diagCanceled = true
+		return true
+	}
+	if s.workspace.Drilled {
+		s.workspace.Update(m)
+		return true
+	}
+	return false
+}
+func (s *providersScreen) keyEnter() bool {
+	if s.width >= 100 && s.workspace.Focus() == tui.PaneList {
+		if row, ok := s.list.SelectedRow(); ok {
+			s.selected = providerRowName(row)
+			s.updateCard()
+		}
+		return true
+	}
+	return false
+}
+func (s *providersScreen) updateWorkspace(m tea.Msg) (tui.Screen, tea.Cmd) {
 	activated := s.workspace.Update(m)
-	if row, ok := s.list.SelectedRow(); ok && row.Data.(string) != s.selected {
-		s.selected = row.Data.(string)
+	if row, ok := s.list.SelectedRow(); ok && providerRowName(row) != s.selected {
+		s.selected = providerRowName(row)
 		s.updateCard()
 	}
 	if activated && s.list.IsAdd() {
@@ -361,9 +418,15 @@ func (s *providersScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
 }
 func (s *providersScreen) selectedName() string {
 	if r, ok := s.list.SelectedRow(); ok {
-		return r.Data.(string)
+		return providerRowName(r)
 	}
 	return ""
+}
+
+// providerRowName is the provider name a list row carries; "" for any other row.
+func providerRowName(row tui.Row) string {
+	name, _ := row.Data.(string)
+	return name
 }
 func (s *providersScreen) startWizard() {
 	s.clearPreview()
@@ -376,8 +439,7 @@ func (s *providersScreen) startEditPrompt(field string) {
 	s.editField = field
 	s.hopOperation = ""
 	label, hint := "Via URL", "Credential hidden while editing"
-	switch field {
-	case "url":
+	if field == "url" {
 		label = "Subscription URL"
 	}
 	s.prompt = tui.NewPrompt(tui.SecretPrompt, "Edit provider — "+label, label, hint, "")
@@ -403,12 +465,12 @@ func (s *providersScreen) startHopSecretPrompt(side, operation string) {
 	s.mode = "edit-prompt"
 }
 
-func (s *providersScreen) openHopPicker(name, side string) tea.Cmd {
+func (s *providersScreen) openHopPicker(name, side string) {
 	cfg, err := loadConfig(s.home)
 	if err != nil {
 		s.setError(err)
 		s.toast(s.message)
-		return nil
+		return
 	}
 	var own config.HopList
 	found := false
@@ -425,7 +487,7 @@ func (s *providersScreen) openHopPicker(name, side string) tea.Cmd {
 		break
 	}
 	if !found || side != "pre" && side != "post" {
-		return nil
+		return
 	}
 	options := []tui.PromptOption{{Label: "Replace whole list", Value: "replace", Description: "Enter one new proxy URL; the previous list is replaced."}}
 	if !chainDisabled(own) {
@@ -453,7 +515,6 @@ func (s *providersScreen) openHopPicker(name, side string) tea.Cmd {
 	s.dialog = p
 	s.mode = "hop-picker"
 	s.editField = side
-	return nil
 }
 
 func (s *providersScreen) applyHopPickerPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
@@ -586,7 +647,7 @@ func (s *providersScreen) applyEditPrompt(x tui.PromptResultMsg) (tui.Screen, te
 	}
 	value := x.Value
 	if s.editField == "url" && strings.TrimSpace(value) == "" {
-		s.prompt.SetError(errors.New("Subscription URL cannot be blank"))
+		s.prompt.SetError(errors.New("subscription URL cannot be blank"))
 		return s, nil
 	}
 	field := s.editField
@@ -653,7 +714,7 @@ func (s *providersScreen) applyRenamePrompt(x tui.PromptResultMsg) (tui.Screen, 
 	}
 	newName := strings.TrimSpace(x.Value)
 	if newName == "" || newName == s.selected {
-		s.prompt.SetError(errors.New("Enter a different name"))
+		s.prompt.SetError(errors.New("enter a different name"))
 		return s, nil
 	}
 	old := s.selected
@@ -742,12 +803,12 @@ func (s *providersScreen) startDiagnose(entries []NodeEntry) {
 	s.mode = "diag-prompt-node"
 }
 
-func (s *providersScreen) applyDiagNodePrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
+func (s *providersScreen) applyDiagNodePrompt(x tui.PromptResultMsg) {
 	if x.Canceled {
 		s.dialog = nil
 		s.prompt = nil
 		s.mode = ""
-		return s, nil
+		return
 	}
 	s.diagLabel = x.Value
 	lo, hi := 1, maxDiagSamples
@@ -757,7 +818,6 @@ func (s *providersScreen) applyDiagNodePrompt(x tui.PromptResultMsg) (tui.Screen
 	s.prompt = p
 	s.dialog = p
 	s.mode = "diag-prompt-samples"
-	return s, nil
 }
 
 func (s *providersScreen) applyDiagSamplesPrompt(x tui.PromptResultMsg) (tui.Screen, tea.Cmd) {
@@ -802,221 +862,259 @@ func (s *providersScreen) result(r providerResultMsg) (screen tui.Screen, comman
 			}
 		}
 	}()
-	screen = s
 	s.busy = ""
+	return s, s.handleResult(r)
+}
+func (s *providersScreen) handleResult(r providerResultMsg) tea.Cmd {
 	switch r.kind {
 	case "list":
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-		} else {
-			s.setProviders(r.value.(ProviderListResult))
-			if s.pendingSelect != "" {
-				s.list.SelectData(s.pendingSelect)
-				s.selected = s.pendingSelect
-				s.pendingSelect = ""
-			}
-			if s.selected == "" {
-				s.selected = s.selectedName()
-			}
-			s.updateCard()
-		}
+		s.resultList(r)
+		return nil
 	case "add":
-		if s.addCancel != nil {
-			s.addCancel()
-			s.addCancel = nil
-		}
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-			if s.wizard != nil {
-				s.wizard.SetSaving(false)
-				s.wizard.SetError(errors.New(s.message + hintText(s.hint)))
-			}
-			s.mode = "add-wizard"
-			return s, nil
-		}
-		x := r.value.(ProviderAddResult)
-		s.message = fmt.Sprintf("Added %s: %d nodes", x.Name, x.Nodes)
-		s.toast(s.message)
-		s.pendingSelect = x.Name
-		s.clearPreview()
-		s.dialog = nil
-		s.wizard = nil
-		s.mode = ""
-		return s, s.load()
+		return s.resultAdd(r)
 	case "edit":
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-			if s.prompt != nil {
-				s.prompt.SetSaving(false)
-				s.prompt.SetError(errors.New(s.message + hintText(s.hint)))
-			}
-			return s, nil
-		}
-		s.message = "Provider updated"
-		s.toast(s.message)
-		s.dialog = nil
-		s.prompt = nil
-		s.mode = ""
-		s.hopOperation = ""
-		s.pendingSelect = s.selected
-		if name, ok := r.value.(string); ok && name != "" {
-			s.pendingSelect = name
-		}
-		return s, s.load()
+		return s.resultEdit(r)
 	case "rename":
-		oldNew, _ := r.value.([2]string)
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-			if s.prompt != nil {
-				s.prompt.SetSaving(false)
-				s.prompt.SetError(errors.New(s.message + hintText(s.hint)))
-			}
-			return s, nil
-		}
-		s.message = "Provider renamed"
-		s.toast(s.message)
-		s.dialog = nil
-		s.prompt = nil
-		s.mode = ""
-		s.selected = oldNew[1]
-		s.pendingSelect = oldNew[1]
-		return s, s.load()
+		return s.resultRename(r)
 	case "preflight":
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-			return s, nil
-		}
-		s.confirmDeps = r.value.([]string)
-		s.startPrompt()
+		s.resultPreflight(r)
+		return nil
 	case "remove":
-		if r.err != nil {
-			s.setError(r.err)
-			if ce := providerCLIError(r.err); ce != nil && ce.Code == "SUB_IN_USE" {
-				if d, ok := r.value.([]string); ok {
-					s.message += "; accounts: " + strings.Join(d, ", ")
-				}
-			}
-			s.toast(s.message)
-		} else {
-			s.message = "Provider removed"
-			s.toast(s.message)
-			s.hint = ""
-			s.selected = ""
-		}
-		s.dialog = nil
-		s.confirm = nil
-		s.mode = ""
-		return s, s.load()
+		return s.resultRemove(r)
 	case "refresh":
-		rs, _ := r.value.([]ProviderRefreshResult)
-		s.refreshLines = nil
-		for _, x := range rs {
-			if x.OK {
-				s.refreshLines = append(s.refreshLines, fmt.Sprintf("%s: refreshed (%d nodes)", x.Name, ptrInt(x.Nodes)))
-			} else {
-				m := "refresh failed"
-				if x.Error != nil {
-					m = x.Error["message"]
-				}
-				s.refreshLines = append(s.refreshLines, x.Name+": "+redactProviderSecrets(m))
-			}
-		}
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-		} else {
-			s.message = "Providers refreshed"
-			s.toast(s.message)
-			s.hint = ""
-		}
-		s.mode = "results"
-		return s, s.load()
+		return s.resultRefresh(r)
 	case "countries":
-		if r.err != nil {
-			s.setError(r.err)
-			s.toast(s.message)
-		} else {
-			s.countries = r.value.(ProviderCountriesResult)
-			s.message = ""
-			s.hint = ""
-			s.startCountriesDialog(s.countries)
-		}
+		s.resultCountries(r)
 	case "preview":
-		if s.previewCancel != nil {
-			s.previewCancel()
-			s.previewCancel = nil
-		}
-		if s.wizard != nil {
-			s.wizard.Busy = false
-			s.wizard.BusyText = ""
-		}
-		switch {
-		case s.previewCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
-			s.previewCanceled = false
-			s.previewState = "canceled"
-			s.message = ""
-			s.hint = ""
-		case r.err != nil:
-			s.previewState = "failed"
-			s.setError(r.err)
-			s.toast(s.message)
-			if s.wizard != nil {
-				s.wizard.SetError(errors.New(s.message + hintText(s.hint)))
-			}
-		default:
-			s.previewState = "done"
-			s.preview = r.value.(previewData)
-			s.message = ""
-			s.hint = ""
-		}
+		s.resultPreview(r)
 	case "nodes":
-		if r.err != nil {
-			s.mode = ""
-			s.setError(r.err)
-			s.toast(s.message)
-			return s, nil
-		}
-		entries, _ := r.value.([]NodeEntry)
-		switch s.mode {
-		case "diag-load":
-			s.mode = ""
-			s.startDiagnose(entries)
-		case "nodes-load":
-			s.mode = ""
-			s.startNodesDialog(s.selected, entries)
-		}
+		s.resultNodes(r)
 	case "diag":
-		if s.diagCancel != nil {
-			s.diagCancel()
-			s.diagCancel = nil
+		s.resultDiag(r)
+	}
+	return nil
+}
+func (s *providersScreen) resultList(r providerResultMsg) {
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+		return
+	}
+	list, _ := r.value.(ProviderListResult)
+	s.setProviders(list)
+	if s.pendingSelect != "" {
+		s.list.SelectData(s.pendingSelect)
+		s.selected = s.pendingSelect
+		s.pendingSelect = ""
+	}
+	if s.selected == "" {
+		s.selected = s.selectedName()
+	}
+	s.updateCard()
+}
+func (s *providersScreen) resultAdd(r providerResultMsg) tea.Cmd {
+	if s.addCancel != nil {
+		s.addCancel()
+		s.addCancel = nil
+	}
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+		if s.wizard != nil {
+			s.wizard.SetSaving(false)
+			s.wizard.SetError(errors.New(s.message + hintText(s.hint)))
 		}
-		diag, _ := r.value.(core.NodeDiag)
-		switch {
-		case s.diagCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
-			s.diagCanceled = false
-			s.mode = ""
-			s.message = "Diagnosis canceled"
-			s.hint = ""
-			s.toast(s.message)
-		case r.err != nil:
-			s.mode = ""
-			s.setError(r.err)
-			s.toast(s.message)
-		default:
-			s.updateCard()
-			d := newDiagResultDialog(diag)
-			d.SetTheme(s.workspace.Theme)
-			s.diagDlg = d
-			s.dialog = d
-			s.mode = "diag-result"
+		s.mode = "add-wizard"
+		return nil
+	}
+	x, _ := r.value.(ProviderAddResult)
+	s.message = fmt.Sprintf("Added %s: %d nodes", x.Name, x.Nodes)
+	s.toast(s.message)
+	s.pendingSelect = x.Name
+	s.clearPreview()
+	s.dialog = nil
+	s.wizard = nil
+	s.mode = ""
+	return s.load()
+}
+func (s *providersScreen) resultEdit(r providerResultMsg) tea.Cmd {
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+		if s.prompt != nil {
+			s.prompt.SetSaving(false)
+			s.prompt.SetError(errors.New(s.message + hintText(s.hint)))
+		}
+		return nil
+	}
+	s.message = "Provider updated"
+	s.toast(s.message)
+	s.dialog = nil
+	s.prompt = nil
+	s.mode = ""
+	s.hopOperation = ""
+	s.pendingSelect = s.selected
+	if name, ok := r.value.(string); ok && name != "" {
+		s.pendingSelect = name
+	}
+	return s.load()
+}
+func (s *providersScreen) resultRename(r providerResultMsg) tea.Cmd {
+	oldNew, _ := r.value.([2]string)
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+		if s.prompt != nil {
+			s.prompt.SetSaving(false)
+			s.prompt.SetError(errors.New(s.message + hintText(s.hint)))
+		}
+		return nil
+	}
+	s.message = "Provider renamed"
+	s.toast(s.message)
+	s.dialog = nil
+	s.prompt = nil
+	s.mode = ""
+	s.selected = oldNew[1]
+	s.pendingSelect = oldNew[1]
+	return s.load()
+}
+func (s *providersScreen) resultPreflight(r providerResultMsg) {
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+		return
+	}
+	s.confirmDeps, _ = r.value.([]string)
+	s.startPrompt()
+}
+func (s *providersScreen) resultRemove(r providerResultMsg) tea.Cmd {
+	if r.err != nil {
+		s.setError(r.err)
+		if ce := providerCLIError(r.err); ce != nil && ce.Code == "SUB_IN_USE" {
+			if d, ok := r.value.([]string); ok {
+				s.message += "; accounts: " + strings.Join(d, ", ")
+			}
+		}
+		s.toast(s.message)
+	} else {
+		s.message = "Provider removed"
+		s.toast(s.message)
+		s.hint = ""
+		s.selected = ""
+	}
+	s.dialog = nil
+	s.confirm = nil
+	s.mode = ""
+	return s.load()
+}
+func (s *providersScreen) resultRefresh(r providerResultMsg) tea.Cmd {
+	rs, _ := r.value.([]ProviderRefreshResult)
+	s.refreshLines = nil
+	for _, x := range rs {
+		if x.OK {
+			s.refreshLines = append(s.refreshLines, fmt.Sprintf("%s: refreshed (%d nodes)", x.Name, ptrInt(x.Nodes)))
+		} else {
+			m := "refresh failed"
+			if x.Error != nil {
+				m = x.Error["message"]
+			}
+			s.refreshLines = append(s.refreshLines, x.Name+": "+redactProviderSecrets(m))
 		}
 	}
-	return s, nil
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+	} else {
+		s.message = "Providers refreshed"
+		s.toast(s.message)
+		s.hint = ""
+	}
+	s.mode = "results"
+	return s.load()
+}
+func (s *providersScreen) resultCountries(r providerResultMsg) {
+	if r.err != nil {
+		s.setError(r.err)
+		s.toast(s.message)
+	} else {
+		s.countries, _ = r.value.(ProviderCountriesResult)
+		s.message = ""
+		s.hint = ""
+		s.startCountriesDialog(s.countries)
+	}
+}
+func (s *providersScreen) resultPreview(r providerResultMsg) {
+	if s.previewCancel != nil {
+		s.previewCancel()
+		s.previewCancel = nil
+	}
+	if s.wizard != nil {
+		s.wizard.Busy = false
+		s.wizard.BusyText = ""
+	}
+	switch {
+	case s.previewCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
+		s.previewCanceled = false
+		s.previewState = "canceled"
+		s.message = ""
+		s.hint = ""
+	case r.err != nil:
+		s.previewState = "failed"
+		s.setError(r.err)
+		s.toast(s.message)
+		if s.wizard != nil {
+			s.wizard.SetError(errors.New(s.message + hintText(s.hint)))
+		}
+	default:
+		s.previewState = "done"
+		s.preview, _ = r.value.(previewData)
+		s.message = ""
+		s.hint = ""
+	}
+}
+func (s *providersScreen) resultNodes(r providerResultMsg) {
+	if r.err != nil {
+		s.mode = ""
+		s.setError(r.err)
+		s.toast(s.message)
+		return
+	}
+	entries, _ := r.value.([]NodeEntry)
+	switch s.mode {
+	case "diag-load":
+		s.mode = ""
+		s.startDiagnose(entries)
+	case "nodes-load":
+		s.mode = ""
+		s.startNodesDialog(s.selected, entries)
+	}
+}
+func (s *providersScreen) resultDiag(r providerResultMsg) {
+	if s.diagCancel != nil {
+		s.diagCancel()
+		s.diagCancel = nil
+	}
+	diag, _ := r.value.(core.NodeDiag)
+	switch {
+	case s.diagCanceled || (r.err != nil && errors.Is(r.err, context.Canceled)):
+		s.diagCanceled = false
+		s.mode = ""
+		s.message = "Diagnosis canceled"
+		s.hint = ""
+		s.toast(s.message)
+	case r.err != nil:
+		s.mode = ""
+		s.setError(r.err)
+		s.toast(s.message)
+	default:
+		s.updateCard()
+		d := newDiagResultDialog(diag)
+		d.SetTheme(s.workspace.Theme)
+		s.diagDlg = d
+		s.dialog = d
+		s.mode = "diag-result"
+	}
 }
 func (s *providersScreen) toast(text string) {
 	if text != "" {
@@ -1054,7 +1152,7 @@ func (s *providersScreen) setProviders(v ProviderListResult) {
 		s.providers[p.Name] = p
 		nodes := "—"
 		if p.Nodes != nil {
-			nodes = fmt.Sprint(*p.Nodes)
+			nodes = strconv.Itoa(*p.Nodes)
 		}
 		rows = append(rows, tui.Row{Cells: []string{p.Name, nodes, p.State}, Data: p.Name})
 	}
@@ -1084,7 +1182,7 @@ func (s *providersScreen) updateCard() {
 	}
 	nodes := "—"
 	if p.Nodes != nil {
-		nodes = fmt.Sprint(*p.Nodes)
+		nodes = strconv.Itoa(*p.Nodes)
 	}
 	updated := "Never"
 	if p.FetchedAt != nil {
@@ -1163,7 +1261,8 @@ func (s *providersScreen) activateCard() (tui.Screen, tea.Cmd) {
 	case "via":
 		s.startEditPrompt("via")
 	case "pre", "post":
-		return s, s.openHopPicker(s.selected, s.card.Lines[s.card.Selected].ID)
+		s.openHopPicker(s.selected, s.card.Lines[s.card.Selected].ID)
+		return s, nil
 	case "clear-pre":
 		return s, s.clearHop("pre")
 	case "clear-post":

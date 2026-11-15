@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -139,7 +141,8 @@ func (s *settingsScreen) toast(text string) tea.Cmd {
 }
 
 func settingsErrorText(err error) string {
-	if ce, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		if ce.Hint != "" {
 			return ce.Message + " (" + ce.Hint + ")"
 		}
@@ -233,9 +236,9 @@ func (s *settingsScreen) promptFor(k ConfigKey) {
 	title := "Settings · " + k.Key
 	switch k.Kind {
 	case ConfigKeyPort:
-		min, max := 1, 65535
+		lo, hi := 1, 65535
 		s.prompt = tui.NewPrompt(tui.NumberPrompt, title, k.Label, k.Hint, settingsRawValue(s.cfg, k.Key))
-		s.prompt.Min, s.prompt.Max = &min, &max
+		s.prompt.Min, s.prompt.Max = &lo, &hi
 	case ConfigKeyBool:
 		s.prompt = tui.NewPrompt(tui.ChoicePrompt, title, k.Label, k.Hint, settingsRawValue(s.cfg, k.Key))
 		s.prompt.Options = []tui.PromptOption{{Label: "Yes", Value: "true"}, {Label: "No", Value: "false"}}
@@ -315,7 +318,7 @@ func (s *settingsScreen) syncRows() {
 	for _, k := range ConfigKeys() {
 		counts[k.Group]++
 	}
-	var rows []tui.Row
+	rows := make([]tui.Row, 0, len(s.groups))
 	for _, g := range s.groups {
 		rows = append(rows, tui.Row{Cells: []string{s.groupLabel(g), fmt.Sprintf("%d keys", counts[g])}, Data: g})
 	}
@@ -361,9 +364,10 @@ func (s *settingsScreen) displayValue(k ConfigKey) string {
 		return "-"
 	}
 	switch k.Kind {
+	case ConfigKeyText:
 	case ConfigKeyPort:
 		if n, ok := v.(int); ok {
-			return fmt.Sprint(n)
+			return strconv.Itoa(n)
 		}
 	case ConfigKeyBool:
 		if b, ok := v.(bool); ok {

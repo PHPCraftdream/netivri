@@ -179,8 +179,7 @@ func (l *List) count() int {
 	}
 	return n
 }
-func (l *List) geometry() (int, int, int) {
-	inner := max(0, l.width-2)
+func (l *List) geometry() (int, int) {
 	title := 0
 	if l.Title != "" {
 		title = 1
@@ -199,10 +198,10 @@ func (l *List) geometry() (int, int, int) {
 		filterLine = 1
 	}
 	visible := max(0, l.height-2-title-header-status-empty-filterLine)
-	return inner, title + header + empty + filterLine, visible
+	return title + header + empty + filterLine, visible
 }
 func (l *List) ensureVisible() {
-	_, _, v := l.geometry()
+	_, v := l.geometry()
 	if v < 1 {
 		l.offset = 0
 		return
@@ -234,10 +233,10 @@ func (l *List) Update(msg tea.Msg) bool {
 		case key.Matches(m, b[1]):
 			l.Selected++
 		case key.Matches(m, b[2]):
-			_, _, v := l.geometry()
+			_, v := l.geometry()
 			l.Selected -= max(1, v)
 		case key.Matches(m, b[3]):
-			_, _, v := l.geometry()
+			_, v := l.geometry()
 			l.Selected += max(1, v)
 		case key.Matches(m, b[4]):
 			l.Selected = 0
@@ -255,11 +254,12 @@ func (l *List) Update(msg tea.Msg) bool {
 		return false
 	case tea.MouseWheelMsg:
 		mouse := tea.Mouse(m)
-		if mouse.Button == tea.MouseWheelUp {
+		switch mouse.Button {
+		case tea.MouseWheelUp:
 			l.Selected--
-		} else if mouse.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			l.Selected++
-		} else {
+		default:
 			return false
 		}
 		l.Selected = max(0, min(max(0, l.count()-1), l.Selected))
@@ -270,12 +270,12 @@ func (l *List) Update(msg tea.Msg) bool {
 		if mouse.Button != tea.MouseLeft {
 			return false
 		}
-		_, start, v := l.geometry()
+		start, v := l.geometry()
 		idx := mouse.Y - 1 - start + l.offset
 		if mouse.Y < 1+start || idx < 0 || idx >= l.count() || idx >= l.offset+v {
 			return false
 		}
-		if idx == l.Selected && idx == l.lastClick {
+		if idx == l.Selected && l.Selected == l.lastClick {
 			l.lastClick = -1
 			return true
 		}
@@ -298,85 +298,113 @@ func (l *List) View(w, h int) string {
 	if t.Accent == nil {
 		t = NewTheme()
 	}
-	border := lipgloss.RoundedBorder()
-	if t.ASCII {
-		border = lipgloss.Border{Top: "-", Bottom: "-", Left: "|", Right: "|", TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+", Middle: "+", MiddleLeft: "+", MiddleRight: "+", MiddleTop: "+", MiddleBottom: "+"}
-	}
 	inner := max(0, w-2)
-	_, _, v := l.geometry()
+	_, v := l.geometry()
 	scrolling := l.count() > v && v > 0
 	contentW := inner
 	if scrolling {
 		contentW = max(0, inner-1)
 	}
-	content := make([]string, max(0, h-2))
-	put := func(y int, s string) {
-		if y >= 0 && y < len(content) {
-			width := inner
-			if scrolling {
-				width = contentW
-			}
-			content[y] = clipTableCell(s, width)
-		}
-	}
-	y := 0
-	if l.Title != "" {
-		put(y, l.Title)
-		y++
-	}
+	canvas := listCanvas{rows: make([]string, max(0, h-2)), width: contentW}
 	widths := l.columnWidths(max(0, contentW-3))
-	if len(l.Columns) > 0 {
-		put(y, "  "+l.renderCells(-1, widths))
-		y++
-	}
-	if l.Filtering {
-		put(y, "/"+l.Filter+"█")
-		y++
-	}
-	if len(l.Rows) == 0 && !l.Filtering {
-		put(y, l.EmptyText)
-		y++
-	}
-	vr := l.visibleRows()
-	for n := 0; n < v && l.offset+n < l.count(); n++ {
-		i := l.offset + n
-		mark := " "
-		if i == l.Selected {
-			mark = t.FocusMark()
-		}
-		text := l.AddLabel
-		if i < len(vr) {
-			text = l.renderCells(vr[i], widths)
-			if l.Rows[vr[i]].Mark {
-				text = "* " + text
-			}
-		}
-		row := mark + " " + text
-		if i == l.Selected && l.Focused && i < len(vr) {
-			row = t.SelectedRow.Render(row)
-		}
-		if scrolling {
-			a, b := "│", "█"
-			if t.ASCII {
-				a, b = "|", "#"
-			}
-			g := a
-			if n == min(v-1, l.offset*v/max(1, l.count()-v+1)) {
-				g = b
-			}
-			row = clipTableCell(row, contentW)
-			row += strings.Repeat(" ", max(0, contentW-lipgloss.Width(row)))
-			row += g
-			content[y+n] = row
-			continue
-		}
-		put(y+n, row)
-	}
+	y := l.putHeader(&canvas, widths)
+	l.putBody(&canvas, y, v, scrolling, widths, t)
 	status := ""
 	if l.count() > 0 {
 		status = fmtPosition(l.Selected+1, l.count())
 	}
-	put(len(content)-1, status)
+	canvas.put(len(canvas.rows)-1, status)
+	return boxList(listBorder(t), canvas.rows, inner, h)
+}
+
+// listCanvas holds the inner rows of a List view; put clips to width.
+type listCanvas struct {
+	rows  []string
+	width int
+}
+
+func (c *listCanvas) put(y int, s string) {
+	if y >= 0 && y < len(c.rows) {
+		c.rows[y] = clipTableCell(s, c.width)
+	}
+}
+
+// putHeader writes the title, column header, filter and empty-state rows; returns the next free row.
+func (l *List) putHeader(c *listCanvas, widths []int) int {
+	y := 0
+	if l.Title != "" {
+		c.put(y, l.Title)
+		y++
+	}
+	if len(l.Columns) > 0 {
+		c.put(y, "  "+l.renderCells(-1, widths))
+		y++
+	}
+	if l.Filtering {
+		c.put(y, "/"+l.Filter+"█")
+		y++
+	}
+	if len(l.Rows) == 0 && !l.Filtering {
+		c.put(y, l.EmptyText)
+		y++
+	}
+	return y
+}
+
+// putBody writes the visible rows from row y down; when scrolling, each row gets a scrollbar cell.
+func (l *List) putBody(c *listCanvas, y, v int, scrolling bool, widths []int, t Theme) {
+	vr := l.visibleRows()
+	for n := 0; n < v && l.offset+n < l.count(); n++ {
+		row := l.renderRow(l.offset+n, vr, widths, t)
+		if scrolling {
+			c.rows[y+n] = l.scrollRow(row, n, v, c.width, t.ASCII)
+			continue
+		}
+		c.put(y+n, row)
+	}
+}
+func (l *List) renderRow(i int, vr []int, widths []int, t Theme) string {
+	mark := " "
+	if i == l.Selected {
+		mark = t.FocusMark()
+	}
+	text := l.AddLabel
+	if i < len(vr) {
+		text = l.renderCells(vr[i], widths)
+		if l.Rows[vr[i]].Mark {
+			text = "* " + text
+		}
+	}
+	row := mark + " " + text
+	if i == l.Selected && l.Focused && i < len(vr) {
+		row = t.SelectedRow.Render(row)
+	}
+	return row
+}
+
+// scrollRow fits row into contentW cells and appends the scrollbar cell for visible row n of v.
+func (l *List) scrollRow(row string, n, v, contentW int, ascii bool) string {
+	a, b := "│", "█"
+	if ascii {
+		a, b = "|", "#"
+	}
+	g := a
+	if n == min(v-1, l.offset*v/max(1, l.count()-v+1)) {
+		g = b
+	}
+	row = clipTableCell(row, contentW)
+	row += strings.Repeat(" ", max(0, contentW-lipgloss.Width(row)))
+	return row + g
+}
+func listBorder(t Theme) lipgloss.Border {
+	if t.ASCII {
+		return lipgloss.Border{Top: "-", Bottom: "-", Left: "|", Right: "|", TopLeft: "+", TopRight: "+", BottomLeft: "+", BottomRight: "+", Middle: "+", MiddleLeft: "+", MiddleRight: "+", MiddleTop: "+", MiddleBottom: "+"}
+	}
+	return lipgloss.RoundedBorder()
+}
+
+// boxList frames the content rows with border; the box is h rows tall and inner cells wide.
+func boxList(border lipgloss.Border, content []string, inner, h int) string {
 	lines := make([]string, h)
 	lines[0] = border.TopLeft + strings.Repeat(border.Top, inner) + border.TopRight
 	for i := 1; i < h-1; i++ {
@@ -456,12 +484,13 @@ func (l *List) renderCells(n int, widths []int) string {
 			}
 		}
 		v = clipTableCell(v, widths[i])
-		if c.Align == AlignRight {
+		switch c.Align {
+		case AlignRight:
 			v = strings.Repeat(" ", max(0, widths[i]-lipgloss.Width(v))) + v
-		} else if c.Align == AlignCenter {
+		case AlignCenter:
 			pad := max(0, widths[i]-lipgloss.Width(v))
 			v = strings.Repeat(" ", pad/2) + v + strings.Repeat(" ", pad-pad/2)
-		} else {
+		default:
 			v += strings.Repeat(" ", max(0, widths[i]-lipgloss.Width(v)))
 		}
 		p[i] = v

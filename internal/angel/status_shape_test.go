@@ -81,7 +81,7 @@ func TestParseControlStatusRejectedCodeIgnoresBody(t *testing.T) {
 
 func TestStatusShapeErr(t *testing.T) {
 	shape := errors.Join(ErrStatusShape, errors.New("detail"))
-	if statusShapeErr(shape) != shape {
+	if !errors.Is(statusShapeErr(shape), shape) {
 		t.Error("statusShapeErr dropped a shape error")
 	}
 	for _, err := range []error{nil, errors.New("other"), ErrNotRunning, ErrControlTimeout} {

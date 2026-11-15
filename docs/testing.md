@@ -121,8 +121,9 @@ packages from the diff (`setup` job, its choice is in the job summary):
 A manual run of the `CI` workflow (Actions, *Run workflow*) uses the inputs
 above and defaults to everything. The coverage floors, the npm checks and the
 static Linux builds run only when everything runs (they need the whole
-suite); `lint` (which also checks the licenses) always runs. `scripts/test-ci-scope.sh` (in
-`lint`) tests the selection.
+suite); `lint` (gofmt, go vet, golangci-lint with zero findings allowed, and the
+license checks) always runs. `scripts/test-ci-scope.sh` (in `lint`) tests the
+selection.
 
 Each CI job selects its own tags:
 

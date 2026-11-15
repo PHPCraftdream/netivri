@@ -27,7 +27,48 @@ import (
 
 const h2Timeout = 10 * time.Second
 
+// h2RouteRun holds the state shared by the phases of TestHysteria2CoreRoutesAuthPolicyRotationAndClose.
+type h2RouteRun struct {
+	t             *testing.T
+	protocol      servers.Protocol
+	alice         string
+	bob           string
+	material      map[string]string
+	aliceAddress  string
+	bobAddress    string
+	aliceRecorder *h2Rec
+	bobRecorder   *h2Rec
+	backendPort   int
+	wantTarget    string
+	home          string
+	port          int
+	rotated       string
+	instance      *core.Instance
+	closed        bool
+}
+
 func TestHysteria2CoreRoutesAuthPolicyRotationAndClose(t *testing.T) {
+	r := newH2RouteRun(t)
+	r.start()
+	defer func() {
+		if r.instance != nil && !r.closed {
+			defer func() { _ = r.instance.Close() }()
+			h2Drain(t, r.instance)
+		}
+	}()
+	servertest.TrustForTest(t, r.material)
+	aliceBefore, bobBefore := r.checkPinnedRoutes()
+	r.checkWrongAuth(aliceBefore, bobBefore)
+	r.checkGlobalDeny()
+	r.checkAccountDeny()
+	r.checkRotation()
+	r.checkOldCredential()
+	oldPort, newPort := r.checkPortChange()
+	r.checkOldPortFreedAndClose(oldPort, newPort)
+}
+
+func newH2RouteRun(t *testing.T) *h2RouteRun {
+	t.Helper()
 	protocol, ok := servers.Lookup("hysteria2")
 	if !ok {
 		t.Fatal("Hysteria2 protocol is not registered")
@@ -40,153 +81,178 @@ func TestHysteria2CoreRoutesAuthPolicyRotationAndClose(t *testing.T) {
 	aliceAddress, aliceRecorder := h2Recorder(t)
 	bobAddress, bobRecorder := h2Recorder(t)
 	backendHost, backendPort := h2Echo(t)
-	home := testutil.TempHome(t)
-	options := func(port int, alicePassword, bobPassword string, currentMaterial map[string]string, aliceNode, bobNode string, allowed []netip.Prefix, accounts map[string][]netip.Prefix) core.Options {
-		return core.Options{
-			HomeDir:       home,
-			Authenticator: auth.NewAuthenticator(nil),
-			RouteNodes: map[string][]map[string]any{
-				"alice": {h2NodeMap(aliceNode)},
-				"bob":   {h2NodeMap(bobNode)},
-			},
-			AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
-			AllowedClients:        allowed,
-			AccountAllowedClients: accounts,
-			Servers: []servers.Spec{{
-				Name: "entry", Protocol: "hysteria2", Bind: "127.0.0.1", Port: port,
-				Accounts: []string{"alice", "bob"}, Params: map[string]string{},
-				Material: servers.SecretMap(currentMaterial),
-				Users: servers.UserSecrets{
-					"alice": {"password": alicePassword},
-					"bob":   {"password": bobPassword},
-				},
-			}},
-		}
+	return &h2RouteRun{
+		t: t, protocol: protocol, alice: alice, bob: bob, material: material,
+		aliceAddress: aliceAddress, bobAddress: bobAddress,
+		aliceRecorder: aliceRecorder, bobRecorder: bobRecorder,
+		backendPort: backendPort,
+		wantTarget:  net.JoinHostPort(backendHost, strconv.Itoa(backendPort)),
+		home:        testutil.TempHome(t),
 	}
-	var instance *core.Instance
-	port := servertest.StartOnFreePort(t, func(candidate int) error {
-		started, startErr := core.Start(context.Background(), options(candidate, alice, bob, material, aliceAddress, bobAddress, nil, nil))
+}
+
+func (r *h2RouteRun) options(port int, alicePassword, bobPassword string, currentMaterial map[string]string, aliceNode, bobNode string, allowed []netip.Prefix, accounts map[string][]netip.Prefix) core.Options {
+	return core.Options{
+		HomeDir:       r.home,
+		Authenticator: auth.NewAuthenticator(nil),
+		RouteNodes: map[string][]map[string]any{
+			"alice": {h2NodeMap(aliceNode)},
+			"bob":   {h2NodeMap(bobNode)},
+		},
+		AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
+		AllowedClients:        allowed,
+		AccountAllowedClients: accounts,
+		Servers: []servers.Spec{{
+			Name: "entry", Protocol: "hysteria2", Bind: "127.0.0.1", Port: port,
+			Accounts: []string{"alice", "bob"}, Params: map[string]string{},
+			Material: servers.SecretMap(currentMaterial),
+			Users: servers.UserSecrets{
+				"alice": {"password": alicePassword},
+				"bob":   {"password": bobPassword},
+			},
+		}},
+	}
+}
+
+func (r *h2RouteRun) start() {
+	r.port = servertest.StartOnFreePort(r.t, func(candidate int) error {
+		started, startErr := core.Start(context.Background(), r.options(candidate, r.alice, r.bob, r.material, r.aliceAddress, r.bobAddress, nil, nil))
 		if startErr != nil {
 			return startErr
 		}
-		instance = started
+		r.instance = started
 		return nil
 	})
-	closed := false
-	defer func() {
-		if instance != nil && !closed {
-			defer instance.Close()
-			h2Drain(t, instance)
-		}
-	}()
-	servertest.TrustForTest(t, material)
-	wantTarget := net.JoinHostPort(backendHost, strconv.Itoa(backendPort))
+}
 
-	if err := h2Roundtrip(t, port, alice, material["fingerprint"], backendPort); err != nil {
+func (r *h2RouteRun) checkPinnedRoutes() ([]string, []string) {
+	t := r.t
+	if err := h2Roundtrip(t, r.port, r.alice, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("pinned Alice client failed:", err)
 	}
-	h2Drain(t, instance)
-	if got := aliceRecorder.snapshot(); len(got) != 1 || got[0] != wantTarget {
-		t.Fatalf("Alice target = %v, want exactly [%s]", got, wantTarget)
+	h2Drain(t, r.instance)
+	if got := r.aliceRecorder.snapshot(); len(got) != 1 || got[0] != r.wantTarget {
+		t.Fatalf("Alice target = %v, want exactly [%s]", got, r.wantTarget)
 	}
-	if got := bobRecorder.snapshot(); len(got) != 0 {
+	if got := r.bobRecorder.snapshot(); len(got) != 0 {
 		t.Fatalf("Alice traffic reached Bob route: %v", got)
 	}
-	aliceBefore, bobBefore := aliceRecorder.snapshot(), bobRecorder.snapshot()
+	aliceBefore := r.aliceRecorder.snapshot()
 
-	if err := h2Roundtrip(t, port, bob, material["fingerprint"], backendPort); err != nil {
+	if err := h2Roundtrip(t, r.port, r.bob, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("pinned Bob client failed:", err)
 	}
-	h2Drain(t, instance)
-	if got := bobRecorder.snapshot(); len(got) != 1 || got[0] != wantTarget {
-		t.Fatalf("Bob target = %v, want exactly [%s]", got, wantTarget)
+	h2Drain(t, r.instance)
+	if got := r.bobRecorder.snapshot(); len(got) != 1 || got[0] != r.wantTarget {
+		t.Fatalf("Bob target = %v, want exactly [%s]", got, r.wantTarget)
 	}
-	if got := aliceRecorder.snapshot(); !h2SameTargets(aliceBefore, got) {
+	if got := r.aliceRecorder.snapshot(); !h2SameTargets(aliceBefore, got) {
 		t.Fatalf("Bob traffic changed Alice route: %v", got)
 	}
-	aliceBefore, bobBefore = aliceRecorder.snapshot(), bobRecorder.snapshot()
+	return r.aliceRecorder.snapshot(), r.bobRecorder.snapshot()
+}
 
-	wrongAuth := h2Roundtrip(t, port, "incorrect-password", material["fingerprint"], backendPort)
+func (r *h2RouteRun) checkWrongAuth(aliceBefore, bobBefore []string) {
+	t := r.t
+	wrongAuth := h2Roundtrip(t, r.port, "incorrect-password", r.material["fingerprint"], r.backendPort)
 	if wrongAuth == nil || !strings.Contains(wrongAuth.Error(), "authentication failed, status code: 404") || strings.Contains(strings.ToLower(wrongAuth.Error()), "timeout") {
 		t.Fatalf("wrong credential error = %v, want Hysteria2 authentication status 404", wrongAuth)
 	}
-	h2Drain(t, instance)
-	if !h2SameTargets(aliceBefore, aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, bobRecorder.snapshot()) {
+	h2Drain(t, r.instance)
+	if !h2SameTargets(aliceBefore, r.aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, r.bobRecorder.snapshot()) {
 		t.Fatal("wrong credentials reached an account recorder")
 	}
+}
 
+func (r *h2RouteRun) checkGlobalDeny() {
+	t := r.t
 	blocked := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-	if err := instance.Reconfigure(options(port, alice, bob, material, aliceAddress, bobAddress, blocked, nil)); err != nil {
+	if err := r.instance.Reconfigure(r.options(r.port, r.alice, r.bob, r.material, r.aliceAddress, r.bobAddress, blocked, nil)); err != nil {
 		t.Fatal("global policy update failed:", err)
 	}
-	beforeDrops := h2Dropped(instance)
-	aliceBefore, bobBefore = aliceRecorder.snapshot(), bobRecorder.snapshot()
-	if err := h2Roundtrip(t, port, alice, material["fingerprint"], backendPort); err == nil {
+	beforeDrops := h2Dropped(r.instance)
+	aliceBefore, bobBefore := r.aliceRecorder.snapshot(), r.bobRecorder.snapshot()
+	if err := h2Roundtrip(t, r.port, r.alice, r.material["fingerprint"], r.backendPort); err == nil {
 		t.Fatal("global deny policy allowed Alice")
 	}
-	h2Drain(t, instance)
-	if h2Dropped(instance) <= beforeDrops {
+	h2Drain(t, r.instance)
+	if h2Dropped(r.instance) <= beforeDrops {
 		t.Fatal("global client drop was not counted")
 	}
-	if !h2SameTargets(aliceBefore, aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, bobRecorder.snapshot()) {
+	if !h2SameTargets(aliceBefore, r.aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, r.bobRecorder.snapshot()) {
 		t.Fatal("globally denied traffic reached a recorder")
 	}
-	if err := instance.Reconfigure(options(port, alice, bob, material, aliceAddress, bobAddress, nil, map[string][]netip.Prefix{"alice": blocked})); err != nil {
+}
+
+func (r *h2RouteRun) checkAccountDeny() {
+	t := r.t
+	blocked := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	if err := r.instance.Reconfigure(r.options(r.port, r.alice, r.bob, r.material, r.aliceAddress, r.bobAddress, nil, map[string][]netip.Prefix{"alice": blocked})); err != nil {
 		t.Fatal("account policy update failed:", err)
 	}
-	beforeDrops = h2Dropped(instance)
-	aliceBefore, bobBefore = aliceRecorder.snapshot(), bobRecorder.snapshot()
-	if err := h2Roundtrip(t, port, alice, material["fingerprint"], backendPort); err == nil {
+	beforeDrops := h2Dropped(r.instance)
+	aliceBefore, bobBefore := r.aliceRecorder.snapshot(), r.bobRecorder.snapshot()
+	if err := h2Roundtrip(t, r.port, r.alice, r.material["fingerprint"], r.backendPort); err == nil {
 		t.Fatal("Alice-specific deny policy allowed Alice")
 	}
-	h2Drain(t, instance)
-	if h2Dropped(instance) <= beforeDrops {
+	h2Drain(t, r.instance)
+	if h2Dropped(r.instance) <= beforeDrops {
 		t.Fatal("account-specific client drop was not counted")
 	}
-	if !h2SameTargets(aliceBefore, aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, bobRecorder.snapshot()) {
+	if !h2SameTargets(aliceBefore, r.aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, r.bobRecorder.snapshot()) {
 		t.Fatal("denied Alice traffic reached a recorder")
 	}
-	if err := h2Roundtrip(t, port, bob, material["fingerprint"], backendPort); err != nil {
+	if err := h2Roundtrip(t, r.port, r.bob, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("Alice restriction blocked Bob:", err)
 	}
-	h2Drain(t, instance)
-	bobBefore = bobRecorder.snapshot()
-	if len(bobBefore) != 2 || bobBefore[1] != wantTarget {
+	h2Drain(t, r.instance)
+	bobBefore = r.bobRecorder.snapshot()
+	if len(bobBefore) != 2 || bobBefore[1] != r.wantTarget {
 		t.Fatalf("Bob target after Alice restriction = %v", bobBefore)
 	}
-	aliceBefore = aliceRecorder.snapshot()
+}
 
-	rotated := h2Secret(t, protocol)
-	if err := instance.Reconfigure(options(port, rotated, bob, material, aliceAddress, bobAddress, nil, nil)); err != nil {
+func (r *h2RouteRun) checkRotation() {
+	t := r.t
+	r.rotated = h2Secret(t, r.protocol)
+	if err := r.instance.Reconfigure(r.options(r.port, r.rotated, r.bob, r.material, r.aliceAddress, r.bobAddress, nil, nil)); err != nil {
 		t.Fatal("credential rotation failed:", err)
 	}
-	if err := h2Roundtrip(t, port, rotated, material["fingerprint"], backendPort); err != nil {
+	if err := h2Roundtrip(t, r.port, r.rotated, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("rotated credential failed:", err)
 	}
-	h2Drain(t, instance)
-	if err := instance.Reconfigure(options(port, rotated, bob, material, aliceAddress, bobAddress, nil, nil)); err != nil {
+	h2Drain(t, r.instance)
+}
+
+func (r *h2RouteRun) checkOldCredential() {
+	t := r.t
+	if err := r.instance.Reconfigure(r.options(r.port, r.rotated, r.bob, r.material, r.aliceAddress, r.bobAddress, nil, nil)); err != nil {
 		t.Fatal("policy removal failed:", err)
 	}
-	aliceBefore, bobBefore = aliceRecorder.snapshot(), bobRecorder.snapshot()
-	oldAuth := h2Roundtrip(t, port, alice, material["fingerprint"], backendPort)
+	aliceBefore, bobBefore := r.aliceRecorder.snapshot(), r.bobRecorder.snapshot()
+	oldAuth := h2Roundtrip(t, r.port, r.alice, r.material["fingerprint"], r.backendPort)
 	if oldAuth == nil || !strings.Contains(oldAuth.Error(), "authentication failed, status code: 404") || strings.Contains(strings.ToLower(oldAuth.Error()), "timeout") {
 		t.Fatalf("old credential error = %v, want Hysteria2 authentication status 404", oldAuth)
 	}
-	h2Drain(t, instance)
-	if !h2SameTargets(aliceBefore, aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, bobRecorder.snapshot()) {
+	h2Drain(t, r.instance)
+	if !h2SameTargets(aliceBefore, r.aliceRecorder.snapshot()) || !h2SameTargets(bobBefore, r.bobRecorder.snapshot()) {
 		t.Fatal("old credential reached an account recorder")
 	}
-	if err := h2Roundtrip(t, port, rotated, material["fingerprint"], backendPort); err != nil {
+	if err := h2Roundtrip(t, r.port, r.rotated, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("pinned client stopped serving after failed authentication:", err)
 	}
-	h2Drain(t, instance)
+	h2Drain(t, r.instance)
+}
 
-	oldPort := port
-	port = servertest.StartOnFreePort(t, func(candidate int) error {
+// checkPortChange moves the listener to a new port and returns the old and new ports.
+func (r *h2RouteRun) checkPortChange() (int, int) {
+	t := r.t
+	oldPort := r.port
+	r.port = servertest.StartOnFreePort(t, func(candidate int) error {
 		if candidate == oldPort {
 			return syscall.EADDRINUSE
 		}
-		startErr := instance.Reconfigure(options(candidate, rotated, bob, material, aliceAddress, bobAddress, nil, nil))
+		startErr := r.instance.Reconfigure(r.options(candidate, r.rotated, r.bob, r.material, r.aliceAddress, r.bobAddress, nil, nil))
 		if startErr != nil {
 			var cliErr *cli.Error
 			if errors.As(startErr, &cliErr) && cliErr.Code == "PORT_IN_USE" {
@@ -199,29 +265,33 @@ func TestHysteria2CoreRoutesAuthPolicyRotationAndClose(t *testing.T) {
 		}
 		return nil
 	})
-	newPort := port
+	newPort := r.port
 	if newPort == oldPort {
 		t.Fatal("replacement listener reused old port")
 	}
-	if err := h2Roundtrip(t, newPort, rotated, material["fingerprint"], backendPort); err != nil {
+	if err := h2Roundtrip(t, newPort, r.rotated, r.material["fingerprint"], r.backendPort); err != nil {
 		t.Fatal("changed port did not serve:", err)
 	}
-	h2Drain(t, instance)
-	oldProbe, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(oldPort)))
+	h2Drain(t, r.instance)
+	return oldPort, newPort
+}
+
+func (r *h2RouteRun) checkOldPortFreedAndClose(oldPort, newPort int) {
+	t := r.t
+	oldProbe, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(oldPort)))
 	if err != nil {
 		t.Fatal("old UDP port not freed:", err)
 	}
 	_ = oldProbe.Close()
-	if err := instance.Close(); err != nil {
+	if err := r.instance.Close(); err != nil {
 		t.Fatal("instance close failed:", err)
 	}
-	closed = true
-	newProbe, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(newPort)))
+	r.closed = true
+	newProbe, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(newPort)))
 	if err != nil {
 		t.Fatal("Close did not free UDP:", err)
 	}
 	_ = newProbe.Close()
-
 }
 
 func TestHysteria2ImmediateCloseReleasesUDP(t *testing.T) {
@@ -260,7 +330,7 @@ func TestHysteria2ImmediateCloseReleasesUDP(t *testing.T) {
 	if err := instance.Close(); err != nil {
 		t.Fatal("immediate Close failed:", err)
 	}
-	probe, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	probe, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal("immediate Close did not release UDP:", err)
 	}
@@ -324,12 +394,12 @@ func h2RoundtripOnce(t *testing.T, port int, password, pin string, destinationPo
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr("127.0.0.1"), DstPort: uint16(destinationPort)})
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr("127.0.0.1"), DstPort: servertest.MustUint16(t, destinationPort)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(h2Timeout)); err != nil {
 		return err
 	}
@@ -383,7 +453,7 @@ func (recorder *h2Rec) snapshot() []string {
 
 func h2Recorder(t *testing.T) (string, *h2Rec) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listen failed:", err)
 	}
@@ -412,7 +482,7 @@ func h2Recorder(t *testing.T) (string, *h2Rec) {
 }
 
 func (recorder *h2Rec) serve(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(h2Timeout)); err != nil {
 		return
 	}
@@ -443,11 +513,11 @@ func (recorder *h2Rec) serve(conn net.Conn) {
 	recorder.mu.Lock()
 	recorder.targets = append(recorder.targets, target)
 	recorder.mu.Unlock()
-	upstream, err := net.DialTimeout("tcp", target, h2Timeout)
+	upstream, err := (&net.Dialer{Timeout: h2Timeout}).DialContext(context.Background(), "tcp", target)
 	if err != nil {
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if _, err := conn.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
 	}
@@ -505,7 +575,7 @@ func h2ReadSOCKSHost(conn net.Conn, addressType byte) (string, error) {
 
 func h2Echo(t *testing.T) (string, int) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("echo listen failed:", err)
 	}
@@ -521,7 +591,7 @@ func h2Echo(t *testing.T) (string, int) {
 			workers.Add(1)
 			go func(conn net.Conn) {
 				defer workers.Done()
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				if err := conn.SetDeadline(time.Now().Add(h2Timeout)); err != nil {
 					return
 				}

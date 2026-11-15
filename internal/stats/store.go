@@ -202,12 +202,12 @@ func openStore(o Options) (*Store, error) {
 	// One connection: SQLite does not benefit from more writers and it
 	// serialises the writer and the retention loop without lock waits.
 	db.SetMaxOpenConns(1)
-	if err := db.Ping(); err != nil {
-		db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("stats: open %s: %w", o.Path, err)
 	}
 	if err := migrate(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 	s := newStore(db, o, false)
@@ -241,17 +241,17 @@ func OpenReadOnly(path string) (*Store, error) {
 		return nil, fmt.Errorf("stats: open: %w", err)
 	}
 	db.SetMaxOpenConns(4)
-	if err := db.Ping(); err != nil {
-		db.Close()
+	if err := db.PingContext(context.Background()); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("stats: open %s: %w", path, err)
 	}
 	var version int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		db.Close()
+	if err := db.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&version); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("stats: read schema version: %w", err)
 	}
 	if version > schemaVersion {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("stats: schema version %d is newer than supported %d", version, schemaVersion)
 	}
 	s := newStore(db, Options{Path: path, Retention: defaultRetention}, true)
@@ -322,7 +322,8 @@ func probeHasName(q querier) bool {
 	if err != nil {
 		return false
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
+	found := false
 	for rows.Next() {
 		var cid int
 		var name, typ string
@@ -332,21 +333,22 @@ func probeHasName(q querier) bool {
 			return false
 		}
 		if name == "name" {
-			return true
+			found = true
+			break
 		}
 	}
-	return false
+	return found && rows.Err() == nil
 }
 
 func migrate(db *sql.DB) error {
-	tx, err := db.Begin()
+	tx, err := db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin migration: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	var version int
-	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := tx.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("stats: read schema version: %w", err)
 	}
 	if version > schemaVersion {
@@ -367,11 +369,11 @@ func migrate(db *sql.DB) error {
 		if version >= step.version || step.version == 3 && probeHasName(tx) {
 			continue
 		}
-		if _, err := tx.Exec(step.ddl); err != nil {
+		if _, err := tx.ExecContext(context.Background(), step.ddl); err != nil {
 			return fmt.Errorf("stats: migrate: %w", err)
 		}
 	}
-	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+	if _, err := tx.ExecContext(context.Background(), fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return fmt.Errorf("stats: set schema version: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

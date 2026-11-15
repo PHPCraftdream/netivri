@@ -196,6 +196,29 @@ func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
 	defer l.mu.Unlock()
 	defer l.outageEnds()
 	l.byLabel, l.servers = byLabel, len(ids)
+	l.setFirstTier(first)
+	preferred := func(id string) string {
+		if labels := labelsByID[id]; len(labels) > 0 {
+			return labels[0]
+		}
+		return ""
+	}
+	pruneDrops(l.drops, ids, byLabel, preferred)
+	for _, latest := range []map[string]drop{l.lastDown, l.lastNever, l.lastBack} {
+		pruneLatest(latest, ids, byLabel, preferred)
+	}
+	deleteUnlisted(l.downNow, ids)
+	deleteUnlisted(l.never, ids)
+	deleteUnlisted(l.flapping, ids)
+	deleteUnlisted(l.burst, ids)
+	deleteUnlisted(l.burstPeak, ids)
+	l.refreshBurst()
+	l.rebuildWindow(ids, byLabel, preferred)
+	l.refreshNeverLabels(ids, byLabel, preferred)
+}
+
+// setFirstTier replaces the first-tier labels; nil makes every node warn.
+func (l *nodeLog) setFirstTier(first map[string]bool) {
 	l.first = nil
 	if first != nil {
 		l.first = make(map[string]bool, len(first))
@@ -203,15 +226,14 @@ func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
 			l.first[label] = isFirst
 		}
 	}
-	preferred := func(id string) string {
-		if labels := labelsByID[id]; len(labels) > 0 {
-			return labels[0]
-		}
-		return ""
-	}
-	for id, downs := range l.drops {
+}
+
+// pruneDrops forgets the drops of removed servers and repoints the drops of
+// removed labels to the current label of their server.
+func pruneDrops(drops map[string][]drop, ids map[string]struct{}, byLabel map[string]stats.NodeInfo, preferred func(string) string) {
+	for id, downs := range drops {
 		if _, ok := ids[id]; !ok {
-			delete(l.drops, id)
+			delete(drops, id)
 			continue
 		}
 		for i := range downs {
@@ -219,47 +241,44 @@ func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
 				downs[i].label = preferred(id)
 			}
 		}
-		l.drops[id] = downs
+		drops[id] = downs
 	}
-	for _, latest := range []map[string]drop{l.lastDown, l.lastNever, l.lastBack} {
-		for id, d := range latest {
-			if _, ok := ids[id]; !ok {
-				delete(latest, id)
-			} else if _, ok := byLabel[d.label]; !ok {
-				d.label = preferred(id)
-				latest[id] = d
-			}
-		}
-	}
-	for _, state := range []map[string]struct{}{l.downNow, l.never} {
-		for id := range state {
-			if _, ok := ids[id]; !ok {
-				delete(state, id)
-			}
-		}
-	}
-	for id := range l.flapping {
+}
+
+// pruneLatest forgets the latest reports of removed servers and repoints the
+// reports of removed labels to the current label of their server.
+func pruneLatest(latest map[string]drop, ids map[string]struct{}, byLabel map[string]stats.NodeInfo, preferred func(string) string) {
+	for id, d := range latest {
 		if _, ok := ids[id]; !ok {
-			delete(l.flapping, id)
+			delete(latest, id)
+		} else if _, ok := byLabel[d.label]; !ok {
+			d.label = preferred(id)
+			latest[id] = d
 		}
 	}
-	for id := range l.burst {
+}
+
+// deleteUnlisted removes the entries of servers that are no longer listed.
+func deleteUnlisted[V any](m map[string]V, ids map[string]struct{}) {
+	for id := range m {
 		if _, ok := ids[id]; !ok {
-			delete(l.burst, id)
+			delete(m, id)
 		}
 	}
-	for id := range l.burstPeak {
-		if _, ok := ids[id]; !ok {
-			delete(l.burstPeak, id)
-		}
-	}
+}
+
+// refreshBurst keeps the burst size and ends a burst with no servers left.
+func (l *nodeLog) refreshBurst() {
 	if l.burst != nil {
 		l.burstSize = max(len(l.burst), len(l.burstPeak))
 	}
 	if l.burst != nil && len(l.burst) == 0 {
 		l.burst, l.burstPeak, l.burstSize, l.burstWarned = nil, nil, 0, false
 	}
+}
 
+// rebuildWindow keeps the window labels of listed servers and recounts their reason kinds.
+func (l *nodeLog) rebuildWindow(ids map[string]struct{}, byLabel map[string]stats.NodeInfo, preferred func(string) string) {
 	window, windowKinds := l.window[:0], l.windowKinds[:0]
 	l.kinds = map[string]int{}
 	for i, label := range l.window {
@@ -276,7 +295,10 @@ func (l *nodeLog) refresh(infos []stats.NodeInfo, first map[string]bool) {
 		l.kinds[kind]++
 	}
 	l.window, l.windowKinds = window, windowKinds
+}
 
+// refreshNeverLabels keeps the never-answered reports of listed servers.
+func (l *nodeLog) refreshNeverLabels(ids map[string]struct{}, byLabel map[string]stats.NodeInfo, preferred func(string) string) {
 	if l.neverLabels == nil {
 		return
 	}
@@ -409,13 +431,14 @@ func (l *nodeLog) down(ev core.NodeEvent) {
 		}
 		l.neverCountries[country]++
 		l.neverMeta[id] = neverReport{kind: kind, country: country, label: ev.Label}
-		if len(l.neverLabels) < neverSolo+1 {
+		switch {
+		case len(l.neverLabels) < neverSolo+1:
 			l.info("%s", line)
-		} else if len(l.neverLabels) == neverSolo+1 {
+		case len(l.neverLabels) == neverSolo+1:
 			l.neverSummary = len(l.neverLabels)
 			l.info("%s", l.neverSummaryLine())
 			l.debug("%s", line)
-		} else {
+		default:
 			l.debug("%s", line)
 		}
 		return
@@ -608,18 +631,19 @@ func (l *nodeLog) back(ev core.NodeEvent) {
 	id := serverID(ev.Label)
 	delete(l.never, id)
 	delete(l.downNow, id)
-	if twin, ok := l.twinOf(l.lastBack, ev, l.now()); ok {
+	switch twin, ok := l.twinOf(l.lastBack, ev, l.now()); {
+	case ok:
 		l.repeat(ev.Label, "%s, same server as %s", line, twin)
-	} else if l.flapping[id] {
+	case l.flapping[id]:
 		l.repeat(ev.Label, "%s", line)
-	} else if l.outage {
+	case l.outage:
 		l.debug("%s", line)
-	} else {
+	default:
 		l.info("%s", line)
 	}
 	l.outageEnds()
-	wasInBurst := false
-	if _, wasInBurst = l.burst[id]; wasInBurst {
+	_, wasInBurst := l.burst[id]
+	if wasInBurst {
 		delete(l.burst, id)
 	}
 	if !wasInBurst {

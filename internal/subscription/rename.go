@@ -15,7 +15,7 @@ var renameFn = os.Rename
 // open) are retried with a short, bounded backoff.
 func renameReplace(from, to string) error {
 	var err error
-	for i := 0; i < renameAttempts; i++ {
+	for i := range renameAttempts {
 		if err = renameFn(from, to); err == nil || !transientRenameError(err) {
 			return err
 		}

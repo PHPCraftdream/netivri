@@ -51,11 +51,11 @@ func CountryFromName(name string) string {
 // black-flag tag sequences for England, Scotland and Wales.
 func countryFromFlag(name string) string {
 	rs := []rune(name)
-	for i := 0; i < len(rs); i++ {
+	for i := range rs {
 		r := rs[i]
 		if r >= 0x1F1E6 && r <= 0x1F1FF {
 			if i+1 < len(rs) && rs[i+1] >= 0x1F1E6 && rs[i+1] <= 0x1F1FF {
-				cc := string(rune('A'+r-0x1F1E6)) + string(rune('A'+rs[i+1]-0x1F1E6))
+				cc := string('A'+r-0x1F1E6) + string('A'+rs[i+1]-0x1F1E6)
 				if _, ok := isoAlpha2[cc]; ok {
 					return cc
 				}
@@ -65,7 +65,7 @@ func countryFromFlag(name string) string {
 		if r == 0x1F3F4 { // black flag followed by a tag sequence
 			letters := make([]rune, 0, 7)
 			for j := i + 1; j < len(rs) && rs[j] >= 0xE0061 && rs[j] <= 0xE007A; j++ {
-				letters = append(letters, rune('a'+rs[j]-0xE0061))
+				letters = append(letters, 'a'+rs[j]-0xE0061)
 			}
 			switch string(letters) {
 			case "gbeng", "gbsct", "gbwls":
@@ -106,7 +106,7 @@ func countryFromISOToken(name string) string {
 }
 
 func isASCIILetters(s string) bool {
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if !isASCIILetter(s[i]) {
 			return false
 		}
@@ -123,7 +123,7 @@ func countryFromWords(name string) string {
 	if len(toks) == 0 {
 		return ""
 	}
-	for i := 0; i < len(toks); i++ {
+	for i := range toks {
 		if i+1 < len(toks) {
 			if cc, ok := enBigrams[toks[i]+" "+toks[i+1]]; ok {
 				return cc

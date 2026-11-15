@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -21,7 +22,7 @@ func submitAccountHopOption(t *testing.T, s *accountsScreen, value string) tea.C
 		t.Fatal("account hop option prompt has no options")
 	}
 	selected := false
-	for i := 0; i < maxOptions; i++ {
+	for range maxOptions {
 		got, err := p.GetAnswer()
 		if err != nil {
 			t.Fatal("could not read selected account hop option")
@@ -54,7 +55,7 @@ func submitAccountHopOption(t *testing.T, s *accountsScreen, value string) tea.C
 
 // The account screen never renders an empty key-hint strip, in any dialog state.
 func TestAccountsKeyHintsNeverEmptyInAnyDialogState(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	if strings.TrimSpace(s.KeyHints()) == "" {
 		t.Fatalf("KeyHints empty without a dialog: %q", s.KeyHints())
 	}
@@ -71,7 +72,7 @@ func TestAccountsKeyHintsNeverEmptyInAnyDialogState(t *testing.T) {
 // Bindings follow the focused pane: card focus exposes card hotkeys, list focus
 // exposes list bindings; both must be non-empty.
 func TestAccountsBindingsFollowFocusedPane(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", Provider: "main", Exit: "direct"}}
 	s.syncRows("alice")
 	keys := func(hs tui.ActionHints) map[string]bool {
@@ -92,7 +93,7 @@ func TestAccountsBindingsFollowFocusedPane(t *testing.T) {
 		t.Fatalf("list-focus bindings missing the reload key: %v", keys(listHints))
 	}
 	s.workspace.SetFocus(tui.PaneCard)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	cardHints := s.Bindings()
 	if len(cardHints) == 0 {
 		t.Fatal("card-focus bindings were empty")
@@ -112,7 +113,7 @@ func TestAccountsReloadAndLoadChoicesFillRowsAndProviders(t *testing.T) {
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	runAccountCmd(s, s.reload())
 	if s.loading || len(s.rows) != 1 || s.rows[0].Login != "alice" {
 		t.Fatalf("reload did not fill rows: loading=%t rows=%#v", s.loading, s.rows)
@@ -129,7 +130,7 @@ func TestAccountsReloadAndLoadChoicesFillRowsAndProviders(t *testing.T) {
 // Dialog result plumbing: no dialog is a no-op, cancel and a missing callback
 // both close the dialog without touching the config.
 func TestAccountsDialogResultNoopCancelAndMissingCallback(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Background: accountsSyncBackground}))
 	// No dialog open: the result is ignored.
 	got, cmd := s.Update(accountsDialogResult{Values: map[string]string{"value": "x"}})
 	if cmd != nil || got != s {
@@ -153,7 +154,7 @@ func TestAccountsDialogResultNoopCancelAndMissingCallback(t *testing.T) {
 // Stale background generations must be ignored; a fresh choices message fills
 // providers and per-provider country codes.
 func TestAccountsStaleGenerationsIgnoredAndChoicesApplied(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Background: accountsSyncBackground}))
 	// Stale load: a generation from a previous reload is dropped.
 	s.loading = true
 	s.loadGeneration = 7
@@ -190,13 +191,24 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	s.syncRows("alice")
 	s.workspace.SetFocus(tui.PaneList)
+
+	checkAccountsCloneHotkey(t, s, h)
+	checkAccountsDeleteHotkeyOpensConfirm(t, h)
+	checkAccountsAddHotkeyWithoutProviders(t, h)
+	s5 := openAccountsAddWizardWithProvider(t, h)
+	checkAccountsTabAndEsc(t, s5)
+	checkAccountsReloadHotkey(t, h)
+}
+
+// 'c' opens the clone prompt; esc cancels it; a submitted login persists.
+func checkAccountsCloneHotkey(t *testing.T, s *accountsScreen, h string) {
+	t.Helper()
 	type press = tea.KeyPressMsg
 
-	// 'c' opens the clone prompt.
 	_, _ = s.Update(press{Code: 'c', Text: "c"})
 	d := s.dialog
 	if d == nil || d.prompt == nil {
@@ -244,13 +256,18 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 	if s.dialog != nil {
 		t.Fatal("successful clone left the dialog open")
 	}
+}
 
-	// 'd' captures a Confirm modal and records the pending login.
+// 'd' captures a Confirm modal and records the pending login.
+func checkAccountsDeleteHotkeyOpensConfirm(t *testing.T, h string) {
+	t.Helper()
+	type press = tea.KeyPressMsg
+
 	var captured tui.Modal
-	s2 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
+	s2 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
 		captured = m
 		return nil
-	}}).(*accountsScreen)
+	}}))
 	s2.rows, _ = AccountList(h)
 	s2.syncRows("alice")
 	s2.workspace.SetFocus(tui.PaneList)
@@ -258,33 +275,50 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 	if captured == nil || s2.pendingLogin != "alice" {
 		t.Fatalf("'d' did not open the confirm modal: captured=%v pendingLogin=%q", captured != nil, s2.pendingLogin)
 	}
+}
 
-	// 'a' with no providers switches to the Providers tab.
+// 'a' with no providers switches to the Providers tab, or explains itself without a hook.
+func checkAccountsAddHotkeyWithoutProviders(t *testing.T, h string) {
+	t.Helper()
+	type press = tea.KeyPressMsg
+
 	switched := -1
-	s3 := newAccountsScreen(h, tui.Env{SwitchTab: func(i int) tea.Cmd {
+	s3 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{SwitchTab: func(i int) tea.Cmd {
 		switched = i
 		return func() tea.Msg { return tui.ThemeMsg{Theme: tui.NewTheme()} }
-	}}).(*accountsScreen)
+	}}))
 	_, addCmd := s3.Update(press{Code: 'a', Text: "a"})
 	if switched != 0 || addCmd == nil {
 		t.Fatalf("'a' without providers did not switch tabs: switched=%d cmd=%v", switched, addCmd != nil)
 	}
 	// Without a SwitchTab hook the screen explains itself instead.
-	s4 := newAccountsScreen(h, tui.Env{}).(*accountsScreen)
+	s4 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{}))
 	_, _ = s4.Update(press{Code: 'a', Text: "a"})
 	if s4.dialog != nil || !strings.Contains(s4.message, "Provider") {
 		t.Fatalf("'a' without providers or hook: dialog=%v message=%q", s4.dialog != nil, s4.message)
 	}
-	// 'a' with providers opens the add wizard.
-	s5 := newAccountsScreen(h, tui.Env{}).(*accountsScreen)
+}
+
+// 'a' with providers opens the add wizard; the dialog is closed again before returning.
+func openAccountsAddWizardWithProvider(t *testing.T, h string) *accountsScreen {
+	t.Helper()
+	type press = tea.KeyPressMsg
+
+	s5 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{}))
 	s5.providers = []string{"main"}
 	_, _ = s5.Update(press{Code: 'a', Text: "a"})
 	if s5.dialog == nil || s5.dialog.wizard == nil {
 		t.Fatalf("'a' with providers did not open the add wizard: %+v", s5.dialog)
 	}
 	s5.dialog = nil
+	return s5
+}
 
-	// Tab cycles workspace focus at width>=100; Esc returns to the list.
+// Tab cycles workspace focus at width>=100; Esc returns to the list.
+func checkAccountsTabAndEsc(t *testing.T, s5 *accountsScreen) {
+	t.Helper()
+	type press = tea.KeyPressMsg
+
 	s5.workspace.SetFocus(tui.PaneList)
 	_, _ = s5.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	_, _ = s5.Update(press{Code: tea.KeyTab})
@@ -295,9 +329,14 @@ func TestAccountsUpdateKeyHotkeysOnRealConfig(t *testing.T) {
 	if s5.workspace.Focus() != tui.PaneList || s5.workspace.Drilled {
 		t.Fatalf("esc did not return to the list: focus=%d drilled=%t", s5.workspace.Focus(), s5.workspace.Drilled)
 	}
+}
 
-	// 'r' reloads: the returned batch drains into fresh rows and choices.
-	s6 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+// 'r' reloads: the returned batch drains into fresh rows and choices.
+func checkAccountsReloadHotkey(t *testing.T, h string) {
+	t.Helper()
+	type press = tea.KeyPressMsg
+
+	s6 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s6.rows = nil
 	s6.workspace.SetFocus(tui.PaneList)
 	_, rCmd := s6.Update(press{Code: 'r', Text: "r"})
@@ -339,11 +378,11 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 		s.syncRows("alice")
 		_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 		s.workspace.SetFocus(tui.PaneCard)
-		s.refreshSelectedCard(true)
+		s.refreshSelectedCard()
 	}
 
 	// Clone line opens the clone prompt.
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	focusCard(s)
 	if !selectLine(s, "clone") {
 		t.Fatalf("card has no clone line: %#v", s.workspace.Card.Lines)
@@ -358,10 +397,10 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 
 	// Remove line captures the confirm modal.
 	var captured tui.Modal
-	s2 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
+	s2 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
 		captured = m
 		return nil
-	}}).(*accountsScreen)
+	}}))
 	focusCard(s2)
 	if !selectLine(s2, "remove") {
 		t.Fatalf("card has no remove line: %#v", s2.workspace.Card.Lines)
@@ -374,7 +413,7 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 	}
 
 	// Clear-post line clears the stored hop through AccountUpdate.
-	s3 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s3 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	focusCard(s3)
 	if !selectLine(s3, "clear-post") {
 		t.Fatalf("card has no clear-post line: %#v", s3.workspace.Card.Lines)
@@ -395,7 +434,7 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 		t.Fatalf("clear-post did not clear the stored hop: %#v", cfg.Accounts[0])
 	}
 	// Inherit-pre line clears the stored override through AccountUpdate.
-	s4 := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s4 := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	focusCard(s4)
 	if !selectLine(s4, "clear-pre") || s4.workspace.Card.Lines[s4.workspace.Card.Selected].Disabled {
 		t.Fatal("inherit-pre line is missing or disabled")
@@ -418,7 +457,7 @@ func TestAccountsActivateCardActionsOnRealConfig(t *testing.T) {
 // to "*"; an invalid login fails validation and keeps the wizard editable.
 func TestAccountsWizardResultPersistsAndValidationRetains(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.providers = []string{"main"}
 	s.beginAdd()
 	d := s.dialog
@@ -460,7 +499,7 @@ func TestAccountsOpenEditPromptsPersistAndValidate(t *testing.T) {
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Provider: "p1", Country: "DE", Exit: "route", ExitGiven: true, PostSOCKS5: config.HopList{"http://post-user:post-secret@post.example:8080"}}); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	a := s.rows[0]
 

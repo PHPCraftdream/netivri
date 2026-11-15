@@ -11,7 +11,7 @@ import (
 // distinct AccountRoute values. Direct routes have no node carrier; the
 // lifecycle uses that flag to probe and attribute failures without node
 // health evidence.
-func directPostPoolUses(o Options, gen int, _ map[string]constant.Proxy) ([]*hopPoolUse, error) {
+func directPostPoolUses(o Options, gen int, _ map[string]constant.Proxy) []*hopPoolUse {
 	routeSet := make(map[string]struct{}, len(o.AccountRoute))
 	for _, route := range o.AccountRoute {
 		routeSet[route] = struct{}{}
@@ -47,5 +47,5 @@ func directPostPoolUses(o Options, gen int, _ map[string]constant.Proxy) ([]*hop
 			direct: true,
 		})
 	}
-	return uses, nil
+	return uses
 }

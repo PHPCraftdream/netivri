@@ -19,7 +19,7 @@ func TestFallbackHopPoolIdentityIgnoresUserinfo(t *testing.T) {
 
 func TestLegacyAndSingletonHopPoolsHaveIdenticalRoutes(t *testing.T) {
 	pre := "socks5://pre-user:pre-secret@pre.example:1080"
-	post := "https://post-user:post-secret@post.example:8443"
+	post := "https://post-user:post-secret@post.example:8443" //nolint:gosec // G101: fake credentials in a test fixture URI
 	base := Options{
 		RouteNodes:   map[string][]map[string]any{"route-secret": {socks5Node(), {"type": "vless", "server": "node-two.invalid", "port": 443}}},
 		AccountRoute: map[string]string{"alice": "route-secret"},
@@ -92,7 +92,11 @@ func TestPoolOverridesAndPerNodeProviderPools(t *testing.T) {
 	for _, mapping := range mappings {
 		name, _ := mapping["name"].(string)
 		if strings.HasSuffix(name, "-pre") {
-			preServers[name] = mapping["server"].(string)
+			server, ok := mapping["server"].(string)
+			if !ok {
+				t.Fatalf("server of %s is %T, want string", name, mapping["server"])
+			}
+			preServers[name] = server
 		}
 	}
 	if preServers[helperProxyName(0, 0, 0, "pre")] != "provider-a.invalid" || preServers[helperProxyName(0, 0, 1, "pre")] != "provider-b.invalid" {
@@ -157,10 +161,10 @@ func TestNodePoolLengthsAndNamesDoNotExposeSecrets(t *testing.T) {
 }
 
 func TestOverlappingProviderPrePoolsKeepCredentialsSeparate(t *testing.T) {
-	preA := "http://user-a:sentinel-a@a.invalid:8080"
-	preBFirst := "http://first-b:sentinel-first@b.invalid:8080"
-	preBSecond := "http://second-b:sentinel-second@b.invalid:8080"
-	preC := "http://user-c:sentinel-c@c.invalid:8080"
+	preA := "http://user-a:sentinel-a@a.invalid:8080"              //nolint:gosec // G101: fake credentials in a test fixture URI
+	preBFirst := "http://first-b:sentinel-first@b.invalid:8080"    //nolint:gosec // G101: fake credentials in a test fixture URI
+	preBSecond := "http://second-b:sentinel-second@b.invalid:8080" //nolint:gosec // G101: fake credentials in a test fixture URI
+	preC := "http://user-c:sentinel-c@c.invalid:8080"              //nolint:gosec // G101: fake credentials in a test fixture URI
 	o := Options{
 		RouteNodes: map[string][]map[string]any{"provider-routes": {
 			{"type": "socks5", "server": "node-a.invalid", "port": 1080},
@@ -241,7 +245,7 @@ func TestOverlappingProviderPrePoolsKeepCredentialsSeparate(t *testing.T) {
 }
 
 func TestLegacyScalarValidationOnlyWhenEffective(t *testing.T) {
-	badScalar := "unsupported://legacy-user:legacy-sentinel@legacy.invalid:8080"
+	badScalar := "unsupported://legacy-user:legacy-sentinel@legacy.invalid:8080" //nolint:gosec // G101: fake credentials in a test fixture URI
 	o := Options{
 		RouteNodes:   map[string][]map[string]any{"active": {socks5Node()}},
 		AccountRoute: map[string]string{"alice": "active"},

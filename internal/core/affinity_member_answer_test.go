@@ -120,7 +120,7 @@ func TestStickySiteRecentAnswerSurvivesLateAnswerFromOldMember(t *testing.T) {
 		t.Fatal("late answer from member 0 erased member 1's recent answer")
 	}
 
-	for i := 0; i < silentNeeded; i++ {
+	for i := range silentNeeded {
 		conn, dialErr := g.DialContext(context.Background(), dialMetadata("alice", blackholed))
 		if dialErr != nil {
 			t.Fatal(dialErr)

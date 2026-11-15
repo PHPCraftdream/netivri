@@ -241,17 +241,17 @@ func TestDialErrKindIsAFixedWord(t *testing.T) {
 	}
 }
 
-func eventGroup(t *testing.T, members []*fakeMember) (*stickyGroup, *eventSink, *healthTable) {
+func eventGroup(t *testing.T, members []*fakeMember) (*stickyGroup, *eventSink) {
 	t.Helper()
-	g, _, health := newTestGroup(t, members, nil)
+	g, _, _ := newTestGroup(t, members, nil)
 	sink := &eventSink{}
 	g.events = sink.add
-	return g, sink, health
+	return g, sink
 }
 
 func TestDialFailureIsReported(t *testing.T) {
 	m := &fakeMember{name: "own/a", err: errors.New("connect: connection refused")}
-	g, sink, _ := eventGroup(t, []*fakeMember{m})
+	g, sink := eventGroup(t, []*fakeMember{m})
 	if _, err := g.DialContext(context.Background(), dialMetadata("alice", "site.example")); err == nil {
 		t.Fatal("dial through a dead member succeeded")
 	}
@@ -263,7 +263,7 @@ func TestDialFailureIsReported(t *testing.T) {
 
 func TestSuccessfulDialIsWrappedAndReportedOnClose(t *testing.T) {
 	m := &fakeMember{name: "own/a"}
-	g, sink, _ := eventGroup(t, []*fakeMember{m})
+	g, sink := eventGroup(t, []*fakeMember{m})
 	conn, err := g.DialContext(context.Background(), dialMetadata("alice", "site.example"))
 	if err != nil {
 		t.Fatal(err)

@@ -11,13 +11,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/check"
 	hopdial "github.com/PHPCraftdream/netivri/pkg/hopkit/dial"
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 	"github.com/PHPCraftdream/netivri/pkg/hopkit/proxyclient"
 	hoprevive "github.com/PHPCraftdream/netivri/pkg/hopkit/revive"
-	"github.com/metacubex/mihomo/adapter"
-	C "github.com/metacubex/mihomo/constant"
 )
 
 // HopEventKind identifies a pool health transition.
@@ -214,7 +215,7 @@ func planPool(o Options, plan routePlan, node int, role hopPoolRole) *hopPoolSpe
 	return newHopPoolSpec(role, o.nodePostPool(plan.key, node), plan.gen)
 }
 
-func (m *hopPoolLifecycle) prepareUses(o Options, plans []routePlan, proxies map[string]C.Proxy, health *healthTable) ([]*hopPoolUse, error) {
+func (m *hopPoolLifecycle) prepareUses(o Options, plans []routePlan, proxies map[string]C.Proxy, health *healthTable) []*hopPoolUse {
 	var uses []*hopPoolUse
 	for _, plan := range plans {
 		for node := range o.RouteNodes[plan.key] {
@@ -260,7 +261,7 @@ func (m *hopPoolLifecycle) prepareUses(o Options, plans []routePlan, proxies map
 			}
 		}
 	}
-	return uses, nil
+	return uses
 }
 
 func (u *hopPoolUse) specProtocol(index int) string {
@@ -285,15 +286,8 @@ func (m *hopPoolLifecycle) install(o Options, plans []routePlan, proxies map[str
 func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[string]C.Proxy, health *healthTable, gen int) (map[string]C.Proxy, []string, error) {
 	m.mutationMu.Lock()
 	defer m.mutationMu.Unlock()
-	uses, err := m.prepareUses(o, plans, proxies, health)
-	if err != nil {
-		return nil, nil, err
-	}
-	directUses, err := directPostPoolUses(o, gen, proxies)
-	if err != nil {
-		return nil, nil, err
-	}
-	uses = append(uses, directUses...)
+	uses := m.prepareUses(o, plans, proxies, health)
+	uses = append(uses, directPostPoolUses(o, gen, proxies)...)
 	uses = append(uses, globalPostPoolUses(o, gen)...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -333,7 +327,6 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 	}
 	for _, use := range preAdapters {
 		p := assigned[poolIdentity(use.role, use.spec.keys)]
-		use := use
 		pa := newHopPoolAdapter(use.adapterName, preHopPool, use.spec, p, binder, nil, m.now)
 		pa.mutate = func(key string, change func()) { m.mutate(p, preHopPool, use.route, key, change) }
 		updated[use.adapterName] = adapter.NewProxy(pa)
@@ -344,7 +337,6 @@ func (m *hopPoolLifecycle) installGen(o Options, plans []routePlan, proxies map[
 			continue
 		}
 		p := use.pool
-		use := use
 		pa := newHopPoolAdapter(use.adapterName, postHopPool, use.spec, p, binder, use.carrier, m.now)
 		for _, hop := range pa.hops {
 			hop.nodeAddress, hop.directCarrier, hop.carrierMember = use.nodeAddress, use.direct, use.carrierMember

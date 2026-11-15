@@ -59,31 +59,37 @@ func TestServerCommandsGoldenJSON(t *testing.T) {
 		check func(*testing.T, serverEnvelope)
 	}{
 		{"protocols", []string{"protocols"}, `"ok":true`, func(t *testing.T, e serverEnvelope) {
-			p := e.Data["protocols"].([]any)
+			p := mustAs[[]any](t, e.Data["protocols"])
 			if len(p) == 0 {
 				t.Fatal("expected registry protocols")
 			}
 		}},
 		{"add", []string{"add", "--protocol", "shadowsocks", "--account", "alice", "--port", "38493", "--bind", "127.0.0.1", "--public-host", "edge.example.org", "--param", "cipher=aes-128-gcm"}, `"bind":"127.0.0.1"`, func(t *testing.T, e serverEnvelope) {
-			s := e.Data["server"].(map[string]any)
+			s := mustAs[map[string]any](t, e.Data["server"])
 			if s["name"] != "ss-38493" || s["protocol"] != "shadowsocks" {
 				t.Fatalf("add data=%v", s)
 			}
 		}},
 		{"list", []string{"list"}, `"params":["cipher"]`, func(t *testing.T, e serverEnvelope) {
-			raw, _ := json.Marshal(e.Data)
+			raw, err := json.Marshal(e.Data)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if strings.Contains(string(raw), "aes-128-gcm") || strings.Contains(string(raw), "password") {
 				t.Fatal("list exposed params or secret")
 			}
 		}},
 		{"show", []string{"show", "ss-38493"}, `"public_host":"edge.example.org"`, func(t *testing.T, e serverEnvelope) {
-			raw, _ := json.Marshal(e.Data)
+			raw, err := json.Marshal(e.Data)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if strings.Contains(string(raw), "aes-128-gcm") || strings.Contains(string(raw), "password") {
 				t.Fatal("show exposed params or secret")
 			}
 		}},
 		{"link", []string{"link", "ss-38493", "--host", "override.example.net"}, `"format":"uri"`, func(t *testing.T, e serverEnvelope) {
-			if e.Data["format"] != "uri" || !strings.Contains(e.Data["link"].(string), "override.example.net") {
+			if e.Data["format"] != "uri" || !strings.Contains(mustAs[string](t, e.Data["link"]), "override.example.net") {
 				t.Fatal("link format/host incorrect")
 			}
 		}},

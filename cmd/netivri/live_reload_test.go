@@ -571,7 +571,7 @@ func TestStartCoreRetriesOnlyWhileThePortIsBusy(t *testing.T) {
 
 func TestWatchRetriesReplacementAfterBusyPortIsFreed(t *testing.T) {
 	f := newReloadFixture(t, upOptions{}, config.Account{Login: "alice", Provider: "p", ExitCountry: "DE"})
-	busyListener, err := net.Listen("tcp", "127.0.0.1:0")
+	busyListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -583,7 +583,7 @@ func TestWatchRetriesReplacementAfterBusyPortIsFreed(t *testing.T) {
 		if err := busyListener.Close(); err != nil {
 			t.Fatal(err)
 		}
-		busyListener, err = net.Listen("tcp", "127.0.0.1:0")
+		busyListener, err = (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatal(err)
 		}

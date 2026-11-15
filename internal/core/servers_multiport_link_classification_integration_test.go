@@ -38,7 +38,7 @@ func (a multiportLinkAddr) String() string  { return string(a) }
 func multiportLinkHello(t *testing.T, sni string, alpn []string) []byte {
 	t.Helper()
 	conn := &multiportLinkHelloConn{}
-	_ = tls.Client(conn, &tls.Config{ServerName: sni, NextProtos: alpn}).Handshake()
+	_ = tls.Client(conn, &tls.Config{ServerName: sni, NextProtos: alpn}).HandshakeContext(context.Background())
 	if conn.Len() == 0 {
 		t.Fatal("TLS client did not write a ClientHello")
 	}
@@ -112,11 +112,15 @@ func TestMultiportClassifierUsesProtocolLinkNames(t *testing.T) {
 		{name: "anytls-host-fallback", protocol: "anytls", login: "bob", host: "any.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
-			port := listener.Addr().(*net.TCPAddr).Port
+			tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+			if !ok {
+				t.Fatalf("listener address is %T, want *net.TCPAddr", listener.Addr())
+			}
+			port := tcpAddr.Port
 			b := newSocketBroker()
 			t.Cleanup(b.close)
 			stage := b.stage()
@@ -173,11 +177,11 @@ func TestMultiportClassifierUsesProtocolLinkNames(t *testing.T) {
 				}
 			})
 			payload := append(multiportLinkHello(t, selectedName, selectedALPN), []byte("replay-tail")...)
-			client, err := net.DialTimeout("tcp", address, multiportLinkClassifyDeadline)
+			client, err := (&net.Dialer{Timeout: multiportLinkClassifyDeadline}).DialContext(t.Context(), "tcp", address)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer client.Close()
+			defer func() { _ = client.Close() }()
 			if err := client.SetDeadline(time.Now().Add(multiportLinkClassifyDeadline)); err != nil {
 				t.Fatal("could not set client deadline")
 			}
@@ -188,7 +192,12 @@ func TestMultiportClassifierUsesProtocolLinkNames(t *testing.T) {
 				name string
 				conn net.Conn
 			}, 2)
-			for _, lease := range []*socketLease{leaseA.(*socketLease), leaseB.(*socketLease)} {
+			leaseASocket, okA := leaseA.(*socketLease)
+			leaseBSocket, okB := leaseB.(*socketLease)
+			if !okA || !okB {
+				t.Fatalf("leases are %T and %T, want *socketLease", leaseA, leaseB)
+			}
+			for _, lease := range []*socketLease{leaseASocket, leaseBSocket} {
 				acceptWG.Add(1)
 				go func(l *socketLease) {
 					defer acceptWG.Done()
@@ -203,7 +212,7 @@ func TestMultiportClassifierUsesProtocolLinkNames(t *testing.T) {
 			}
 			select {
 			case got := <-accepted:
-				defer got.conn.Close()
+				defer func() { _ = got.conn.Close() }()
 				if got.name != "link-member" {
 					t.Fatalf("selected member %q, want link-member", got.name)
 				}

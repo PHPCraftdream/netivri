@@ -18,11 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/metacubex/mihomo/adapter/outbound"
-	C "github.com/metacubex/mihomo/constant"
 )
 
 type exitDirectRecorder struct {
@@ -36,7 +37,7 @@ type exitDirectRecorder struct {
 
 func startE2EExitDirectRecorder(t *testing.T, backend string) *exitDirectRecorder {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listen:", err)
 	}
@@ -122,12 +123,12 @@ func (r *exitDirectRecorder) serve(c net.Conn) {
 		return
 	}
 	dest := net.JoinHostPort(host, strconv.Itoa(int(binary.BigEndian.Uint16(pb[:]))))
-	up, err := net.DialTimeout("tcp", dest, 5*time.Second)
+	up, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", dest)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(20 * time.Second))
 	if dest == r.backend {
 		r.count.Add(1)
@@ -144,12 +145,55 @@ func (r *exitDirectRecorder) serve(c net.Conn) {
 	<-done
 }
 
+// exitDirectState is the shared state of TestE2EExitDirectServerAccountRouting.
+type exitDirectState struct {
+	ctx         context.Context
+	backend     string
+	recorder    *exitDirectRecorder
+	alicePass   string
+	bobPass     string
+	aliceHash   string
+	bobHash     string
+	secrets     []string
+	homeA       string
+	serverAngel *upProc
+	clientAngel *upProc
+	links       map[string]string
+}
+
 func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	backend := accountsEcho(t)
-	recorder := startE2EExitDirectRecorder(t, backend)
-	const alicePass, bobPass = "exit-direct-alice-password", "exit-direct-bob-password"
+	st := &exitDirectState{ctx: ctx}
+	setupExitDirectServer(t, st)
+	checkExitDirectServerTraffic(t, st)
+	st.links = map[string]string{"alice": exitDirectLink(t, st.homeA, "alice"), "bob": exitDirectLink(t, st.homeA, "bob")}
+	subAddr := startExitDirectSubscriptions(t, st.links)
+	setupExitDirectClient(t, st, subAddr)
+	checkExitDirectClientTraffic(t, st)
+
+	held := e2eExitDirectOpenVMess(t, st.links["bob"], st.backend)
+	defer func() { _ = held.Close() }()
+	e2eExitDirectSendExpect(t, held, "established-before-reload")
+	checkExitDirectRouteModes(t, st, held)
+	checkExitDirectRejectedDirect(t, st)
+	checkExitDirectDirectMode(t, st, held)
+	_ = held.Close()
+
+	checkExitDirectValidation(t, st)
+	checkExitDirectPreWriteCountry(t, st)
+	if err := ctx.Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setupExitDirectServer starts A's recorder and server angel, then adds the
+// VMess edge for alice and bob.
+func setupExitDirectServer(t *testing.T, st *exitDirectState) {
+	t.Helper()
+	st.backend = accountsEcho(t)
+	st.recorder = startE2EExitDirectRecorder(t, st.backend)
+	const alicePass, bobPass = "exit-direct-alice-password", "exit-direct-bob-password" //nolint:gosec // G101: fixture passwords of test accounts, not credentials
 	aliceHash, err := auth.Hash(alicePass)
 	if err != nil {
 		t.Fatal("hash Alice password")
@@ -158,57 +202,73 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	if err != nil {
 		t.Fatal("hash Bob password")
 	}
-	homeA := t.TempDir()
-	writeConfig(t, homeA, func(cfg *config.Config) {
+	st.alicePass, st.bobPass = alicePass, bobPass
+	st.aliceHash, st.bobHash = aliceHash, bobHash
+	st.secrets = []string{alicePass, bobPass, aliceHash, bobHash}
+	st.homeA = t.TempDir()
+	writeConfig(t, st.homeA, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: aliceHash, Provider: "route"}, {Login: "bob", Password: bobHash, Exit: "direct"}}
 		cfg.Subscriptions = []config.Subscription{{Name: "route", URL: "http://route.invalid/sub"}}
 	})
-	accountsSaveSnapshot(t, homeA, "route", []subscription.Node{e2eExitDirectSocksNode("exit-direct-node", recorder.listener.Addr().String())})
-	serverAngel := startUp(t, homeA, "--port", "0")
+	accountsSaveSnapshot(t, st.homeA, "route", []subscription.Node{e2eExitDirectSocksNode("exit-direct-node", st.recorder.listener.Addr().String())})
+	serverAngel := startUp(t, st.homeA, "--port", "0")
+	st.serverAngel = serverAngel
 	t.Cleanup(func() {
 		serverAngel.Stop()
-		assertNoSecrets(t, serverAngel.Stdout(), serverAngel.Stderr(), alicePass, bobPass, aliceHash, bobHash)
+		assertNoSecrets(t, serverAngel.Stdout(), serverAngel.Stderr(), st.secrets...)
 	})
 	port := freePort(t)
-	code, out, stderr := serverRun(t, homeA, "add", "--protocol", "vmess", "--name", "exit-direct-edge", "--account", "alice,bob", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1")
+	code, out, stderr := serverRun(t, st.homeA, "add", "--protocol", "vmess", "--name", "exit-direct-edge", "--account", "alice,bob", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1")
 	if code != 0 {
 		t.Fatalf("server add: %s", serverErrorSummary(out, stderr))
 	}
-	waitExitDirectStatus(t, ctx, homeA, serverAngel, 1, true, alicePass, bobPass, aliceHash, bobHash)
-	before := recorder.count.Load()
-	accountsClient(t, serverAngel.Status().Data.Listen, "alice", alicePass, backend)
-	if recorder.count.Load() <= before {
+	waitExitDirectStatus(t, st.ctx, st.homeA, 1, st.secrets...)
+}
+
+// checkExitDirectServerTraffic checks that alice's mixed-port traffic uses A's
+// route and bob's direct route does not.
+func checkExitDirectServerTraffic(t *testing.T, st *exitDirectState) {
+	t.Helper()
+	before := st.recorder.count.Load()
+	accountsClient(t, st.serverAngel.Status().Data.Listen, "alice", st.alicePass, st.backend)
+	if st.recorder.count.Load() <= before {
 		t.Fatal("Alice mixed-port traffic did not use A route recorder")
 	}
-	before = recorder.count.Load()
-	accountsClient(t, serverAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() != before {
+	before = st.recorder.count.Load()
+	accountsClient(t, st.serverAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() != before {
 		t.Fatal("Bob mixed-port direct traffic reached A route recorder")
 	}
-	link := func(account string) string {
-		t.Helper()
-		code, stdout, stderr := serverRun(t, homeA, "link", "exit-direct-edge", "--account", account, "--format", "uri")
-		if code != 0 {
-			t.Fatalf("server link: %s", serverErrorSummary(stdout, stderr))
-		}
-		var e struct {
-			Data struct {
-				Link string `json:"link"`
-			} `json:"data"`
-		}
-		if json.Unmarshal([]byte(stdout), &e) != nil || e.Data.Link == "" {
-			t.Fatal("server link omitted URI")
-		}
-		return e.Data.Link
+}
+
+// exitDirectLink returns the VMess URI that `server link` prints for account.
+func exitDirectLink(t *testing.T, home, account string) string {
+	t.Helper()
+	code, stdout, stderr := serverRun(t, home, "link", "exit-direct-edge", "--account", account, "--format", "uri")
+	if code != 0 {
+		t.Fatalf("server link: %s", serverErrorSummary(stdout, stderr))
 	}
-	links := map[string]string{"alice": link("alice"), "bob": link("bob")}
+	var e struct {
+		Data struct {
+			Link string `json:"link"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(stdout), &e) != nil || e.Data.Link == "" {
+		t.Fatal("server link omitted URI")
+	}
+	return e.Data.Link
+}
+
+// startExitDirectSubscriptions serves each account's link on the loopback and
+// returns the listener address.
+func startExitDirectSubscriptions(t *testing.T, links map[string]string) string {
+	t.Helper()
 	mux := http.NewServeMux()
 	for _, account := range []string{"alice", "bob"} {
-		account := account
 		mux.HandleFunc("/"+account, func(w http.ResponseWriter, _ *http.Request) { _, _ = fmt.Fprintln(w, links[account]) })
 	}
 	sub := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second}
-	subListener, err := net.Listen("tcp", "127.0.0.1:0")
+	subListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("subscription listener:", err)
 	}
@@ -222,9 +282,16 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 			t.Error("subscription server did not stop")
 		}
 	})
+	return subListener.Addr().String()
+}
+
+// setupExitDirectClient imports both links into B as subscriptions and starts
+// B's angel: alice's provider routes to A, bob's provider is direct.
+func setupExitDirectClient(t *testing.T, st *exitDirectState, subAddr string) {
+	t.Helper()
 	homeB := t.TempDir()
 	for _, account := range []string{"alice", "bob"} {
-		code, out, stderr = accountsRun(t, homeB, "sub", "add", "http://"+subListener.Addr().String()+"/"+account, "--name", account+"-edge")
+		code, out, stderr := accountsRun(t.Context(), t, homeB, "sub", "add", "http://"+subAddr+"/"+account, "--name", account+"-edge")
 		if code != 0 {
 			t.Fatalf("import %s: %s", account, serverErrorSummary(out, stderr))
 		}
@@ -232,143 +299,175 @@ func TestE2EExitDirectServerAccountRouting(t *testing.T) {
 	// Keep the subscriptions `sub add` saved: writeConfig would start from the
 	// default config and drop them, leaving the providers below unknown.
 	cfgB := loadConfigFile(t, homeB)
-	cfgB.Accounts = []config.Account{{Login: "alice", Password: aliceHash, Provider: "alice-edge"}, {Login: "bob", Password: bobHash, Provider: "bob-edge"}}
+	cfgB.Accounts = []config.Account{{Login: "alice", Password: st.aliceHash, Provider: "alice-edge"}, {Login: "bob", Password: st.bobHash, Provider: "bob-edge"}}
 	if err := config.Save(config.ConfigPath(homeB), cfgB); err != nil {
 		t.Fatalf("save client config: %v", err)
 	}
 	clientAngel := startUp(t, homeB, "--port", "0")
+	st.clientAngel = clientAngel
 	t.Cleanup(func() {
 		clientAngel.Stop()
-		assertNoSecrets(t, clientAngel.Stdout(), clientAngel.Stderr(), alicePass, bobPass, aliceHash, bobHash)
+		assertNoSecrets(t, clientAngel.Stdout(), clientAngel.Stderr(), st.secrets...)
 	})
-	before = recorder.count.Load()
-	accountsClient(t, clientAngel.Status().Data.Listen, "alice", alicePass, backend)
-	if recorder.count.Load() <= before {
+}
+
+// checkExitDirectClientTraffic checks that B's alice reaches A's route recorder
+// and B's bob does not.
+func checkExitDirectClientTraffic(t *testing.T, st *exitDirectState) {
+	t.Helper()
+	before := st.recorder.count.Load()
+	accountsClient(t, st.clientAngel.Status().Data.Listen, "alice", st.alicePass, st.backend)
+	if st.recorder.count.Load() <= before {
 		t.Fatal("Alice did not use A route recorder")
 	}
-	before = recorder.count.Load()
-	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() != before {
+	before = st.recorder.count.Load()
+	accountsClient(t, st.clientAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() != before {
 		t.Fatal("Bob direct traffic reached A's route recorder")
 	}
+}
 
-	held := e2eExitDirectOpenVMess(t, links["bob"], backend)
-	defer held.Close()
-	e2eExitDirectSendExpect(t, held, "established-before-reload")
-	code, out, stderr = accountsRun(t, homeA, "account", "set-exit", "bob", "route")
+// checkExitDirectRouteModes moves bob to route by exit, then by provider; the
+// established tunnel must survive both reloads.
+func checkExitDirectRouteModes(t *testing.T, st *exitDirectState, held net.Conn) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-exit", "bob", "route")
 	if code != 0 {
 		t.Fatalf("set-exit route: %s", serverErrorSummary(out, stderr))
 	}
-	waitExitDirectStatus(t, ctx, homeA, serverAngel, 2, true, alicePass, bobPass, aliceHash, bobHash)
+	waitExitDirectStatus(t, st.ctx, st.homeA, 2, st.secrets...)
 	// No provider/country means route mode follows A's default DIRECT route.
 	e2eExitDirectSendExpect(t, held, "open-after-default-route")
-	before = recorder.count.Load()
-	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() != before {
+	before := st.recorder.count.Load()
+	accountsClient(t, st.clientAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() != before {
 		t.Fatal("empty route did not use default direct exit")
 	}
 
-	code, out, stderr = accountsRun(t, homeA, "account", "set-provider", "bob", "route")
+	code, out, stderr = accountsRun(t.Context(), t, st.homeA, "account", "set-provider", "bob", "route")
 	if code != 0 {
 		t.Fatalf("set-provider route: %s", serverErrorSummary(out, stderr))
 	}
-	waitExitDirectStatus(t, ctx, homeA, serverAngel, 3, true, alicePass, bobPass, aliceHash, bobHash)
+	waitExitDirectStatus(t, st.ctx, st.homeA, 3, st.secrets...)
 	e2eExitDirectSendExpect(t, held, "open-after-provider-route")
-	before = recorder.count.Load()
-	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() <= before {
+	before = st.recorder.count.Load()
+	accountsClient(t, st.clientAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() <= before {
 		t.Fatal("Bob routed mode missed A recorder")
 	}
-	code, out, stderr = accountsRun(t, homeA, "account", "set-exit", "bob", "direct")
+}
+
+// checkExitDirectRejectedDirect checks that direct with a provider fails
+// validation and leaves bob unchanged.
+func checkExitDirectRejectedDirect(t *testing.T, st *exitDirectState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-exit", "bob", "direct")
 	if code == 0 || decodeErrEnvelope(t, stderr).Error.Code != "CONFIG_INVALID" {
 		t.Fatalf("direct with provider should fail: %s", serverErrorSummary(out, stderr))
 	}
-	cfg := loadConfigFile(t, homeA)
+	cfg := loadConfigFile(t, st.homeA)
 	bob, _ := cfg.Account("bob")
 	if bob == nil || bob.Provider != "route" || bob.Exit != "route" {
 		t.Fatal("failed direct validation mutated Bob")
 	}
+}
+
+// checkExitDirectDirectMode clears bob's provider, then sets bob to direct; the
+// established tunnel survives and only bob's route changes.
+func checkExitDirectDirectMode(t *testing.T, st *exitDirectState, held net.Conn) {
+	t.Helper()
 	// Remove the redundant set-exit route: Bob is already route. Explicitly
 	// clear the provider then apply direct; each effective update increments once.
-	if code, out, stderr = accountsRun(t, homeA, "account", "set-provider", "bob", "--none"); code != 0 {
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-provider", "bob", "--none")
+	if code != 0 {
 		t.Fatalf("clear Bob provider: %s", serverErrorSummary(out, stderr))
 	}
-	waitExitDirectStatus(t, ctx, homeA, serverAngel, 4, true, alicePass, bobPass, aliceHash, bobHash)
-	if code, out, stderr = accountsRun(t, homeA, "account", "set-exit", "bob", "direct"); code != 0 {
+	waitExitDirectStatus(t, st.ctx, st.homeA, 4, st.secrets...)
+	code, out, stderr = accountsRun(t.Context(), t, st.homeA, "account", "set-exit", "bob", "direct")
+	if code != 0 {
 		t.Fatalf("set-exit direct: %s", serverErrorSummary(out, stderr))
 	}
-	waitExitDirectStatus(t, ctx, homeA, serverAngel, 5, true, alicePass, bobPass, aliceHash, bobHash)
+	waitExitDirectStatus(t, st.ctx, st.homeA, 5, st.secrets...)
 	e2eExitDirectSendExpect(t, held, "open-after-direct")
-	before = recorder.count.Load()
-	accountsClient(t, clientAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() != before {
+	before := st.recorder.count.Load()
+	accountsClient(t, st.clientAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() != before {
 		t.Fatal("Bob direct mode still used A recorder")
 	}
-	before = recorder.count.Load()
-	accountsClient(t, serverAngel.Status().Data.Listen, "alice", alicePass, backend)
-	if recorder.count.Load() <= before {
+	before = st.recorder.count.Load()
+	accountsClient(t, st.serverAngel.Status().Data.Listen, "alice", st.alicePass, st.backend)
+	if st.recorder.count.Load() <= before {
 		t.Fatal("Alice mixed-port route stopped using A recorder after Bob became direct")
 	}
-	before = recorder.count.Load()
-	accountsClient(t, serverAngel.Status().Data.Listen, "bob", bobPass, backend)
-	if recorder.count.Load() != before {
+	before = st.recorder.count.Load()
+	accountsClient(t, st.serverAngel.Status().Data.Listen, "bob", st.bobPass, st.backend)
+	if st.recorder.count.Load() != before {
 		t.Fatal("Bob mixed-port direct traffic used A recorder after direct reconfiguration")
 	}
-	_ = held.Close()
+}
 
+// checkExitDirectValidation stops A's server angel, adds the validation
+// accounts and checks that invalid account commands fail with their codes.
+func checkExitDirectValidation(t *testing.T, st *exitDirectState) {
+	t.Helper()
 	// CLI validation accounts are created only after connection-survival checks;
 	// account additions restart the listener and intentionally end old sessions.
-	serverAngel.Stop()
+	st.serverAngel.Stop()
 	for _, args := range [][]string{{"add", "exit-direct-provider", "--provider", "route"}, {"add", "exit-direct-country", "--country", "DE"}, {"add", "exit-direct-pre", "--pre-socks5", "socks5://127.0.0.1:1080"}} {
-		code, out, stderr = accountsRun(t, homeA, append([]string{"account"}, args...)...)
+		code, out, stderr := accountsRun(t.Context(), t, st.homeA, append([]string{"account"}, args...)...)
 		if code != 0 {
 			t.Fatalf("setup validation account: %s", serverErrorSummary(out, stderr))
 		}
 	}
-	checkCLIError := func(args []string, want string) {
-		t.Helper()
-		code, stdout, stderr := accountsRun(t, homeA, append([]string{"account"}, args...)...)
-		if code == 0 {
-			t.Fatalf("account %v unexpectedly succeeded", args)
-		}
-		env := decodeErrEnvelope(t, stderr)
-		if env.Error.Code != want {
-			t.Fatalf("account %v code=%s want %s stdout=%s", args, env.Error.Code, want, stdout)
-		}
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "bob", "unknown"}, "CONFIG_INVALID")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "missing", "direct"}, "ACCOUNT_NOT_FOUND")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "bad/name", "direct"}, "ACCOUNT_INVALID")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "bob", "direct", "extra"}, "USAGE")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "--all", "direct", "extra"}, "USAGE")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "exit-direct-provider", "direct"}, "CONFIG_INVALID")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "exit-direct-country", "direct"}, "CONFIG_INVALID")
+	checkExitDirectCLIError(t, st.homeA, []string{"set-exit", "exit-direct-pre", "direct"}, "CONFIG_INVALID")
+}
+
+// checkExitDirectCLIError checks that an account command fails with the error code want.
+func checkExitDirectCLIError(t *testing.T, home string, args []string, want string) {
+	t.Helper()
+	code, stdout, stderr := accountsRun(t.Context(), t, home, append([]string{"account"}, args...)...)
+	if code == 0 {
+		t.Fatalf("account %v unexpectedly succeeded", args)
 	}
-	checkCLIError([]string{"set-exit", "bob", "unknown"}, "CONFIG_INVALID")
-	checkCLIError([]string{"set-exit", "missing", "direct"}, "ACCOUNT_NOT_FOUND")
-	checkCLIError([]string{"set-exit", "bad/name", "direct"}, "ACCOUNT_INVALID")
-	checkCLIError([]string{"set-exit", "bob", "direct", "extra"}, "USAGE")
-	checkCLIError([]string{"set-exit", "--all", "direct", "extra"}, "USAGE")
-	checkCLIError([]string{"set-exit", "exit-direct-provider", "direct"}, "CONFIG_INVALID")
-	checkCLIError([]string{"set-exit", "exit-direct-country", "direct"}, "CONFIG_INVALID")
-	checkCLIError([]string{"set-exit", "exit-direct-pre", "direct"}, "CONFIG_INVALID")
-	code, out, stderr = accountsRun(t, homeA, "account", "set-country", "alice", "ZZ")
+	env := decodeErrEnvelope(t, stderr)
+	if env.Error.Code != want {
+		t.Fatalf("account %v code=%s want %s stdout=%s", args, env.Error.Code, want, stdout)
+	}
+}
+
+// checkExitDirectPreWriteCountry checks that an unknown country fails before
+// any write and leaves alice and bob unchanged.
+func checkExitDirectPreWriteCountry(t *testing.T, st *exitDirectState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-country", "alice", "ZZ")
 	if code == 0 || decodeErrEnvelope(t, stderr).Error.Code != "NO_NODES_FOR_COUNTRY" {
 		t.Fatalf("set-country alice ZZ should fail before write: %s", serverErrorSummary(out, stderr))
 	}
-	cfg = loadConfigFile(t, homeA)
+	cfg := loadConfigFile(t, st.homeA)
 	alice, _ := cfg.Account("alice")
-	bob, _ = cfg.Account("bob")
+	bob, _ := cfg.Account("bob")
 	if alice == nil || alice.ExitCountry != "" || alice.Provider != "route" {
 		t.Fatal("pre-write country validation mutated Alice")
 	}
 	if bob == nil || bob.Exit != "direct" || bob.Provider != "" {
 		t.Fatal("failed CLI validation mutated Bob")
 	}
-	if err := ctx.Err(); err != nil {
-		t.Fatal(err)
-	}
 }
 
-func waitExitDirectStatus(t *testing.T, ctx context.Context, home string, proc *upProc, reloadCount uint64, wantServer bool, secrets ...string) {
+func waitExitDirectStatus(t *testing.T, ctx context.Context, home string, reloadCount uint64, secrets ...string) {
 	t.Helper()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	lastStatus := "status unavailable"
+	var lastStatus string
 	for {
-		code, out, stderr := accountsRun(t, home, "status")
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		if code == 0 {
 			var env struct {
 				Data struct {
@@ -387,7 +486,7 @@ func waitExitDirectStatus(t *testing.T, ctx context.Context, home string, proc *
 			}
 			if err := json.Unmarshal([]byte(out), &env); err == nil {
 				lastStatus = exitDirectStatusSummary(env.Data.Reload, env.Data.Servers)
-				serverMatches, statusErr := serverStatusMatches(out, "exit-direct-edge", "vmess", wantServer)
+				serverMatches, statusErr := serverStatusMatches(out, "exit-direct-edge", "vmess", true)
 				if env.Data.Reload != nil && env.Data.Reload.Count >= reloadCount && env.Data.Reload.LastError == "" && statusErr == nil && serverMatches {
 					return
 				}
@@ -401,7 +500,7 @@ func waitExitDirectStatus(t *testing.T, ctx context.Context, home string, proc *
 		case <-ctx.Done():
 			redactedStatus := redactExitDirectDiagnostic(lastStatus, secrets)
 			redactedAngel := redactExitDirectDiagnostic(upProcReport(home), secrets)
-			t.Fatalf("status did not reach reload count %d and server present=%t (last status: %s)\n%s", reloadCount, wantServer, redactedStatus, redactedAngel)
+			t.Fatalf("status did not reach reload count %d and server present=true (last status: %s)\n%s", reloadCount, redactedStatus, redactedAngel)
 		case <-ticker.C:
 		}
 	}
@@ -413,8 +512,9 @@ func redactExitDirectDiagnostic(text string, secrets []string) string {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 		}
 	}
-	var safe []string
-	for _, line := range strings.Split(text, "\n") {
+	lines := strings.Split(text, "\n")
+	safe := make([]string, 0, len(lines))
+	for _, line := range lines {
 		if strings.Contains(line, "://") || strings.Contains(strings.ToLower(line), "password") || strings.Contains(strings.ToLower(line), "secret") {
 			line = "[redacted diagnostic line]"
 		}
@@ -475,7 +575,7 @@ func e2eExitDirectOpenVMess(t *testing.T, uri, target string) net.Conn {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(p)})
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: e2eUint16(t, p)})
 	if err != nil {
 		t.Fatal("open VMess connection:", err)
 	}

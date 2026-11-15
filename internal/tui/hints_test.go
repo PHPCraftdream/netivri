@@ -35,8 +35,13 @@ func TestHintASCIIPreservesLabelPositions(t *testing.T) {
 	unicodeLine := themedHintLine(bindings, 80, unicodeTheme)
 	asciiLine := themedHintLine(bindings, 80, asciiTheme)
 	for _, label := range []string{"quit", "help", "focus", "tabs"} {
-		unicodePos := lipgloss.Width(unicodeLine[:strings.Index(unicodeLine, label)])
-		asciiPos := lipgloss.Width(asciiLine[:strings.Index(asciiLine, label)])
+		unicodeAt := strings.Index(unicodeLine, label)
+		asciiAt := strings.Index(asciiLine, label)
+		if unicodeAt < 0 || asciiAt < 0 {
+			t.Fatalf("label %q missing from the hint line", label)
+		}
+		unicodePos := lipgloss.Width(unicodeLine[:unicodeAt])
+		asciiPos := lipgloss.Width(asciiLine[:asciiAt])
 		if unicodePos != asciiPos {
 			t.Errorf("%s starts at %d in Unicode and %d in ASCII", label, unicodePos, asciiPos)
 		}
@@ -62,15 +67,7 @@ func TestConfirmActions(t *testing.T) {
 		{tea.KeyPressMsg{Code: 'n', Text: "n"}, false, true},
 		{tea.KeyPressMsg{Code: tea.KeyEscape}, false, true},
 	} {
-		c := &Confirm{Prompt: "Remove?"}
-		_, cmd := c.Update(tc.key)
-		if cmd == nil {
-			t.Fatalf("key %v: expected a result command", tc.key)
-		}
-		got := cmd().(ConfirmResultMsg)
-		if got.Confirmed != tc.confirmed || got.Canceled != tc.canceled {
-			t.Fatalf("key %v: %+v", tc.key, got)
-		}
+		assertConfirmKey(t, tc.key, tc.confirmed, tc.canceled)
 	}
 }
 func TestConfirmCancelFocusedAndBounded(t *testing.T) {

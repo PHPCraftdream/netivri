@@ -118,7 +118,7 @@ func TestTrustTunnelRoutesAuthenticationPolicyRotationAndClose(t *testing.T) {
 		t.Fatal("core close failed")
 	}
 	closed = true
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal("Close did not release the port")
 	}
@@ -164,12 +164,12 @@ func trusttunnelRoundTrip(t *testing.T, port int, username, password, fingerprin
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)})
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: servertest.MustUint16(t, backendPort)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(trusttunnelTestTimeout)); err != nil {
 		return err
 	}
@@ -211,7 +211,7 @@ func trusttunnelWaitConnections(t *testing.T, instance *core.Instance) {
 
 func trusttunnelEchoServer(t *testing.T) string {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("echo listener failed")
 	}
@@ -227,7 +227,7 @@ func trusttunnelEchoServer(t *testing.T) string {
 			handlers.Add(1)
 			go func(conn net.Conn) {
 				defer handlers.Done()
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(trusttunnelTestTimeout))
 				_, _ = io.Copy(conn, conn)
 			}(conn)
@@ -256,7 +256,7 @@ type trusttunnelRecorder struct {
 func trusttunnelStartRecorder(t *testing.T) (*trusttunnelRecorder, string) {
 	t.Helper()
 	recorder := &trusttunnelRecorder{}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listener failed")
 	}
@@ -297,7 +297,7 @@ func (r *trusttunnelRecorder) snapshot() []string {
 }
 
 func (r *trusttunnelRecorder) serve(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if conn.SetDeadline(time.Now().Add(trusttunnelTestTimeout)) != nil {
 		return
 	}
@@ -351,12 +351,12 @@ func (r *trusttunnelRecorder) serve(conn net.Conn) {
 	r.mu.Lock()
 	r.targets = append(r.targets, destination)
 	r.mu.Unlock()
-	upstream, err := net.DialTimeout("tcp", destination, trusttunnelTestTimeout)
+	upstream, err := (&net.Dialer{Timeout: trusttunnelTestTimeout}).DialContext(context.Background(), "tcp", destination)
 	if err != nil {
 		_, _ = conn.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	if upstream.SetDeadline(time.Now().Add(trusttunnelTestTimeout)) != nil {
 		return
 	}

@@ -12,7 +12,7 @@ import (
 )
 
 func TestProvidersCoverKeyHintsByState(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	if got := s.KeyHints(); !strings.Contains(got, "refresh") {
 		t.Fatalf("default hints: %q", got)
 	}
@@ -29,13 +29,13 @@ func TestProvidersCoverKeyHintsByState(t *testing.T) {
 
 func TestProvidersCoverBackgroundDispatch(t *testing.T) {
 	// With env.Background set, bg delegates to it.
-	s := newProvidersScreen(t.TempDir(), providerEnv(t.TempDir())).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), providerEnv(t.TempDir())))
 	c := s.bg("label-a", func() tea.Msg { return providerResultMsg{} })
 	if c == nil {
 		t.Fatal("background cmd nil with env.Background")
 	}
 	// Without env.Background, bg wraps the work inline as a BackgroundMsg.
-	s2 := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s2 := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	c2 := s2.bg("label-b", func() tea.Msg { return "payload" })
 	if c2 == nil {
 		t.Fatal("inline cmd nil")
@@ -49,7 +49,7 @@ func TestProvidersCoverBackgroundDispatch(t *testing.T) {
 
 func TestProvidersCoverWindowSizeAndTheme(t *testing.T) {
 	h := providerSeed(t)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	_, _ = s.Update(tea.WindowSizeMsg{Width: 110, Height: 33})
 	if s.width != 110 || s.height != 33 || s.workspace.Width != 110 || s.workspace.Height != 33 {
 		t.Fatalf("window size not applied: %d %d %d %d", s.width, s.height, s.workspace.Width, s.workspace.Height)
@@ -64,7 +64,7 @@ func TestProvidersCoverWindowSizeAndTheme(t *testing.T) {
 
 func TestProvidersCoverThemeAppliedToPromptAndConfirm(t *testing.T) {
 	h := providerSeed(t)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	light := tui.NewThemeFor(false)
 	s.startEditPrompt("url")
 	_, _ = s.Update(tui.ThemeMsg{Theme: light})
@@ -81,7 +81,7 @@ func TestProvidersCoverThemeAppliedToPromptAndConfirm(t *testing.T) {
 
 func TestProvidersCoverConfirmRemoveConfirmed(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "gone", URL: "https://gone.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.confirmName = "gone"
 	s.confirmDeps = nil
 	s.startPrompt()
@@ -106,7 +106,7 @@ func TestProvidersCoverConfirmRemoveConfirmed(t *testing.T) {
 
 func TestProvidersCoverConfirmRemoveDeclined(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "keep", URL: "https://keep.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.confirmName = "keep"
 	s.startPrompt()
 	_, c := s.Update(tui.ConfirmResultMsg{Confirmed: false})
@@ -126,7 +126,7 @@ func TestProvidersCoverConfirmRemoveDeclined(t *testing.T) {
 }
 
 func TestProvidersCoverWizardCancelWithAddCancel(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.startWizard()
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -145,7 +145,7 @@ func TestProvidersCoverWizardCancelWithAddCancel(t *testing.T) {
 }
 
 func TestProvidersCoverPromptEditCancelAndBlankURL(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.startEditPrompt("url")
 	_, c := s.Update(tui.PromptResultMsg{Canceled: true})
 	if c != nil {
@@ -171,7 +171,7 @@ func TestProvidersCoverPromptEditCancelAndBlankURL(t *testing.T) {
 }
 
 func TestProvidersCoverStartDialogState(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.startWizard()
 	if s.mode != "add-wizard" || s.dialog == nil || s.wizard == nil {
 		t.Fatal("startWizard state")
@@ -190,7 +190,7 @@ func TestProvidersCoverStartDialogState(t *testing.T) {
 }
 
 func TestProvidersCoverFocusPaneAndSetPaneFocus(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	s.startWizard()
 	if s.FocusPane(false) {
@@ -212,7 +212,7 @@ func TestProvidersCoverFocusPaneAndSetPaneFocus(t *testing.T) {
 	if s.workspace.Focus() != tui.PaneCard {
 		t.Fatal("SetPaneFocus did not apply at wide width")
 	}
-	narrow := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	narrow := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	narrow.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	narrow.SetPaneFocus(int(tui.PaneCard))
 	if narrow.workspace.Focus() != tui.PaneList {
@@ -225,7 +225,7 @@ func TestProvidersCoverFocusPaneAndSetPaneFocus(t *testing.T) {
 
 func TestProvidersCoverEditResultSuccess(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.startEditPrompt("url")
 	sc, c := s.result(providerResultMsg{kind: "edit", value: nil, err: nil})
 	if s.mode != "" || s.dialog != nil || s.prompt != nil || sc != s || c == nil {
@@ -234,7 +234,7 @@ func TestProvidersCoverEditResultSuccess(t *testing.T) {
 }
 
 func TestProvidersCoverPreflightResultOpensConfirm(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	_, _ = s.Update(providerResultMsg{kind: "preflight", value: []string{"alice", "bob"}, err: nil})
 	if s.mode != "confirm-remove" || s.dialog == nil || s.confirm == nil {
 		t.Fatal("preflight success did not open confirm dialog")
@@ -245,7 +245,7 @@ func TestProvidersCoverPreflightResultOpensConfirm(t *testing.T) {
 }
 
 func TestProvidersCoverCountriesDialogKeys(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.selected = "p"
 	s.startCountriesDialog(tuiProviderCountriesFixture())
 	key := func(m tea.KeyPressMsg) { _, _ = s.Update(m) }
@@ -287,7 +287,7 @@ func tuiProviderCountriesFixture() ProviderCountriesResult {
 }
 
 func TestProvidersCoverResultsPagingKeys(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.mode = "results"
 	s.refreshLines = []string{"a", "b", "c"}
 	s.height = 10
@@ -320,7 +320,7 @@ func TestProvidersCoverResultsPagingKeys(t *testing.T) {
 
 func TestProvidersCoverActivateCardBranches(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.selected = "p"
 	s.providers = map[string]ProviderInfo{"p": {Name: "p"}}
 	lineIdx := func(id string) int {
@@ -364,7 +364,7 @@ func TestProvidersCoverActivateCardBranches(t *testing.T) {
 
 func TestProvidersCoverViewHeightsDialogAndScrub(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.selected = "p"
 	s.providers = map[string]ProviderInfo{"p": {Name: "p"}}
 	s.startCountriesDialog(tuiProviderCountriesFixture())

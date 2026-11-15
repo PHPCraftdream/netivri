@@ -85,7 +85,7 @@ func TestRouteOptionsGlobalPostPoolReachesMatchOnlyWhenReachable(t *testing.T) {
 		t.Fatalf("options lost the account pool or configured an unreachable MATCH pool: %+v", options)
 	}
 	// Legacy authentication makes MATCH reachable: the pool is configured.
-	cfg.Auth = config.Auth{Login: "legacy", Password: "$argon2id$fixture"}
+	cfg.Auth = config.Auth{Login: "legacy", Password: "$argon2id$fixture"} //nolint:gosec // G101: fake credential, test fixture only
 	options, _, err = (&liveAngel{}).routeOptionsWithLoggerChecked(desiredState{cfg: cfg, pool: routePool{accountRoutes: map[string]string{"alice": "direct"}, routePost: map[string]config.HopList{"direct": multi}}}, nil, nil)
 	if err != nil {
 		t.Fatalf("legacy auth with global pool: %v", err)
@@ -248,9 +248,10 @@ func TestBuildAccountRoutePoolCountryOnlySpansProvidersOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var names []string
-	for _, raw := range got.nodes[credentialRouteKeyHops("", "DE", nil, nil)] {
-		names = append(names, raw["name"].(string))
+	rawNodes := got.nodes[credentialRouteKeyHops("", "DE", nil, nil)]
+	names := make([]string, 0, len(rawNodes))
+	for _, raw := range rawNodes {
+		names = append(names, mustAs[string](t, raw["name"]))
 	}
 	if strings.Join(names, ",") != "a,a-dup,z" {
 		t.Fatalf("order = %v, want [a a-dup z]", names)
@@ -434,7 +435,7 @@ func TestAccountRoutePoolMissingAllSnapshots(t *testing.T) {
 func brokenSnapshot(t *testing.T, home, name string) {
 	t.Helper()
 	dir := filepath.Join(home, "subscriptions")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, name+".ktav"), []byte("nodes: [\n    {\n"), 0o600); err != nil {

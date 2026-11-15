@@ -15,7 +15,7 @@ import (
 func e2eAuthStatus(t *testing.T, proxy, user, pass string) byte {
 	t.Helper()
 	c := dialProxy(t, proxy)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if m := socks5Greet(t, c, 0, 2); m != 0x02 {
 		t.Fatalf("greeting method = %#x, want 0x02", m)
 	}

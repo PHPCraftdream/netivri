@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"sort"
@@ -350,6 +351,9 @@ func diagNode(ctx context.Context, o DiagOptions, index int, dn DiagNode) (*Node
 	if err != nil {
 		return nil, err
 	}
+	if port < 0 || port > math.MaxUint16 {
+		return nil, errors.New("core: diag: probe URL has an invalid port")
+	}
 	md := &C.Metadata{NetWork: C.TCP, Host: host, DstPort: uint16(port)}
 
 	run := &diagNodeRun{
@@ -380,7 +384,7 @@ func diagNode(ctx context.Context, o DiagOptions, index int, dn DiagNode) (*Node
 		}()
 	}
 
-	for s := 0; s < o.Samples; s++ {
+	for range o.Samples {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}

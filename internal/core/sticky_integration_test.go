@@ -97,7 +97,7 @@ func TestStickyGroupAffinity(t *testing.T) {
 	// Bob binds independently: his connections stay on one upstream, which
 	// may be either of them.
 	var bobFirst *fakeUpstream
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		dialAccountSOCKS5(t, instance.Addr(), domain, backend, "bob", bobPassword)
 		bobServed := served()
 		if bobServed == nil {
@@ -128,7 +128,7 @@ func tryDialAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, pa
 	if err != nil {
 		return err
 	}
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	return accountEcho(connection)
 }
 
@@ -136,7 +136,7 @@ func tryDialAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, pa
 // backend) through the proxy; the caller closes the connection.
 func openAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, password string) (net.Conn, error) {
 	t.Helper()
-	connection, err := net.DialTimeout("tcp", proxyAddress, testTimeout)
+	connection, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", proxyAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +161,10 @@ func socks5AccountHandshake(connection net.Conn, domain, backend, login, passwor
 	if greeting[0] != 5 || greeting[1] != 2 {
 		return fmt.Errorf("socks5 greeting = %v, want username/password", greeting)
 	}
-	auth := []byte{1, byte(len(login))}
+	auth := make([]byte, 0, 2+len(login)+1+len(password))
+	auth = append(auth, 1, mustByte(len(login)))
 	auth = append(auth, login...)
-	auth = append(auth, byte(len(password)))
+	auth = append(auth, mustByte(len(password)))
 	auth = append(auth, password...)
 	if _, err := connection.Write(auth); err != nil {
 		return err
@@ -183,9 +184,9 @@ func socks5AccountHandshake(connection net.Conn, domain, backend, login, passwor
 	if err != nil {
 		return fmt.Errorf("parse backend port: %w", err)
 	}
-	request := []byte{5, 1, 0, 3, byte(len(domain))}
+	request := []byte{5, 1, 0, 3, mustByte(len(domain))}
 	request = append(request, domain...)
-	request = binary.BigEndian.AppendUint16(request, uint16(backendPort))
+	request = binary.BigEndian.AppendUint16(request, mustUint16(backendPort))
 	if _, err := connection.Write(request); err != nil {
 		return err
 	}

@@ -69,7 +69,7 @@ func validHost(host string) bool {
 			return false
 		}
 		for _, r := range label {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
 				return false
 			}
 		}
@@ -104,7 +104,7 @@ func (vlessReality) Validate(params map[string]string) error {
 		return errors.New("invalid sni parameter")
 	}
 	if params["sni"] == "" && net.ParseIP(strings.Trim(realitySNI(params), "[]")) != nil {
-		return errors.New("Reality SNI is required for an IP destination")
+		return errors.New("reality SNI is required for an IP destination")
 	}
 	if params["flow"] != "" && params["flow"] != defaultRealityFlow {
 		return errors.New("invalid flow parameter")

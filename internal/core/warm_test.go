@@ -149,7 +149,7 @@ func TestProbeBackoffSkipsDownNodeInRounds(t *testing.T) {
 		probed = append(probed, round)
 		return 0, net.ErrClosed
 	}
-	for i := 0; i < 22; i++ {
+	for i := range 22 {
 		round = i + 1
 		w.probeAll(context.Background())
 		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
@@ -178,12 +178,12 @@ func TestProbeBackoffResetsOnRecovery(t *testing.T) {
 		}
 		return 10, nil
 	}
-	for i := 0; i < 3; i++ { // rounds 1 and 2 probe, round 3 is skipped
+	for i := range 3 { // rounds 1 and 2 probe, round 3 is skipped
 		w.probeAll(context.Background())
 		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
 	}
-	down = false             // recovery from outside the warmer (a real dial)
-	for i := 0; i < 4; i++ { // rounds 4-7 probe every round again
+	down = false       // recovery from outside the warmer (a real dial)
+	for i := range 4 { // rounds 4-7 probe every round again
 		w.probeAll(context.Background())
 		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+4) * 45 * time.Second)}
 	}
@@ -207,7 +207,7 @@ func TestProbeBackoffResetsOnProbeSuccess(t *testing.T) {
 		}
 		return 10, nil
 	}
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		w.probeAll(context.Background())
 		w.clock = testWarmClock{now: time.Unix(1, 0).Add(time.Duration(i+1) * 45 * time.Second)}
 	}
@@ -301,7 +301,7 @@ func TestProbeAllRespectsProbeConcurrency(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(release)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case <-finished:
 		case <-time.After(2 * time.Second):
@@ -318,7 +318,7 @@ func TestProbeAllRespectsProbeConcurrency(t *testing.T) {
 func TestProbeAllCancellationRecordsNothing(t *testing.T) {
 	// The first probe's release of its slot races with the cancellation in the
 	// scheduler's select; repeat so a regression shows up every time.
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		probeAllCancellationRecordsNothing(t)
 	}
 }

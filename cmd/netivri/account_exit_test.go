@@ -72,7 +72,7 @@ func exitOutData(t *testing.T, b []byte) map[string]any {
 	if err != nil {
 		t.Fatalf("decode output: %v: %s", err, b)
 	}
-	return parsed.(map[string]any)["data"].(map[string]any)
+	return mustAs[map[string]any](t, mustAs[map[string]any](t, parsed)["data"])
 }
 
 func TestAccountSetExitRouteChecksBeforeWrite(t *testing.T) {
@@ -99,10 +99,10 @@ func TestAccountShowDirectHasNoPreChainOrTiers(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := exitOutData(t, out.Bytes())
-	if data["exit"] != "direct" || len(data["tiers"].([]any)) != 0 {
+	if data["exit"] != "direct" || len(mustAs[[]any](t, data["tiers"])) != 0 {
 		t.Fatalf("show data=%v", data)
 	}
-	pre := data["pre_socks5"].(map[string]any)
+	pre := mustAs[map[string]any](t, data["pre_socks5"])
 	if !reflect.DeepEqual(pre["value"], []any{"none"}) || pre["source"] != "direct" {
 		t.Fatalf("pre_socks5=%v", pre)
 	}
@@ -192,7 +192,7 @@ func TestAccountAddAndCloneExit(t *testing.T) {
 	if err := call("list"); err != nil {
 		t.Fatal(err)
 	}
-	listed := exitOutData(t, out.Bytes())["accounts"].([]any)[0].(map[string]any)
+	listed := mustAs[map[string]any](t, mustAs[[]any](t, exitOutData(t, out.Bytes())["accounts"])[0])
 	if listed["exit"] != "direct" {
 		t.Fatalf("listed exit=%v", listed["exit"])
 	}

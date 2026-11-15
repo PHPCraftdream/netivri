@@ -65,8 +65,8 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 		add   string
 		seed  func(tui.Screen, bool)
 	}{
-		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return s.(*providersScreen).workspace.List }, "A provider is a subscription of proxy nodes. Add one to start.", "", func(screen tui.Screen, populated bool) {
-			s := screen.(*providersScreen)
+		{"providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(s tui.Screen) *tui.List { return mustAs[*providersScreen](t, s).workspace.List }, "A provider is a subscription of proxy nodes. Add one to start.", "", func(screen tui.Screen, populated bool) {
+			s := mustAs[*providersScreen](t, screen)
 			if populated {
 				s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "alpha"}, {Name: "beta"}}})
 			} else {
@@ -77,8 +77,8 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 			s.list.Title = screen.Title()
 			s.card = s.workspace.Card
 		}},
-		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*accountsScreen).workspace.List }, "An account needs a provider. Add one on the Providers tab, then add the account here.", "", func(screen tui.Screen, populated bool) {
-			s := screen.(*accountsScreen)
+		{"accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(s tui.Screen) *tui.List { return mustAs[*accountsScreen](t, s).workspace.List }, "An account needs a provider. Add one on the Providers tab, then add the account here.", "", func(screen tui.Screen, populated bool) {
+			s := mustAs[*accountsScreen](t, screen)
 			if populated {
 				s.rows = []accountInfo{{Login: "alpha"}, {Login: "beta"}}
 			} else {
@@ -88,8 +88,8 @@ func TestScreenListLayoutGoldens(t *testing.T) {
 			s.workspace.List.Columns = []tui.ListColumn{{Title: "Name", Width: 8}}
 			s.workspace.List.AddLabel = ""
 		}},
-		{"servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(s tui.Screen) *tui.List { return s.(*serversScreen).workspace.List }, "No servers configured", "+ Add a server [a]", func(screen tui.Screen, populated bool) {
-			s := screen.(*serversScreen)
+		{"servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(s tui.Screen) *tui.List { return mustAs[*serversScreen](t, s).workspace.List }, "No servers configured", "+ Add a server [a]", func(screen tui.Screen, populated bool) {
+			s := mustAs[*serversScreen](t, screen)
 			if populated {
 				s.rows = []serverView{{Name: "alpha", Protocol: "test", Port: 1234}, {Name: "beta", Protocol: "test", Port: 1234}}
 			} else {

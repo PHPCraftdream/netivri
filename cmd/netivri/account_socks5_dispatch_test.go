@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -62,11 +63,11 @@ func TestAccountSOCKS5DispatchRepeatedReplacementRejectsOverCapWithoutWrite(t *t
 	home := t.TempDir()
 	runAccountOK(t, home, "add", "alice")
 	path := config.ConfigPath(home)
-	before, err := os.ReadFile(path)
+	before, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	secret := "socks5://user:secret@proxy.example:1080"
+	secret := "socks5://user:secret@proxy.example:1080" //nolint:gosec // G101: fake credential, test fixture only
 	args := []string{"set-socks5", "alice", "--pre", secret}
 	for i := 1; i < config.MaxHopsPerSide+1; i++ {
 		args = append(args, "--pre", "socks5://proxy"+strings.Repeat("x", i)+".example:1080")
@@ -80,7 +81,7 @@ func TestAccountSOCKS5DispatchRepeatedReplacementRejectsOverCapWithoutWrite(t *t
 	if err != nil && (strings.Contains(err.Error()+out.String(), "user") || strings.Contains(err.Error()+out.String(), "secret")) {
 		t.Fatal("repeated replacement error leaked credentials")
 	}
-	after, err := os.ReadFile(path)
+	after, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func TestAccountSOCKS5TopLevelErrorsAreRedactedAndDoNotWrite(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			path := config.ConfigPath(home)
-			before, err := os.ReadFile(path)
+			before, err := os.ReadFile(filepath.Clean(path))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -266,7 +267,7 @@ func TestAccountSOCKS5TopLevelErrorsAreRedactedAndDoNotWrite(t *testing.T) {
 			if strings.Contains(stdout.String()+stderr.String()+ce.Error(), "user") || strings.Contains(stdout.String()+stderr.String()+ce.Error(), secret) {
 				t.Fatalf("case %q disclosed URL credentials", tc.name)
 			}
-			after, err := os.ReadFile(path)
+			after, err := os.ReadFile(filepath.Clean(path))
 			if err != nil {
 				t.Fatal(err)
 			}

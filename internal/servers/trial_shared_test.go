@@ -2,6 +2,8 @@ package servers
 
 import (
 	"encoding/base64"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,7 +18,7 @@ func ssSpec(name, cipher, password string) Spec {
 }
 func vmessSpec(name string, count int, uuid string) Spec {
 	s := Spec{Name: name, Bind: trialBind, Port: 443, Protocol: "vmess", Params: map[string]string{}}
-	for i := 0; i < count; i++ {
+	for i := range count {
 		login := fmt.Sprintf("u%d", i)
 		s.Accounts = append(s.Accounts, login)
 		if uuid != "" {
@@ -37,7 +39,8 @@ func tlsSpec(name, sni string, def bool) Spec {
 }
 func requireAmbiguous(t *testing.T, err error) *cli.Error {
 	t.Helper()
-	ce, ok := err.(*cli.Error)
+	var ce *cli.Error
+	ok := errors.As(err, &ce)
 	if !ok || ce.Code != "SERVER_PORT_AMBIGUOUS" {
 		t.Fatalf("error=%v, want SERVER_PORT_AMBIGUOUS cli.Error", err)
 	}
@@ -63,11 +66,11 @@ func TestValidateSharedPortTrialDefaultAndLimits(t *testing.T) {
 	for i := range seventeen {
 		seventeen[i] = Spec{Name: fmt.Sprintf("ss%d", i), Bind: trialBind, Port: 443, Protocol: "shadowsocks", Params: map[string]string{"cipher": "2022-blake3-aes-128-gcm"}}
 	}
-	requireAmbiguous(t, ValidateSharedPort(seventeen))
+	_ = requireAmbiguous(t, ValidateSharedPort(seventeen))
 
 	a := vmessSpec("vmess-a", 512, "")
 	b := vmessSpec("vmess-b", 513, "")
-	requireAmbiguous(t, ValidateSharedPort([]Spec{a, b}))
+	_ = requireAmbiguous(t, ValidateSharedPort([]Spec{a, b}))
 	if err := ValidateSharedPort([]Spec{vmessSpec("vmess-a", 512, ""), vmessSpec("vmess-b", 512, "")}); err != nil {
 		t.Fatalf("1024 VMess users rejected: %v", err)
 	}
@@ -102,12 +105,13 @@ func TestValidateSharedPortDuplicateRawPSKAcrossCiphers(t *testing.T) {
 			}
 
 			err := ValidateSharedPort([]Spec{a, b})
-			ce, ok := err.(*cli.Error)
+			var ce *cli.Error
+			ok := errors.As(err, &ce)
 			if !ok || ce.Code != "SERVER_PORT_AMBIGUOUS" || ce.Message != "shared endpoint has invalid or ambiguous trial credentials" || ce.Hint != "use distinct valid trial credentials" {
 				t.Fatal("duplicate credential error did not match the safe ambiguity contract")
 			}
 			for _, rendered := range []string{ce.Error(), fmt.Sprintf("%#v", ce)} {
-				if strings.Contains(rendered, psk) || strings.Contains(rendered, fmt.Sprintf("%x", make([]byte, tc.size))) {
+				if strings.Contains(rendered, psk) || strings.Contains(rendered, hex.EncodeToString(make([]byte, tc.size))) {
 					t.Fatal("credential leaked in error formatting")
 				}
 			}

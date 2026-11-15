@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -69,8 +70,8 @@ func wantConfigUsage(t *testing.T, args []string) *cli.Error {
 	if err == nil {
 		t.Fatalf("dispatch(%q) succeeded, want usage error", args)
 	}
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("dispatch(%q) = %T (%v), want *cli.Error", args, err, err)
 	}
 	if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {
@@ -182,8 +183,8 @@ func TestConfigSetInvalidPortWritesNothing(t *testing.T) {
 	if err == nil {
 		t.Fatalf("set listen.port 70000 succeeded, want CONFIG_INVALID")
 	}
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("error = %T (%v), want *cli.Error", err, err)
 	}
 	if ce.Code != "CONFIG_INVALID" || ce.Exit != cli.ExitUsage {

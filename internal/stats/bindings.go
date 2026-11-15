@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -39,16 +40,16 @@ func (s *Store) LoadBindings(now time.Time, ttl time.Duration, limit int) ([]Bin
 	}
 	cutoff := now.UTC().Add(-ttl).UnixMilli()
 	if !s.ro {
-		if _, err := s.db.Exec("DELETE FROM binding WHERE last_used < ?", cutoff); err != nil {
+		if _, err := s.db.ExecContext(context.Background(), "DELETE FROM binding WHERE last_used < ?", cutoff); err != nil {
 			return nil, fmt.Errorf("stats: delete stale bindings: %w", err)
 		}
 	}
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(context.Background(),
 		"SELECT login, site, label, bound_at, last_used FROM binding ORDER BY last_used DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, fmt.Errorf("stats: query bindings: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Binding
 	for rows.Next() {
 		var b Binding
@@ -97,38 +98,38 @@ func (s *Store) ReplaceBindings(rows []Binding) error {
 // writeBindings replaces the stored set in one transaction. Called only from
 // the writer goroutine; all times come from the store clock.
 func (s *Store) writeBindings(w *bindingWrite) error {
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(context.Background(), nil)
 	if err != nil {
 		return fmt.Errorf("stats: begin: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	cutoff := s.now().UTC().Add(-BindingTTL).UnixMilli()
-	if _, err := tx.Exec("DELETE FROM binding WHERE last_used < ?", cutoff); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM binding WHERE last_used < ?", cutoff); err != nil {
 		return fmt.Errorf("stats: delete stale bindings: %w", err)
 	}
 	// The kept keys go into a temp table so rows that are no longer live can
 	// be deleted in one statement inside the same transaction.
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(context.Background(),
 		"CREATE TEMP TABLE IF NOT EXISTS binding_keep (login TEXT NOT NULL, site TEXT NOT NULL, PRIMARY KEY (login, site))"); err != nil {
 		return fmt.Errorf("stats: prepare binding keep: %w", err)
 	}
-	if _, err := tx.Exec("DELETE FROM binding_keep"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM binding_keep"); err != nil {
 		return fmt.Errorf("stats: clear binding keep: %w", err)
 	}
-	upsert, err := tx.Prepare(`
+	upsert, err := tx.PrepareContext(context.Background(), `
 INSERT INTO binding (login, site, label, bound_at, last_used) VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(login, site) DO UPDATE SET
   label = excluded.label, bound_at = excluded.bound_at, last_used = excluded.last_used`)
 	if err != nil {
 		return fmt.Errorf("stats: prepare upsert binding: %w", err)
 	}
-	defer upsert.Close()
-	keep, err := tx.Prepare("INSERT INTO binding_keep (login, site) VALUES (?, ?)")
+	defer func() { _ = upsert.Close() }()
+	keep, err := tx.PrepareContext(context.Background(), "INSERT INTO binding_keep (login, site) VALUES (?, ?)")
 	if err != nil {
 		return fmt.Errorf("stats: prepare binding keep row: %w", err)
 	}
-	defer keep.Close()
+	defer func() { _ = keep.Close() }()
 
 	for _, b := range w.rows {
 		lastUsed := b.LastUsed.UTC().UnixMilli()
@@ -137,14 +138,14 @@ ON CONFLICT(login, site) DO UPDATE SET
 			// not be undone by the snapshot.
 			continue
 		}
-		if _, err := upsert.Exec(b.Login, b.Site, b.Label, b.BoundAt.UTC().UnixMilli(), lastUsed); err != nil {
+		if _, err := upsert.ExecContext(context.Background(), b.Login, b.Site, b.Label, b.BoundAt.UTC().UnixMilli(), lastUsed); err != nil {
 			return fmt.Errorf("stats: upsert binding: %w", err)
 		}
-		if _, err := keep.Exec(b.Login, b.Site); err != nil {
+		if _, err := keep.ExecContext(context.Background(), b.Login, b.Site); err != nil {
 			return fmt.Errorf("stats: keep binding: %w", err)
 		}
 	}
-	if _, err := tx.Exec("DELETE FROM main.binding WHERE (login, site) NOT IN (SELECT login, site FROM binding_keep)"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DELETE FROM main.binding WHERE (login, site) NOT IN (SELECT login, site FROM binding_keep)"); err != nil {
 		return fmt.Errorf("stats: delete dropped bindings: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -42,8 +42,8 @@ func dualServersSeed(t *testing.T) string {
 	home := t.TempDir()
 	c := config.Default()
 	c.Accounts = []config.Account{
-		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
-		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
+		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}, //nolint:gosec // G101: fake credential, test fixture only
+		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},   //nolint:gosec // G101: fake credential, test fixture only
 	}
 	c.Servers = []config.Server{
 		{Name: "ss", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 1234, Accounts: "alice", PublicHost: "pub.test", Params: map[string]string{"cipher": "aes-128-gcm"}},
@@ -69,9 +69,9 @@ func dualServersSeed(t *testing.T) string {
 
 // dualServersResize sizes the workspace to the wide layout the real frame
 // runs at, so Tab can focus the card pane.
-func dualServersResize(d *dualShell, width, height int) {
+func dualServersResize(d *dualShell) {
 	var c tea.Cmd
-	d.screen, c = d.screen.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	d.screen, c = d.screen.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	d.screen = parityDrain(d.screen, c)
 }
 
@@ -86,7 +86,7 @@ func dualServersView(d *dualShell, width, height int) string {
 // Name step (tui_servers_wizard.go updateWizard).
 func dualServersWizardProtocol(t *testing.T, d *dualShell, name string) {
 	t.Helper()
-	dial := d.screen.(*serversScreen).dialog
+	dial := mustAs[*serversScreen](t, d.screen).dialog
 	if dial == nil || dial.wizard == nil {
 		t.Fatal("wizard is not open")
 	}
@@ -107,11 +107,11 @@ func dualServersWizardProtocol(t *testing.T, d *dualShell, name string) {
 			cur = i
 		}
 	}
-	for i := 0; i < (idx-cur+len(p.Options))%len(p.Options); i++ {
+	for range (idx - cur + len(p.Options)) % len(p.Options) {
 		d.Keys("down")
 	}
 	d.Keys("enter")
-	rebuilt := d.screen.(*serversScreen).dialog
+	rebuilt := mustAs[*serversScreen](t, d.screen).dialog
 	if rebuilt == nil || rebuilt.wizard == nil || rebuilt.wizard.Values["Protocol"] != name || rebuilt.wizard.Index != 1 {
 		t.Fatalf("protocol %q did not commit onto the Name step", name)
 	}
@@ -122,16 +122,16 @@ func dualServersWizardProtocol(t *testing.T, d *dualShell, name string) {
 // tui_servers.go flow: Enter on the focused card line opens the prompt, the
 // save lands as serversDialogResult and runs ServerUpdate; a failed update
 // keeps the prompt open with the error.
-func dualServersAnswerText(t *testing.T, d *dualShell, value string, clear int) {
+func dualServersAnswerText(t *testing.T, d *dualShell, value string, prefill int) {
 	t.Helper()
-	s := d.screen.(*serversScreen)
+	s := mustAs[*serversScreen](t, d.screen)
 	if s.dialog == nil || s.dialog.prompt == nil {
 		t.Fatal("field prompt did not open")
 	}
-	if len(s.dialog.prompt.Value) != clear {
-		t.Fatalf("prompt %q prefilled with %q, want %d characters", s.dialog.prompt.TitleText, s.dialog.prompt.Value, clear)
+	if len(s.dialog.prompt.Value) != prefill {
+		t.Fatalf("prompt %q prefilled with %q, want %d characters", s.dialog.prompt.TitleText, s.dialog.prompt.Value, prefill)
 	}
-	for i := 0; i < clear; i++ {
+	for range prefill {
 		d.Keys("backspace")
 	}
 	d.Type(value)
@@ -157,7 +157,7 @@ func testDualServerAdd(t *testing.T) {
 		"--param", "cipher=2022-blake3-aes-128-gcm", "--param", "udp=false")
 
 	d := newDualShell(t, shellHome, "Servers")
-	dualServersResize(d, 120, 30)
+	dualServersResize(d)
 	d.Keys("a") // Add a server... opens the wizard
 	dualServersWizardProtocol(t, d, "shadowsocks")
 	d.Type("wss01")
@@ -182,7 +182,7 @@ func testDualServerAdd(t *testing.T) {
 func testDualServerRotate(t *testing.T) {
 	cliHome, shellHome := dualHomes(t, dualServersSeed)
 	secrets := func(home string) string {
-		b, err := os.ReadFile(filepath.Join(home, "server-secrets.ktav"))
+		b, err := os.ReadFile(filepath.Clean(filepath.Join(home, "server-secrets.ktav")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,7 +192,7 @@ func testDualServerRotate(t *testing.T) {
 	dualCLI(t, cliHome, "server", "rotate", "ss")
 
 	d := newDualShell(t, shellHome, "Servers")
-	dualServersResize(d, 120, 30)
+	dualServersResize(d)
 	d.Keys("enter") // load the ss detail on the list pane
 	d.Keys("tab")   // focus the card
 	d.Keys("t")     // Rotate keys... -> confirmation through env.OpenModal
@@ -213,7 +213,7 @@ func testDualServerRemove(t *testing.T) {
 	dualCLI(t, cliHome, "server", "remove", "ss")
 
 	d := newDualShell(t, shellHome, "Servers")
-	dualServersResize(d, 120, 30)
+	dualServersResize(d)
 	d.Keys("enter") // load the ss detail on the list pane
 	d.Keys("tab")   // focus the card
 	d.Keys("d")     // Remove... -> confirmation
@@ -236,7 +236,7 @@ func testDualServerUpdate(t *testing.T) {
 		"--account", "bob")
 
 	d := newDualShell(t, shellHome, "Servers")
-	dualServersResize(d, 120, 30)
+	dualServersResize(d)
 	d.Keys("tab") // card focus; the cursor sits on Bind
 
 	d.Keys("enter") // Bind, prefilled 127.0.0.1

@@ -19,7 +19,7 @@ func serversFixture(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash", PreSOCKS5: config.HopList{"socks5://user:fake-chain-password@127.0.0.1:1080"}}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash", PreSOCKS5: config.HopList{"socks5://user:fake-chain-password@127.0.0.1:1080"}}} //nolint:gosec // G101: fake credential, test fixture only
 	c.Servers = []config.Server{{Name: "ss", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 1234, Accounts: "alice", PublicHost: "pub.test", Params: map[string]string{"cipher": "aes-128-gcm"}}, {Name: "vless", Protocol: "vless-reality", Bind: "127.0.0.1", Port: 2345, Accounts: "alice", Params: map[string]string{"sni": "secret-reality-sni.example"}}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("invalid fixture: %v", err)
@@ -49,9 +49,9 @@ func newServersTestScreen(t *testing.T, home string) *serversScreen {
 	var st angel.Status
 	statusErr := angel.ErrNotRunning
 	angelProbeLive = func(context.Context, string) (angel.State, angel.Status, error) { return angel.State{}, st, statusErr }
-	s := newServersScreen(home, tui.Env{Home: home, Background: func(label string, work func() tea.Msg) tea.Cmd {
+	s := mustAs[*serversScreen](t, newServersScreen(home, tui.Env{Home: home, Background: func(label string, work func() tea.Msg) tea.Cmd {
 		return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
-	}}).(*serversScreen)
+	}}))
 	s.status = func(ctx context.Context, h string) (angel.State, angel.Status, error) { return angelProbeLive(ctx, h) }
 	return s
 }
@@ -64,7 +64,7 @@ func serversRunOne(t *testing.T, s *serversScreen, c tea.Cmd) (tea.Msg, tea.Cmd)
 	_, next := s.Update(msg)
 	return msg, next
 }
-func serversRun(t *testing.T, s *serversScreen, c tea.Cmd) tea.Cmd {
+func serversRun(t *testing.T, s *serversScreen, c tea.Cmd) {
 	t.Helper()
 	for n := 0; c != nil && n < 20; n++ {
 		_, c = serversRunOne(t, s, c)
@@ -72,7 +72,6 @@ func serversRun(t *testing.T, s *serversScreen, c tea.Cmd) tea.Cmd {
 	if c != nil {
 		t.Fatal("server commands did not settle")
 	}
-	return nil
 }
 func serversKey(code rune, text string) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code, Text: text})
@@ -91,7 +90,7 @@ func serversLoadDetail(t *testing.T, s *serversScreen) {
 }
 
 func TestServersTUIFramePaneFocus(t *testing.T) {
-	screen := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	screen := mustAs[*serversScreen](t, newServersScreen(t.TempDir(), tui.Env{}))
 	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Servers", New: func(tui.Env) tui.Screen { return screen }}}})
 	frame.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	frame.Init()
@@ -130,7 +129,7 @@ func TestServersTUIFramePaneFocus(t *testing.T) {
 }
 
 func TestServersTUIFramePaneFocusBindings(t *testing.T) {
-	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	s := mustAs[*serversScreen](t, newServersScreen(t.TempDir(), tui.Env{}))
 	s.workspace.SetSize(120, 40)
 	hints := s.Bindings()
 	if len(hints) < 2 {
@@ -398,10 +397,10 @@ func TestServersTUISchedulesStatusInBackground(t *testing.T) {
 		return angel.State{}, angel.Status{}, angel.ErrNotRunning
 	}
 	calls, scheduled := 0, 0
-	s := newServersScreen(home, tui.Env{Home: home, Background: func(label string, work func() tea.Msg) tea.Cmd {
+	s := mustAs[*serversScreen](t, newServersScreen(home, tui.Env{Home: home, Background: func(label string, work func() tea.Msg) tea.Cmd {
 		scheduled++
 		return func() tea.Msg { return tui.BackgroundMsg{Label: label, Value: work()} }
-	}}).(*serversScreen)
+	}}))
 	s.status = func(context.Context, string) (angel.State, angel.Status, error) {
 		calls++
 		return angel.State{}, angel.Status{Servers: []angel.ServerInfo{{Name: "ss"}}}, nil

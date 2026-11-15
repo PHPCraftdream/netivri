@@ -20,6 +20,7 @@ func transientRenameError(err error) bool {
 	switch errno {
 	case errorAccessDenied, errorSharingViolation, errorLockViolation:
 		return true
+	default:
+		return false
 	}
-	return false
 }

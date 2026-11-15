@@ -30,7 +30,7 @@ func singleflightBurst(t *testing.T, verify func(user, pass string) bool) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	results := make([]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -94,7 +94,11 @@ func TestConcurrentFirstVerifyMultiRunsArgon2Once(t *testing.T) {
 		t.Fatal(err)
 	}
 	singleflightBurst(t, m.Verify)
-	state := m.(*multiAuthenticator).accounts["user"]
+	multiAuth, ok := m.(*multiAuthenticator)
+	if !ok {
+		t.Fatalf("m = %T, want *multiAuthenticator", m)
+	}
+	state := multiAuth.accounts["user"]
 	state.mu.Lock()
 	cached := state.cached
 	state.mu.Unlock()
@@ -121,7 +125,10 @@ func TestVerifyAfterCachedFlightSkipsArgon2(t *testing.T) {
 	}
 	t.Cleanup(func() { verifyHash = orig })
 	// Enter the flight directly, as a caller that saw an empty cache would.
-	multi := m.(*multiAuthenticator)
+	multi, ok := m.(*multiAuthenticator)
+	if !ok {
+		t.Fatalf("m = %T, want *multiAuthenticator", m)
+	}
 	state := multi.accounts["user"]
 	v, err, _ := multi.sf.Do("user\x00hunter2", func() (any, error) {
 		state.mu.Lock()
@@ -146,7 +153,7 @@ func TestConcurrentVerifyWrongAndRightPasswordsIsolated(t *testing.T) {
 	var wg sync.WaitGroup
 	wrong := make([]bool, n)
 	right := make([]bool, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
@@ -161,7 +168,7 @@ func TestConcurrentVerifyWrongAndRightPasswordsIsolated(t *testing.T) {
 	}
 	close(start)
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if wrong[i] {
 			t.Fatalf("wrong password accepted (goroutine %d)", i)
 		}

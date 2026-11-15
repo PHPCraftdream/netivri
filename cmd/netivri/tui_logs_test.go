@@ -10,15 +10,17 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 var logsNow = time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
 
 type logsFixture struct {
+	t        testing.TB
 	s        *logsScreen
 	reads    []angel.LogQuery
 	polls    int
@@ -38,8 +40,8 @@ func newLogsFixture(t *testing.T, seed string) *logsFixture {
 		Background: inlineBackground,
 		Toast:      func(string) tea.Cmd { return nil },
 	}
-	f := &logsFixture{}
-	f.s = newLogsScreen(env.Home, env).(*logsScreen)
+	f := &logsFixture{t: t}
+	f.s = mustAs[*logsScreen](t, newLogsScreen(env.Home, env))
 	f.s.wait = func(time.Duration, func(time.Time) tea.Msg) tea.Cmd { return nil }
 	f.follower = angel.NewLogFollower(home)
 	f.s.poll = func(_ string, from int64, q angel.LogQuery) ([]angel.LogEntry, int64, error) {
@@ -54,26 +56,26 @@ func newLogsFixture(t *testing.T, seed string) *logsFixture {
 		}
 		return base(home, q)
 	}
-	f.s = parityDrain(f.s, f.s.Init()).(*logsScreen)
+	f.s = mustAs[*logsScreen](t, parityDrain(f.s, f.s.Init()))
 	return f
 }
 
 func (f *logsFixture) key(k tea.KeyPressMsg) {
 	sc, c := f.s.Update(k)
-	f.s = sc.(*logsScreen)
-	f.s = parityDrain(f.s, c).(*logsScreen)
+	f.s = mustAs[*logsScreen](f.t, sc)
+	f.s = mustAs[*logsScreen](f.t, parityDrain(f.s, c))
 }
 
 func (f *logsFixture) tick() {
 	sc, c := f.s.Update(logsTick{})
-	f.s = sc.(*logsScreen)
-	f.s = parityDrain(f.s, c).(*logsScreen)
+	f.s = mustAs[*logsScreen](f.t, sc)
+	f.s = mustAs[*logsScreen](f.t, parityDrain(f.s, c))
 }
 
 func (f *logsFixture) wheelUp() {
 	sc, c := f.s.Update(tea.MouseWheelMsg{X: 5, Y: 5, Button: tea.MouseWheelUp})
-	f.s = sc.(*logsScreen)
-	f.s = parityDrain(f.s, c).(*logsScreen)
+	f.s = mustAs[*logsScreen](f.t, sc)
+	f.s = mustAs[*logsScreen](f.t, parityDrain(f.s, c))
 }
 
 func logsTypeText(f *logsFixture, text string) {
@@ -195,7 +197,7 @@ func TestLogsScreenLevelCyclesAndRereads(t *testing.T) {
 func TestLogsScreenLevelFiltersRows(t *testing.T) {
 	seed := "2026-11-05T11:00:00Z DEBUG quiet probe\n2026-11-05T11:01:00Z INFO loud start\n"
 	f := newLogsFixture(t, seed)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.key(tea.KeyPressMsg{Code: 'l', Text: "l"})
 	}
 	if len(f.s.list.Rows) != 2 {
@@ -294,7 +296,7 @@ func TestLogsScreenSincePromptRealKeys(t *testing.T) {
 		t.Fatalf("esc on an unchanged prompt does not cancel: dialog %v since %q", f.s.dialog != nil, f.s.since)
 	}
 	f.key(tea.KeyPressMsg{Code: 's', Text: "s"})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.key(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	f.key(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -326,7 +328,7 @@ func TestLogsScreenSincePromptRealKeys(t *testing.T) {
 func TestLogsScreenTailPromptRealKeys(t *testing.T) {
 	f := newLogsFixture(t, logsFiveLines)
 	clearTailInput := func() {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			f.key(tea.KeyPressMsg{Code: tea.KeyBackspace})
 		}
 	}
@@ -447,11 +449,11 @@ func TestLogsScreenFollowPollAppendsAndPins(t *testing.T) {
 }
 
 func TestLogsScreenTailTrimsOldestOnPoll(t *testing.T) {
-	seed := ""
+	var seed strings.Builder
 	for i := 1; i <= 6; i++ {
-		seed += "2026-11-05T11:0" + string(rune('0'+i)) + ":00Z INFO line " + string(rune('0'+i)) + "\n"
+		seed.WriteString("2026-11-05T11:0" + string(rune('0'+i)) + ":00Z INFO line " + string(rune('0'+i)) + "\n")
 	}
-	f := newLogsFixture(t, seed)
+	f := newLogsFixture(t, seed.String())
 	f.s.tail = 3
 	appendLogFile(t, f.s.home, "2026-11-05T11:07:00Z INFO line 7\n")
 	f.tick()
@@ -477,12 +479,12 @@ func TestLogsScreenErrorsShownByMessageOnly(t *testing.T) {
 		t.Fatalf("card info %q", info)
 	}
 	sc, _ := f.s.Update(logsPollMsg{err: errors.New("disk on fire")})
-	f.s = sc.(*logsScreen)
+	f.s = mustAs[*logsScreen](t, sc)
 	if f.s.notice != "Reading the log failed." {
 		t.Fatalf("poll notice = %q", f.s.notice)
 	}
 	sc, _ = f.s.Update(logsPollMsg{err: os.ErrNotExist})
-	f.s = sc.(*logsScreen)
+	f.s = mustAs[*logsScreen](t, sc)
 	if !f.s.missing {
 		t.Fatalf("a missing-log poll must set missing")
 	}
@@ -554,6 +556,15 @@ func TestLogsScreenParityRefs(t *testing.T) {
 
 func TestLogsScreenSmallCoverage(t *testing.T) {
 	f := newLogsFixture(t, logsSample)
+	checkLogsViewAndFocus(t, f)
+	checkLogsResizeAndPoll(t, f)
+	checkLogsCardFollowLevel(t, f)
+	checkLogsCardPrompts(t, f)
+	f.s.list.EndFilter(false)
+}
+
+func checkLogsViewAndFocus(t *testing.T, f *logsFixture) {
+	t.Helper()
 	if f.s.View(0, 0) != "" {
 		t.Fatalf("empty view is not empty")
 	}
@@ -583,10 +594,14 @@ func TestLogsScreenSmallCoverage(t *testing.T) {
 	if f.s.FocusPane(true) {
 		t.Fatalf("FocusPane reverse from the list must hit the boundary")
 	}
+}
+
+func checkLogsResizeAndPoll(t *testing.T, f *logsFixture) {
+	t.Helper()
 	sc, _ := f.s.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
-	f.s = sc.(*logsScreen)
+	f.s = mustAs[*logsScreen](t, sc)
 	sc, _ = f.s.Update(tui.ThemeMsg{Theme: tui.NewTheme()})
-	f.s = sc.(*logsScreen)
+	f.s = mustAs[*logsScreen](t, sc)
 	if nextLogLevel("") != angel.LevelInfo || nextLogLevel("nope") != angel.LevelWarn {
 		t.Fatalf("nextLogLevel fallbacks")
 	}
@@ -605,6 +620,10 @@ func TestLogsScreenSmallCoverage(t *testing.T) {
 	}
 	f.s.list.Filter = ""
 	f.s.lastFilter = ""
+}
+
+func checkLogsCardFollowLevel(t *testing.T, f *logsFixture) {
+	t.Helper()
 	card := f.s.workspace.Card
 	for i, l := range card.Lines {
 		if l.ID == "follow" {
@@ -624,6 +643,10 @@ func TestLogsScreenSmallCoverage(t *testing.T) {
 	if l, _ := cardLine(f.s.workspace.Card, "level"); l.Value != "warn" {
 		t.Fatalf("activate level = %q", l.Value)
 	}
+}
+
+func checkLogsCardPrompts(t *testing.T, f *logsFixture) {
+	t.Helper()
 	for i, l := range f.s.workspace.Card.Lines {
 		if l.ID == "since" {
 			f.s.workspace.Card.Selected = i
@@ -653,5 +676,4 @@ func TestLogsScreenSmallCoverage(t *testing.T) {
 	if !f.s.list.Filtering {
 		t.Fatalf("activate search does not start the filter")
 	}
-	f.s.list.EndFilter(false)
 }

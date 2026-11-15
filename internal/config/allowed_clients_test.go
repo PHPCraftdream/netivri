@@ -192,10 +192,10 @@ func TestValidateAllowedClients(t *testing.T) {
 		{"listen invalid", func(c *Config) { c.Listen.AllowedClients = "19*" }, "listen.allowed_clients"},
 		{"listen valid", func(c *Config) { c.Listen.AllowedClients = "10.0.0.0/8" }, ""},
 		{"account invalid", func(c *Config) {
-			c.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "a,,b"}}
+			c.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "a,,b"}} //nolint:gosec // G101: fixture argon2 hash, not a real credential
 		}, "accounts[0].allowed_clients"},
 		{"account valid", func(c *Config) {
-			c.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "loopback"}}
+			c.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "loopback"}} //nolint:gosec // G101: fixture argon2 hash, not a real credential
 		}, ""},
 	}
 	for _, tc := range cases {
@@ -232,7 +232,7 @@ func TestAllowedClientsMarshalRoundTrip(t *testing.T) {
 	}
 	cfg := validBaseline()
 	cfg.Listen.AllowedClients = "10.0.0.0/8"
-	cfg.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "loopback"}}
+	cfg.Accounts = []Account{{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash", AllowedClients: "loopback"}} //nolint:gosec // G101: fixture argon2 hash, not a real credential
 	doc, err = Marshal(cfg)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
@@ -331,7 +331,7 @@ func TestAllowedClientsDefaultAndEmpty(t *testing.T) {
 	if err := Save(saved, cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	b, err := os.ReadFile(saved)
+	b, err := os.ReadFile(filepath.Clean(saved))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func TestAllowedClientsDefaultAndEmpty(t *testing.T) {
 	if err := Save(saved2, cfg2); err != nil {
 		t.Fatalf("Save again: %v", err)
 	}
-	b2, err := os.ReadFile(saved2)
+	b2, err := os.ReadFile(filepath.Clean(saved2))
 	if err != nil {
 		t.Fatal(err)
 	}

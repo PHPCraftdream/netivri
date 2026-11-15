@@ -27,8 +27,9 @@ type ServerParameter struct {
 }
 
 func ServerProtocols() []ServerProtocol {
-	out := []ServerProtocol{}
-	for _, p := range servers.Registered() {
+	registered := servers.Registered()
+	out := make([]ServerProtocol, 0, len(registered))
+	for _, p := range registered {
 		m, _ := servers.Metadata(p.Name())
 		tr := "TCP"
 		if servers.IsUDPBound(p) {
@@ -176,11 +177,11 @@ func serverAddConfigWithSave(h string, c *config.Config, o ServerAddOptions, sav
 	}
 	if e = save(config.ConfigPath(h), c); e != nil {
 		cleanup := st.CleanupCreated(receipt)
-		ce := serverError("INTERNAL", "server configuration could not be saved", cli.ExitInternal)
+		ce := &cli.Error{Code: "INTERNAL", Message: "server configuration could not be saved", Exit: cli.ExitInternal}
 		if cleanup != nil {
-			ce.(*cli.Error).Hint = "server-secrets.ktav may contain leftover secrets for server " + n
+			ce.Hint = "server-secrets.ktav may contain leftover secrets for server " + n
 		}
-		return fail(&serverSaveError{cliErr: ce.(*cli.Error), cause: e})
+		return fail(&serverSaveError{cliErr: ce, cause: e})
 	}
 	keys := []string{}
 	for _, f := range receipt.Material {
@@ -309,11 +310,11 @@ func serverUpdateConfigWithSave(h string, c *config.Config, n string, o ServerUp
 	if e = save(config.ConfigPath(h), c); e != nil {
 		cleanup := st.CleanupCreated(receipt)
 		c.Servers[i] = old
-		ce := serverError("INTERNAL", "server configuration could not be saved", cli.ExitInternal)
+		ce := &cli.Error{Code: "INTERNAL", Message: "server configuration could not be saved", Exit: cli.ExitInternal}
 		if cleanup != nil {
-			ce.(*cli.Error).Hint = "server-secrets.ktav may contain leftover secrets for server " + n
+			ce.Hint = "server-secrets.ktav may contain leftover secrets for server " + n
 		}
-		return serverView{}, &serverSaveError{cliErr: ce.(*cli.Error), cause: e}
+		return serverView{}, &serverSaveError{cliErr: ce, cause: e}
 	}
 	return serverPublic(c, c.Servers[i]), nil
 }
@@ -380,9 +381,9 @@ func removeConfig(h string, c *config.Config, n string) (ServerRemoveResult, err
 	if e := servers.NewStore(h).Remove(n); e != nil {
 		c.Servers = append(c.Servers[:i], append([]config.Server{old}, c.Servers[i:]...)...)
 		restoreErr := config.Save(config.ConfigPath(h), c)
-		ce := serverError("INTERNAL", "server secrets could not be removed", cli.ExitInternal)
+		ce := &cli.Error{Code: "INTERNAL", Message: "server secrets could not be removed", Exit: cli.ExitInternal}
 		if restoreErr != nil {
-			ce.(*cli.Error).Hint = "server configuration rollback failed; inspect config.ktav for server " + n
+			ce.Hint = "server configuration rollback failed; inspect config.ktav for server " + n
 		}
 		return ServerRemoveResult{}, ce
 	}

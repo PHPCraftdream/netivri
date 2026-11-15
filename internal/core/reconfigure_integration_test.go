@@ -85,7 +85,7 @@ func TestReconfigureKeepsOpenConnections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the held connection: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	if err := accountEcho(held); err != nil {
 		t.Fatalf("held connection before the change: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestReconfigureKeepsNodeHealth(t *testing.T) {
 	live, liveAddress := startFakeUpstream(t)
 	spare, spareAddress := startFakeUpstream(t)
 	backend, _ := countEchoServer(t)
-	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	deadListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve dead upstream address: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestReconfigureKeepsNodeHealth(t *testing.T) {
 	)); err != nil {
 		t.Fatalf("Reconfigure: %v", err)
 	}
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := range 5 {
 		domain := fmt.Sprintf("after%d.invalid", attempt)
 		live.mapDomain(domain, backend)
 		spare.mapDomain(domain, backend)

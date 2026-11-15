@@ -58,7 +58,7 @@ func TestNodeLogFlappingStaysUntilAWholeQuietWindow(t *testing.T) {
 
 func TestNodeLogFlappingExactlyAWindowApartStaysFlapping(t *testing.T) {
 	f := newBurstFixture(t, 3)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.down(0, "2 probe failures (timeout)")
 		f.now = f.now.Add(time.Minute)
 	}
@@ -75,7 +75,7 @@ func TestNodeLogFlappingExactlyAWindowApartStaysFlapping(t *testing.T) {
 func TestNodeLogFlappingNoticeNamesTheLevelOfItsRepeats(t *testing.T) {
 	f := debugFixture(t)
 	for _, label := range []string{"own/a", "own/c"} {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			f.now = f.now.Add(time.Minute)
 			f.downLabel(label)
 		}
@@ -107,7 +107,7 @@ func TestNodeLogFlappingNoticeOfAnOutageSaysDebug(t *testing.T) {
 	if f.count("WARN node outage:") != 1 {
 		t.Fatalf("no outage: %q", f.lines)
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.down(0, "2 probe failures (timeout)")
 		f.now = f.now.Add(time.Minute)
 	}
@@ -136,7 +136,7 @@ func TestNodeLogBurstOfFallbackNodesIsInfo(t *testing.T) {
 func TestNodeLogBurstWithAFirstTierNodeIsWarn(t *testing.T) {
 	f := newBurstFixture(t, 12)
 	f.log.first = map[string]bool{"p/n2": true}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	if got := f.count("WARN node burst: 3 of 12"); got != 1 {
@@ -150,7 +150,7 @@ func TestNodeLogBurstWithAFirstTierNodeIsWarn(t *testing.T) {
 func TestNodeLogFirstTierNodeJoiningAFallbackBurstRaisesTheWarning(t *testing.T) {
 	f := newBurstFixture(t, 12)
 	f.log.first = map[string]bool{"p/n3": true, "p/n6": true}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	f.down(4, "2 probe failures (timeout)") // another fallback node: still INFO
@@ -170,14 +170,14 @@ func TestNodeLogFirstTierNodeJoiningAFallbackBurstRaisesTheWarning(t *testing.T)
 func TestNodeLogBurstWarningStateEndsWithTheBurst(t *testing.T) {
 	f := newBurstFixture(t, 12)
 	f.log.first = map[string]bool{"p/n3": true}
-	for i := 0; i < 4; i++ { // a burst that a first-tier node joins
+	for i := range 4 { // a burst that a first-tier node joins
 		f.down(i, "2 probe failures (timeout)")
 	}
 	if got := f.count("WARN node burst"); got != 1 {
 		t.Fatalf("%d burst warnings, want 1: %q", got, f.lines)
 	}
 	f.now = f.now.Add(time.Minute)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.back(i, time.Minute)
 	}
 	if f.count("INFO node burst over") != 1 {
@@ -199,7 +199,7 @@ func TestNodeLogBurstWarningStateEndsWithTheBurst(t *testing.T) {
 
 func TestNodeLogWithoutTierInformationEveryBurstWarns(t *testing.T) {
 	f := newBurstFixture(t, 6)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	if got := f.count("WARN node burst: 3 of 6"); got != 1 {

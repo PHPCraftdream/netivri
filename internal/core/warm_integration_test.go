@@ -25,7 +25,7 @@ func (*integrationDialer) ListenPacket(context.Context, string, string, netip.Ad
 }
 
 func TestPoolDialerReusesWarmSocket(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestPoolDialerReusesWarmSocket(t *testing.T) {
 			if err != nil {
 				return
 			}
-			go func() { defer conn.Close(); _, _ = io.Copy(conn, conn) }()
+			go func() { defer func() { _ = conn.Close() }(); _, _ = io.Copy(conn, conn) }()
 		}
 	}()
 	dialer := &integrationDialer{}
@@ -80,7 +80,7 @@ func TestPoolDialerReusesWarmSocket(t *testing.T) {
 }
 
 func TestWarmStartActualSOCKSProbes(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,11 +161,11 @@ func TestPoolAdapterRoundTripAndClose(t *testing.T) {
 }
 
 func TestPoolDialerDiscardsClosedPeer(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	accepted := make(chan net.Conn, 1)
 	go func() {
 		conn, acceptErr := listener.Accept()

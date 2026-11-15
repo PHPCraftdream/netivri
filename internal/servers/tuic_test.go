@@ -143,7 +143,7 @@ func TestTUICNewMaterialCertificates(t *testing.T) {
 func TestTUICLinkRoundTrip(t *testing.T) {
 	p := tuicProtocol{}
 	spec := tuicTestSpec(t)
-	password := "space +%@: /"
+	password := "space +%@: /" //nolint:gosec // G101: fixture password for URL escaping round-trip, not a credential
 	spec.Users["alice"]["password"] = password
 	link, err := p.Link(spec, "alice", "2001:db8::7")
 	if err != nil {

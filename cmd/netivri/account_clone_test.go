@@ -42,7 +42,7 @@ type cloneResult struct {
 		PasswordSet bool   `json:"password_set"`
 	} `json:"account"`
 	ClonedFrom string `json:"cloned_from"`
-	Password   string `json:"password"`
+	Password   string `json:"password"` //nolint:gosec // G117: test-only decode target for the password-leak check, not a secret
 }
 
 func runClone(t *testing.T, home string, args ...string) (cloneResult, []byte) {

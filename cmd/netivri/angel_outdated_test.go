@@ -32,7 +32,7 @@ func stubOutdatedAngel(t *testing.T, listen string) {
 }
 
 func TestRunUpAngelAnotherBuildIsAlreadyRunning(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeNotRunning, func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		t.Error("up spawned a second angel next to one of another build")
 		return angel.State{}, errors.New("must not spawn")
 	})
@@ -48,7 +48,7 @@ func TestRunUpAngelAnotherBuildIsAlreadyRunning(t *testing.T) {
 }
 
 func TestRunUpAngelAnotherBuildWithOtherListenConflicts(t *testing.T) {
-	_ = stubAngels(t, probeNotRunning, func(context.Context, angel.SpawnOptions) (angel.State, error) {
+	stubAngels(t, probeNotRunning, func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		t.Error("up spawned a second angel next to one of another build")
 		return angel.State{}, errors.New("must not spawn")
 	})

@@ -11,16 +11,16 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func countriesSeed(t *testing.T) (string, *providersScreen) {
+func countriesSeed(t *testing.T) *providersScreen {
 	t.Helper()
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://user:secret@p.invalid/path"})
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://user:secret@p.invalid/path"}) //nolint:gosec // G101: fake credential, test fixture only
 	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
-	return h, s
+	return s
 }
 
 func openCountries(t *testing.T, s *providersScreen) {
@@ -36,14 +36,14 @@ func openCountries(t *testing.T, s *providersScreen) {
 
 func TestProviderCountriesPickerToggleAndApply(t *testing.T) {
 	var toastText string
-	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://user:secret@p.invalid/path"})
+	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://user:secret@p.invalid/path"}) //nolint:gosec // G101: fake credential, test fixture only
 	nodes := []subscription.Node{{Country: "DE"}, {Country: "DE"}, {Country: "NL"}}
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
 	e := providerEnv(h)
 	e.Toast = func(text string) tea.Cmd { toastText = text; return func() tea.Msg { return tui.ToastMsg(text) } }
-	s := newProvidersScreen(h, e).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, e))
 	drainProvider(s, s.Init())
 	if s.card.Lines[4].Value != "DE:2, NL:1" {
 		t.Fatalf("card summary: %q", s.card.Lines[4].Value)
@@ -80,8 +80,7 @@ func TestProviderCountriesPickerToggleAndApply(t *testing.T) {
 }
 
 func TestProviderCountriesPickerCancelKeepsSummary(t *testing.T) {
-	h, s := countriesSeed(t)
-	_ = h
+	s := countriesSeed(t)
 	openCountries(t, s)
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
@@ -107,7 +106,7 @@ func TestProviderCountriesPickerCancelKeepsSummary(t *testing.T) {
 }
 
 func TestProviderCountriesPickerFrameContract(t *testing.T) {
-	_, s := countriesSeed(t)
+	s := countriesSeed(t)
 	openCountries(t, s)
 	for _, z := range []struct{ w, hgt int }{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
 		checkProvidersFrame(t, s, z.w, z.hgt)
@@ -115,7 +114,7 @@ func TestProviderCountriesPickerFrameContract(t *testing.T) {
 }
 
 func TestProviderCardSubscriptionIsMaskedNotURL(t *testing.T) {
-	_, s := countriesSeed(t)
+	s := countriesSeed(t)
 	s.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
 	v := ansi.Strip(s.View(100, 24))
 	if !strings.Contains(v, "•••••• (set)") {

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"fmt"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -124,46 +124,46 @@ func strconvValue(v any) (int, error) {
 		return value, nil
 	case int64:
 		if value < 1 || value > 65535 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case uint64:
 		if value < 1 || value > 65535 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case int32:
 		if value < 1 || value > 65535 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case uint32:
 		if value < 1 || value > 65535 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case int16:
 		if value < 1 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case uint16:
 		if value < 1 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case int8:
 		if value < 1 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	case uint8:
 		if value < 1 {
-			return 0, fmt.Errorf("invalid number")
+			return 0, errors.New("invalid number")
 		}
 		return int(value), nil
 	default:
-		return 0, fmt.Errorf("invalid number")
+		return 0, errors.New("invalid number")
 	}
 }
 

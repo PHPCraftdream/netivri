@@ -3,6 +3,7 @@
 package core
 
 import (
+	"context"
 	"encoding/binary"
 	"io"
 	"net"
@@ -22,7 +23,7 @@ type chainRecorder struct {
 func startChainRecorder(t *testing.T) (*chainRecorder, string) {
 	t.Helper()
 	r := &chainRecorder{}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("chain recorder listen: %v", err)
 	}
@@ -44,7 +45,7 @@ func (r *chainRecorder) snapshot() []string {
 	return append([]string(nil), r.targets...)
 }
 func (r *chainRecorder) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(testTimeout))
 	h, ok := readN(c, 2)
 	if !ok || h[0] != 5 {
@@ -95,12 +96,12 @@ func (r *chainRecorder) serve(c net.Conn) {
 	r.mu.Lock()
 	r.targets = append(r.targets, dest)
 	r.mu.Unlock()
-	up, err := net.DialTimeout("tcp", dest, testTimeout)
+	up, err := (&net.Dialer{Timeout: testTimeout}).DialContext(context.Background(), "tcp", dest)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	if _, err = c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
 	}

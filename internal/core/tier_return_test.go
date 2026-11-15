@@ -30,7 +30,7 @@ func tierReturnGroup(t *testing.T, tiers []int, returnAfter time.Duration) (*sti
 }
 
 func nodeDown(health *healthTable, label string) {
-	for i := 0; i < downDialFailures; i++ {
+	for range downDialFailures {
 		health.recordDial(label, false, 0)
 	}
 }

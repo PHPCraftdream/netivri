@@ -208,245 +208,317 @@ func (f *Frame) pollHeader() tea.Cmd {
 }
 func (f *Frame) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if batch, ok := msg.(tea.BatchMsg); ok {
-		var cmds []tea.Cmd
-		for _, cmd := range batch {
-			if cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-		return f, tea.Batch(cmds...)
+		return f, batchCmds(batch)
 	}
 	if m, ok := msg.(backgroundResult); ok {
-		delete(f.background, m.id)
-		if m.value == nil {
-			return f, nil
-		}
-		return f, f.routeScreen(m.screen, BackgroundMsg{m.label, m.screen, m.value})
+		return f, f.handleBackgroundResult(m)
 	}
-	switch m := msg.(type) {
-	case tea.WindowSizeMsg:
-		f.width = max(1, m.Width)
-		f.height = max(1, m.Height)
-		return f, forwardAll(f.screens, tea.WindowSizeMsg{Width: f.width, Height: max(0, f.height-bodyReservedRows)})
-	case switchTabMsg:
-		return f, f.switchToTab(int(m))
-	case ThemeMsg:
-		f.theme = m.Theme
-		f.options.Env.Theme = f.theme
-		if themed, ok := f.modal.(interface{ SetTheme(Theme) }); ok {
-			themed.SetTheme(f.theme)
-		}
-		return f, forwardAll(f.screens, m)
-	case tea.BackgroundColorMsg:
-		f.theme = NewThemeFor(m.IsDark())
-		f.options.Env.Theme = f.theme
-		return f, forwardAll(f.screens, ThemeMsg{Theme: f.theme})
-	case headerTick:
-		return f, f.pollHeader()
-	case headerResult:
-		f.header, f.headerErr = m.h, m.err
-		return f, tea.Tick(2*time.Second, func(time.Time) tea.Msg { return headerTick{} })
-	case ToastMsg:
-		f.toast = string(m)
-		f.toastGeneration++
-		generation := f.toastGeneration
-		return f, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastExpire{generation} })
-	case toastExpire:
-		if m.generation == f.toastGeneration {
-			f.toast = ""
-		}
-		return f, nil
-	case tea.MouseWheelMsg:
-		if f.help {
-			return f, nil
-		}
-		if m.Y < 2 || m.Y >= f.height-2 {
-			return f, nil
-		}
-		translated := tea.MouseWheelMsg{X: m.X, Y: m.Y - 2, Button: m.Button, Mod: m.Mod}
-		if f.modal != nil {
-			var c tea.Cmd
-			f.modal, c = f.modal.Update(translated)
-			return f, c
-		}
-		return f, f.routeScreen(f.index, translated)
-	case tea.MouseClickMsg:
-		mouse := tea.Mouse(m)
-		if mouse.Button != tea.MouseLeft {
-			return f, nil
-		}
-		if mouse.Y == 1 {
-			current := f.screenAt(f.index)
-			if f.modal != nil || f.help || current != nil && current.CapturingInput() {
-				return f, nil
-			}
-			column := 0
-			for i, tab := range f.options.Tabs {
-				width := lipgloss.Width(tab.Title) + 2
-				if mouse.X >= column && mouse.X < column+width {
-					f.index = i
-					f.tabFocus = true
-					return f, f.initCurrent()
-				}
-				column += width + 1
-			}
-			return f, nil
-		}
-		if mouse.Y >= 2 && mouse.Y < f.height-2 {
-			if f.help {
-				return f, nil
-			}
-			f.tabFocus = false
-			translated := tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - 2, Button: mouse.Button, Mod: mouse.Mod}
-			if f.modal != nil {
-				var c tea.Cmd
-				f.modal, c = f.modal.Update(translated)
-				return f, c
-			}
-			return f, f.routeScreen(f.index, translated)
-		}
-	case modalOpen:
-		f.modal = m.modal
-		f.modalScreen = m.screen
-		return f, nil
-	case backgroundStart:
-		f.background[m.id] = backgroundItem{m.label, m.screen}
-		return f, tea.Batch(backgroundWork(m.id, m.label, m.screen, m.work), func() tea.Msg { return m.tick })
-	case spinner.TickMsg:
-		var c tea.Cmd
-		f.spinner, c = f.spinner.Update(m)
-		if len(f.background) > 0 {
-			return f, c
-		}
-		return f, nil
-	case ModalResultMsg, ConfirmResultMsg, PromptResultMsg, WizardResultMsg:
-		if f.modal != nil {
-			i := f.modalScreen
-			f.modal = nil
-			return f, f.routeScreen(i, msg)
-		}
+	if cmd, ok := f.updateFrameMsg(msg); ok {
+		return f, cmd
 	}
 	if len(f.screens) == 0 {
 		return f, nil
 	}
 	if k, ok := msg.(tea.KeyPressMsg); ok {
-		key := k.String()
-		if key == "ctrl+c" {
-			return f, tea.Quit
+		if cmd, ok := f.handleKey(k, msg); ok {
+			return f, cmd
 		}
-		if f.modal != nil {
-			var c tea.Cmd
-			f.modal, c = f.modal.Update(msg)
-			return f, c
+	}
+	return f, f.routeToModalOrScreen(msg)
+}
+func batchCmds(batch tea.BatchMsg) tea.Cmd {
+	var cmds []tea.Cmd
+	for _, cmd := range batch {
+		if cmd != nil {
+			cmds = append(cmds, cmd)
 		}
-		if f.help {
-			if key == "esc" || bubbleskey.Matches(k, globalHelpBindings[1]) {
-				f.help = false
-			}
-			if bubbleskey.Matches(k, globalHelpBindings[0]) {
-				return f, tea.Quit
-			}
-			return f, nil
-		}
-		if f.width <= 60 || f.height <= 16 {
-			return f, nil
-		}
-		if f.modal != nil {
-			return f, nil
-		}
-		if f.help {
-			return f, nil
-		}
-		if f.screens[f.index] != nil && f.screens[f.index].CapturingInput() {
-			return f, f.routeScreen(f.index, msg)
-		}
-		if key == "up" && f.tabFocus {
-			return f, nil
-		}
-		if key == "enter" && f.tabFocus {
-			f.tabFocus = false
-			if s, ok := f.screenAt(f.index).(SetPaneFocusScreen); ok {
-				s.SetPaneFocus(0)
-			}
-			return f, f.routeScreen(f.index, RegionFocusMsg{Tabs: false})
-		}
-		if bubbleskey.Matches(k, globalHelpBindings[0]) {
-			return f, tea.Quit
-		}
-		if bubbleskey.Matches(k, globalHelpBindings[1]) {
-			f.help = true
-			return f, nil
-		}
-		switch key {
-		case "q":
-			return f, tea.Quit
-		case "?":
-			f.help = true
-			return f, nil
-		case "right":
-			return f, f.switchTab(1)
-		case "left":
-			return f, f.switchTab(-1)
-		case "home":
-			if f.tabFocus {
-				return f, f.switchToTab(0)
-			}
-		case "end":
-			if f.tabFocus {
-				return f, f.switchToTab(len(f.screens) - 1)
-			}
-		case "tab":
-			if f.tabFocus {
-				f.tabFocus = false
-				if s, ok := f.screenAt(f.index).(SetPaneFocusScreen); ok {
-					s.SetPaneFocus(0)
-				}
-				return f, f.routeScreen(f.index, RegionFocusMsg{Reverse: false})
-			}
-			if s, ok := f.screenAt(f.index).(PaneFocusScreen); ok && s.FocusPane(false) {
-				return f, nil
-			}
+	}
+	return tea.Batch(cmds...)
+}
+func (f *Frame) handleBackgroundResult(m backgroundResult) tea.Cmd {
+	delete(f.background, m.id)
+	if m.value == nil {
+		return nil
+	}
+	return f.routeScreen(m.screen, BackgroundMsg{m.label, m.screen, m.value})
+}
+
+// updateFrameMsg handles frame-level messages; ok=false lets the message fall through to key handling and screen routing.
+func (f *Frame) updateFrameMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch m := msg.(type) {
+	case tea.WindowSizeMsg:
+		return f.resize(m), true
+	case switchTabMsg:
+		return f.switchToTab(int(m)), true
+	case ThemeMsg:
+		return f.handleThemeMsg(m), true
+	case tea.BackgroundColorMsg:
+		return f.handleBackgroundColor(m), true
+	case headerTick:
+		return f.pollHeader(), true
+	case headerResult:
+		return f.handleHeaderResult(m), true
+	case ToastMsg:
+		return f.showToast(m), true
+	case toastExpire:
+		f.expireToast(m)
+		return nil, true
+	case tea.MouseWheelMsg:
+		return f.handleMouseWheel(m), true
+	case tea.MouseClickMsg:
+		return f.handleMouseClick(m)
+	case modalOpen:
+		f.openModal(m)
+		return nil, true
+	case backgroundStart:
+		return f.startBackground(m), true
+	case spinner.TickMsg:
+		return f.tickSpinner(m), true
+	case ModalResultMsg, ConfirmResultMsg, PromptResultMsg, WizardResultMsg:
+		return f.handleModalResult(msg)
+	}
+	return nil, false
+}
+func (f *Frame) resize(m tea.WindowSizeMsg) tea.Cmd {
+	f.width = max(1, m.Width)
+	f.height = max(1, m.Height)
+	return forwardAll(f.screens, tea.WindowSizeMsg{Width: f.width, Height: max(0, f.height-bodyReservedRows)})
+}
+func (f *Frame) setTheme(th Theme) {
+	f.theme = th
+	f.options.Env.Theme = th
+}
+func (f *Frame) handleThemeMsg(m ThemeMsg) tea.Cmd {
+	f.setTheme(m.Theme)
+	if themed, ok := f.modal.(interface{ SetTheme(Theme) }); ok {
+		themed.SetTheme(f.theme)
+	}
+	return forwardAll(f.screens, m)
+}
+func (f *Frame) handleBackgroundColor(m tea.BackgroundColorMsg) tea.Cmd {
+	f.setTheme(NewThemeFor(m.IsDark()))
+	return forwardAll(f.screens, ThemeMsg{Theme: f.theme})
+}
+func (f *Frame) handleHeaderResult(m headerResult) tea.Cmd {
+	f.header, f.headerErr = m.h, m.err
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return headerTick{} })
+}
+func (f *Frame) showToast(m ToastMsg) tea.Cmd {
+	f.toast = string(m)
+	f.toastGeneration++
+	generation := f.toastGeneration
+	return tea.Tick(3*time.Second, func(time.Time) tea.Msg { return toastExpire{generation} })
+}
+func (f *Frame) expireToast(m toastExpire) {
+	if m.generation == f.toastGeneration {
+		f.toast = ""
+	}
+}
+func (f *Frame) openModal(m modalOpen) {
+	f.modal = m.modal
+	f.modalScreen = m.screen
+}
+func (f *Frame) startBackground(m backgroundStart) tea.Cmd {
+	f.background[m.id] = backgroundItem{m.label, m.screen}
+	return tea.Batch(backgroundWork(m.id, m.label, m.screen, m.work), func() tea.Msg { return m.tick })
+}
+func (f *Frame) tickSpinner(m spinner.TickMsg) tea.Cmd {
+	var c tea.Cmd
+	f.spinner, c = f.spinner.Update(m)
+	if len(f.background) > 0 {
+		return c
+	}
+	return nil
+}
+func (f *Frame) handleModalResult(msg tea.Msg) (tea.Cmd, bool) {
+	if f.modal == nil {
+		return nil, false
+	}
+	i := f.modalScreen
+	f.modal = nil
+	return f.routeScreen(i, msg), true
+}
+func (f *Frame) handleMouseWheel(m tea.MouseWheelMsg) tea.Cmd {
+	if f.help {
+		return nil
+	}
+	if m.Y < 2 || m.Y >= f.height-2 {
+		return nil
+	}
+	return f.routeToModalOrScreen(tea.MouseWheelMsg{X: m.X, Y: m.Y - 2, Button: m.Button, Mod: m.Mod})
+}
+func (f *Frame) handleMouseClick(m tea.MouseClickMsg) (tea.Cmd, bool) {
+	mouse := tea.Mouse(m)
+	if mouse.Button != tea.MouseLeft {
+		return nil, true
+	}
+	if mouse.Y == 1 {
+		return f.handleTabStripClick(mouse), true
+	}
+	if mouse.Y >= 2 && mouse.Y < f.height-2 {
+		return f.handleBodyClick(mouse), true
+	}
+	return nil, false
+}
+func (f *Frame) handleTabStripClick(mouse tea.Mouse) tea.Cmd {
+	current := f.screenAt(f.index)
+	if f.modal != nil || f.help || current != nil && current.CapturingInput() {
+		return nil
+	}
+	column := 0
+	for i, tab := range f.options.Tabs {
+		width := lipgloss.Width(tab.Title) + 2
+		if mouse.X >= column && mouse.X < column+width {
+			f.index = i
 			f.tabFocus = true
-			return f, nil
-		case "shift+tab":
-			if f.tabFocus {
-				f.tabFocus = false
-				pane := PaneList
-				if f.width >= 100 || f.width < 100 && f.screenAt(f.index) != nil && f.screenAt(f.index).CapturingInput() {
-					pane = PaneCard
-				}
-				if s, ok := f.screenAt(f.index).(SetPaneFocusScreen); ok {
-					s.SetPaneFocus(pane)
-				}
-				return f, f.routeScreen(f.index, RegionFocusMsg{Tabs: false, Reverse: true})
-			}
-			if s, ok := f.screenAt(f.index).(PaneFocusScreen); ok && s.FocusPane(true) {
-				return f, nil
-			}
-			f.tabFocus = true
-			return f, nil
-		case "enter", "down":
-			if f.tabFocus {
-				f.tabFocus = false
-				if s, ok := f.screenAt(f.index).(SetPaneFocusScreen); ok {
-					s.SetPaneFocus(0)
-				}
-				return f, f.routeScreen(f.index, RegionFocusMsg{Tabs: false})
-			}
-		case "1", "2", "3":
-			i := int(key[0] - '1')
-			if i < len(f.screens) {
-				f.index = i
-				return f, f.initCurrent()
-			}
+			return f.initCurrent()
 		}
+		column += width + 1
+	}
+	return nil
+}
+func (f *Frame) handleBodyClick(mouse tea.Mouse) tea.Cmd {
+	if f.help {
+		return nil
+	}
+	f.tabFocus = false
+	return f.routeToModalOrScreen(tea.MouseClickMsg{X: mouse.X, Y: mouse.Y - 2, Button: mouse.Button, Mod: mouse.Mod})
+}
+func (f *Frame) handleKey(k tea.KeyPressMsg, msg tea.Msg) (tea.Cmd, bool) {
+	key := k.String()
+	if key == "ctrl+c" {
+		return tea.Quit, true
 	}
 	if f.modal != nil {
-		var c tea.Cmd
-		f.modal, c = f.modal.Update(msg)
-		return f, c
+		return f.updateModal(msg), true
 	}
-	return f, f.routeScreen(f.index, msg)
+	if f.help {
+		return f.handleHelpKey(k, key), true
+	}
+	if f.width <= 60 || f.height <= 16 {
+		return nil, true
+	}
+	if f.screens[f.index] != nil && f.screens[f.index].CapturingInput() {
+		return f.routeScreen(f.index, msg), true
+	}
+	if cmd, ok := f.handleTabStripKey(key); ok {
+		return cmd, true
+	}
+	if bubbleskey.Matches(k, globalHelpBindings[0]) {
+		return tea.Quit, true
+	}
+	if bubbleskey.Matches(k, globalHelpBindings[1]) {
+		f.help = true
+		return nil, true
+	}
+	return f.handleNavKey(key)
+}
+func (f *Frame) handleHelpKey(k tea.KeyPressMsg, key string) tea.Cmd {
+	if key == "esc" || bubbleskey.Matches(k, globalHelpBindings[1]) {
+		f.help = false
+	}
+	if bubbleskey.Matches(k, globalHelpBindings[0]) {
+		return tea.Quit
+	}
+	return nil
+}
+func (f *Frame) handleTabStripKey(key string) (tea.Cmd, bool) {
+	if !f.tabFocus {
+		return nil, false
+	}
+	switch key {
+	case "up":
+		return nil, true
+	case "enter":
+		return f.focusPaneFromTabs(0, false), true
+	}
+	return nil, false
+}
+func (f *Frame) handleNavKey(key string) (tea.Cmd, bool) {
+	switch key {
+	case "q":
+		return tea.Quit, true
+	case "?":
+		f.help = true
+		return nil, true
+	case "right":
+		return f.switchTab(1), true
+	case "left":
+		return f.switchTab(-1), true
+	case "home":
+		if f.tabFocus {
+			return f.switchToTab(0), true
+		}
+	case "end":
+		if f.tabFocus {
+			return f.switchToTab(len(f.screens) - 1), true
+		}
+	case "tab":
+		return f.handleTabKey(), true
+	case "shift+tab":
+		return f.handleShiftTabKey(), true
+	case "enter", "down":
+		if f.tabFocus {
+			return f.focusPaneFromTabs(0, false), true
+		}
+	case "1", "2", "3":
+		return f.selectTabByKey(key)
+	}
+	return nil, false
+}
+func (f *Frame) selectTabByKey(key string) (tea.Cmd, bool) {
+	i := int(key[0] - '1')
+	if i >= len(f.screens) {
+		return nil, false
+	}
+	f.index = i
+	return f.initCurrent(), true
+}
+func (f *Frame) handleTabKey() tea.Cmd {
+	if f.tabFocus {
+		return f.focusPaneFromTabs(0, false)
+	}
+	if s, ok := f.screenAt(f.index).(PaneFocusScreen); ok && s.FocusPane(false) {
+		return nil
+	}
+	f.tabFocus = true
+	return nil
+}
+func (f *Frame) handleShiftTabKey() tea.Cmd {
+	if f.tabFocus {
+		return f.focusPaneFromTabs(f.shiftTabPane(), true)
+	}
+	if s, ok := f.screenAt(f.index).(PaneFocusScreen); ok && s.FocusPane(true) {
+		return nil
+	}
+	f.tabFocus = true
+	return nil
+}
+func (f *Frame) shiftTabPane() int {
+	if f.width >= 100 || f.width < 100 && f.screenAt(f.index) != nil && f.screenAt(f.index).CapturingInput() {
+		return PaneCard
+	}
+	return PaneList
+}
+
+// focusPaneFromTabs leaves the tab strip and focuses the given pane of the current screen.
+func (f *Frame) focusPaneFromTabs(pane int, reverse bool) tea.Cmd {
+	f.tabFocus = false
+	if s, ok := f.screenAt(f.index).(SetPaneFocusScreen); ok {
+		s.SetPaneFocus(pane)
+	}
+	return f.routeScreen(f.index, RegionFocusMsg{Tabs: false, Reverse: reverse})
+}
+func (f *Frame) routeToModalOrScreen(msg tea.Msg) tea.Cmd {
+	if f.modal != nil {
+		return f.updateModal(msg)
+	}
+	return f.routeScreen(f.index, msg)
+}
+func (f *Frame) updateModal(msg tea.Msg) tea.Cmd {
+	var c tea.Cmd
+	f.modal, c = f.modal.Update(msg)
+	return c
 }
 func forwardAll(screens []Screen, m tea.Msg) tea.Cmd {
 	var cmds []tea.Cmd
@@ -538,11 +610,12 @@ func (f *Frame) View() tea.View {
 }
 func (f *Frame) headerLine(w int) string {
 	var s string
-	if f.headerErr != nil {
+	switch {
+	case f.headerErr != nil:
 		s = "Service status unavailable"
-	} else if !f.header.Running && f.header.Version == "" && f.header.Listen == "" {
+	case !f.header.Running && f.header.Version == "" && f.header.Listen == "":
 		s = "Service stopped"
-	} else {
+	default:
 		s = "netivri  " + padCells(statusWord(f.header.Running), 7) + " " + padCells(sanitizeLine(f.header.Listen), 24) + "  up " + padCells(sanitizeLine(f.header.Uptime.Round(time.Second).String()), 12) + "  " + padCells(sanitizeLine(f.header.Version), 16)
 	}
 	if b, ok := f.screenAt(f.index).(BreadcrumbScreen); ok && b.Breadcrumb() != "" {
@@ -677,10 +750,4 @@ func Start(o Options) error {
 }
 func IO(tabs []Tab, env Env, header HeaderSource) Options {
 	return Options{Tabs: tabs, Env: env, Header: header, Input: os.Stdin, Output: os.Stdout}
-}
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

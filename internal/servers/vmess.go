@@ -33,7 +33,7 @@ func (vmess) Validate(params map[string]string) error {
 	case "auto", "aes-128-gcm", "chacha20-poly1305", "none":
 		return nil
 	default:
-		return fmt.Errorf("invalid cipher")
+		return errors.New("invalid cipher")
 	}
 }
 func vmessCipher(params map[string]string) string {
@@ -51,14 +51,14 @@ func (p vmess) NewSecret(_ string, params map[string]string) (map[string]string,
 	}
 	id, err := uuid.NewRandom()
 	if err != nil {
-		return nil, fmt.Errorf("generate vmess secret failed")
+		return nil, errors.New("generate vmess secret failed")
 	}
 	return map[string]string{"uuid": id.String()}, nil
 }
 func canonicalVMessUUID(value string) (string, error) {
 	id, err := uuid.Parse(value)
 	if err != nil || id.Version() != 4 {
-		return "", fmt.Errorf("invalid vmess secret")
+		return "", errors.New("invalid vmess secret")
 	}
 	return id.String(), nil
 }
@@ -67,10 +67,10 @@ func (vmess) Start(spec Spec, env Env) (io.Closer, error) {
 		return nil, err
 	}
 	if spec.Protocol != "vmess" {
-		return nil, fmt.Errorf("vmess protocol mismatch")
+		return nil, errors.New("vmess protocol mismatch")
 	}
 	if env.Tunnel == nil || env.ListenConfig == nil {
-		return nil, fmt.Errorf("vmess start requires tunnel and listen config")
+		return nil, errors.New("vmess start requires tunnel and listen config")
 	}
 	users := make([]LC.VmessUser, 0, len(spec.Accounts))
 	seen := make(map[string]struct{}, len(spec.Accounts))
@@ -80,7 +80,7 @@ func (vmess) Start(spec Spec, env Env) (io.Closer, error) {
 			return nil, err
 		}
 		if _, ok := seen[id]; ok {
-			return nil, fmt.Errorf("duplicate vmess secret")
+			return nil, errors.New("duplicate vmess secret")
 		}
 		seen[id] = struct{}{}
 		users = append(users, LC.VmessUser{Username: login, UUID: id, AlterID: 0})
@@ -111,10 +111,10 @@ func (vmess) Link(spec Spec, login, host string) (string, error) {
 		return "", err
 	}
 	if spec.Protocol != "vmess" {
-		return "", fmt.Errorf("vmess protocol mismatch")
+		return "", errors.New("vmess protocol mismatch")
 	}
 	if !containsVMessAccount(spec.Accounts, login) || host == "" {
-		return "", fmt.Errorf("configured account and host are required")
+		return "", errors.New("configured account and host are required")
 	}
 	id, err := canonicalVMessUUID(spec.Users[login]["uuid"])
 	if err != nil {
@@ -146,7 +146,7 @@ func (vmess) Link(spec Spec, login, host string) (string, error) {
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("encode vmess link failed")
+		return "", errors.New("encode vmess link failed")
 	}
 	return "vmess://" + base64.StdEncoding.EncodeToString(data), nil
 }

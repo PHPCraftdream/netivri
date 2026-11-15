@@ -64,14 +64,14 @@ func TestNodeHealthDelayUnknownWithoutSamples(t *testing.T) {
 
 func TestNodeHealthFailRateRing(t *testing.T) {
 	var h nodeHealth
-	for i := 0; i < healthRingSize; i++ {
+	for i := range healthRingSize {
 		h.recordOutcome(i%4 != 0) // 24 successes, 8 failures in 32 outcomes
 	}
 	if math.Abs(h.failRate()-0.25) > 1e-9 {
 		t.Fatalf("fail rate = %v, want 0.25", h.failRate())
 	}
 	// The ring only keeps the last 32 outcomes: 32 successes clear the rate.
-	for i := 0; i < healthRingSize; i++ {
+	for range healthRingSize {
 		h.recordOutcome(true)
 	}
 	if h.failRate() != 0 {

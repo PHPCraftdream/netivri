@@ -111,106 +111,119 @@ func (w *Workspace) Update(msg tea.Msg) bool {
 		w.SetSize(w.Width, w.Height)
 	}
 	if k, ok := msg.(tea.KeyPressMsg); ok {
-		if w.List != nil && w.List.Filtering && (k.String() == "esc" || k.String() == "enter") {
-			// While the filter is active, esc clears the filter and enter
-			// keeps it; neither may drill back or drill in.
-			return w.List.Update(msg)
-		}
-		switch k.String() {
-		case "tab":
-			if w.Width < 100 {
-				return false
-			}
-			w.CycleFocus(1)
-			return false
-		case "shift+tab":
-			if w.Width < 100 {
-				return false
-			}
-			w.CycleFocus(-1)
-			return false
-		case "esc":
-			if w.Drilled || w.FocusedPane == PaneCard {
-				w.Drilled = false
-				w.SetFocus(PaneList)
-			}
-			return false
-		case "enter":
-			if w.Width < 100 && !w.Drilled {
-				if w.List != nil && w.List.IsAdd() {
-					return true
-				}
-				if w.List == nil || w.List.Selected >= len(w.List.Rows) {
-					return false
-				}
-				w.Drilled = true
-				w.SetFocus(PaneCard)
-				return false
-			}
-			if w.Width >= 100 && w.FocusedPane == PaneList {
-				if w.List != nil && w.List.IsAdd() {
-					return true
-				}
-				if w.List != nil && w.List.Selected < len(w.List.Rows) {
-					w.SetFocus(PaneCard)
-				}
-				return false
-			}
+		if ret, handled := w.handleKey(k, msg); handled {
+			return ret
 		}
 	}
 	if w.Width >= 100 {
-		if m, ok := msg.(tea.MouseClickMsg); ok {
-			p := tea.Mouse(m)
-			left := w.Width * 35 / 100
-			if p.X == left {
-				return false
-			}
-			if p.X < 0 || p.X >= w.Width || p.Y < 0 || p.Y >= w.Height {
-				return false
-			}
-			if p.X > left {
-				w.SetFocus(PaneCard)
-				p.X -= left + 1
-				return w.Card != nil && w.Card.Update(tea.MouseClickMsg(p))
-			}
-			w.SetFocus(PaneList)
-			return w.List != nil && w.List.Update(tea.MouseClickMsg(p))
-		}
-		if m, ok := msg.(tea.MouseWheelMsg); ok {
-			p := tea.Mouse(m)
-			left := w.Width * 35 / 100
-			if p.X < 0 || p.X >= w.Width || p.Y < 0 || p.Y >= w.Height || p.X == left {
-				return false
-			}
-			if p.X > left {
-				w.SetFocus(PaneCard)
-				p.X -= left + 1
-				return w.Card != nil && w.Card.Update(tea.MouseWheelMsg(p))
-			}
-			w.SetFocus(PaneList)
-			return w.List != nil && w.List.Update(tea.MouseWheelMsg(p))
-		}
-		if w.FocusedPane == PaneCard {
-			return w.Card != nil && w.Card.Update(msg)
-		}
-		return w.List != nil && w.List.Update(msg)
+		return w.updateWide(msg)
 	}
 	if w.Drilled {
 		return w.Card != nil && w.Card.Update(msg)
 	}
-	if m, ok := msg.(tea.MouseClickMsg); ok && w.List != nil {
-		p := tea.Mouse(m)
-		if p.Button == tea.MouseLeft {
-			before := w.List.Selected
-			w.List.Update(msg)
-			if before == w.List.Selected && w.List.Selected < len(w.List.Rows) && !w.List.IsAdd() {
-				w.Drilled = true
-				w.SetFocus(PaneCard)
-			}
-			return false
+	return w.updateNarrowList(msg)
+}
+
+// handleKey returns the result and whether the key was consumed; unconsumed keys fall through to pane routing.
+func (w *Workspace) handleKey(k tea.KeyPressMsg, msg tea.Msg) (bool, bool) {
+	if w.List != nil && w.List.Filtering && (k.String() == "esc" || k.String() == "enter") {
+		// While the filter is active, esc clears the filter and enter
+		// keeps it; neither may drill back or drill in.
+		return w.List.Update(msg), true
+	}
+	switch k.String() {
+	case "tab":
+		w.cycleFocusWide(1)
+		return false, true
+	case "shift+tab":
+		w.cycleFocusWide(-1)
+		return false, true
+	case "esc":
+		if w.Drilled || w.FocusedPane == PaneCard {
+			w.Drilled = false
+			w.SetFocus(PaneList)
 		}
+		return false, true
+	case "enter":
+		return w.handleEnter()
+	}
+	return false, false
+}
+func (w *Workspace) cycleFocusWide(delta int) {
+	if w.Width >= 100 {
+		w.CycleFocus(delta)
+	}
+}
+func (w *Workspace) handleEnter() (bool, bool) {
+	if w.Width < 100 && !w.Drilled {
+		if w.List != nil && w.List.IsAdd() {
+			return true, true
+		}
+		if w.List == nil || w.List.Selected >= len(w.List.Rows) {
+			return false, true
+		}
+		w.Drilled = true
+		w.SetFocus(PaneCard)
+		return false, true
+	}
+	if w.Width >= 100 && w.FocusedPane == PaneList {
+		if w.List != nil && w.List.IsAdd() {
+			return true, true
+		}
+		if w.List != nil && w.List.Selected < len(w.List.Rows) {
+			w.SetFocus(PaneCard)
+		}
+		return false, true
+	}
+	return false, false
+}
+
+// updateWide routes input in the two-pane layout (width >= 100).
+func (w *Workspace) updateWide(msg tea.Msg) bool {
+	switch m := msg.(type) {
+	case tea.MouseClickMsg:
+		return w.updateWideMouse(tea.Mouse(m), func(p tea.Mouse) tea.Msg { return tea.MouseClickMsg(p) })
+	case tea.MouseWheelMsg:
+		return w.updateWideMouse(tea.Mouse(m), func(p tea.Mouse) tea.Msg { return tea.MouseWheelMsg(p) })
+	}
+	if w.FocusedPane == PaneCard {
+		return w.Card != nil && w.Card.Update(msg)
 	}
 	return w.List != nil && w.List.Update(msg)
+}
+
+// updateWideMouse sends a mouse event to the pane under it; the card starts right of the gutter at 35% width.
+func (w *Workspace) updateWideMouse(p tea.Mouse, wrap func(tea.Mouse) tea.Msg) bool {
+	left := w.Width * 35 / 100
+	if p.X < 0 || p.X >= w.Width || p.Y < 0 || p.Y >= w.Height || p.X == left {
+		return false
+	}
+	if p.X > left {
+		w.SetFocus(PaneCard)
+		p.X -= left + 1
+		return w.Card != nil && w.Card.Update(wrap(p))
+	}
+	w.SetFocus(PaneList)
+	return w.List != nil && w.List.Update(wrap(p))
+}
+
+// updateNarrowList routes input in the single-pane layout (width < 100) while the list is shown.
+func (w *Workspace) updateNarrowList(msg tea.Msg) bool {
+	if m, ok := msg.(tea.MouseClickMsg); ok && w.List != nil && tea.Mouse(m).Button == tea.MouseLeft {
+		w.drillOnListClick(msg)
+		return false
+	}
+	return w.List != nil && w.List.Update(msg)
+}
+
+// drillOnListClick drills into the card when a click lands on the already selected row.
+func (w *Workspace) drillOnListClick(msg tea.Msg) {
+	before := w.List.Selected
+	w.List.Update(msg)
+	if before == w.List.Selected && w.List.Selected < len(w.List.Rows) && !w.List.IsAdd() {
+		w.Drilled = true
+		w.SetFocus(PaneCard)
+	}
 }
 func (w *Workspace) View(width, height int) string {
 	w.SetSize(width, height)

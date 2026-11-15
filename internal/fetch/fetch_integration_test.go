@@ -46,7 +46,7 @@ func codeOf(t *testing.T, err error) *cli.Error {
 func TestViaHTTPProxy(t *testing.T) {
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Subscription-Userinfo", "upload=1; download=2; total=3; expire=4")
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	p := newHTTPProxy(t)
 	res, err := Get(context.Background(), srv.URL+"/sub", Options{Proxy: "http://" + p.addr()})
@@ -73,7 +73,7 @@ func TestViaHTTPProxy(t *testing.T) {
 // locally.
 func TestViaSocks5DomainName(t *testing.T) {
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	targetPort := portOf(t, srv.URL)
 	p := newSocksProxy(t, "", "")
@@ -100,7 +100,7 @@ func TestProxyUnreachableNoFallback(t *testing.T) {
 	var targetHits atomic.Int32
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		targetHits.Add(1)
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	cases := []struct{ name, proxy string }{
 		{"socks5", "socks5://" + closed},
@@ -137,7 +137,7 @@ func TestRedirects(t *testing.T) {
 		http.Redirect(w, r, "/r3", http.StatusFound)
 	})
 	mux.HandleFunc("/r3", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	mux.HandleFunc("/scheme", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "ftp://redirect.invalid/x", http.StatusFound)
@@ -199,7 +199,7 @@ func TestRedirectPolicyStripsRefererOnEveryHop(t *testing.T) {
 			observed := make(chan observation, 2)
 			third := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				observed <- observation{r.URL.Path, r.URL.RawQuery, r.Header.Get("Referer")}
-				fmt.Fprint(w, subBody)
+				_, _ = fmt.Fprint(w, subBody)
 			}))
 			t.Cleanup(third.Close)
 			second := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -219,18 +219,18 @@ func TestRedirectPolicyStripsRefererOnEveryHop(t *testing.T) {
 			tr := newTransport(nil, &tls.Config{RootCAs: pool})
 			defer tr.CloseIdleConnections()
 			client := &http.Client{Transport: tr, CheckRedirect: redirectPolicy}
-			req, err := http.NewRequest(http.MethodGet, first.URL+"/source/credential-fixture?token=fixture-value", nil)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, first.URL+"/source/credential-fixture?token=fixture-value", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tc.referer != "" {
 				req.Header.Set("Referer", tc.referer)
 			}
-			resp, err := client.Do(req)
+			resp, err := client.Do(req) //nolint:gosec // G704: target is the loopback httptest server of this test
 			if err != nil {
 				t.Fatal("redirect request failed")
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("final status = %d, want %d", resp.StatusCode, http.StatusOK)
 			}
@@ -262,10 +262,10 @@ func TestBodyTooLarge(t *testing.T) {
 	tooBig := strings.Repeat("x", 100)
 	setCL := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.Itoa(len(tooBig)))
-		fmt.Fprint(w, tooBig)
+		_, _ = fmt.Fprint(w, tooBig)
 	})
 	chunked := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, tooBig)
+		_, _ = fmt.Fprint(w, tooBig)
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -314,7 +314,7 @@ func TestHTTPStatus(t *testing.T) {
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1048576")
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(w, strings.Repeat("x", 4096))
+		_, _ = fmt.Fprint(w, strings.Repeat("x", 4096))
 	})
 	_, err := Get(context.Background(), srv.URL+"/secret-token-abc/sub", Options{})
 	ce := codeOf(t, err)
@@ -333,7 +333,7 @@ func TestHTTPStatus(t *testing.T) {
 // text; a secret token in the target path appears in no error text.
 func TestCredentialsAndSecrets(t *testing.T) {
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	targetPort := portOf(t, srv.URL)
 
@@ -399,7 +399,7 @@ func TestCredentialsAndSecrets(t *testing.T) {
 // CA via the internal tlsCfg hook.
 func TestHTTPSTargetViaConnectProxy(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	}))
 	t.Cleanup(srv.Close)
 	pool := x509.NewCertPool()
@@ -431,7 +431,7 @@ func TestHTTPSTargetViaConnectProxy(t *testing.T) {
 // must fail: TLS verification is always on.
 func TestHTTPSUntrusted(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	}))
 	t.Cleanup(srv.Close)
 	_, err := Get(context.Background(), srv.URL+"/sub", Options{Timeout: 5 * time.Second})
@@ -483,8 +483,13 @@ func stalledTarget(t *testing.T, body bool) *httptest.Server {
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		if body {
 			w.Header().Set("Content-Length", "100")
-			fmt.Fprint(w, "partial")
-			w.(http.Flusher).Flush()
+			_, _ = fmt.Fprint(w, "partial")
+			f, ok := w.(http.Flusher)
+			if !ok {
+				t.Error("response writer is not an http.Flusher")
+				return
+			}
+			f.Flush()
 		}
 		select {
 		case <-release:
@@ -529,7 +534,7 @@ func TestTimeoutNamesThePhase(t *testing.T) {
 // A server that accepts the connection and never answers the TLS hello: the
 // failure names the handshake, not the phase after it.
 func TestTimeoutInTheTLSHandshakeNamesIt(t *testing.T) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,10 +551,10 @@ func TestTimeoutInTheTLSHandshakeNamesIt(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() {
-		ln.Close()
+		_ = ln.Close()
 		<-done
 		for _, c := range conns {
-			c.Close()
+			_ = c.Close()
 		}
 	})
 

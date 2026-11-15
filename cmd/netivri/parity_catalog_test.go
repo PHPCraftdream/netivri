@@ -23,9 +23,6 @@ type capability struct {
 }
 
 func permanent(side, reason string) exemption { return exemption{Side: side, Reason: reason} }
-func gap(side, task, reason string) exemption {
-	return exemption{Side: side, Reason: reason, Gap: task}
-}
 
 // parityGapBudget is the number of exemptions that carry a gap id. It only
 // goes down: closing a gap lowers it in the same change, adding one is a

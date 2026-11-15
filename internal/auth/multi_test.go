@@ -18,7 +18,11 @@ func newMultiForTest(t *testing.T, o MultiOptions) *multiAuthenticator {
 	if err != nil {
 		t.Fatalf("NewMulti: %v", err)
 	}
-	return a.(*multiAuthenticator)
+	m, ok := a.(*multiAuthenticator)
+	if !ok {
+		t.Fatalf("NewMulti returned %T, want *multiAuthenticator", a)
+	}
+	return m
 }
 
 func requireConfigInvalid(t *testing.T, o MultiOptions, secrets ...string) {
@@ -129,7 +133,7 @@ func TestNewMultiVerificationAndUnknownNoArgon(t *testing.T) {
 	unknown := newMultiForTest(t, MultiOptions{
 		Accounts: []AccountSpec{{Login: "alice", Password: h}},
 	})
-	for i := 0; i < cap(unknown.slots); i++ {
+	for range cap(unknown.slots) {
 		unknown.slots <- struct{}{}
 	}
 	released := false
@@ -138,7 +142,7 @@ func TestNewMultiVerificationAndUnknownNoArgon(t *testing.T) {
 			return
 		}
 		released = true
-		for i := 0; i < cap(unknown.slots); i++ {
+		for range cap(unknown.slots) {
 			<-unknown.slots
 		}
 	}
@@ -209,7 +213,7 @@ func TestNewMultiSamePasswordInitRace(t *testing.T) {
 	var accepted int32
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < n; i++ {
+	for range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -383,7 +387,10 @@ func TestNewMultiLegacyInitSharesSemaphore(t *testing.T) {
 		Accounts:       []AccountSpec{{Login: "alice", Password: InitPlaceholder}},
 		PersistAccount: func(string, string) error { return nil },
 	})
-	legacy := m.legacy.(*authenticator)
+	legacy, ok := m.legacy.(*authenticator)
+	if !ok {
+		t.Fatalf("legacy = %T, want *authenticator", m.legacy)
+	}
 	if legacy.sharedSlots != m.slots {
 		t.Fatal("legacy authenticator does not share Multi semaphore")
 	}
@@ -394,7 +401,11 @@ func TestNewMultiLegacyInitSharesSemaphore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if standalone.(*authenticator).sharedSlots != nil {
+	standaloneAuth, ok := standalone.(*authenticator)
+	if !ok {
+		t.Fatalf("standalone = %T, want *authenticator", standalone)
+	}
+	if standaloneAuth.sharedSlots != nil {
 		t.Fatal("standalone New unexpectedly has a Multi semaphore")
 	}
 	if !m.Verify("legacy", "pw") {

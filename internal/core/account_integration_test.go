@@ -126,7 +126,7 @@ func TestAccountRouteIsolation(t *testing.T) {
 func dialAccountSOCKS5(t *testing.T, proxyAddress, domain, backend, login, password string) {
 	t.Helper()
 	connection := dialProxy(t, proxyAddress)
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	_ = connection.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := connection.Write([]byte{5, 1, 2}); err != nil {
 		t.Fatalf("SOCKS greeting: %v", err)
@@ -152,9 +152,9 @@ func writeSOCKSDomainConnect(t *testing.T, connection net.Conn, domain, backend 
 	if err != nil {
 		t.Fatalf("parse backend port: %v", err)
 	}
-	request := []byte{5, 1, 0, 3, byte(len(domain))}
+	request := []byte{5, 1, 0, 3, toByte(t, len(domain))}
 	request = append(request, domain...)
-	request = binary.BigEndian.AppendUint16(request, uint16(backendPort))
+	request = binary.BigEndian.AppendUint16(request, toUint16(t, backendPort))
 	if _, err := connection.Write(request); err != nil {
 		t.Fatalf("SOCKS CONNECT request: %v", err)
 	}
@@ -178,7 +178,7 @@ func writeSOCKSDomainConnect(t *testing.T, connection net.Conn, domain, backend 
 func dialAccountHTTPConnect(t *testing.T, proxyAddress, domain, backend, login, password string) {
 	t.Helper()
 	connection := dialProxy(t, proxyAddress)
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	_ = connection.SetDeadline(time.Now().Add(testTimeout))
 	credential := base64.StdEncoding.EncodeToString([]byte(login + ":" + password))
 	target := net.JoinHostPort(domain, mustPort(t, backend))
@@ -240,9 +240,9 @@ func assertAccountUpstreams(t *testing.T, selected *fakeUpstream, others []*fake
 func TestAccountRouteAllDeadNodesFailClosed(t *testing.T) {
 	backend, backendConnections := countEchoServer(t)
 	// The dead addresses are reserved last so no live listener can hold them.
-	var deadAddresses []string
-	for i := 0; i < 2; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+	deadAddresses := make([]string, 0, 2)
+	for range 2 {
+		listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("reserve dead upstream address: %v", err)
 		}
@@ -270,7 +270,7 @@ func TestAccountRouteAllDeadNodesFailClosed(t *testing.T) {
 	// "localhost" with the backend's port is directly reachable: a fallback to
 	// DIRECT would reach the backend, which is checked below.
 	domain := "localhost"
-	for attempt := 0; attempt < 4; attempt++ {
+	for attempt := range 4 {
 		err := tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword)
 		if err == nil {
 			t.Fatalf("attempt %d succeeded although every route node is dead", attempt)
@@ -295,7 +295,7 @@ func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
 	backend, _ := countEchoServer(t)
 	// The dead address is reserved after every live listener exists, so none
 	// of them can hold it.
-	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	deadListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve dead upstream address: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
 
 	// The binding now points at the live node: every further connection
 	// succeeds through it.
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		if err := tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword); err != nil {
 			t.Fatalf("attempt %d after failover failed: %v", attempt, err)
 		}
@@ -349,22 +349,6 @@ func TestAccountRouteDeadNodeFailsOverToLive(t *testing.T) {
 	if got, want := len(live.recorded()), succeeded+3; got != want {
 		t.Fatalf("live upstream saw %d connections, want %d", got, want)
 	}
-}
-
-func socks5ConnectRequestBytes(target string) []byte {
-	host, portText, err := net.SplitHostPort(target)
-	if err != nil {
-		panic(err)
-	}
-	ip := net.ParseIP(host).To4()
-	if ip == nil {
-		panic("expected IPv4 target")
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil {
-		panic(err)
-	}
-	return []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], byte(port >> 8), byte(port)}
 }
 
 func deadNodeMap(address string) map[string]any {

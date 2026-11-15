@@ -126,15 +126,14 @@ func accountSetExit(home string, cfg *config.Config, rest []string, save func() 
 		return err
 	}
 	multi := all || strings.Contains(spec, ",")
-	if value == "direct" {
-		if multi {
-			cli.Success(stdout, map[string]any{"accounts": out, "hint": directExitHint})
-		} else {
-			cli.Success(stdout, map[string]any{"account": out[0], "hint": directExitHint})
-		}
-	} else if multi {
+	switch {
+	case value == "direct" && multi:
+		cli.Success(stdout, map[string]any{"accounts": out, "hint": directExitHint})
+	case value == "direct":
+		cli.Success(stdout, map[string]any{"account": out[0], "hint": directExitHint})
+	case multi:
 		cli.Success(stdout, map[string]any{"accounts": out})
-	} else {
+	default:
 		cli.Success(stdout, map[string]any{"account": out[0]})
 	}
 	return nil

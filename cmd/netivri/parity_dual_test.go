@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
 )
@@ -80,7 +81,7 @@ const dualCmdWait = 40 * time.Millisecond
 // commands the screen returned until none produces a message.
 func (d *dualShell) drain(c tea.Cmd) {
 	queue := []tea.Cmd{c}
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		if len(d.pending) > 0 {
 			m := d.pending[0]
 			d.pending = d.pending[1:]
@@ -205,7 +206,7 @@ func dualState(t *testing.T, home string, volatile ...dualVolatile) map[string]s
 	t.Helper()
 	out := map[string]string{}
 	add := func(path string) {
-		b, err := os.ReadFile(path)
+		b, err := os.ReadFile(filepath.Clean(path))
 		if err != nil {
 			t.Fatal(err)
 		}

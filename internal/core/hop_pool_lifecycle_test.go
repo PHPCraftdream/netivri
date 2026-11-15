@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	pool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 	C "github.com/metacubex/mihomo/constant"
+
+	pool "github.com/PHPCraftdream/netivri/pkg/hopkit/pool"
 )
 
 func TestHopLifecycleTransitionsAndSafeObservability(t *testing.T) {
@@ -22,7 +23,7 @@ func TestHopLifecycleTransitionsAndSafeObservability(t *testing.T) {
 		logical: logical, role: preHopPool, route: logical.route, spec: spec, pool: p,
 		members: map[string]member{spec.keys[0]: &fakeMember{name: "entry"}},
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		m.mutate(p, preHopPool, logical.route, spec.keys[0], func() { p.RecordHard(spec.keys[0]) })
 	}
 	if len(events) != 1 || events[0].Kind != HopEventQuarantined || events[0].Trips != 1 {
@@ -190,7 +191,10 @@ func TestHopLifecycleInstallForgetsOnlyGloballyRemovedPostHop(t *testing.T) {
 		}
 		proxies := make(map[string]C.Proxy, len(mappings))
 		for _, mapping := range mappings {
-			name := mapping["name"].(string)
+			name, ok := mapping["name"].(string)
+			if !ok {
+				t.Fatalf("proxy name is %T, want string", mapping["name"])
+			}
 			proxies[name] = testWarmProxy{name: name, typ: C.Socks5}
 		}
 		health := newHealthTable()
@@ -405,10 +409,7 @@ func TestHopLifecycleBaseProbeNamesIncludePreAndPostPools(t *testing.T) {
 func TestHopLifecycleSingletonIsNotAdapted(t *testing.T) {
 	m := newHopPoolLifecycle(nil)
 	plan := routePlan{key: "r", gen: 0, index: 0, names: []string{"netivri-r0-0"}, prePools: []*hopPoolSpec{newHopPoolSpec(preHopPool, []string{"socks5://one.invalid:1080"}, 0)}}
-	uses, err := m.prepareUses(Options{RouteNodes: map[string][]map[string]any{"r": {{}}}}, []routePlan{plan}, map[string]C.Proxy{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	uses := m.prepareUses(Options{RouteNodes: map[string][]map[string]any{"r": {{}}}}, []routePlan{plan}, map[string]C.Proxy{}, nil)
 	if len(uses) != 0 {
 		t.Fatal("singleton chain was replaced by a lifecycle adapter")
 	}

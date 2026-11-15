@@ -80,8 +80,8 @@ func (e *Error) NextUnreachable() bool {
 	return e != nil && e.Stage == StageTarget
 }
 
-func proxyError(stage Stage, code int, err error) error {
-	return &Error{Stage: stage, Code: code, Err: err}
+func proxyError(stage Stage, err error) error {
+	return &Error{Stage: stage, Err: err}
 }
 
 func targetSentError(stage Stage, code int, err error) error {

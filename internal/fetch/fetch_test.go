@@ -208,7 +208,7 @@ func TestTransportIgnoresEnvironment(t *testing.T) {
 		t.Fatal("newTransport(proxyURL) must install http.ProxyURL(proxyURL)")
 	}
 	for _, raw := range []string{"http://example.com/", "https://example.com/"} {
-		req, err := http.NewRequest(http.MethodGet, raw, nil)
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, raw, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestRedirectPolicy(t *testing.T) {
 		return u
 	}
 	build := func(chain ...*url.URL) ([]*http.Request, *http.Request) {
-		var via []*http.Request
+		via := make([]*http.Request, 0, len(chain))
 		for _, u := range chain {
 			via = append(via, &http.Request{URL: u})
 		}
@@ -258,7 +258,7 @@ func TestRedirectPolicy(t *testing.T) {
 		t.Errorf("plain http redirect: %v", err)
 	}
 
-	via, next = build(mk("https", "a.example"))
+	via, _ = build(mk("https", "a.example"))
 	if err := redirectPolicy(&http.Request{URL: mk("http", "b.example")}, via); err == nil {
 		t.Error("https->http downgrade must be refused")
 	}
@@ -268,8 +268,8 @@ func TestRedirectPolicy(t *testing.T) {
 		t.Error("non-http redirect scheme must be refused")
 	}
 
-	chain := []*http.Request{}
-	for i := 0; i < MaxRedirects; i++ {
+	chain := make([]*http.Request, 0, MaxRedirects)
+	for range MaxRedirects {
 		chain = append(chain, &http.Request{URL: mk("http", "a.example")})
 	}
 	if err := redirectPolicy(next, chain); err == nil {
@@ -417,10 +417,10 @@ func TestBothFailedKeepsTheDirectCodeAndNamesBoth(t *testing.T) {
 	}
 	// An error that is not a *cli.Error stays as it was.
 	plain := errors.New("plain")
-	if got := bothFailed(plain, reserve); got != plain {
+	if got := bothFailed(plain, reserve); !errors.Is(got, plain) {
 		t.Errorf("plain direct error replaced: %v", got)
 	}
-	if got := bothFailed(direct, plain); got != error(direct) {
+	if got := bothFailed(direct, plain); !errors.Is(got, error(direct)) {
 		t.Errorf("direct error replaced by a plain reserve error: %v", got)
 	}
 }

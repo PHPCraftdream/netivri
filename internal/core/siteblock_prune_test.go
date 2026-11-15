@@ -9,7 +9,7 @@ import (
 func TestSiteBlocksRateLimitsFailedPrunesAndReclaimsExpiredRecords(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < siteBlockCap; i++ {
+	for i := range siteBlockCap {
 		b.silentEnd("a", "site"+strconv.Itoa(i), 0, 37*time.Second, false, now().Add(time.Second))
 	}
 	if got := b.n.Load(); got != siteBlockCap {
@@ -20,7 +20,7 @@ func TestSiteBlocksRateLimitsFailedPrunesAndReclaimsExpiredRecords(t *testing.T)
 	if b.pruneScans != 1 {
 		t.Fatalf("prune scans = %d after the first full-table miss, want 1", b.pruneScans)
 	}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		b.silentEnd("a", "miss"+strconv.Itoa(i), 0, 37*time.Second, false, now().Add(time.Second))
 	}
 	if b.pruneScans != 1 {

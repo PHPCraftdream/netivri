@@ -35,7 +35,7 @@ func TestTierFirstTierTakesAllSites(t *testing.T) {
 	t.Cleanup(func() { _ = instance.Close() })
 
 	const sites = 12
-	for i := 0; i < sites; i++ {
+	for i := range sites {
 		domain := fmt.Sprintf("tier-%d.invalid", i)
 		first.mapDomain(domain, backend)
 		second.mapDomain(domain, backend)
@@ -57,7 +57,7 @@ func TestTierDeadFirstTierFallsBackToSecond(t *testing.T) {
 	second, secondAddress := startFakeUpstream(t)
 	backend, backendConnections := countEchoServer(t)
 	// The dead address is reserved after every live listener exists.
-	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	deadListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve dead upstream address: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestTierDeadFirstTierFallsBackToSecond(t *testing.T) {
 	// Dials of different sites to the dead node fail until it is marked down
 	// (3 failures), then the failing dial is retried once on the second tier.
 	succeeded := 0
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		domain := fmt.Sprintf("tier-down-%d.invalid", i)
 		second.mapDomain(domain, backend)
 		if tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword) == nil {
@@ -95,7 +95,7 @@ func TestTierDeadFirstTierFallsBackToSecond(t *testing.T) {
 	}
 	// Once the first tier is known to be down, new sites go straight to the
 	// second tier and succeed.
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		domain := fmt.Sprintf("tier-after-%d.invalid", i)
 		second.mapDomain(domain, backend)
 		if err := tryDialAccountSOCKS5(t, instance.Addr(), domain, backend, "alice", alicePassword); err != nil {

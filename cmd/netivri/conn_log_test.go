@@ -32,29 +32,29 @@ func newConnLogFixture() *connLogFixture {
 }
 
 func (f *connLogFixture) dialFail(login, label, why string, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		f.log.event(core.ConnEvent{Kind: core.ConnDialFailed, Login: login, Label: label, Why: why})
 	}
 }
 
 func (f *connLogFixture) ended(login, label, why string, down int64, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Why: why, Down: down, Lifetime: time.Second})
 	}
 }
 
 // endedUp is ended with the bytes the client sent to the node.
-func (f *connLogFixture) endedUp(login, label string, up, down int64, n int) {
-	for i := 0; i < n; i++ {
-		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: up, Down: down, Lifetime: time.Second})
+func (f *connLogFixture) endedUp(login string, up, down int64, n int) {
+	for range n {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: "main/us", Up: up, Down: down, Lifetime: time.Second})
 	}
 }
 
 func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
 	f := newConnLogFixture()
-	f.endedUp("alice", "main/us", 0, 0, 6)     // the client left before sending a byte
-	f.endedUp("alice", "main/us", 300, 0, 4)   // the client asked, nothing came back
-	f.endedUp("alice", "main/us", 300, 900, 5) // a normal one
+	f.endedUp("alice", 0, 0, 6)     // the client left before sending a byte
+	f.endedUp("alice", 300, 0, 4)   // the client asked, nothing came back
+	f.endedUp("alice", 300, 900, 5) // a normal one
 	f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: "alice", Label: "main/us", Why: "timeout", Up: 300})
 	f.log.flush()
 	if len(f.lines) != 1 || !strings.Contains(f.lines[0], "16 connections ended, 1 broken (timeout x1), 6 closed before any data, 4 without an answer") {
@@ -71,7 +71,7 @@ func TestConnLogTellsAClientThatLeftFromANodeThatNeverAnswered(t *testing.T) {
 // endedSilent ends connections that sent 300 bytes to a site on a port and got
 // nothing back after the given wait.
 func (f *connLogFixture) endedSilent(login, label string, port uint16, site uint64, wait time.Duration, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 300, Port: port, Site: site, Lifetime: wait})
 	}
 }
@@ -84,7 +84,7 @@ func TestConnLogSaysWhereTheSilentConnectionsWent(t *testing.T) {
 	f.endedSilent("alice", "main/us", 5222, 4, time.Second, 1)
 	f.endedSilent("alice", "main/us", 8080, 5, time.Second, 1)
 	f.endedSilent("alice", "main/us", 9, 6, time.Second, 1)
-	f.endedUp("alice", "main/us", 300, 900, 4) // answered: not part of the detail
+	f.endedUp("alice", 300, 900, 4) // answered: not part of the detail
 	f.log.heartbeat()
 	want := "INFO account alice: last hour: 12 connections ended, 0 broken, 0 closed before any data, " +
 		"8 without an answer (6 sites; ports 443 x4, 9 x1, 80 x1, other x2; waited 2.0s median, 15s longest; via main/us (United States, country US) x8), " +
@@ -176,7 +176,7 @@ func TestConnLogBrokenConnections(t *testing.T) {
 
 func TestConnLogMovedSites(t *testing.T) {
 	f := newConnLogFixture()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: "main/us", Label: "own/nl", Why: core.MoveNodeDown})
 	}
 	f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: "own/nl", Label: "main/us", Why: core.MoveBetterTier})
@@ -207,7 +207,7 @@ func TestConnLogFailedLoginsNameOnlyConfiguredAccounts(t *testing.T) {
 	if !auth.Verify("alice", "secret") {
 		t.Fatal("a right login was refused")
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		auth.Verify("alice", "guess")
 	}
 	auth.Verify("hunter2-typed-as-a-login", "x")
@@ -452,7 +452,7 @@ func TestHumanBytes(t *testing.T) {
 
 // answered ends connections that got an answer after the given time.
 func (f *connLogFixture) answered(login, label string, after time.Duration, n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 100, Down: 900, Answer: after, Lifetime: time.Second})
 	}
 }
@@ -480,7 +480,7 @@ func TestAnswerTimesMedianAndNinetyFifth(t *testing.T) {
 	if a.p95() != 95*time.Millisecond {
 		t.Errorf("hundred: 95th %v, want 95ms", a.p95())
 	}
-	for i := 0; i < 2*answerCap; i++ {
+	for range 2 * answerCap {
 		a.add(time.Millisecond)
 	}
 	if len(a) != answerCap {
@@ -514,7 +514,7 @@ func TestMinuteLineSaysWhenAnswersAreSlow(t *testing.T) {
 func TestMovedSitesSummaryNamesASingleNode(t *testing.T) {
 	f := newConnLogFixture()
 	move := func(from string, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: from, Label: "own/nl", Why: core.MoveNodeDown})
 		}
 	}
@@ -557,8 +557,8 @@ func TestConnLogNamesTheNodesOfTheSilentConnections(t *testing.T) {
 
 	// Connections that answered, or ended empty, are not counted by node.
 	f.lines = nil
-	f.endedUp("carol", "main/us", 300, 900, 4)
-	f.endedUp("carol", "main/us", 0, 0, 4)
+	f.endedUp("carol", 300, 900, 4)
+	f.endedUp("carol", 0, 0, 4)
 	f.log.heartbeat()
 	if len(f.lines) != 1 || strings.Contains(f.lines[0], "via") {
 		t.Errorf("lines = %q", f.lines)
@@ -570,15 +570,15 @@ func (f *connLogFixture) debugged() {
 	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
 }
 
-func (f *connLogFixture) blocked(login, label, target string, block time.Duration) {
-	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: login, Label: label, Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block})
+func (f *connLogFixture) blocked(label, target string, block time.Duration) {
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: "alice", Label: label, Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block})
 }
 
 func TestConnLogNamesABlockedSiteOnlyInDebug(t *testing.T) {
 	f := newConnLogFixture()
 	f.debugged()
-	f.blocked("alice", "main/us", "149.154.167.51:443", 30*time.Minute)
-	f.blocked("alice", "main/us", "91.108.56.130:80", time.Hour)
+	f.blocked("main/us", "149.154.167.51:443", 30*time.Minute)
+	f.blocked("main/us", "91.108.56.130:80", time.Hour)
 	f.log.flush()
 	var info, debug []string
 	for _, line := range f.lines {
@@ -606,14 +606,14 @@ func TestConnLogNamesABlockedSiteOnlyInDebug(t *testing.T) {
 	}
 }
 
-func (f *connLogFixture) blockedByRatio(login, label, target string, block time.Duration, silent, answered int) {
-	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: login, Label: label, Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block, Silent: silent, Answered: answered})
+func (f *connLogFixture) blockedByRatio(target string, block time.Duration, silent, answered int) {
+	f.log.event(core.ConnEvent{Kind: core.ConnSiteBlocked, Login: "alice", Label: "own/nl", Why: core.MoveNoAnswer, Port: 443, Target: target, Block: block, Silent: silent, Answered: answered})
 }
 
 func TestConnLogRatioBlockSaysMostWereSilent(t *testing.T) {
 	f := newConnLogFixture()
 	f.debugged()
-	f.blockedByRatio("alice", "own/nl", "149.154.167.223:443", 30*time.Minute, 22, 2)
+	f.blockedByRatio("149.154.167.223:443", 30*time.Minute, 22, 2)
 	f.log.flush()
 	wantInfo := "INFO account alice via own/nl (country NL): 1 site got mostly no answer through this node (22 of 24 connections sent data and heard nothing back, the rest were answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
 	wantDebug := "DEBUG account alice: no answer from 149.154.167.223:443 via own/nl (country NL) in 22 of 24 connections, the node is blocked for it for 30m"
@@ -624,7 +624,7 @@ func TestConnLogRatioBlockSaysMostWereSilent(t *testing.T) {
 
 func TestConnLogRatioBlockWithNoAnswerInTheWindowDoesNotSayTheRestWereAnswered(t *testing.T) {
 	f := newConnLogFixture()
-	f.blockedByRatio("alice", "own/nl", "149.154.167.41:443", 30*time.Minute, 20, 0)
+	f.blockedByRatio("149.154.167.41:443", 30*time.Minute, 20, 0)
 	f.log.flush()
 	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (20 connections sent data and heard nothing back within 10 minutes, though a connection of the site was still being answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
 	if len(f.lines) != 1 || f.lines[0] != want {
@@ -637,9 +637,9 @@ func TestConnLogRatioBlockWithNoAnswerInTheWindowDoesNotSayTheRestWereAnswered(t
 
 func TestConnLogPlainAndRatioBlocksOfOneNodeAreTwoLines(t *testing.T) {
 	f := newConnLogFixture()
-	f.blocked("alice", "own/nl", "10.0.0.1:443", time.Hour)
-	f.blockedByRatio("alice", "own/nl", "10.0.0.2:443", 30*time.Minute, 20, 1)
-	f.blockedByRatio("alice", "own/nl", "10.0.0.3:443", 2*time.Hour, 30, 2)
+	f.blocked("own/nl", "10.0.0.1:443", time.Hour)
+	f.blockedByRatio("10.0.0.2:443", 30*time.Minute, 20, 1)
+	f.blockedByRatio("10.0.0.3:443", 2*time.Hour, 30, 2)
 	f.log.flush()
 	want := []string{
 		"INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for it, up to 1h00m, and its connections take the next node of the route",
@@ -671,9 +671,9 @@ func TestConnLogPeriodLineOfANodeIsWarnWhenMostConnectionsFailed(t *testing.T) {
 			if c.quiet {
 				f.log.quiet = func() bool { return true }
 			}
-			f.silentTo("alice", "main/us", "10.0.0.1:443", c.silent)
+			f.silentTo("10.0.0.1:443", c.silent)
 			f.ended("alice", "main/us", "connection reset", 0, c.broken)
-			f.endedUp("alice", "main/us", 300, 900, c.answered)
+			f.endedUp("alice", 300, 900, c.answered)
 			f.log.flush()
 			if c.want == "" {
 				if len(f.lines) != 0 {
@@ -717,9 +717,9 @@ func TestConnLogHourlySummaryIsWarnWhenMostConnectionsFailed(t *testing.T) {
 			if c.quiet {
 				f.log.quiet = func() bool { return true }
 			}
-			f.silentTo("alice", "main/us", "10.0.0.1:443", c.silent)
+			f.silentTo("10.0.0.1:443", c.silent)
 			f.ended("alice", "main/us", "timeout", 0, c.broken)
-			f.endedUp("alice", "main/us", 300, 900, c.answered)
+			f.endedUp("alice", 300, 900, c.answered)
 			f.log.heartbeat()
 			if len(f.lines) != 1 || !strings.HasPrefix(f.lines[0], c.want+" account alice: last hour: ") {
 				t.Fatalf("lines = %q, want one %s line", f.lines, c.want)
@@ -730,7 +730,7 @@ func TestConnLogHourlySummaryIsWarnWhenMostConnectionsFailed(t *testing.T) {
 
 func TestConnLogOneBlockedSiteSaysIt(t *testing.T) {
 	f := newConnLogFixture()
-	f.blocked("alice", "own/nl", "", 30*time.Minute)
+	f.blocked("own/nl", "", 30*time.Minute)
 	f.log.flush()
 	want := "INFO account alice via own/nl (country NL): 1 site got no answer through this node (connections that sent data and heard nothing back, or dials that timed out; none answered); the node is blocked for it, up to 30m, and its connections take the next node of the route"
 	if len(f.lines) != 1 || f.lines[0] != want {
@@ -740,8 +740,8 @@ func TestConnLogOneBlockedSiteSaysIt(t *testing.T) {
 
 func TestConnLogBlockedEventsAreBoundedAndMakeNoHourlyLine(t *testing.T) {
 	f := newConnLogFixture()
-	for i := 0; i < 3*blockedCap; i++ {
-		f.blocked("alice", "main/us", fmt.Sprintf("10.0.%d.%d:443", i/250, i%250), time.Hour)
+	for i := range 3 * blockedCap {
+		f.blocked("main/us", fmt.Sprintf("10.0.%d.%d:443", i/250, i%250), time.Hour)
 	}
 	f.log.flush()
 	if len(f.lines) != 1 || !strings.Contains(f.lines[0], fmt.Sprintf("%d sites got no answer", blockedCap)) {
@@ -764,18 +764,18 @@ func TestConnLogMovedForNoAnswerIsInfoNotWarn(t *testing.T) {
 	}
 }
 
-func (f *connLogFixture) silentTo(login, label, target string, n int) {
-	for i := 0; i < n; i++ {
-		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: login, Label: label, Up: 300, Port: 443, Site: 1, Lifetime: 37 * time.Second, Target: target})
+func (f *connLogFixture) silentTo(target string, n int) {
+	for range n {
+		f.log.event(core.ConnEvent{Kind: core.ConnStreamEnded, Login: "alice", Label: "main/us", Up: 300, Port: 443, Site: 1, Lifetime: 37 * time.Second, Target: target})
 	}
 }
 
 func TestConnLogHourlyDebugLineNamesTheSilentDestinations(t *testing.T) {
 	f := newConnLogFixture()
 	f.debugged()
-	f.silentTo("alice", "main/us", "149.154.167.51:443", 40)
-	f.silentTo("alice", "main/us", "149.154.175.53:443", 7)
-	f.silentTo("alice", "main/us", "a.example:80", 7)
+	f.silentTo("149.154.167.51:443", 40)
+	f.silentTo("149.154.175.53:443", 7)
+	f.silentTo("a.example:80", 7)
 	f.log.heartbeat()
 	if len(f.lines) != 2 || !strings.HasPrefix(f.lines[0], "WARN account alice: last hour: 54 connections ended") {
 		t.Fatalf("lines = %q", f.lines)
@@ -792,8 +792,8 @@ func TestConnLogHourlyDebugLineNamesTheSilentDestinations(t *testing.T) {
 func TestConnLogSilentDestinationsListIsShortAndBounded(t *testing.T) {
 	f := newConnLogFixture()
 	f.debugged()
-	for i := 0; i < silentTargetShown+3; i++ {
-		f.silentTo("alice", "main/us", fmt.Sprintf("h%d.example:443", i), 10-i)
+	for i := range silentTargetShown + 3 {
+		f.silentTo(fmt.Sprintf("h%d.example:443", i), 10-i)
 	}
 	f.log.heartbeat()
 	if len(f.lines) != 2 || !strings.HasSuffix(f.lines[1], "x6, and 3 more") || strings.Count(f.lines[1], ".example:443") != silentTargetShown {
@@ -801,7 +801,7 @@ func TestConnLogSilentDestinationsListIsShortAndBounded(t *testing.T) {
 	}
 
 	tally := &hourTally{}
-	for i := 0; i < silentTargetCap+50; i++ {
+	for i := range silentTargetCap + 50 {
 		tally.noteSilent(core.ConnEvent{Up: 1, Target: fmt.Sprintf("h%d:1", i)})
 	}
 	tally.noteSilent(core.ConnEvent{Up: 1, Target: "h0:1"}) // a known one still counts
@@ -817,7 +817,7 @@ func TestConnLogWritesOneWarnPerNodeAndPanic(t *testing.T) {
 	f := newConnLogFixture()
 	f.log.quiet = func() bool { return true } // a panic is never demoted after a wake-up
 	why := "buffer overflow: capacity 32768,start 0, need 2 at buf.(*Buffer).ExtendHeader buffer.go:114 <- vision.ApplyPadding padding.go:35"
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "alice", Label: "main/us", Why: why})
 	}
 	f.log.event(core.ConnEvent{Kind: core.ConnPanicked, Login: "bob", Label: "main/us", Why: why})

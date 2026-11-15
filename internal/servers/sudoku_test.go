@@ -25,7 +25,7 @@ func TestSudokuListenGateAccept(t *testing.T) {
 	}()
 	select {
 	case err := <-started:
-		if err != transientErr {
+		if !errors.Is(err, transientErr) {
 			t.Fatalf("transient error = %v, want original error", err)
 		}
 	case <-time.After(time.Second):
@@ -87,6 +87,14 @@ func (a sudokuTestAddr) String() string  { return string(a) }
 
 func TestSudokuValidationSecretsAndMihomoImport(t *testing.T) {
 	p := sudokuServer{}
+	sudokuCheckValidation(t, p)
+	first := sudokuCheckSecrets(t, p)
+	spec := sudokuCheckMihomoImport(t, p, first)
+	sudokuCheckRedaction(t, p, spec, first)
+}
+
+func sudokuCheckValidation(t *testing.T, p sudokuServer) {
+	t.Helper()
 	valid := []map[string]string{
 		nil, {}, {"table-type": "prefer_ascii"}, {"table-type": "prefer_entropy"},
 		{"table-type": "up_ascii_down_entropy"}, {"table-type": "up_entropy_down_ascii"},
@@ -109,6 +117,10 @@ func TestSudokuValidationSecretsAndMihomoImport(t *testing.T) {
 			t.Errorf("invalid params accepted: %v", params)
 		}
 	}
+}
+
+func sudokuCheckSecrets(t *testing.T, p sudokuServer) map[string]string {
+	t.Helper()
 	first, err := p.NewSecret("alice", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +145,11 @@ func TestSudokuValidationSecretsAndMihomoImport(t *testing.T) {
 	if material, err := p.NewMaterial(nil); err != nil || len(material) != 0 {
 		t.Fatalf("material=%v err=%v", material, err)
 	}
+	return first
+}
+
+func sudokuCheckMihomoImport(t *testing.T, p sudokuServer, first map[string]string) Spec {
+	t.Helper()
 	params := map[string]string{"table-type": "prefer_ascii", "padding-min": "10", "padding-max": "30", "enable-pure-downlink": "false", "disable-http-mask": "true", "http-mask-mode": "stream"}
 	spec := Spec{Name: "edge", Protocol: "sudoku", Bind: "127.0.0.1", Port: 8388, Accounts: []string{"alice"}, Params: params, Users: UserSecrets{"alice": first}}
 	if err := spec.Validate(); err != nil {
@@ -166,10 +183,15 @@ func TestSudokuValidationSecretsAndMihomoImport(t *testing.T) {
 	if err != nil || parsed == nil {
 		t.Fatal("Mihomo adapter rejected the emitted proxy options")
 	}
-	parsed.Close()
+	_ = parsed.Close()
 	if _, err := p.Link(spec, "alice", "example.org"); err == nil || !strings.Contains(err.Error(), "--format mihomo") {
 		t.Fatal("URI error did not direct to Mihomo format")
 	}
+	return spec
+}
+
+func sudokuCheckRedaction(t *testing.T, p sudokuServer, spec Spec, first map[string]string) {
+	t.Helper()
 	for _, format := range []string{"%v", "%+v", "%#v"} {
 		formatted := fmt.Sprintf(format, spec)
 		if strings.Contains(formatted, first["key"]) {

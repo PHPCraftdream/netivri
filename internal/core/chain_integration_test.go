@@ -58,13 +58,13 @@ func TestSOCKS5PreReconfigureKeepsOpenConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer instance.Close()
+	defer func() { _ = instance.Close() }()
 	address := instance.Addr()
 	held, err := openAccountSOCKS5(t, address, "127.0.0.1", backend, "alice", alicePassword)
 	if err != nil {
 		t.Fatalf("open held connection: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	// The SOCKS5 success reply comes before the upstream dial: an echo proves
 	// the held connection went through the old chain before the change.
 	if err := accountEcho(held); err != nil {

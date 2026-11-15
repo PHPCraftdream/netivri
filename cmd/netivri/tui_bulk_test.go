@@ -14,7 +14,7 @@ import (
 
 func bulkTestScreen(t *testing.T, h string) *accountsScreen {
 	t.Helper()
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	s.syncRows("")
 	s.workspace.SetFocus(tui.PaneList)
@@ -248,7 +248,7 @@ func TestAccountsBulkNothingPartialOnError(t *testing.T) {
 	if !accountsEqual(before, after) {
 		t.Fatal("a refused exit bulk changed the config")
 	}
-	_, _, err := accountBulkApply(h, "country", []string{"alice", "ghost"}, "DE")
+	_, err := accountBulkApply(h, "country", []string{"alice", "ghost"}, "DE")
 	if err == nil || !strings.Contains(accountsErrorText(err), "account not found: ghost") {
 		t.Fatalf("vanished target error = %v", err)
 	}
@@ -270,10 +270,10 @@ func TestAccountsBulkNothingPartialOnError(t *testing.T) {
 func TestAccountsBulkConfirmFlow(t *testing.T) {
 	h := switchHome(t)
 	var captured tui.Modal
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground, OpenModal: func(m tui.Modal) tea.Cmd {
 		captured = m
 		return nil
-	}}).(*accountsScreen)
+	}}))
 	s.rows, _ = AccountList(h)
 	s.syncRows("")
 	s.workspace.SetFocus(tui.PaneList)
@@ -333,7 +333,7 @@ func TestAccountsBulkConfirmFlow(t *testing.T) {
 // drill behavior below 100 columns.
 func TestAccountsBulkFrameContracts(t *testing.T) {
 	h := switchHome(t)
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	s.syncRows("alice")
 	s.marked["alice"] = true

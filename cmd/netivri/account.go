@@ -107,7 +107,7 @@ func runAccount(args []string, stdout io.Writer) error {
 		}
 		result := AccountAddResult{}
 		o.ExitGiven = exitModeGiven
-		if err := accountAddWith(home, cfg, o, save, &result); err != nil {
+		if err := accountAddWith(cfg, o, save, &result); err != nil {
 			return err
 		}
 		out := map[string]any{"account": result.Account, "existing": result.Existing}
@@ -180,21 +180,22 @@ func accountSet(field, home string, cfg *config.Config, rest []string, save func
 	if !*none {
 		value = pos[0]
 		var err error
-		if field == "country" {
+		switch field {
+		case "country":
 			value, err = parseCountries(value)
-		} else if field == "clients" {
+		case "clients":
 			if _, err = config.ParseAllowedClients(value); err != nil {
 				return &cli.Error{Code: "CONFIG_INVALID", Message: err.Error(), Exit: cli.ExitUsage}
 			}
 			value = config.NormalizeAllowedClients(value)
-		} else {
+		default:
 			value, err = parseProviders(cfg, value)
 		}
 		if err != nil {
 			return err
 		}
 	}
-	items, err := updateAccountTargets(home, cfg, field, targets, spec, *all, value, save)
+	items, err := updateAccountTargets(home, cfg, field, targets, value, save)
 	if err != nil {
 		return err
 	}

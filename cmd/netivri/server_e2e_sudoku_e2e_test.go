@@ -6,10 +6,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -20,26 +22,67 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/metacubex/mihomo/adapter/outbound"
-	C "github.com/metacubex/mihomo/constant"
 )
+
+// e2eSudokuPhaseTimeout bounds each wait and drive of the Sudoku lifecycle.
+const e2eSudokuPhaseTimeout = 35 * time.Second
 
 func TestE2EServerSudokuLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	const phaseTimeout = 35 * time.Second
-	const pass = "sudoku-e2e-account-password"
-	backend := accountsEcho(t)
-	aliceUp, bobUp := accountsServer(t), accountsServer(t)
+	st := &e2eSudokuState{ctx: ctx}
+	setupSudokuServerA(t, st)
+	readSudokuLinks(t, st)
+	subAddr := startSudokuSubscriptions(t, st)
+	setupSudokuClientB(t, st, "http://"+subAddr)
+	checkSudokuInitialRoutes(t, st)
+	rotateSudokuAlice(t, st)
+	restrictSudokuAlice(t, st)
+	clearSudokuRestriction(t, st)
+	restartSudokuServer(t, st)
+	removeSudokuEdges(t, st)
+}
+
+// e2eSudokuState is the shared state of TestE2EServerSudokuLifecycle. secrets
+// grows as keys and links are created.
+type e2eSudokuState struct {
+	ctx     context.Context
+	pass    string
+	hash    string
+	backend string
+	aliceUp *accountsUpstream
+	bobUp   *accountsUpstream
+	homeA   string
+	homeB   string
+	ports   map[string]int
+	secrets []string
+	links   map[string]string
+	linksMu sync.RWMutex
+	serverA *upProc
+	clientB *upProc
+}
+
+// setupSudokuServerA writes A's fixture, starts A's angel and adds one Sudoku
+// edge per account.
+func setupSudokuServerA(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	const pass = "sudoku-e2e-account-password" //nolint:gosec // G101: fixture password of a test account, not a credential
+	st.pass = pass
+	st.backend = accountsEcho(t)
+	st.aliceUp, st.bobUp = accountsServer(t), accountsServer(t)
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal("hash account password")
 	}
-	homeA := t.TempDir()
-	writeConfig(t, homeA, func(cfg *config.Config) {
+	st.hash = hash
+	st.homeA = t.TempDir()
+	writeConfig(t, st.homeA, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{
 			{Login: "alice", Password: hash, Provider: "alice-route"},
 			{Login: "bob", Password: hash, Provider: "bob-route"},
@@ -49,131 +92,153 @@ func TestE2EServerSudokuLifecycle(t *testing.T) {
 			{Name: "bob-route", URL: "http://bob.invalid/sub"},
 		}
 	})
-	accountsSaveSnapshot(t, homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", aliceUp)})
-	accountsSaveSnapshot(t, homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", bobUp)})
-	serverA := startUp(t, homeA, "--port", "0")
-	waitReload := func(home string, count uint64) {
-		waitCtx, cancelWait := context.WithTimeout(ctx, phaseTimeout)
-		defer cancelWait()
-		waitStatusReload(t, waitCtx, home, count)
+	accountsSaveSnapshot(t, st.homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", st.aliceUp)})
+	accountsSaveSnapshot(t, st.homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", st.bobUp)})
+	st.serverA = startUp(t, st.homeA, "--port", "0")
+	st.ports = map[string]int{"sudoku-alice": freePort(t), "sudoku-bob": freePort(t)}
+	for st.ports["sudoku-alice"] == st.ports["sudoku-bob"] {
+		st.ports["sudoku-bob"] = freePort(t)
 	}
-	waitStatus := func(name string, present bool, secrets ...string) {
-		waitCtx, cancelWait := context.WithTimeout(ctx, phaseTimeout)
-		defer cancelWait()
-		e2eSudokuWaitStatus(t, waitCtx, homeA, name, present, secrets...)
-	}
-	waitPortClosed := func(port int) error {
-		waitCtx, cancelWait := context.WithTimeout(ctx, phaseTimeout)
-		defer cancelWait()
-		return waitServerPort(waitCtx, port, false)
-	}
-	ports := map[string]int{"sudoku-alice": freePort(t), "sudoku-bob": freePort(t)}
-	for ports["sudoku-alice"] == ports["sudoku-bob"] {
-		ports["sudoku-bob"] = freePort(t)
-	}
-	secrets := []string{pass, hash}
+	st.secrets = []string{pass, hash}
 	for i, entry := range []struct{ name, account string }{{"sudoku-alice", "alice"}, {"sudoku-bob", "bob"}} {
-		code, out, stderr := serverRun(t, homeA, "add", "--protocol", "sudoku", "--name", entry.name, "--account", entry.account, "--port", strconv.Itoa(ports[entry.name]), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1")
+		code, out, stderr := serverRun(t, st.homeA, "add", "--protocol", "sudoku", "--name", entry.name, "--account", entry.account, "--port", strconv.Itoa(st.ports[entry.name]), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1")
 		if code != 0 {
 			t.Fatalf("server add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secrets...)
-		waitReload(homeA, uint64(i+1))
-		waitStatus(entry.name, true, secrets...)
+		assertNoSecrets(t, out, stderr, st.secrets...)
+		waitSudokuReload(t, st, st.homeA, uint64(i+1))
+		waitSudokuStatus(t, st, entry.name, true, st.secrets...)
 	}
+}
 
-	link := func(name string) string {
-		t.Helper()
-		code, out, stderr := serverRun(t, homeA, "link", name, "--format", "mihomo")
-		if code != 0 {
-			t.Fatalf("link failed: %s", serverErrorSummary(out, stderr))
-		}
-		var response struct {
-			OK   bool `json:"ok"`
-			Data struct {
-				Link string `json:"link"`
-			} `json:"data"`
-		}
-		if json.Unmarshal([]byte(out), &response) != nil || !response.OK || response.Data.Link == "" {
-			t.Fatal("Mihomo YAML link missing")
-		}
-		key := e2eSudokuKey(response.Data.Link)
-		if key == "" {
-			t.Fatal("Sudoku YAML omitted key")
-		}
-		secrets = append(secrets, key, response.Data.Link)
-		assertNoSecrets(t, out, stderr, pass, hash)
-		return response.Data.Link
+// waitSudokuReload waits until home has reloaded count times, within the phase timeout.
+func waitSudokuReload(t *testing.T, st *e2eSudokuState, home string, count uint64) {
+	t.Helper()
+	waitCtx, cancelWait := context.WithTimeout(st.ctx, e2eSudokuPhaseTimeout)
+	defer cancelWait()
+	waitStatusReload(t, waitCtx, home, count)
+}
+
+// waitSudokuStatus waits until the named edge is present or absent on A, within the phase timeout.
+func waitSudokuStatus(t *testing.T, st *e2eSudokuState, name string, present bool, secrets ...string) {
+	t.Helper()
+	waitCtx, cancelWait := context.WithTimeout(st.ctx, e2eSudokuPhaseTimeout)
+	defer cancelWait()
+	e2eSudokuWaitStatus(t, waitCtx, st.homeA, name, present, secrets...)
+}
+
+// waitSudokuPortClosed waits until port stops listening, within the phase timeout.
+func waitSudokuPortClosed(st *e2eSudokuState, port int) error {
+	waitCtx, cancelWait := context.WithTimeout(st.ctx, e2eSudokuPhaseTimeout)
+	defer cancelWait()
+	return waitServerPort(waitCtx, port, false)
+}
+
+// sudokuLink returns the Mihomo Sudoku link of the named edge and adds its key
+// and link to the redaction list.
+func sudokuLink(t *testing.T, st *e2eSudokuState, name string) string {
+	t.Helper()
+	code, out, stderr := serverRun(t, st.homeA, "link", name, "--format", "mihomo")
+	if code != 0 {
+		t.Fatalf("link failed: %s", serverErrorSummary(out, stderr))
 	}
-	var linksMu sync.RWMutex
-	links := map[string]string{"alice": link("sudoku-alice"), "bob": link("sudoku-bob")}
+	var response struct {
+		OK   bool `json:"ok"`
+		Data struct {
+			Link string `json:"link"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(out), &response) != nil || !response.OK || response.Data.Link == "" {
+		t.Fatal("Mihomo YAML link missing")
+	}
+	key := e2eSudokuKey(response.Data.Link)
+	if key == "" {
+		t.Fatal("Sudoku YAML omitted key")
+	}
+	st.secrets = append(st.secrets, key, response.Data.Link)
+	assertNoSecrets(t, out, stderr, st.pass, st.hash)
+	return response.Data.Link
+}
+
+// readSudokuLinks reads the links of alice and bob.
+func readSudokuLinks(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	st.links = map[string]string{"alice": sudokuLink(t, st, "sudoku-alice"), "bob": sudokuLink(t, st, "sudoku-bob")}
+}
+
+// startSudokuSubscriptions serves each account's current link on the loopback
+// and returns the listener address.
+func startSudokuSubscriptions(t *testing.T, st *e2eSudokuState) string {
+	t.Helper()
 	subMux := http.NewServeMux()
 	for _, account := range []string{"alice", "bob"} {
-		account := account
 		subMux.HandleFunc("/"+account, func(w http.ResponseWriter, _ *http.Request) {
-			linksMu.RLock()
-			defer linksMu.RUnlock()
-			_, _ = io.WriteString(w, links[account]+"\n")
+			st.linksMu.RLock()
+			defer st.linksMu.RUnlock()
+			_, _ = io.WriteString(w, st.links[account]+"\n")
 		})
 	}
-	subHTTP := &http.Server{Handler: subMux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 10 * time.Second}
-	subListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal("listen for subscription")
-	}
-	subDone := make(chan struct{})
-	t.Cleanup(func() {
-		_ = subHTTP.Close()
-		select {
-		case <-subDone:
-		case <-time.After(e2eKillGrace):
-			t.Error("subscription server did not stop")
-		}
-	})
-	go func() { defer close(subDone); _ = subHTTP.Serve(subListener) }()
-	homeB := t.TempDir()
-	baseURL := "http://" + subListener.Addr().String()
+	return serveLoopbackSubscriptions(t, subMux)
+}
+
+// setupSudokuClientB imports both subscriptions into B, adds one account per
+// provider and starts B's angel.
+func setupSudokuClientB(t *testing.T, st *e2eSudokuState, baseURL string) {
+	t.Helper()
+	st.homeB = t.TempDir()
 	for _, account := range []string{"alice", "bob"} {
 		provider := account + "-provider"
-		code, out, stderr := accountsRun(t, homeB, "sub", "add", baseURL+"/"+account, "--name", provider)
+		code, out, stderr := accountsRun(t.Context(), t, st.homeB, "sub", "add", baseURL+"/"+account, "--name", provider)
 		if code != 0 {
 			t.Fatalf("subscription add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secrets...)
-		code, out, stderr = accountsRun(t, homeB, "account", "add", account, "--provider", provider)
+		assertNoSecrets(t, out, stderr, st.secrets...)
+		code, out, stderr = accountsRun(t.Context(), t, st.homeB, "account", "add", account, "--provider", provider)
 		if code != 0 {
 			t.Fatalf("account add failed: %s", serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secrets...)
+		assertNoSecrets(t, out, stderr, st.secrets...)
 	}
-	clientB := startUp(t, homeB, "--port", "0")
-	restartB := func() {
-		t.Helper()
-		code, out, stderr := accountsRun(t, homeB, "down")
-		if code != 0 {
-			t.Fatalf("B down failed: %s", serverErrorSummary(out, stderr))
-		}
-		assertNoSecrets(t, out, stderr, secrets...)
-		clientB.Stop()
-		clientB = startUp(t, homeB, "--port", "0")
+	st.clientB = startUp(t, st.homeB, "--port", "0")
+}
+
+// restartSudokuClient restarts B's angel.
+func restartSudokuClient(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeB, "down")
+	if code != 0 {
+		t.Fatalf("B down failed: %s", serverErrorSummary(out, stderr))
 	}
-	drive := func(account string, own, other *accountsUpstream, retry bool) error {
-		phaseCtx, cancelDrive := context.WithTimeout(ctx, phaseTimeout)
-		defer cancelDrive()
-		return e2eSudokuDrive(t, phaseCtx, homeA, homeB, clientB, backend, account, pass, own, other, retry, secrets...)
-	}
-	if err := drive("alice", aliceUp, bobUp, false); err != nil {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	st.clientB.Stop()
+	st.clientB = startUp(t, st.homeB, "--port", "0")
+}
+
+// driveSudoku runs one routed echo through B for account, within the phase timeout.
+func driveSudoku(t *testing.T, st *e2eSudokuState, account string, own, other *accountsUpstream, retry bool) error {
+	phaseCtx, cancelDrive := context.WithTimeout(st.ctx, e2eSudokuPhaseTimeout)
+	defer cancelDrive()
+	return e2eSudokuDrive(t, phaseCtx, st.homeA, st.homeB, st.clientB, st.backend, account, st.pass, own, other, retry, st.secrets...)
+}
+
+// probeSudoku runs one Sudoku probe against the backend, within the phase timeout.
+func probeSudoku(st *e2eSudokuState, text, key string) error {
+	phaseCtx, cancelProbe := context.WithTimeout(st.ctx, e2eSudokuPhaseTimeout)
+	defer cancelProbe()
+	return e2eSudokuProbe(phaseCtx, text, key, st.backend)
+}
+
+// checkSudokuInitialRoutes checks both routed echoes, then that a valid key
+// connects and a wrong one is rejected.
+func checkSudokuInitialRoutes(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	if err := driveSudoku(t, st, "alice", st.aliceUp, st.bobUp, false); err != nil {
 		t.Fatalf("Alice routed echo: %v", err)
 	}
-	if err := drive("bob", bobUp, aliceUp, false); err != nil {
+	if err := driveSudoku(t, st, "bob", st.bobUp, st.aliceUp, false); err != nil {
 		t.Fatalf("Bob routed echo: %v", err)
 	}
-	probe := func(text, key string) error {
-		phaseCtx, cancelProbe := context.WithTimeout(ctx, phaseTimeout)
-		defer cancelProbe()
-		return e2eSudokuProbe(phaseCtx, text, key, backend)
-	}
-	if err := probe(links["alice"], ""); err != nil {
+	if err := probeSudoku(st, st.links["alice"], ""); err != nil {
 		t.Fatalf("valid key probe failed: %v", err)
 	}
 	wrongRaw := make([]byte, 32)
@@ -181,110 +246,136 @@ func TestE2EServerSudokuLifecycle(t *testing.T) {
 		t.Fatal("generate wrong key")
 	}
 	wrongKey := base64.RawURLEncoding.EncodeToString(wrongRaw)
-	secrets = append(secrets, wrongKey)
-	if err := probe(links["alice"], wrongKey); !errors.Is(err, e2eSudokuRejected) {
+	st.secrets = append(st.secrets, wrongKey)
+	if err := probeSudoku(st, st.links["alice"], wrongKey); !errors.Is(err, errE2ESudokuRejected) {
 		t.Fatalf("wrong key was not rejected: %v", err)
 	}
+}
 
-	baseline := liveStatusOf(t, homeA).Data.Reload.Count
-	oldAlice := links["alice"]
-	code, out, stderr := serverRun(t, homeA, "rotate", "sudoku-alice", "--account", "alice")
+// rotateSudokuAlice rotates alice's key, checks that the old link is refused and
+// publishes the new link through B's refreshed subscription.
+func rotateSudokuAlice(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	baseline := liveStatusOf(t, st.homeA).Data.Reload.Count
+	oldAlice := st.links["alice"]
+	code, out, stderr := serverRun(t, st.homeA, "rotate", "sudoku-alice", "--account", "alice")
 	if code != 0 {
 		t.Fatalf("rotate failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secrets...)
-	waitReload(homeA, baseline+1)
-	linksMu.Lock()
-	links["alice"] = link("sudoku-alice")
-	linksMu.Unlock()
-	if err := probe(oldAlice, ""); !errors.Is(err, e2eSudokuRejected) {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	waitSudokuReload(t, st, st.homeA, baseline+1)
+	st.linksMu.Lock()
+	st.links["alice"] = sudokuLink(t, st, "sudoku-alice")
+	st.linksMu.Unlock()
+	if err := probeSudoku(st, oldAlice, ""); !errors.Is(err, errE2ESudokuRejected) {
 		t.Fatalf("old key not rejected after rotate: %v", err)
 	}
-	code, out, stderr = accountsRun(t, homeB, "sub", "update", "alice-provider")
+	code, out, stderr = accountsRun(t.Context(), t, st.homeB, "sub", "update", "alice-provider")
 	if code != 0 {
 		t.Fatalf("Alice subscription refresh failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secrets...)
-	waitReload(homeB, 1)
-	restartB()
-	if err := drive("alice", aliceUp, bobUp, false); err != nil {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	waitSudokuReload(t, st, st.homeB, 1)
+	restartSudokuClient(t, st)
+	if err := driveSudoku(t, st, "alice", st.aliceUp, st.bobUp, false); err != nil {
 		t.Fatalf("refreshed Alice link: %v", err)
 	}
+}
 
-	baseline = liveStatusOf(t, homeA).Data.Reload.Count
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "192.0.2.0/24")
+// restrictSudokuAlice limits alice to 192.0.2.0/24: alice's link is refused, and
+// bob still routes after B restarts.
+func restrictSudokuAlice(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	baseline := liveStatusOf(t, st.homeA).Data.Reload.Count
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "192.0.2.0/24")
 	if code != 0 {
 		t.Fatalf("restrict Alice clients failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secrets...)
-	waitReload(homeA, baseline+1)
-	if err := probe(links["alice"], ""); !errors.Is(err, e2eSudokuRejected) {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	waitSudokuReload(t, st, st.homeA, baseline+1)
+	if err := probeSudoku(st, st.links["alice"], ""); !errors.Is(err, errE2ESudokuRejected) {
 		t.Fatalf("restricted Alice probe not refused: %v", err)
 	}
-	restartB()
-	if err := drive("bob", bobUp, aliceUp, true); err != nil {
+	restartSudokuClient(t, st)
+	if err := driveSudoku(t, st, "bob", st.bobUp, st.aliceUp, true); err != nil {
 		t.Fatalf("Bob route with Alice restricted: %v", err)
 	}
-	baseline = liveStatusOf(t, homeA).Data.Reload.Count
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
+}
+
+// clearSudokuRestriction clears alice's client filter and checks that both
+// accounts route again after B restarts.
+func clearSudokuRestriction(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	baseline := liveStatusOf(t, st.homeA).Data.Reload.Count
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "--none")
 	if code != 0 {
 		t.Fatalf("clear Alice restriction failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secrets...)
-	waitReload(homeA, baseline+1)
-	restartB()
-	if err := drive("alice", aliceUp, bobUp, true); err != nil {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	waitSudokuReload(t, st, st.homeA, baseline+1)
+	restartSudokuClient(t, st)
+	if err := driveSudoku(t, st, "alice", st.aliceUp, st.bobUp, true); err != nil {
 		t.Fatalf("Alice route with restriction cleared: %v", err)
 	}
-	if err := drive("bob", bobUp, aliceUp, true); err != nil {
+	if err := driveSudoku(t, st, "bob", st.bobUp, st.aliceUp, true); err != nil {
 		t.Fatalf("Bob route after allowlist clear: %v", err)
 	}
+}
 
-	stableAlice, stableBob := links["alice"], links["bob"]
-	code, out, stderr = accountsRun(t, homeA, "down")
+// restartSudokuServer restarts A's angel and checks that both listeners close and
+// reopen, the links are unchanged and both accounts route again.
+func restartSudokuServer(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
+	stableAlice, stableBob := st.links["alice"], st.links["bob"]
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "down")
 	if code != 0 {
 		t.Fatalf("A down failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secrets...)
-	serverA.Stop()
-	if err := waitPortClosed(ports["sudoku-alice"]); err != nil {
+	assertNoSecrets(t, out, stderr, st.secrets...)
+	st.serverA.Stop()
+	if err := waitSudokuPortClosed(st, st.ports["sudoku-alice"]); err != nil {
 		t.Fatalf("Alice listener not closed: %v", err)
 	}
-	if err := waitPortClosed(ports["sudoku-bob"]); err != nil {
+	if err := waitSudokuPortClosed(st, st.ports["sudoku-bob"]); err != nil {
 		t.Fatalf("Bob listener not closed: %v", err)
 	}
-	serverA = startUp(t, homeA, "--port", "0")
-	if link("sudoku-alice") != stableAlice || link("sudoku-bob") != stableBob {
+	st.serverA = startUp(t, st.homeA, "--port", "0")
+	if sudokuLink(t, st, "sudoku-alice") != stableAlice || sudokuLink(t, st, "sudoku-bob") != stableBob {
 		t.Fatal("server link changed across restart")
 	}
-	restartB()
-	if err := drive("alice", aliceUp, bobUp, true); err != nil {
+	restartSudokuClient(t, st)
+	if err := driveSudoku(t, st, "alice", st.aliceUp, st.bobUp, true); err != nil {
 		t.Fatalf("Alice route after A restart: %v", err)
 	}
-	if err := drive("bob", bobUp, aliceUp, true); err != nil {
+	if err := driveSudoku(t, st, "bob", st.bobUp, st.aliceUp, true); err != nil {
 		t.Fatalf("Bob route after A restart: %v", err)
 	}
+}
 
+// removeSudokuEdges removes both edges, checks that their listeners close and
+// stops both angels.
+func removeSudokuEdges(t *testing.T, st *e2eSudokuState) {
+	t.Helper()
 	for _, name := range []string{"sudoku-alice", "sudoku-bob"} {
-		baseline = liveStatusOf(t, homeA).Data.Reload.Count
-		code, out, stderr = serverRun(t, homeA, "remove", name)
+		baseline := liveStatusOf(t, st.homeA).Data.Reload.Count
+		code, out, stderr := serverRun(t, st.homeA, "remove", name)
 		if code != 0 {
 			t.Fatalf("remove %s failed: %s", name, serverErrorSummary(out, stderr))
 		}
-		assertNoSecrets(t, out, stderr, secrets...)
-		waitReload(homeA, baseline+1)
-		waitStatus(name, false, secrets...)
-		if err := waitPortClosed(ports[name]); err != nil {
+		assertNoSecrets(t, out, stderr, st.secrets...)
+		waitSudokuReload(t, st, st.homeA, baseline+1)
+		waitSudokuStatus(t, st, name, false, st.secrets...)
+		if err := waitSudokuPortClosed(st, st.ports[name]); err != nil {
 			t.Fatalf("removed %s port remains open: %v", name, err)
 		}
 	}
-	serverA.Stop()
-	clientB.Stop()
-	assertNoSecrets(t, serverA.Stdout(), serverA.Stderr(), secrets...)
-	assertNoSecrets(t, clientB.Stdout(), clientB.Stderr(), secrets...)
+	st.serverA.Stop()
+	st.clientB.Stop()
+	assertNoSecrets(t, st.serverA.Stdout(), st.serverA.Stderr(), st.secrets...)
+	assertNoSecrets(t, st.clientB.Stdout(), st.clientB.Stderr(), st.secrets...)
 }
 
-var e2eSudokuRejected = errors.New("Sudoku connection rejected")
+var errE2ESudokuRejected = errors.New("sudoku connection rejected")
 
 func e2eSudokuKey(text string) string {
 	nodes, err := subscription.Parse([]byte(text))
@@ -318,7 +409,7 @@ func e2eSudokuProbe(ctx context.Context, text, key, target string) error {
 	if err != nil {
 		return errors.New("Sudoku client setup failed")
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	host, portText, err := net.SplitHostPort(target)
 	if err != nil {
 		return errors.New("echo target invalid")
@@ -327,13 +418,19 @@ func e2eSudokuProbe(ctx context.Context, text, key, target string) error {
 	if err != nil {
 		return errors.New("echo port invalid")
 	}
+	if port < 0 {
+		return errors.New("echo port invalid")
+	}
+	if port > math.MaxUint16 {
+		return errors.New("echo port invalid")
+	}
 	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
 	conn, err := client.DialContext(probeCtx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(port)})
 	if err != nil {
 		return e2eSudokuProbeFailure(err, probeCtx)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	payload := []byte("sudoku-e2e-probe")
 	if _, err = conn.Write(payload); err != nil {
@@ -358,23 +455,23 @@ func e2eSudokuProbeFailure(err error, ctx context.Context) error {
 		return errors.New("Sudoku probe timed out")
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.Errno(10054)) || errors.Is(err, syscall.Errno(10053)) {
-		return e2eSudokuRejected
+		return errE2ESudokuRejected
 	}
 	lower := strings.ToLower(err.Error())
 	for _, marker := range []string{"eof", "reset", "broken pipe", "forcibly closed", "aborted", "10053", "10054"} {
 		if strings.Contains(lower, marker) {
-			return e2eSudokuRejected
+			return errE2ESudokuRejected
 		}
 	}
 	return errors.New("unclassified Sudoku network failure")
 }
 
-func e2eSudokuAccountClient(proxy, user, pass, target string) error {
-	conn, err := net.DialTimeout("tcp", proxy, 2*time.Second)
+func e2eSudokuAccountClient(ctx context.Context, proxy, user, pass, target string) error {
+	conn, err := (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", proxy)
 	if err != nil {
 		return errors.New("B proxy dial failed")
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 	if _, err = conn.Write([]byte{5, 1, 2}); err != nil {
 		return errors.New("SOCKS greeting write failed")
@@ -383,9 +480,18 @@ func e2eSudokuAccountClient(proxy, user, pass, target string) error {
 	if _, err = io.ReadFull(conn, method[:]); err != nil || method != [2]byte{5, 2} {
 		return errors.New("SOCKS auth method rejected")
 	}
-	authRequest := []byte{1, byte(len(user))}
+	userLen := len(user)
+	if userLen > 255 {
+		return errors.New("SOCKS credentials too long")
+	}
+	passLen := len(pass)
+	if passLen > 255 {
+		return errors.New("SOCKS credentials too long")
+	}
+	authRequest := make([]byte, 0, 2+len(user)+1+len(pass))
+	authRequest = append(authRequest, 1, byte(userLen))
 	authRequest = append(authRequest, user...)
-	authRequest = append(authRequest, byte(len(pass)))
+	authRequest = append(authRequest, byte(passLen))
 	authRequest = append(authRequest, pass...)
 	if _, err = conn.Write(authRequest); err != nil {
 		return errors.New("SOCKS auth write failed")
@@ -406,9 +512,16 @@ func e2eSudokuAccountClient(proxy, user, pass, target string) error {
 	if err != nil {
 		return errors.New("echo port invalid")
 	}
-	request := []byte{5, 1, 0, 1}
+	if port < 0 {
+		return errors.New("echo port invalid")
+	}
+	if port > math.MaxUint16 {
+		return errors.New("echo port invalid")
+	}
+	request := make([]byte, 0, 4+len(ip)+2)
+	request = append(request, 5, 1, 0, 1)
 	request = append(request, ip...)
-	request = append(request, byte(port>>8), byte(port))
+	request = binary.BigEndian.AppendUint16(request, uint16(port))
 	if _, err = conn.Write(request); err != nil {
 		return errors.New("SOCKS connect write failed")
 	}
@@ -438,7 +551,7 @@ func e2eSudokuDrive(t *testing.T, ctx context.Context, homeA, homeB string, clie
 	defer ticker.Stop()
 	var last error
 	for {
-		last = e2eSudokuAccountClient(client.Status().Data.Listen, user, pass, backend)
+		last = e2eSudokuAccountClient(ctx, client.Status().Data.Listen, user, pass, backend)
 		if last == nil && own.count.Load() > beforeOwn && other.count.Load() == beforeOther {
 			return nil
 		}
@@ -451,7 +564,7 @@ func e2eSudokuDrive(t *testing.T, ctx context.Context, homeA, homeB string, clie
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("routed connection cancelled")
+			return errors.New("routed connection cancelled")
 		case <-ticker.C:
 		}
 	}
@@ -462,11 +575,11 @@ func e2eSudokuDrive(t *testing.T, ctx context.Context, homeA, homeB string, clie
 
 func e2eSudokuDiagnostics(t *testing.T, ctx context.Context, homeA, homeB string, secrets ...string) string {
 	t.Helper()
-	codeA, outA, errA := accountsRun(t, homeA, "status")
-	codeB, outB, errB := accountsRun(t, homeB, "status")
+	codeA, outA, errA := accountsRun(context.WithoutCancel(ctx), t, homeA, "status")
+	codeB, outB, errB := accountsRun(context.WithoutCancel(ctx), t, homeB, "status")
 	assertNoSecrets(t, outA, errA, secrets...)
 	assertNoSecrets(t, outB, errB, secrets...)
-	return fmt.Sprintf("A status exit %d; %s; B status exit %d; %s; B node list: %s; deadline %v", codeA, e2eSudokuServers(outA), codeB, e2eSudokuServers(outB), e2eSudokuNodeHealth(t, homeB, secrets...), ctx.Err()) + "; A logs: " + serverE2ELogTail(t, homeA) + "; B logs: " + serverE2ELogTail(t, homeB)
+	return fmt.Sprintf("A status exit %d; %s; B status exit %d; %s; B node list: %s; deadline %v", codeA, e2eSudokuServers(outA), codeB, e2eSudokuServers(outB), e2eSudokuNodeHealth(context.WithoutCancel(ctx), t, homeB, secrets...), ctx.Err()) + "; A logs: " + serverE2ELogTail(ctx, t, homeA) + "; B logs: " + serverE2ELogTail(ctx, t, homeB)
 }
 
 func e2eSudokuServers(raw string) string {
@@ -487,11 +600,11 @@ func e2eSudokuServers(raw string) string {
 	return fmt.Sprintf("%+v", env.Data.Servers)
 }
 
-func e2eSudokuNodeHealth(t *testing.T, home string, secrets ...string) string {
+func e2eSudokuNodeHealth(ctx context.Context, t *testing.T, home string, secrets ...string) string {
 	t.Helper()
 	var summary []string
 	for _, account := range []string{"alice", "bob"} {
-		code, out, stderr := accountsRun(t, home, "account", "show", account)
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "account", "show", account)
 		assertNoSecrets(t, out, stderr, secrets...)
 		if code != 0 {
 			summary = append(summary, account+": unavailable")
@@ -530,7 +643,7 @@ func e2eSudokuWaitStatus(t *testing.T, ctx context.Context, home, name string, p
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		code, out, stderr := accountsRun(t, home, "status")
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		if code == 0 {
 			var env struct {
 				Data struct {
@@ -561,14 +674,14 @@ func e2eSudokuWaitStatus(t *testing.T, ctx context.Context, home, name string, p
 					return
 				}
 				if env.Data.Reload.LastError != "" {
-					serverE2EFailureDiagnostics(t, home, "Sudoku reload failed")
+					serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "Sudoku reload failed")
 					t.Fatalf("Sudoku reload failed: %s", e2eRedactDiagnostic(env.Data.Reload.LastError))
 				}
 			}
 		}
 		select {
 		case <-ctx.Done():
-			serverE2EFailureDiagnostics(t, home, fmt.Sprintf("Sudoku status wait expired (%v)", ctx.Err()))
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, fmt.Sprintf("Sudoku status wait expired (%v)", ctx.Err()))
 			t.Fatal("Sudoku status mismatch")
 		case <-ticker.C:
 		}

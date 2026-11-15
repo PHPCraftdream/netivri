@@ -6,14 +6,15 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func routeTestScreen(t *testing.T, h string) *accountsScreen {
 	t.Helper()
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.workspace.SetFocus(tui.PaneList)
 	return s
 }
@@ -125,8 +126,8 @@ func TestAccountsRouteViewerRunningAngelInjected(t *testing.T) {
 func TestAccountsRouteViewerScrollAndContract(t *testing.T) {
 	s := routeTestScreen(t, "")
 	s.show = func(_, _ string) (AccountShowResult, error) {
-		tiers := []accountShowTier{}
-		for i := 0; i < 30; i++ {
+		tiers := make([]accountShowTier, 0, 30)
+		for i := range 30 {
 			tiers = append(tiers, accountShowTier{Tier: i, Country: "DE", Providers: []string{"p1"}, Nodes: []accountShowNode{{Label: "n" + strconv.Itoa(i), Country: "DE"}}})
 		}
 		return AccountShowResult{Login: "alice", Exit: "route", Live: false, Tiers: tiers}, nil
@@ -134,7 +135,7 @@ func TestAccountsRouteViewerScrollAndContract(t *testing.T) {
 	s.rows = []accountInfo{{Login: "alice"}}
 	s.syncRows("alice")
 	runAccountCmd(s, s.openRoute())
-	v := s.viewer.(*routeViewer)
+	v := mustAs[*routeViewer](t, s.viewer)
 	for _, size := range [][2]int{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
 		out := s.View(size[0], size[1])
 		lines := strings.Split(out, "\n")
@@ -154,7 +155,7 @@ func TestAccountsRouteViewerScrollAndContract(t *testing.T) {
 	if !strings.Contains(s.View(80, 10), "n0 · DE · not probed") {
 		t.Fatal("top of the route missing at scroll 0")
 	}
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if v.scroll != 6 {
@@ -238,13 +239,13 @@ func TestAccountsRouteViewerNoSelectionAndStaleLoad(t *testing.T) {
 // both actions to the parity check, bulk as a disabled action without marks.
 func TestAccountsParityRefsIncludeRouteAndBulk(t *testing.T) {
 	home := parityFixtureHome(t)
-	s := newAccountsScreen(home, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(home, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(home)
 	if len(s.rows) == 0 {
 		t.Fatal("parity fixture has no accounts")
 	}
 	s.syncRows(s.rows[0].Login)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	refs := s.ParityRefs()
 	has := func(ref string) bool {
 		for _, r := range refs {

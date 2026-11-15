@@ -34,7 +34,7 @@ func newTestStore(t *testing.T, mutate func(*Options)) *Store {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 
@@ -49,11 +49,11 @@ func openRaw(t *testing.T, path string) *sql.DB {
 	if err != nil {
 		t.Fatalf("raw open: %v", err)
 	}
-	if err := db.Ping(); err != nil {
-		db.Close()
+	if err := db.PingContext(t.Context()); err != nil {
+		_ = db.Close()
 		t.Fatalf("raw ping: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
 
@@ -61,7 +61,7 @@ func openRaw(t *testing.T, path string) *sql.DB {
 func countRows(t *testing.T, db *sql.DB, table string) int64 {
 	t.Helper()
 	var n int64
-	if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+	if err := db.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM "+table).Scan(&n); err != nil {
 		t.Fatalf("count %s: %v", table, err)
 	}
 	return n
@@ -83,13 +83,13 @@ func TestOpenCreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("database file missing: %v", err)
 	}
 	raw := openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != schemaVersion {
@@ -101,11 +101,11 @@ func TestMigrateV2WithExistingNameColumnKeepsData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stats.db")
 	makeV2DB(t, path)
 	raw := openRaw(t, path)
-	if _, err := raw.Exec(schemaV3); err != nil {
+	if _, err := raw.ExecContext(t.Context(), schemaV3); err != nil {
 		t.Fatalf("apply interrupted v3 migration: %v", err)
 	}
 	const name = "saved display name"
-	if _, err := raw.Exec("UPDATE node SET name = ? WHERE id = 1", name); err != nil {
+	if _, err := raw.ExecContext(t.Context(), "UPDATE node SET name = ? WHERE id = 1", name); err != nil {
 		t.Fatalf("set existing name: %v", err)
 	}
 	if err := raw.Close(); err != nil {
@@ -126,7 +126,7 @@ func TestMigrateV2WithExistingNameColumnKeepsData(t *testing.T) {
 	}
 	raw = openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != schemaVersion {
@@ -138,7 +138,7 @@ func TestMigrateRollbackOnV4Failure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "stats.db")
 	makeV2DB(t, path)
 	raw := openRaw(t, path)
-	if _, err := raw.Exec("CREATE INDEX binding ON node(label)"); err != nil {
+	if _, err := raw.ExecContext(t.Context(), "CREATE INDEX binding ON node(label)"); err != nil {
 		t.Fatalf("create incompatible binding index: %v", err)
 	}
 	if err := raw.Close(); err != nil {
@@ -156,13 +156,13 @@ func TestMigrateRollbackOnV4Failure(t *testing.T) {
 		t.Fatal("schema v3 name column remained after failed migration")
 	}
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 2 {
 		t.Fatalf("user_version = %d, want 2 after rollback", version)
 	}
-	if _, err := raw.Exec("DROP INDEX binding"); err != nil {
+	if _, err := raw.ExecContext(t.Context(), "DROP INDEX binding"); err != nil {
 		t.Fatalf("drop incompatible binding index: %v", err)
 	}
 	if err := raw.Close(); err != nil {
@@ -182,7 +182,7 @@ func TestMigrateRollbackOnV4Failure(t *testing.T) {
 		t.Fatalf("Nodes after migration = %+v, want preserved samples and default name", got)
 	}
 	raw = openRaw(t, path)
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read migrated user_version: %v", err)
 	}
 	if version != schemaVersion {
@@ -214,7 +214,7 @@ func TestSetNodesStoresName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	t.Cleanup(func() { ro.Close() })
+	t.Cleanup(func() { _ = ro.Close() })
 	got, err := ro.Nodes(Query{})
 	if err != nil {
 		t.Fatalf("Nodes: %v", err)
@@ -242,7 +242,7 @@ func TestReopenKeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	t.Cleanup(func() { ro.Close() })
+	t.Cleanup(func() { _ = ro.Close() })
 	got, err := ro.Nodes(Query{})
 	if err != nil {
 		t.Fatalf("Nodes: %v", err)
@@ -256,7 +256,7 @@ func TestReopenKeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	t.Cleanup(func() { s2.Close() })
+	t.Cleanup(func() { _ = s2.Close() })
 	got, err = s2.Nodes(Query{})
 	if err != nil {
 		t.Fatalf("Nodes: %v", err)
@@ -276,7 +276,7 @@ func TestNewerSchemaRejected(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	raw := openRaw(t, opts.Path)
-	if _, err := raw.Exec("PRAGMA user_version = 99"); err != nil {
+	if _, err := raw.ExecContext(t.Context(), "PRAGMA user_version = 99"); err != nil {
 		t.Fatalf("bump user_version: %v", err)
 	}
 	if _, err := Open(Options{Path: opts.Path, Now: clock(0)}); err == nil {

@@ -221,7 +221,7 @@ func cells(t *testing.T, header, row string) []string {
 	t.Helper()
 	var starts []int
 	inWord := false
-	for i := 0; i < len(header); i++ {
+	for i := range len(header) {
 		if header[i] != ' ' && !inWord {
 			starts = append(starts, i)
 			inWord = true
@@ -390,21 +390,21 @@ func TestStatusWatchNDJSON(t *testing.T) {
 	if first["time"] != "2026-10-25T12:00:00Z" || first["active_accounts"] != float64(1) {
 		t.Errorf("first = %+v", first)
 	}
-	accs := first["accounts"].([]any)
+	accs := mustAs[[]any](t, first["accounts"])
 	if len(accs) != 2 {
 		t.Fatalf("first frame accounts = %+v", accs)
 	}
-	a0 := accs[0].(map[string]any)
+	a0 := mustAs[map[string]any](t, accs[0])
 	if a0["login"] != "alice" || a0["up_bytes_per_s"] != nil || a0["down_bytes_per_s"] != nil {
 		t.Errorf("first frame rates must be null: %+v", a0)
 	}
 	second := lines[1]
-	a := second["accounts"].([]any)[0].(map[string]any)
-	if a["up_bytes_per_s"].(float64) != 4096 || a["down_bytes_per_s"].(float64) != 1024 {
+	a := mustAs[map[string]any](t, mustAs[[]any](t, second["accounts"])[0])
+	if mustAs[float64](t, a["up_bytes_per_s"]) != 4096 || mustAs[float64](t, a["down_bytes_per_s"]) != 1024 {
 		t.Errorf("second frame rates = %+v", a)
 	}
-	nodes := a["nodes"].([]any)
-	if len(nodes) != 4 || nodes[0].(map[string]any)["name"] != "Germany 1" {
+	nodes := mustAs[[]any](t, a["nodes"])
+	if len(nodes) != 4 || mustAs[map[string]any](t, nodes[0])["name"] != "Germany 1" {
 		t.Errorf("nodes = %+v", nodes)
 	}
 	if lines[2]["stopped"] != true || lines[2]["time"] == "" {
@@ -618,7 +618,7 @@ func TestStatusWatchCancelReturnsCleanly(t *testing.T) {
 	// all three proves the frame was fully printed before the cancel.
 	br := bufio.NewReader(r)
 	var frame []string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		type readRes struct {
 			line string
 			err  error

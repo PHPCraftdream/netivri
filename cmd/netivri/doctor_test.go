@@ -568,7 +568,7 @@ func TestDoctorNoSecretsInOutput(t *testing.T) {
 	doctorAngelDown(t)
 	doctorStubListen(t, nil)
 	const (
-		secretURL  = "https://provider.example/sub/supersecret"
+		secretURL  = "https://provider.example/sub/supersecret" //nolint:gosec // G101: fake credential, test fixture only
 		authSecret = "legacy-password-secret"
 		accSecret  = "alice-password-secret"
 	)
@@ -616,7 +616,7 @@ func TestDoctorKtavShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("output is not Ktav: %v\n%s", err, out.String())
 	}
-	doc := got.(map[string]any)
+	doc := mustAs[map[string]any](t, got)
 	data, ok := doc["data"].(map[string]any)
 	if !ok || doc["ok"] != true {
 		t.Fatalf("envelope = %v", doc)
@@ -625,11 +625,11 @@ func TestDoctorKtavShape(t *testing.T) {
 	if !ok || len(checks) == 0 {
 		t.Fatalf("checks = %v", data["checks"])
 	}
-	first := checks[0].(map[string]any)
+	first := mustAs[map[string]any](t, checks[0])
 	if first["name"] != "config" || first["status"] != doctorOK {
 		t.Errorf("first check = %v", first)
 	}
-	summary := data["summary"].(map[string]any)
+	summary := mustAs[map[string]any](t, data["summary"])
 	if summary["ok"] == nil || summary["warn"] == nil || summary["fail"] == nil {
 		t.Errorf("summary = %v", summary)
 	}
@@ -639,8 +639,8 @@ func TestDoctorUsage(t *testing.T) {
 	cli.UseJSON()
 	var out bytes.Buffer
 	err := runDoctor([]string{"extra"}, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "USAGE" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "USAGE" {
 		t.Fatalf("doctor extra = %v, want USAGE", err)
 	}
 	if out.Len() != 0 {

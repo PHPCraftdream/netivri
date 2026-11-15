@@ -28,7 +28,7 @@ func TestTrackedTunnelCloseAllClosesConnsAndWaits(t *testing.T) {
 	tt := newTrackedTunnel(ft)
 
 	server, client := net.Pipe()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	handlerDone := make(chan struct{})
 	go func() {
 		tt.HandleTCPConn(server, nil)
@@ -59,7 +59,7 @@ func TestTrackedTunnelRefusesNewConnsAfterClose(t *testing.T) {
 	tt.closeAll(time.Second)
 
 	server, client := net.Pipe()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	tt.HandleTCPConn(server, nil) // must return immediately without entering the inner tunnel
 	select {
 	case <-ft.entered:
@@ -79,7 +79,7 @@ func TestTrackedTunnelCloseAllTimeout(t *testing.T) {
 	tt := newTrackedTunnel(blockingTunnel{release: release, entered: entered})
 
 	server, client := net.Pipe()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	go tt.HandleTCPConn(server, nil)
 	<-entered // registered before the inner tunnel is entered
 
@@ -108,12 +108,12 @@ func TestTrackedTunnelShardedConcurrentClose(t *testing.T) {
 	tt := newTrackedTunnel(ft)
 
 	clients := make([]net.Conn, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		server, client := net.Pipe()
 		clients[i] = client
 		go tt.HandleTCPConn(server, nil)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		select {
 		case <-ft.entered:
 		case <-time.After(time.Second):

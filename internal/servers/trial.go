@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
 	"math"
 	"strings"
@@ -49,12 +48,7 @@ func (t *trialAuth) String() string   { return "<redacted>" }
 func (t *trialAuth) GoString() string { return "<redacted>" }
 func (t *trialAuth) MinBytes() int    { return t.min }
 
-type ssTrialAuthenticator struct{}
-type vmessTrialAuthenticator struct{}
-
-func (ssTrialAuthenticator) NewTrial(s Spec) (Trial, error)    { return newTrial(s) }
-func (vmessTrialAuthenticator) NewTrial(s Spec) (Trial, error) { return newTrial(s) }
-func NewTrial(s Spec) (Trial, error)                           { return newTrial(s) }
+func NewTrial(s Spec) (Trial, error) { return newTrial(s) }
 func newTrial(s Spec) (Trial, error) {
 	if s.Protocol != "shadowsocks" && s.Protocol != "vmess" {
 		return nil, errors.New("trial authentication unsupported")
@@ -103,8 +97,9 @@ func (t *trialAuth) Try(p []byte, now time.Time) (Verdict, []byte) {
 		for _, u := range t.keys {
 			var id [16]byte
 			u.auth.Decrypt(id[:], p[:16])
-			stamp := int64(binary.BigEndian.Uint64(id[:8]))
-			if crc32.ChecksumIEEE(id[:12]) != binary.BigEndian.Uint32(id[12:]) || math.Abs(float64(now.Unix()-stamp)) > 118 {
+			stamp := binary.BigEndian.Uint64(id[:8])
+			// float64: a wire stamp may exceed int64
+			if crc32.ChecksumIEEE(id[:12]) != binary.BigEndian.Uint32(id[12:]) || math.Abs(float64(now.Unix())-float64(stamp)) > 118 {
 				continue
 			}
 			nonce := p[34:42]
@@ -148,7 +143,7 @@ func (t *trialAuth) Try(p []byte, now time.Time) (Verdict, []byte) {
 			continue
 		}
 		stamp := binary.BigEndian.Uint64(plain[1:9])
-		if math.Abs(float64(now.Unix()-int64(stamp))) > 28 {
+		if math.Abs(float64(now.Unix())-float64(stamp)) > 28 {
 			continue
 		}
 		return Accept, append([]byte(nil), p[:size]...)
@@ -187,7 +182,7 @@ func ValidateTrialSecrets(specs []Spec) error {
 			return err
 		}
 		for _, login := range s.Accounts {
-			key := ""
+			var key string
 			if s.Protocol == "vmess" {
 				id, err := uuid.FromString(s.Users[login]["uuid"])
 				if err != nil {
@@ -202,7 +197,7 @@ func ValidateTrialSecrets(specs []Spec) error {
 				key = "ss:" + string(b)
 			}
 			if seen[key] {
-				return fmt.Errorf("shared endpoint has ambiguous trial credentials")
+				return errors.New("shared endpoint has ambiguous trial credentials")
 			}
 			seen[key] = true
 		}

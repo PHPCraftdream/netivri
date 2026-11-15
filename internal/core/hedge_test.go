@@ -397,7 +397,7 @@ func TestHedgeBudgetExhaustedNoHedge(t *testing.T) {
 func TestHedgeBudgetTakeAndRefill(t *testing.T) {
 	var h nodeHealth
 	h.initHedgeBudget()
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		if !h.hedgeTake() {
 			t.Fatalf("hedge take %d failed, want success", i+1)
 		}
@@ -405,7 +405,7 @@ func TestHedgeBudgetTakeAndRefill(t *testing.T) {
 	if h.hedgeTake() {
 		t.Fatal("the fifth hedge must be refused")
 	}
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		h.hedgeRefillDial()
 	}
 	if h.hedgeTake() {
@@ -416,7 +416,7 @@ func TestHedgeBudgetTakeAndRefill(t *testing.T) {
 		t.Fatal("ten dials must refill one token")
 	}
 	// Refills cap at the bucket size.
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		h.hedgeRefillDial()
 	}
 	if units := h.hedgeUnits.Load(); units != hedgeBudgetCap {
@@ -504,7 +504,7 @@ func TestHedgeEligibleTypes(t *testing.T) {
 // succeed with fast members (no hedge fires without the fake timer).
 func TestHedgeConcurrentDials(t *testing.T) {
 	m := newScriptedMember("a")
-	for i := 0; i < 80; i++ {
+	for range 80 {
 		m.scripts = append(m.scripts, scriptedDial{conn: &trackedConn{fakeConn: fakeConn{}}})
 	}
 	obs := &recordedObserver{}
@@ -512,18 +512,18 @@ func TestHedgeConcurrentDials(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
-	for worker := 0; worker < 8; worker++ {
+	for range 8 {
 		wg.Add(1)
-		go func(worker int) {
+		go func() {
 			defer wg.Done()
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				md := dialMetadata("user", "site.example")
 				if _, err := g.DialContext(context.Background(), md); err != nil {
 					errs <- err
 					return
 				}
 			}
-		}(worker)
+		}()
 	}
 	wg.Wait()
 	close(errs)

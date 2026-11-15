@@ -173,7 +173,11 @@ func VerifyHash(hash, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	key := argon2.IDKey([]byte(password), h.salt, h.t, h.m, h.p, uint32(len(h.key)))
+	keyLen := len(h.key)
+	if keyLen < minKeyLen || keyLen > maxKeyLen {
+		return false, errors.New("auth: key length out of range")
+	}
+	key := argon2.IDKey([]byte(password), h.salt, h.t, h.m, h.p, uint32(keyLen))
 	return subtle.ConstantTimeCompare(key, h.key) == 1, nil
 }
 

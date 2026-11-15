@@ -85,8 +85,8 @@ func TestBuildAccountRoutePoolProviderHopsMultiListReplacement(t *testing.T) {
 	accountPre := config.HopList{"socks5://account-pre-1:secret@account-pre-1.example:1080", "http://account-pre-2:secret@account-pre-2.example:8080"}
 	accountPost := config.HopList{"https://account-post-1:secret@account-post-1.example:8443", "socks5://account-post-2:secret@account-post-2.example:1080"}
 	subs := []config.Subscription{
-		{Name: "a", URL: "https://provider-user:provider-secret@a.example/sub", PreSOCKS5: aPre},
-		{Name: "b", URL: "https://provider-user:provider-secret@b.example/sub", PostSOCKS5: bPost},
+		{Name: "a", URL: "https://provider-user:provider-secret@a.example/sub", PreSOCKS5: aPre},   //nolint:gosec // G101: fake credential, test fixture only
+		{Name: "b", URL: "https://provider-user:provider-secret@b.example/sub", PostSOCKS5: bPost}, //nolint:gosec // G101: fake credential, test fixture only
 	}
 	accounts := []config.Account{
 		{Login: "inherit", Provider: "b,a", ExitCountry: "DE"},
@@ -355,7 +355,7 @@ func TestAccountInfoShowsProviderSource(t *testing.T) {
 
 func TestProviderUpdateSetsAndClearsHops(t *testing.T) {
 	home := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.example/sub"})
-	pre, post := "http://u:hop-pw@h.example:8080", "none"
+	pre, post := "http://u:hop-pw@h.example:8080", "none" //nolint:gosec // G101: fake credential, test fixture only
 	preList, postList := config.HopList{pre}, config.HopList{post}
 	if err := ProviderUpdate(home, "p", ProviderUpdateOptions{Pre: &preList, Post: &postList}); err != nil {
 		t.Fatal(err)
@@ -374,7 +374,10 @@ func TestProviderUpdateSetsAndClearsHops(t *testing.T) {
 	if !slices.Equal(list.Providers[0].Pre, []string{"http://h.example:8080"}) || !slices.Equal(list.Providers[0].Post, []string{"none"}) {
 		t.Fatal("listed provider hops did not match the expected redacted singleton values")
 	}
-	raw, _ := json.Marshal(list)
+	raw, err := json.Marshal(list) //nolint:musttag // ProviderListResult is a production type with no json tags; the test only checks that hop credentials do not reach its JSON
+	if err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(string(raw), "hop-pw") {
 		t.Fatal("provider list JSON leaked credentials")
 	}

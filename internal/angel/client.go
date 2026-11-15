@@ -46,7 +46,7 @@ func readControlResponse(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-func (c Client) do(ctx context.Context, req *http.Request) ([]byte, int, error) {
+func (c Client) do(req *http.Request) ([]byte, int, error) {
 	transport := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           (&net.Dialer{Timeout: ProbeTimeout}).DialContext,
@@ -59,11 +59,11 @@ func (c Client) do(ctx context.Context, req *http.Request) ([]byte, int, error) 
 		Timeout:       ProbeTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	resp, err := client.Do(req)
+	resp, err := client.Do(req) //nolint:gosec // G704: target is the loopback control address from the operator-owned state file
 	if err != nil {
 		return nil, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := readControlResponse(resp.Body)
 	if err != nil {
 		return nil, resp.StatusCode, err
@@ -79,7 +79,7 @@ func (c Client) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	data, code, err := c.do(ctx, req)
+	data, code, err := c.do(req)
 	if err != nil {
 		return Status{}, err
 	}
@@ -95,7 +95,7 @@ func (c Client) Stop(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	_, code, err := c.do(ctx, req)
+	_, code, err := c.do(req)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func ProbeLiveKeep(ctx context.Context, home string) (State, Status, error) {
 		if isConnRefused(err) {
 			// Nothing listens on the recorded control port: the angel
 			// the state file names is gone (a crash leaves the file).
-			return st, Status{}, fmt.Errorf("%w: nothing listens on %s: %v",
+			return st, Status{}, fmt.Errorf("%w: nothing listens on %s: %w",
 				ErrNotRunning, st.Control, err)
 		}
 		return st, Status{}, err
@@ -197,7 +197,7 @@ func ProbeLive(ctx context.Context, home string) (State, Status, error) {
 			return State{}, Status{}, ErrNotRunning
 		}
 		if isTimeout(err) {
-			return st, Status{}, fmt.Errorf("%w: %v", ErrControlTimeout, err)
+			return st, Status{}, fmt.Errorf("%w: %w", ErrControlTimeout, err)
 		}
 		return st, Status{}, err
 	}

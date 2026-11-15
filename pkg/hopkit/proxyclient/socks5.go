@@ -3,6 +3,7 @@ package proxyclient
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"net"
 	"strings"
 )
@@ -14,41 +15,46 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int, 
 	if p.Username != "" || p.Password != "" {
 		methods = append(methods, 2)
 	}
-	greeting := []byte{5, byte(len(methods))}
+	nmethods, err := socksLen(len(methods))
+	if err != nil {
+		return proxyError(StageOther, err)
+	}
+	greeting := make([]byte, 0, 2+len(methods))
+	greeting = append(greeting, 5, nmethods)
 	greeting = append(greeting, methods...)
 	if err := writeAll(conn, greeting); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return proxyError(StageHandshake, err)
 	}
 	var choice [2]byte
 	if _, err := io.ReadFull(conn, choice[:]); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return proxyError(StageHandshake, err)
 	}
 	if choice[0] != 5 {
-		return proxyError(StageHandshake, 0, errInvalidProxy)
+		return proxyError(StageHandshake, errInvalidProxy)
 	}
 	switch choice[1] {
 	case 0:
 	case 2:
 		if len(methods) != 2 {
-			return proxyError(StageHandshake, 0, errInvalidProxy)
+			return proxyError(StageHandshake, errInvalidProxy)
 		}
 		err := socks5Auth(conn, p.Username, p.Password)
 		if err != nil {
 			return err
 		}
 	case 0xff:
-		return proxyError(StageRefused, 0, errInvalidProxy)
+		return proxyError(StageRefused, errInvalidProxy)
 	default:
-		return proxyError(StageHandshake, 0, errInvalidProxy)
+		return proxyError(StageHandshake, errInvalidProxy)
 	}
 
 	request, err := socks5Request(targetHost, targetPort)
 	if err != nil {
-		return proxyError(StageOther, 0, err)
+		return proxyError(StageOther, err)
 	}
 	if targetPhase != nil {
 		if err := targetPhase(); err != nil {
-			return proxyError(StageHandshake, 0, err)
+			return proxyError(StageHandshake, err)
 		}
 	}
 	if err := writeAll(conn, request); err != nil {
@@ -99,26 +105,37 @@ func socks5Handshake(conn net.Conn, p Proxy, targetHost string, targetPort int, 
 	return nil
 }
 
-func socks5Auth(conn net.Conn, username, password string) error {
-	if len(username) > 255 || len(password) > 255 {
-		return proxyError(StageOther, 0, errInvalidProxy)
+// socksLen narrows a SOCKS5 length field to the one byte the protocol allows.
+func socksLen(n int) (byte, error) {
+	if n < 0 || n > math.MaxUint8 {
+		return 0, errInvalidProxy
 	}
-	message := []byte{1, byte(len(username))}
+	return byte(n), nil
+}
+
+func socks5Auth(conn net.Conn, username, password string) error {
+	ulen, uerr := socksLen(len(username))
+	plen, perr := socksLen(len(password))
+	if uerr != nil || perr != nil {
+		return proxyError(StageOther, errInvalidProxy)
+	}
+	message := make([]byte, 0, 3+len(username)+len(password))
+	message = append(message, 1, ulen)
 	message = append(message, username...)
-	message = append(message, byte(len(password)))
+	message = append(message, plen)
 	message = append(message, password...)
 	if err := writeAll(conn, message); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return proxyError(StageHandshake, err)
 	}
 	var response [2]byte
 	if _, err := io.ReadFull(conn, response[:]); err != nil {
-		return proxyError(StageHandshake, 0, err)
+		return proxyError(StageHandshake, err)
 	}
 	if response[0] != 1 {
-		return proxyError(StageHandshake, 0, errInvalidProxy)
+		return proxyError(StageHandshake, errInvalidProxy)
 	}
 	if response[1] != 0 {
-		return proxyError(StageRefused, 0, errInvalidProxy)
+		return proxyError(StageRefused, errInvalidProxy)
 	}
 	return nil
 }
@@ -136,11 +153,15 @@ func socks5Request(host string, port int) ([]byte, error) {
 		request = append(request, 1)
 		request = append(request, ip.To4()...)
 	} else {
-		if len(host) == 0 || len(host) > 255 {
+		hlen, err := socksLen(len(host))
+		if len(host) == 0 || err != nil {
 			return nil, errInvalidTarget
 		}
-		request = append(request, 3, byte(len(host)))
+		request = append(request, 3, hlen)
 		request = append(request, host...)
+	}
+	if port < 0 || port > math.MaxUint16 {
+		return nil, errInvalidTarget
 	}
 	var b [2]byte
 	binary.BigEndian.PutUint16(b[:], uint16(port))

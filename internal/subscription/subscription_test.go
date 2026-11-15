@@ -2,7 +2,6 @@ package subscription
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -64,7 +63,7 @@ func TestParseClashYAML(t *testing.T) {
 		t.Fatalf("nodes out of order: %+v", res.Nodes)
 	}
 	// Raw must never leak through the node JSON.
-	data, _ := json.Marshal(res.Nodes[0])
+	data := mustMarshalJSON(t, res.Nodes[0])
 	if strings.Contains(string(data), "password") || strings.Contains(string(data), "cipher") {
 		t.Fatalf("node JSON leaks raw mapping: %s", data)
 	}
@@ -140,7 +139,7 @@ func TestParseErrors(t *testing.T) {
 	}
 	var b strings.Builder
 	b.WriteString("proxies:\n")
-	for i := 0; i < maxNodes+1; i++ {
+	for range maxNodes + 1 {
 		b.WriteString("- {name: n, type: ss, server: e.invalid, port: 1, cipher: aes-128-gcm, password: p}\n")
 	}
 	_, err = Parse([]byte(b.String()))

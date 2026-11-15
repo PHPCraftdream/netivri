@@ -41,14 +41,14 @@ type liveStatus struct {
 
 func liveStatusOf(t *testing.T, home string) liveStatus {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "status")
+	code, out, stderr := accountsRun(t.Context(), t, home, "status")
 	if code != 0 {
-		serverE2EFailureDiagnostics(t, home, "live status command failed")
+		serverE2EFailureDiagnostics(t.Context(), t, home, "live status command failed")
 		t.Fatalf("status exit %d: %s", code, e2eRedactDiagnostic(out+stderr))
 	}
 	var st liveStatus
 	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		serverE2EFailureDiagnostics(t, home, "live status decode failed")
+		serverE2EFailureDiagnostics(t.Context(), t, home, "live status decode failed")
 		t.Fatalf("decode status failed")
 	}
 	return st
@@ -72,7 +72,7 @@ func waitLive(t *testing.T, home, what string, cond func(liveStatus) bool) liveS
 			return st
 		}
 		if time.Now().After(deadline) {
-			serverE2EFailureDiagnostics(t, home, "live status wait expired: "+what)
+			serverE2EFailureDiagnostics(t.Context(), t, home, "live status wait expired: "+what)
 			t.Fatalf("not applied within 40s: %s (reloads %d, last error %q)", what, st.Data.Reload.Count, e2eRedactDiagnostic(st.Data.Reload.LastError))
 		}
 		time.Sleep(500 * time.Millisecond)
@@ -89,7 +89,7 @@ type liveFixture struct {
 // stored DE node that leads to the upstream p1.
 func startLive(t *testing.T, more ...string) *liveFixture {
 	t.Helper()
-	f := &liveFixture{home: t.TempDir(), pass: "live-e2e-password"}
+	f := &liveFixture{home: t.TempDir(), pass: "live-e2e-password"} //nolint:gosec // G101: fixture password of a test account, not a credential
 	var err error
 	if f.hash, err = auth.Hash(f.pass); err != nil {
 		t.Fatal(err)

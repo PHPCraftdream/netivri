@@ -126,7 +126,7 @@ func TestHopHealthLoadErrorWarnsOnceWithoutErrorText(t *testing.T) {
 	clock := &hopTestClock{now: time.Unix(100, 0)}
 	pre, post, logs := &fakeHopHealthStore{loadErr: errors.New("secret-url-password")}, &fakeHopHealthStore{}, &hopLogRecorder{}
 	h := newHopHealthWithMode(map[string]hopHealthStore{"pre": pre, "post": post}, nil, logs.warn, clock.Now, nil, true)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		h.Hook()
 		h.Attach(&fakeHopHealthCore{})
 	}

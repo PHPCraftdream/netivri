@@ -184,7 +184,15 @@ func TestServerParseAndParamsMarshalRoundTrip(t *testing.T) {
 	if err := pure.LoadsInto(src, &genericInto); err != nil {
 		t.Fatal(err)
 	}
-	intoPort := genericInto["servers"].([]any)[0].(map[string]any)["port"]
+	intoServers, ok := genericInto["servers"].([]any)
+	if !ok || len(intoServers) == 0 {
+		t.Fatalf("LoadsInto servers = %T, want non-empty []any", genericInto["servers"])
+	}
+	intoServer, ok := intoServers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("LoadsInto server = %T, want map[string]any", intoServers[0])
+	}
+	intoPort := intoServer["port"]
 	if _, ok := intoPort.(float64); !ok {
 		t.Fatalf("LoadsInto generic port = %T (%v), want float64", intoPort, intoPort)
 	}
@@ -192,11 +200,23 @@ func TestServerParseAndParamsMarshalRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gotPort := raw.(map[string]any)["servers"].([]any)[0].(map[string]any)["port"]
+	rawMap, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("generic Ktav root = %T, want map[string]any", raw)
+	}
+	rawServers, ok := rawMap["servers"].([]any)
+	if !ok || len(rawServers) == 0 {
+		t.Fatalf("generic Ktav servers = %T, want non-empty []any", rawMap["servers"])
+	}
+	rawServer, ok := rawServers[0].(map[string]any)
+	if !ok {
+		t.Fatalf("generic Ktav server = %T, want map[string]any", rawServers[0])
+	}
+	gotPort := rawServer["port"]
 	if _, ok := gotPort.(int64); !ok {
 		t.Fatalf("generic Ktav port = %T (%v), want int64", gotPort, gotPort)
 	}
-	gotParam := raw.(map[string]any)["servers"].([]any)[0].(map[string]any)["numeric"]
+	gotParam := rawServer["numeric"]
 	if gotParam != int64(123) {
 		t.Fatalf("generic Ktav numeric parameter = %#v", gotParam)
 	}

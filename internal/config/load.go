@@ -31,7 +31,7 @@ func configFromBindingError(err error) *cli.Error {
 		b.WriteString(" (" + kerr.Reason + ")")
 	}
 	if kerr.Line > 0 {
-		b.WriteString(fmt.Sprintf(" at line %d", kerr.Line))
+		fmt.Fprintf(&b, " at line %d", kerr.Line)
 	}
 	if kerr.SpecSection != "" {
 		b.WriteString(" [" + kerr.SpecSection + "]")
@@ -58,7 +58,7 @@ func bindingErrorSummary(err error) string {
 		b.WriteString(" (" + kerr.Reason + ")")
 	}
 	if kerr.Line > 0 {
-		b.WriteString(fmt.Sprintf(" at line %d", kerr.Line))
+		fmt.Fprintf(&b, " at line %d", kerr.Line)
 	}
 	return b.String()
 }
@@ -103,7 +103,7 @@ func exitAccountValues(src string) ([]*string, error) {
 // file is reported as an error wrapping os.ErrNotExist; parse or
 // validation problems are *cli.Error with code CONFIG_INVALID.
 func Load(path string) (*Config, error) {
-	src, err := os.ReadFile(path)
+	src, err := os.ReadFile(path) //nolint:gosec // G304: path is the operator-chosen config file (flag or default location)
 	if err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}

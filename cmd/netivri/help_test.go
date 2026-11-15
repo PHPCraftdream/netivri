@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -252,8 +253,8 @@ func TestHelpJSONOverview(t *testing.T) {
 	cmds, _ := help["commands"].([]any)
 	names := map[string]bool{}
 	for _, c := range cmds {
-		m := c.(map[string]any)
-		names[m["name"].(string)] = true
+		m := mustAs[map[string]any](t, c)
+		names[mustAs[string](t, m["name"])] = true
 		if u, _ := m["usage"].([]any); len(u) == 0 {
 			t.Errorf("command %v has no usage", m["name"])
 		}
@@ -310,8 +311,8 @@ func TestHelpErrors(t *testing.T) {
 		{"help", "--nope"},
 	} {
 		out, err := dispatchOut(t, args...)
-		ce, ok := err.(*cli.Error)
-		if !ok {
+		var ce *cli.Error
+		if !errors.As(err, &ce) {
 			t.Errorf("dispatch(%q) = %T (%v), want *cli.Error", args, err, err)
 			continue
 		}
@@ -509,7 +510,7 @@ func TestHelpErrorsMatchTheDocumentedContract(t *testing.T) {
 		}
 	}
 	want := []int{cli.ExitOK, cli.ExitInternal, cli.ExitUsage, cli.ExitNetwork, cli.ExitNoAngel, cli.ExitNotFound, cli.ExitConflict, cli.ExitCheckFailed}
-	var got []int
+	got := make([]int, 0, len(helpExitCodes))
 	for _, e := range helpExitCodes {
 		got = append(got, e.Code)
 	}
@@ -766,7 +767,7 @@ func TestConceptTopicsAreListed(t *testing.T) {
 	cmds, _ := help["commands"].([]any)
 	names := map[string]bool{}
 	for _, c := range cmds {
-		names[c.(map[string]any)["name"].(string)] = true
+		names[mustAs[string](t, mustAs[map[string]any](t, c)["name"])] = true
 	}
 	for _, name := range conceptTopics {
 		if !names[name] {

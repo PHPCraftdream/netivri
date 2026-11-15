@@ -26,12 +26,12 @@ type AccountUpdateOptions struct {
 	PreEdit, PostEdit                *HopEdit
 }
 type AccountCloneOptions struct {
-	Source, Login, Password, Provider, Country, Clients, Exit string
+	Source, Login, Password, Provider, Country, Clients, Exit string //nolint:gosec // G117: the --password flag value, held in memory only; the options are never encoded
 	PasswordGiven, ClientsGiven, ExitGiven                    bool
 }
 type AccountCloneResult struct {
 	Account              accountInfo
-	ClonedFrom, Password string
+	ClonedFrom, Password string //nolint:gosec // G117: the clone command reports the account password by design (its output contract)
 }
 type AccountShowResult struct {
 	Login, Provider, ExitCountry, Exit string
@@ -51,10 +51,10 @@ func AccountAdd(home string, o AccountAddOptions) (AccountAddResult, error) {
 		return AccountAddResult{}, e
 	}
 	r := AccountAddResult{}
-	e = accountAddWith(home, c, o, func() error { return saveAccountConfig(home, c) }, &r)
+	e = accountAddWith(c, o, func() error { return saveAccountConfig(home, c) }, &r)
 	return r, e
 }
-func accountAddWith(home string, c *config.Config, o AccountAddOptions, save func() error, r *AccountAddResult) error {
+func accountAddWith(c *config.Config, o AccountAddOptions, save func() error, r *AccountAddResult) error {
 	if !config.ValidAccountLogin(o.Login) {
 		return &cli.Error{Code: "ACCOUNT_INVALID", Message: "invalid account login", Exit: cli.ExitUsage}
 	}
@@ -156,6 +156,8 @@ func accountShowResult(ctx context.Context, home string, c *config.Config, login
 	info := infoForAccount(c, a)
 	return AccountShowResult{Login: a.Login, Provider: a.Provider, ExitCountry: a.ExitCountry, Exit: effectiveExit(a), PreSOCKS5: showChainInfoForAccount(info.PreSOCKS5), PostSOCKS5: showChainInfoForAccount(info.PostSOCKS5), Providers: providers, Countries: countries, Tiers: tiers, Live: accountShowLive(ctx, home, login, tiers), FallbackConnections: fallbackConnections(tiers)}, nil
 }
+
+//nolint:unparam // exported update API: the updated account is its result; the CLI and tests discard it
 func AccountUpdate(home string, o AccountUpdateOptions) (accountInfo, error) {
 	c, e := loadConfig(home)
 	if e != nil {
@@ -361,14 +363,15 @@ func accountRemoveWith(c *config.Config, login string, save func() error) error 
 	}
 	originalAccounts := c.Accounts
 	candidateAccounts := append([]config.Account(nil), c.Accounts...)
-	c.Accounts = append(candidateAccounts[:i], candidateAccounts[i+1:]...)
+	candidateAccounts = append(candidateAccounts[:i], candidateAccounts[i+1:]...)
+	c.Accounts = candidateAccounts
 	if err := save(); err != nil {
 		c.Accounts = originalAccounts
 		return err
 	}
 	return nil
 }
-func updateAccountTargets(home string, c *config.Config, field string, targets []*config.Account, spec string, all bool, value string, save func() error) ([]accountInfo, error) {
+func updateAccountTargets(home string, c *config.Config, field string, targets []*config.Account, value string, save func() error) ([]accountInfo, error) {
 	if len(targets) == 0 {
 		return nil, accountNotFound()
 	}
