@@ -133,7 +133,7 @@ func TestStickyGroupHonoursTiers(t *testing.T) {
 	if index, _ := g.choose("alice", "one.example"); index != 0 {
 		t.Fatalf("first site bound to %d, want 0 (first tier, though slower)", index)
 	}
-	for i := 0; i < downDialFailures; i++ {
+	for range downDialFailures {
 		health.recordDial("a", false, 0)
 	}
 	if index, _ := g.choose("alice", "one.example"); index != 1 {

@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -19,26 +21,73 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/metacubex/mihomo/adapter/outbound"
-	C "github.com/metacubex/mihomo/constant"
 )
 
 func TestE2EShadowQUICLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	const accountPass = "shadowquic-e2e-account-password"
-	backend := accountsEcho(t)
-	aliceUp, bobUp := accountsServer(t), accountsServer(t)
+	st := &e2eShadowQUICState{ctx: ctx}
+	setupShadowQUICServerA(t, st)
+	readShadowQUICLinks(t, st)
+	setupShadowQUICClientB(t, st)
+	checkShadowQUICInitialRoutes(t, st)
+	checkShadowQUICWrongSecret(t, st)
+	rotateShadowQUICAlice(t, st)
+	updateShadowQUICSubscription(t, st)
+	restrictShadowQUICAlice(t, st)
+	checkShadowQUICRestrictedBob(t, st)
+	clearShadowQUICRestriction(t, st)
+	restartShadowQUICServer(t, st)
+	checkShadowQUICAfterRestart(t, st)
+	removeShadowQUICEdge(t, st)
+}
+
+// e2eShadowQUICState is the shared state of TestE2EShadowQUICLifecycle.
+// secretCheck grows as links and secrets are created, and the cleanups read
+// the current serverProc and clientProc at teardown.
+type e2eShadowQUICState struct {
+	ctx         context.Context
+	accountPass string
+	hash        string
+	backend     string
+	aliceUp     *accountsUpstream
+	bobUp       *accountsUpstream
+	homeA       string
+	homeB       string
+	port        int
+	secretCheck []string
+	aliceLink   string
+	bobLink     string
+	feedAlice   *e2eShadowQUICFeed
+	feedBob     *e2eShadowQUICFeed
+	serverA     *upProc
+	serverProc  *upProc
+	clientB     *upProc
+	clientProc  *upProc
+}
+
+// setupShadowQUICServerA writes A's fixture and adds the ShadowQUIC edge that
+// alice and bob share.
+func setupShadowQUICServerA(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	const accountPass = "shadowquic-e2e-account-password" //nolint:gosec // G101: fixture password of a test account, not a credential
+	st.accountPass = accountPass
+	st.backend = accountsEcho(t)
+	st.aliceUp, st.bobUp = accountsServer(t), accountsServer(t)
 	hash, err := auth.Hash(accountPass)
 	if err != nil {
 		t.Fatal("hash test account password")
 	}
-	homeA := t.TempDir()
-	writeConfig(t, homeA, func(cfg *config.Config) {
+	st.hash = hash
+	st.homeA = t.TempDir()
+	writeConfig(t, st.homeA, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{
 			{Login: "alice", Password: hash, Provider: "alice-route"},
 			{Login: "bob", Password: hash, Provider: "bob-route"},
@@ -48,251 +97,331 @@ func TestE2EShadowQUICLifecycle(t *testing.T) {
 			{Name: "bob-route", URL: "http://bob.invalid/sub"},
 		}
 	})
-	accountsSaveSnapshot(t, homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", aliceUp)})
-	accountsSaveSnapshot(t, homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", bobUp)})
-	serverA := startUp(t, homeA, "--port", "0")
-	secretCheck := []string{accountPass, hash}
-	serverProc := serverA
+	accountsSaveSnapshot(t, st.homeA, "alice-route", []subscription.Node{accountsSocksNode("alice-node", "", st.aliceUp)})
+	accountsSaveSnapshot(t, st.homeA, "bob-route", []subscription.Node{accountsSocksNode("bob-node", "", st.bobUp)})
+	st.serverA = startUp(t, st.homeA, "--port", "0")
+	st.secretCheck = []string{accountPass, hash}
+	st.serverProc = st.serverA
 	t.Cleanup(func() {
-		if serverProc != nil {
-			serverProc.Stop()
-			assertNoSecrets(t, serverProc.Stdout(), serverProc.Stderr(), secretCheck...)
+		if st.serverProc != nil {
+			st.serverProc.Stop()
+			assertNoSecrets(t, st.serverProc.Stdout(), st.serverProc.Stderr(), st.secretCheck...)
 		}
 	})
-	port := servertest.FreePort(t)
-	code, out, stderr := serverRun(t, homeA, "add", "--protocol", "shadowquic", "--name", "edge", "--account", "alice,bob", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1", "--param", "sni=localhost")
+	st.port = servertest.FreePort(t)
+	code, out, stderr := serverRun(t, st.homeA, "add", "--protocol", "shadowquic", "--name", "edge", "--account", "alice,bob", "--port", strconv.Itoa(st.port), "--bind", "127.0.0.1", "--public-host", "::ffff:127.0.0.1", "--param", "sni=localhost")
 	if code != 0 {
 		t.Fatalf("ShadowQUIC server add failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 1)
-	e2eShadowQUICWaitStatus(t, ctx, homeA, true, secretCheck...)
-	getLink := func(account string) string {
-		t.Helper()
-		code, out, stderr := serverRun(t, homeA, "link", "edge", "--account", account, "--host", "::ffff:127.0.0.1", "--format", "mihomo")
-		if code != 0 {
-			t.Fatalf("ShadowQUIC link failed: %s", serverErrorSummary(out, stderr))
-		}
-		var env struct {
-			Data struct {
-				Link string `json:"link"`
-			} `json:"data"`
-		}
-		if json.Unmarshal([]byte(out), &env) != nil || env.Data.Link == "" {
-			t.Fatal("ShadowQUIC link response invalid")
-		}
-		assertNoSecrets(t, out, stderr, accountPass, hash)
-		return env.Data.Link
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 1)
+	e2eShadowQUICWaitStatus(t, st.ctx, st.homeA, true, st.secretCheck...)
+}
+
+// getShadowQUICLink returns the mihomo ShadowQUIC link of account.
+func getShadowQUICLink(t *testing.T, st *e2eShadowQUICState, account string) string {
+	t.Helper()
+	code, out, stderr := serverRun(t, st.homeA, "link", "edge", "--account", account, "--host", "::ffff:127.0.0.1", "--format", "mihomo")
+	if code != 0 {
+		t.Fatalf("ShadowQUIC link failed: %s", serverErrorSummary(out, stderr))
 	}
-	aliceLink, bobLink := getLink("alice"), getLink("bob")
-	secretCheck = append(secretCheck, e2eShadowQUICPassword(t, aliceLink), e2eShadowQUICPassword(t, bobLink))
-	feed := &e2eShadowQUICFeed{body: aliceLink}
-	feedURLAlice := feed.start(t, "/alice")
-	bobFeed := &e2eShadowQUICFeed{body: bobLink}
-	feedURLBob := bobFeed.start(t, "/bob")
-	homeB := t.TempDir()
-	code, out, stderr = accountsRun(t, homeB, "sub", "add", feedURLAlice, "--name", "edge")
+	var env struct {
+		Data struct {
+			Link string `json:"link"`
+		} `json:"data"`
+	}
+	if json.Unmarshal([]byte(out), &env) != nil || env.Data.Link == "" {
+		t.Fatal("ShadowQUIC link response invalid")
+	}
+	assertNoSecrets(t, out, stderr, st.accountPass, st.hash)
+	return env.Data.Link
+}
+
+// readShadowQUICLinks reads the links of alice and bob and adds their secrets
+// to the redaction list.
+func readShadowQUICLinks(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	st.aliceLink, st.bobLink = getShadowQUICLink(t, st, "alice"), getShadowQUICLink(t, st, "bob")
+	st.secretCheck = append(st.secretCheck, e2eShadowQUICPassword(t, st.aliceLink), e2eShadowQUICPassword(t, st.bobLink))
+}
+
+// setupShadowQUICClientB serves each link as a subscription feed, imports both
+// into B and starts B's angel.
+func setupShadowQUICClientB(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	st.feedAlice = &e2eShadowQUICFeed{body: st.aliceLink}
+	feedURLAlice := st.feedAlice.start(t, "/alice")
+	st.feedBob = &e2eShadowQUICFeed{body: st.bobLink}
+	feedURLBob := st.feedBob.start(t, "/bob")
+	st.homeB = t.TempDir()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeB, "sub", "add", feedURLAlice, "--name", "edge")
 	if code != 0 {
 		t.Fatalf("subscription add failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	code, out, stderr = accountsRun(t, homeB, "account", "add", "alice", "--provider", "edge")
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	code, out, stderr = accountsRun(t.Context(), t, st.homeB, "account", "add", "alice", "--provider", "edge")
 	if code != 0 {
 		t.Fatalf("Alice account add failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	code, out, stderr = accountsRun(t, homeB, "sub", "add", feedURLBob, "--name", "bob-edge")
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	code, out, stderr = accountsRun(t.Context(), t, st.homeB, "sub", "add", feedURLBob, "--name", "bob-edge")
 	if code != 0 {
 		t.Fatalf("Bob subscription add failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	code, out, stderr = accountsRun(t, homeB, "account", "add", "bob", "--provider", "bob-edge")
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	code, out, stderr = accountsRun(t.Context(), t, st.homeB, "account", "add", "bob", "--provider", "bob-edge")
 	if code != 0 {
 		t.Fatalf("Bob account add failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	clientB := startUp(t, homeB, "--port", "0")
-	clientProc := clientB
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	st.clientB = startUp(t, st.homeB, "--port", "0")
+	st.clientProc = st.clientB
 	t.Cleanup(func() {
-		if clientProc != nil {
-			clientProc.Stop()
-			assertNoSecrets(t, clientProc.Stdout(), clientProc.Stderr(), secretCheck...)
+		if st.clientProc != nil {
+			st.clientProc.Stop()
+			assertNoSecrets(t, st.clientProc.Stdout(), st.clientProc.Stderr(), st.secretCheck...)
 		}
 	})
-	restartB := func() {
-		t.Helper()
-		code, out, stderr := accountsRun(t, homeB, "down")
-		if code != 0 {
-			t.Fatalf("client B down failed: %s", serverErrorSummary(out, stderr))
+}
+
+// restartShadowQUICClient restarts B's angel and records it for cleanup.
+func restartShadowQUICClient(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeB, "down")
+	if code != 0 {
+		t.Fatalf("client B down failed: %s", serverErrorSummary(out, stderr))
+	}
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	st.clientB.Stop()
+	assertNoSecrets(t, st.clientB.Stdout(), st.clientB.Stderr(), st.secretCheck...)
+	st.clientB = startUp(t, st.homeB, "--port", "0")
+	st.clientProc = st.clientB
+}
+
+// driveShadowQUIC sends one echo through B as account and checks that only that
+// account's upstream recorded it. With retry it keeps trying until the deadline
+// or the test context ends.
+func driveShadowQUIC(st *e2eShadowQUICState, account string, retry bool) error {
+	deadline := time.Now().Add(30 * time.Second)
+	if parentDeadline, ok := st.ctx.Deadline(); ok && parentDeadline.Before(deadline) {
+		deadline = parentDeadline
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	beforeAlice, beforeBob := st.aliceUp.count.Load(), st.bobUp.count.Load()
+	for {
+		attemptCtx, cancelAttempt := context.WithDeadline(st.ctx, deadline)
+		err := e2eShadowQUICEcho(attemptCtx, st.clientB.Status().Data.Listen, account, st.accountPass, st.backend)
+		cancelAttempt()
+		aliceDelta := st.aliceUp.count.Load() - beforeAlice
+		bobDelta := st.bobUp.count.Load() - beforeBob
+		if aliceDelta < 0 || bobDelta < 0 {
+			return errors.New("recorder count decreased during routed echo")
 		}
-		assertNoSecrets(t, out, stderr, secretCheck...)
-		clientB.Stop()
-		assertNoSecrets(t, clientB.Stdout(), clientB.Stderr(), secretCheck...)
-		clientB = startUp(t, homeB, "--port", "0")
-		clientProc = clientB
-	}
-	drive := func(account string, retry bool) error {
-		deadline := time.Now().Add(30 * time.Second)
-		if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
-			deadline = parentDeadline
+		if err == nil && ((account == "alice" && aliceDelta > 0 && bobDelta == 0) || (account == "bob" && bobDelta > 0 && aliceDelta == 0)) {
+			return nil
 		}
-		tick := time.NewTicker(time.Second)
-		defer tick.Stop()
-		beforeAlice, beforeBob := aliceUp.count.Load(), bobUp.count.Load()
-		for {
-			attemptCtx, cancelAttempt := context.WithDeadline(ctx, deadline)
-			err := e2eShadowQUICEcho(attemptCtx, clientB.Status().Data.Listen, account, accountPass, backend)
-			cancelAttempt()
-			aliceDelta := aliceUp.count.Load() - beforeAlice
-			bobDelta := bobUp.count.Load() - beforeBob
-			if aliceDelta < 0 || bobDelta < 0 {
-				return errors.New("recorder count decreased during routed echo")
-			}
-			if err == nil && ((account == "alice" && aliceDelta > 0 && bobDelta == 0) || (account == "bob" && bobDelta > 0 && aliceDelta == 0)) {
-				return nil
-			}
-			if err == nil {
-				err = errors.New("account recorder routing mismatch")
-			}
-			if !retry || time.Now().After(deadline) || ctx.Err() != nil {
-				return err
-			}
-			select {
-			case <-ctx.Done():
-				return err
-			case <-tick.C:
-			}
+		if err == nil {
+			err = errors.New("account recorder routing mismatch")
+		}
+		if !retry || time.Now().After(deadline) || st.ctx.Err() != nil {
+			return err
+		}
+		select {
+		case <-st.ctx.Done():
+			return err
+		case <-tick.C:
 		}
 	}
-	if err := drive("alice", false); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+}
+
+// checkShadowQUICInitialRoutes drives alice and bob through B.
+func checkShadowQUICInitialRoutes(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	if err := driveShadowQUIC(st, "alice", false); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	if err := drive("bob", false); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := driveShadowQUIC(st, "bob", false); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	beforeA, beforeB := aliceUp.count.Load(), bobUp.count.Load()
+}
+
+// checkShadowQUICWrongSecret checks that a wrong secret for alice is refused or
+// times out, and that neither outcome reaches a recorder.
+func checkShadowQUICWrongSecret(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	beforeA, beforeB := st.aliceUp.count.Load(), st.bobUp.count.Load()
 	wrongPassword := e2eShadowQUICWrongPassword(t)
-	secretCheck = append(secretCheck, wrongPassword)
-	wrongErr := e2eShadowQUICProbe(ctx, port, "alice", wrongPassword, backend)
+	st.secretCheck = append(st.secretCheck, wrongPassword)
+	wrongErr := e2eShadowQUICProbe(st.ctx, st.port, "alice", wrongPassword, st.backend)
 	if wrongErr == nil {
 		t.Fatal("wrong ShadowQUIC secret was accepted")
 	}
 	if e2eShadowQUICTimedOut(wrongErr) {
-		if aliceUp.count.Load() != beforeA || bobUp.count.Load() != beforeB {
+		if st.aliceUp.count.Load() != beforeA || st.bobUp.count.Load() != beforeB {
 			t.Fatal("wrong-secret probe reached a recorder")
 		}
 		t.Log("JLS silently drops invalid authentication; client deadline is inconclusive, not a rejection classification")
 	} else if !e2eShadowQUICRejected(wrongErr) {
 		t.Fatalf("wrong-secret probe returned an unexpected error class: %T", wrongErr)
 	}
-	if aliceUp.count.Load() != beforeA || bobUp.count.Load() != beforeB {
+	if st.aliceUp.count.Load() != beforeA || st.bobUp.count.Load() != beforeB {
 		t.Fatal("wrong-secret probe reached a recorder")
 	}
-	oldAlice := aliceLink
-	if err := e2eShadowQUICProbe(ctx, port, "alice", e2eShadowQUICPassword(t, oldAlice), backend); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+}
+
+// rotateShadowQUICAlice checks that alice's current secret works, rotates it,
+// checks that the old secret is refused and publishes the new link to the feed.
+func rotateShadowQUICAlice(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	oldAlice := st.aliceLink
+	if err := e2eShadowQUICProbe(st.ctx, st.port, "alice", e2eShadowQUICPassword(t, oldAlice), st.backend); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	code, out, stderr = serverRun(t, homeA, "rotate", "edge", "--account", "alice")
+	code, out, stderr := serverRun(t, st.homeA, "rotate", "edge", "--account", "alice")
 	if code != 0 {
 		t.Fatalf("rotation failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 2)
-	oldAliceCount, oldBobCount := aliceUp.count.Load(), bobUp.count.Load()
-	if err := e2eShadowQUICProbe(ctx, port, "alice", e2eShadowQUICPassword(t, oldAlice), backend); err == nil {
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 2)
+	oldAliceCount, oldBobCount := st.aliceUp.count.Load(), st.bobUp.count.Load()
+	switch err := e2eShadowQUICProbe(st.ctx, st.port, "alice", e2eShadowQUICPassword(t, oldAlice), st.backend); {
+	case err == nil:
 		t.Fatal("old Alice secret was accepted after rotation")
-	} else if e2eShadowQUICRejected(err) {
-		if aliceUp.count.Load() != oldAliceCount || bobUp.count.Load() != oldBobCount {
+	case e2eShadowQUICRejected(err):
+		if st.aliceUp.count.Load() != oldAliceCount || st.bobUp.count.Load() != oldBobCount {
 			t.Fatal("old-secret probe reached a recorder")
 		}
-	} else if e2eShadowQUICTimedOut(err) {
-		if aliceUp.count.Load() != oldAliceCount || bobUp.count.Load() != oldBobCount {
+	case e2eShadowQUICTimedOut(err):
+		if st.aliceUp.count.Load() != oldAliceCount || st.bobUp.count.Load() != oldBobCount {
 			t.Fatal("old-secret probe reached a recorder")
 		}
 		t.Log("JLS silently drops invalid authentication; client deadline is inconclusive, not a rejection classification")
-	} else {
+	default:
 		t.Fatalf("old-secret probe returned an unexpected error class: %T", err)
 	}
-	aliceLink = getLink("alice")
-	secretCheck = append(secretCheck, e2eShadowQUICPassword(t, aliceLink))
-	feed.set(aliceLink)
-	code, out, stderr = accountsRun(t, homeB, "sub", "update", "edge")
+	st.aliceLink = getShadowQUICLink(t, st, "alice")
+	st.secretCheck = append(st.secretCheck, e2eShadowQUICPassword(t, st.aliceLink))
+	st.feedAlice.set(st.aliceLink)
+}
+
+// updateShadowQUICSubscription refreshes B's subscription after the rotation
+// and drives both accounts through the restarted B.
+func updateShadowQUICSubscription(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeB, "sub", "update", "edge")
 	if code != 0 {
 		t.Fatalf("subscription update failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeB, 1)
-	restartB()
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeB, 1)
+	restartShadowQUICClient(t, st)
 	// The first QUIC connection after a restart can be reset on a loaded
 	// runner (windows e2e), like the later restarts below: retry it.
-	if err := drive("alice", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := driveShadowQUIC(st, "alice", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	if err := drive("bob", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := driveShadowQUIC(st, "bob", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "192.0.2.0/24")
+}
+
+// restrictShadowQUICAlice limits alice to 192.0.2.0/24: alice's probe from
+// outside the range is refused and bob's probe still succeeds.
+func restrictShadowQUICAlice(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "192.0.2.0/24")
 	if code != 0 {
 		t.Fatalf("set Alice clients failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 3)
-	if err := e2eShadowQUICProbe(ctx, port, "alice", e2eShadowQUICPassword(t, aliceLink), backend); err == nil {
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 3)
+	if err := e2eShadowQUICProbe(st.ctx, st.port, "alice", e2eShadowQUICPassword(t, st.aliceLink), st.backend); err == nil {
 		t.Fatal("disallowed Alice client probe was accepted")
 	} else if !e2eShadowQUICRejected(err) {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
 			t.Fatal("disallowed Alice client probe timed out instead of being rejected")
 		}
 		t.Fatalf("disallowed Alice probe returned an unexpected error class: %T", err)
 	}
-	if err := e2eShadowQUICProbe(ctx, port, "bob", e2eShadowQUICPassword(t, bobLink), backend); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := e2eShadowQUICProbe(st.ctx, st.port, "bob", e2eShadowQUICPassword(t, st.bobLink), st.backend); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	restartB()
-	if err := drive("bob", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+}
+
+// checkShadowQUICRestrictedBob restarts B while alice is restricted and checks
+// that bob still routes.
+func checkShadowQUICRestrictedBob(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	restartShadowQUICClient(t, st)
+	if err := driveShadowQUIC(st, "bob", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	code, out, stderr = accountsRun(t, homeA, "account", "set-clients", "alice", "--none")
+}
+
+// clearShadowQUICRestriction clears alice's client filter and checks that both
+// accounts route again after B restarts.
+func clearShadowQUICRestriction(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "account", "set-clients", "alice", "--none")
 	if code != 0 {
 		t.Fatalf("clear Alice clients failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 4)
-	restartB()
-	if err := drive("alice", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 4)
+	restartShadowQUICClient(t, st)
+	if err := driveShadowQUIC(st, "alice", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	if err := drive("bob", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := driveShadowQUIC(st, "bob", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	code, out, stderr = accountsRun(t, homeA, "down")
+}
+
+// restartShadowQUICServer restarts A's angel and checks that alice's current
+// secret works again afterwards.
+func restartShadowQUICServer(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := accountsRun(t.Context(), t, st.homeA, "down")
 	if code != 0 {
 		t.Fatalf("server down failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	serverA.Stop()
-	assertNoSecrets(t, serverA.Stdout(), serverA.Stderr(), secretCheck...)
-	serverProc = nil
-	serverA = startUp(t, homeA, "--port", "0")
-	serverProc = serverA
-	if err := e2eShadowQUICProbe(ctx, port, "alice", e2eShadowQUICPassword(t, aliceLink), backend); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	st.serverA.Stop()
+	assertNoSecrets(t, st.serverA.Stdout(), st.serverA.Stderr(), st.secretCheck...)
+	st.serverProc = nil
+	st.serverA = startUp(t, st.homeA, "--port", "0")
+	st.serverProc = st.serverA
+	if err := e2eShadowQUICProbe(st.ctx, st.port, "alice", e2eShadowQUICPassword(t, st.aliceLink), st.backend); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	restartB()
-	if err := drive("alice", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+}
+
+// checkShadowQUICAfterRestart restarts B and drives both accounts.
+func checkShadowQUICAfterRestart(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	restartShadowQUICClient(t, st)
+	if err := driveShadowQUIC(st, "alice", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	if err := drive("bob", true); err != nil {
-		e2eShadowQUICFailure(t, homeA, homeB, err, secretCheck...)
+	if err := driveShadowQUIC(st, "bob", true); err != nil {
+		e2eShadowQUICFailure(t, st.homeA, st.homeB, err, st.secretCheck...)
 	}
-	code, out, stderr = serverRun(t, homeA, "remove", "edge")
+}
+
+// removeShadowQUICEdge removes the ShadowQUIC edge and checks that its UDP port
+// is released.
+func removeShadowQUICEdge(t *testing.T, st *e2eShadowQUICState) {
+	t.Helper()
+	code, out, stderr := serverRun(t, st.homeA, "remove", "edge")
 	if code != 0 {
 		t.Fatalf("server remove failed: %s", serverErrorSummary(out, stderr))
 	}
-	assertNoSecrets(t, out, stderr, secretCheck...)
-	waitStatusReload(t, ctx, homeA, 1)
-	e2eShadowQUICWaitStatus(t, ctx, homeA, false, secretCheck...)
-	if err := e2eShadowQUICWaitPort(ctx, port); err != nil {
+	assertNoSecrets(t, out, stderr, st.secretCheck...)
+	waitStatusReload(t, st.ctx, st.homeA, 1)
+	e2eShadowQUICWaitStatus(t, st.ctx, st.homeA, false, st.secretCheck...)
+	if err := e2eShadowQUICWaitPort(st.ctx, st.port); err != nil {
 		t.Fatalf("removed ShadowQUIC UDP port remains bound: %v", err)
 	}
 }
@@ -317,7 +446,7 @@ func (f *e2eShadowQUICFeed) start(t *testing.T, path string) string {
 		_, _ = io.WriteString(w, f.body)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: time.Second, ReadTimeout: 2 * time.Second, WriteTimeout: 2 * time.Second}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("subscription listen")
 	}
@@ -357,7 +486,7 @@ func e2eShadowQUICProxyEcho(ctx context.Context, proxy, account, password, targe
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	deadline := time.Now().Add(3 * time.Second)
 	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 		deadline = contextDeadline
@@ -375,10 +504,18 @@ func e2eShadowQUICProxyEcho(ctx context.Context, proxy, account, password, targe
 	if r[1] != 2 {
 		return errors.New("proxy did not request authentication")
 	}
+	accountLen := len(account)
+	if accountLen > 255 {
+		return errors.New("account name too long")
+	}
+	passLen := len(password)
+	if passLen > 255 {
+		return errors.New("password too long")
+	}
 	authRequest := make([]byte, 0, 3+len(account)+len(password))
-	authRequest = append(authRequest, 1, byte(len(account)))
+	authRequest = append(authRequest, 1, byte(accountLen))
 	authRequest = append(authRequest, account...)
-	authRequest = append(authRequest, byte(len(password)))
+	authRequest = append(authRequest, byte(passLen))
 	authRequest = append(authRequest, password...)
 	if _, err = c.Write(authRequest); err != nil {
 		return err
@@ -394,11 +531,18 @@ func e2eShadowQUICProxyEcho(ctx context.Context, proxy, account, password, targe
 		return e
 	}
 	port, _ := strconv.Atoi(portText)
+	if port < 0 {
+		return errors.New("echo port invalid")
+	}
+	if port > math.MaxUint16 {
+		return errors.New("echo port invalid")
+	}
 	ip := net.ParseIP(host).To4()
 	if ip == nil {
 		return errors.New("backend is not IPv4")
 	}
-	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], byte(port >> 8), byte(port)}
+	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3]}
+	req = binary.BigEndian.AppendUint16(req, uint16(port))
 	if _, err = c.Write(req); err != nil {
 		return err
 	}
@@ -410,13 +554,14 @@ func e2eShadowQUICProxyEcho(ctx context.Context, proxy, account, password, targe
 		return errors.New("proxy CONNECT rejected")
 	}
 	rest := 6
-	if head[3] == 3 {
+	switch head[3] {
+	case 3:
 		b := make([]byte, 1)
 		if _, err = io.ReadFull(c, b); err != nil {
 			return err
 		}
 		rest = int(b[0]) + 2
-	} else if head[3] == 4 {
+	case 4:
 		rest = 18
 	}
 	if _, err = io.CopyN(io.Discard, c, int64(rest)); err != nil {
@@ -444,16 +589,22 @@ func e2eShadowQUICProbe(parent context.Context, port int, user, password, target
 		return err
 	}
 	p, _ := strconv.Atoi(ptext)
+	if p < 0 {
+		return errors.New("echo port invalid")
+	}
+	if p > math.MaxUint16 {
+		return errors.New("echo port invalid")
+	}
 	client, err := outbound.NewShadowQuic(outbound.ShadowQuicOption{Name: "shadowquic-e2e-probe", Server: "127.0.0.1", Port: port, Username: user, Password: password, SNI: "localhost"})
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(p)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	deadline := time.Now().Add(2 * time.Second)
 	if parentDeadline, ok := ctx.Deadline(); ok && parentDeadline.Before(deadline) {
 		deadline = parentDeadline
@@ -515,7 +666,7 @@ func e2eShadowQUICWaitStatus(t *testing.T, ctx context.Context, home string, wan
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		code, out, stderr := accountsRun(t, home, "status")
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		if code == 0 {
 			var env struct {
 				Data struct {
@@ -550,7 +701,7 @@ func e2eShadowQUICWaitStatus(t *testing.T, ctx context.Context, home string, wan
 		}
 		select {
 		case <-ctx.Done():
-			serverE2EFailureDiagnostics(t, home, "ShadowQUIC status wait expired")
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "ShadowQUIC status wait expired")
 			t.Fatalf("ShadowQUIC status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}
@@ -562,8 +713,8 @@ func e2eShadowQUICFailure(t *testing.T, homeA, homeB string, err error, secrets 
 	// The checks below stop the test on a possible secret in the output (a short
 	// secret can match by chance), so name the real failure first.
 	t.Logf("ShadowQUIC echo failed (primary error, redacted): %s", e2eRedactDiagnostic(err.Error()))
-	codeA, statusA, stderrA := accountsRun(t, homeA, "status", "--full")
-	codeB, statusB, stderrB := accountsRun(t, homeB, "status", "--full")
+	codeA, statusA, stderrA := accountsRun(t.Context(), t, homeA, "status", "--full")
+	codeB, statusB, stderrB := accountsRun(t.Context(), t, homeB, "status", "--full")
 	assertNoSecrets(t, statusA, stderrA, append(e2eShadowQUICAccountSecrets(t, homeA), secrets...)...)
 	assertNoSecrets(t, statusB, stderrB, append(e2eShadowQUICAccountSecrets(t, homeB), secrets...)...)
 	if codeA != 0 {
@@ -576,7 +727,7 @@ func e2eShadowQUICFailure(t *testing.T, homeA, homeB string, err error, secrets 
 	} else {
 		statusB = e2eShadowQUICSafeStatus(statusB)
 	}
-	logsA := serverE2ELogTail(t, homeA)
+	logsA := serverE2ELogTail(t.Context(), t, homeA)
 	assertNoSecrets(t, logsA, "", secrets...)
 	statusSecrets := append(e2eShadowQUICAccountSecrets(t, homeA), secrets...)
 	assertNoSecrets(t, statusA, "", statusSecrets...)
@@ -606,7 +757,7 @@ func e2eShadowQUICSafeStatus(raw string) string {
 func e2eShadowQUICAccountSecrets(t *testing.T, home string) []string {
 	t.Helper()
 	cfg := loadConfigFile(t, home)
-	var secrets []string
+	secrets := make([]string, 0, len(cfg.Accounts))
 	for _, account := range cfg.Accounts {
 		secrets = append(secrets, account.Password)
 	}
@@ -618,7 +769,7 @@ func e2eShadowQUICWaitPort(ctx context.Context, port int) error {
 	defer tick.Stop()
 	addr := "127.0.0.1:" + strconv.Itoa(port)
 	for {
-		pc, err := net.ListenPacket("udp", addr)
+		pc, err := (&net.ListenConfig{}).ListenPacket(context.WithoutCancel(ctx), "udp", addr)
 		if err == nil {
 			if closeErr := pc.Close(); closeErr != nil {
 				return closeErr

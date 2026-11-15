@@ -422,7 +422,7 @@ func TestRoundSkipsLeaseStarvationAndRotatesClaims(t *testing.T) {
 		return pool.ProbeInconclusive
 	})
 	r := testReviver(t, registration, Options{Interval: time.Second, Timeout: time.Second, Concurrency: 1, Clock: clock})
-	for round := 0; round < 3; round++ {
+	for range 3 {
 		if err := r.Round(context.Background()); err != nil {
 			t.Fatal(err)
 		}

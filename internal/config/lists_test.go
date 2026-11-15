@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -96,7 +97,8 @@ func TestValidateAccountLists(t *testing.T) {
 		{"", "DE,NLD", "exit_country"},
 	} {
 		err := valid(tc.provider, tc.country).Validate()
-		ce, ok := err.(*cli.Error)
+		var ce *cli.Error
+		ok := errors.As(err, &ce)
 		if !ok || ce.Code != CodeConfigInvalid || !strings.HasPrefix(ce.Message, "accounts[0]."+tc.field+" must be") {
 			t.Errorf("%+v: error = %#v", tc, err)
 		}
@@ -170,7 +172,8 @@ func TestValidateAccountListsRejectBadScalars(t *testing.T) {
 		c := Default()
 		c.Accounts = []Account{{Login: "alice", Password: InitPlaceholder, Provider: tc.provider, ExitCountry: tc.country}}
 		err := c.Validate()
-		ce, ok := err.(*cli.Error)
+		var ce *cli.Error
+		ok := errors.As(err, &ce)
 		if !ok || ce.Code != CodeConfigInvalid || !strings.Contains(ce.Message, "accounts[0]."+tc.field) {
 			t.Errorf("%+v: error = %#v", tc, err)
 		}
@@ -186,7 +189,8 @@ func TestLoadRejectsBadAccountLists(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := Load(path)
-		ce, ok := err.(*cli.Error)
+		var ce *cli.Error
+		ok := errors.As(err, &ce)
 		if !ok || ce.Code != CodeConfigInvalid {
 			t.Fatalf("%q: error = %#v", line, err)
 		}

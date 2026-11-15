@@ -174,14 +174,14 @@ func TestParityEveryCLICommandAndFlagIsInTheCatalog(t *testing.T) {
 			inCatalog[r] = true
 		}
 	}
-	real := parityCLIRefs()
-	for _, ref := range paritySortedKeys(real) {
+	cliRefs := parityCLIRefs()
+	for _, ref := range paritySortedKeys(cliRefs) {
 		if !inCatalog[ref] {
 			t.Errorf("CLI %q is not in the parity catalog (add a capability, or a CLI ref to one)", ref)
 		}
 	}
 	for _, ref := range paritySortedKeys(inCatalog) {
-		if !real[ref] {
+		if !cliRefs[ref] {
 			t.Errorf("the catalog names CLI %q, which does not exist (renamed or removed?)", ref)
 		}
 	}
@@ -194,14 +194,14 @@ func TestParityEveryShellActionIsInTheCatalog(t *testing.T) {
 			inCatalog[r] = true
 		}
 	}
-	real := parityTUIRefs(t)
-	for _, ref := range paritySortedKeys(real) {
+	tuiRefs := parityTUIRefs(t)
+	for _, ref := range paritySortedKeys(tuiRefs) {
 		if !inCatalog[ref] {
 			t.Errorf("shell %q is not in the parity catalog (add a capability, or a TUI ref to one)", ref)
 		}
 	}
 	for _, ref := range paritySortedKeys(inCatalog) {
-		if !real[ref] {
+		if !tuiRefs[ref] {
 			t.Errorf("the catalog names shell %q, which does not exist (renamed or removed?)", ref)
 		}
 	}

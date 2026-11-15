@@ -158,8 +158,8 @@ func (b *Binder) remove(entry *binderEntry) {
 func (b *Binder) removeExpired(now time.Time) {
 	for element := b.lru.Back(); element != nil; {
 		previous := element.Prev()
-		entry := element.Value.(*binderEntry)
-		if now.Before(entry.expires) {
+		entry, ok := element.Value.(*binderEntry)
+		if !ok || now.Before(entry.expires) {
 			return
 		}
 		b.remove(entry)
@@ -173,6 +173,8 @@ func (b *Binder) evictForInsert(now time.Time) {
 	}
 	b.removeExpired(now)
 	if len(b.entries) >= b.maxEntries {
-		b.remove(b.lru.Back().Value.(*binderEntry))
+		if oldest, ok := b.lru.Back().Value.(*binderEntry); ok {
+			b.remove(oldest)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -62,10 +63,10 @@ func (f *watchIntervalFlag) Set(s string) error {
 func parseWatchInterval(s string) (time.Duration, error) {
 	d, err := time.ParseDuration(s)
 	if err != nil {
-		return 0, fmt.Errorf("--interval must be a duration, e.g. 2s: %v", err)
+		return 0, fmt.Errorf("--interval must be a duration, e.g. 2s: %w", err)
 	}
 	if d < statusWatchMinInterval || d > statusWatchMaxInterval {
-		return 0, fmt.Errorf("--interval must be between 1s and 60s")
+		return 0, errors.New("--interval must be between 1s and 60s")
 	}
 	return d, nil
 }
@@ -213,9 +214,9 @@ type watchPrinter struct {
 // there, the output is exactly one object per line.
 func (w *watchPrinter) beginFrame() {
 	if w.term {
-		fmt.Fprint(w.out, "\x1b[H\x1b[2J")
+		_, _ = fmt.Fprint(w.out, "\x1b[H\x1b[2J")
 	} else if w.wrote {
-		fmt.Fprintln(w.out)
+		_, _ = fmt.Fprintln(w.out)
 	}
 	w.wrote = true
 }
@@ -237,7 +238,7 @@ func (w *watchPrinter) frameText(st angel.Status, rates map[string][2]float64, n
 			active++
 		}
 	}
-	fmt.Fprintf(w.out, "netivri status --watch  listen=%s  uptime=%s  active_accounts=%d\n",
+	_, _ = fmt.Fprintf(w.out, "netivri status --watch  listen=%s  uptime=%s  active_accounts=%d\n",
 		asciiSafe(st.Listen), watchUptime(st.StartedAt, now), active)
 	rows := make([][]string, 0, len(accounts))
 	for _, a := range accounts {
@@ -253,7 +254,7 @@ func (w *watchPrinter) frameText(st angel.Status, rates map[string][2]float64, n
 		rows = append(rows, []string{
 			asciiSafe(a.Login),
 			watchState(a.Active),
-			fmt.Sprintf("%d", a.Connections),
+			strconv.Itoa(a.Connections),
 			up, down,
 			asciiSafe(strings.Join(watchNodeLabels(a), ", ")),
 			asciiSafe(strings.Join(a.Countries, ", ")),
@@ -262,12 +263,20 @@ func (w *watchPrinter) frameText(st angel.Status, rates map[string][2]float64, n
 	writeASCIITable(w.out,
 		[]string{"LOGIN", "STATE", "CONN", "UP/s", "DOWN/s", "NODES", "COUNTRIES"}, rows)
 	if len(st.Servers) > 0 {
-		fmt.Fprintln(w.out, "Servers")
+		_, _ = fmt.Fprintln(w.out, "Servers")
 		serverRows := make([][]string, 0, len(st.Servers))
 		for _, s := range st.Servers {
-			serverRows = append(serverRows, []string{asciiSafe(s.Name), asciiSafe(s.Protocol), asciiSafe(s.Listen), strings.Join(s.Accounts, ", "), fmt.Sprint(s.Connections), fmt.Sprint(s.DroppedClients)})
+			serverRows = append(serverRows, []string{asciiSafe(s.Name), asciiSafe(s.Protocol), asciiSafe(s.Listen), strings.Join(s.Accounts, ", "), strconv.Itoa(s.Connections), strconv.FormatUint(s.DroppedClients, 10)})
 		}
 		writeASCIITable(w.out, []string{"NAME", "PROTOCOL", "LISTEN", "ACCOUNTS", "CONN", "DROPPED"}, serverRows)
+	}
+}
+
+// encodeLine writes doc as one JSON line. A failed write has no channel back to
+// the caller; the watch loop carries on and the next line is written as usual.
+func (w *watchPrinter) encodeLine(doc any) {
+	if err := json.NewEncoder(w.out).Encode(doc); err != nil {
+		return
 	}
 }
 
@@ -324,7 +333,7 @@ func (w *watchPrinter) frameJSON(st angel.Status, rates map[string][2]float64, n
 	if st.Core != "" {
 		doc.Core = st.Core
 	}
-	_ = json.NewEncoder(w.out).Encode(doc)
+	w.encodeLine(doc)
 }
 
 func (w *watchPrinter) warn(err error, now time.Time) {
@@ -333,10 +342,10 @@ func (w *watchPrinter) warn(err error, now time.Time) {
 			Time    string `json:"time"`
 			Warning string `json:"warning"`
 		}{Time: now.UTC().Format(time.RFC3339), Warning: err.Error()}
-		_ = json.NewEncoder(w.out).Encode(doc)
+		w.encodeLine(doc)
 		return
 	}
-	fmt.Fprintf(w.out, "warning: poll failed: %v\n", err)
+	_, _ = fmt.Fprintf(w.out, "warning: poll failed: %v\n", err)
 }
 
 func (w *watchPrinter) stopped(now time.Time) {
@@ -345,11 +354,11 @@ func (w *watchPrinter) stopped(now time.Time) {
 			Stopped bool   `json:"stopped"`
 			Time    string `json:"time"`
 		}{Stopped: true, Time: now.UTC().Format(time.RFC3339)}
-		_ = json.NewEncoder(w.out).Encode(doc)
+		w.encodeLine(doc)
 		return
 	}
 	w.beginFrame()
-	fmt.Fprintln(w.out, "angel stopped")
+	_, _ = fmt.Fprintln(w.out, "angel stopped")
 }
 
 // watchSorted copies the activity sorted by login.
@@ -456,7 +465,7 @@ func writeASCIITable(out io.Writer, header []string, rows [][]string) {
 			b.WriteString(cell)
 			b.WriteString(strings.Repeat(" ", widths[i]-len(cell)))
 		}
-		fmt.Fprintln(out, strings.TrimRight(b.String(), " "))
+		_, _ = fmt.Fprintln(out, strings.TrimRight(b.String(), " "))
 	}
 	line(header)
 	for _, row := range rows {

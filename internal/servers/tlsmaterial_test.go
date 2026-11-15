@@ -1,6 +1,7 @@
 package servers
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -120,6 +121,14 @@ func TestTLSParamValidation(t *testing.T) {
 }
 
 func TestProvidedTLSPathsAndRefresh(t *testing.T) {
+	material, dir, certPath, keyPath := providedTLSFixture(t)
+	provided := providedTLSPairLoaded(t, material, certPath, keyPath)
+	providedTLSRefresh(t, provided, certPath, keyPath)
+	providedTLSErrors(t, material, dir, certPath, keyPath)
+}
+
+func providedTLSFixture(t *testing.T) (map[string]string, string, string, string) {
+	t.Helper()
 	material, err := NewTLSMaterial(nil, "provided.test")
 	if err != nil {
 		t.Fatal("generation failed")
@@ -129,6 +138,11 @@ func TestProvidedTLSPathsAndRefresh(t *testing.T) {
 	keyPath := filepath.Join(dir, "key.pem")
 	writeSecretFixture(t, certPath, material[tlsCertKey])
 	writeSecretFixture(t, keyPath, material[tlsKeyKey])
+	return material, dir, certPath, keyPath
+}
+
+func providedTLSPairLoaded(t *testing.T, material map[string]string, certPath, keyPath string) map[string]string {
+	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatal("working directory unavailable")
@@ -153,6 +167,11 @@ func TestProvidedTLSPathsAndRefresh(t *testing.T) {
 	if TLSFingerprint(provided) != material[tlsFingerprintKey] {
 		t.Fatal("provided pair fingerprint differs")
 	}
+	return provided
+}
+
+func providedTLSRefresh(t *testing.T, provided map[string]string, certPath, keyPath string) {
+	t.Helper()
 	oldExpiry, err := TLSExpiry(provided)
 	if err != nil {
 		t.Fatal("provided pair expiry unavailable")
@@ -170,6 +189,10 @@ func TestProvidedTLSPathsAndRefresh(t *testing.T) {
 	if err != nil || !newExpiry.Before(oldExpiry) {
 		t.Fatal("expiry did not follow updated certificate file")
 	}
+}
+
+func providedTLSErrors(t *testing.T, material map[string]string, dir, certPath, keyPath string) {
+	t.Helper()
 	if _, err := NewTLSMaterial(map[string]string{"cert_file": filepath.Join(dir, "missing-cert"), "key_file": keyPath}, "host"); err == nil || !strings.Contains(err.Error(), "cert_file") || strings.Contains(err.Error(), "missing-cert") {
 		t.Fatal("certificate path error missing key or disclosed path")
 	}
@@ -213,7 +236,7 @@ func TestTLSExpiryAndFingerprintMalformed(t *testing.T) {
 		}
 	}
 	validBlock, _ := pem.Decode([]byte(valid[tlsCertKey]))
-	malformedFirst := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("bad DER")})) + string(valid[tlsCertKey])
+	malformedFirst := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("bad DER")})) + valid[tlsCertKey]
 	if _, err := TLSExpiry(map[string]string{"cert_pem": malformedFirst}); err == nil || !strings.Contains(err.Error(), "cert_pem") || TLSFingerprint(map[string]string{"cert_pem": malformedFirst}) != "" {
 		t.Fatal("malformed first certificate block was not rejected")
 	}
@@ -292,7 +315,7 @@ func TestTLSHandshakeOverPipe(t *testing.T) {
 	}
 	ca.ResetCertificate()
 	t.Cleanup(ca.ResetCertificate)
-	if err := ca.AddCertificate(string(certPEM)); err != nil {
+	if err := ca.AddCertificate(certPEM); err != nil {
 		t.Fatal("test certificate was not added to CA pool")
 	}
 	pool := ca.GetCertPool().Clone()
@@ -301,12 +324,12 @@ func TestTLSHandshakeOverPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal("pin verifier setup failed")
 	}
-	runPipeHandshake(t, cert, &tls.Config{InsecureSkipVerify: true, VerifyConnection: func(s tls.ConnectionState) error { return verifier(s.PeerCertificates, "") }}, true)
+	runPipeHandshake(t, cert, &tls.Config{InsecureSkipVerify: true, VerifyConnection: func(s tls.ConnectionState) error { return verifier(s.PeerCertificates, "") }}, true) //nolint:gosec // G402: pinned-fingerprint verifier in VerifyConnection replaces chain validation
 	wrongVerifier, err := ca.NewFingerprintVerifier(strings.Repeat("0", 64), nil)
 	if err != nil {
 		t.Fatal("wrong pin verifier setup failed")
 	}
-	runPipeHandshake(t, cert, &tls.Config{InsecureSkipVerify: true, VerifyConnection: func(s tls.ConnectionState) error { return wrongVerifier(s.PeerCertificates, "") }}, false)
+	runPipeHandshake(t, cert, &tls.Config{InsecureSkipVerify: true, VerifyConnection: func(s tls.ConnectionState) error { return wrongVerifier(s.PeerCertificates, "") }}, false) //nolint:gosec // G402: pinned-fingerprint verifier in VerifyConnection replaces chain validation
 	runPipeHandshake(t, cert, &tls.Config{RootCAs: x509.NewCertPool(), ServerName: "localhost"}, false)
 	runPipeHandshake(t, cert, &tls.Config{RootCAs: pool, ServerName: "wrong.test"}, false)
 }
@@ -324,8 +347,8 @@ func runPipeHandshake(t *testing.T, cert tls.Certificate, clientConfig *tls.Conf
 		err    error
 	}
 	results := make(chan result, 2)
-	go func() { results <- result{err: server.Handshake()} }()
-	go func() { results <- result{client: true, err: client.Handshake()} }()
+	go func() { results <- result{err: server.HandshakeContext(context.Background())} }()
+	go func() { results <- result{client: true, err: client.HandshakeContext(context.Background())} }()
 	var clientErr, serverErr error
 	for range 2 {
 		got := <-results

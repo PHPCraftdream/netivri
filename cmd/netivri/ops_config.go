@@ -164,6 +164,7 @@ func ConfigRawValue(cfg *config.Config, key string) (string, bool) {
 		return "false", true
 	case ConfigKeyPassword, ConfigKeyProxy:
 		return "", false
+	case ConfigKeyText:
 	}
 	switch key {
 	case "listen.bind":
@@ -254,6 +255,125 @@ func configClearableKey(key string) bool {
 	return false
 }
 
+// configSetValue is a `config set` value parsed for its key.
+type configSetValue struct {
+	text    string
+	port    int
+	boolean bool
+	changed bool
+}
+
+// parseConfigSetValue parses value for the key's kind; errors name the key, never the value.
+func parseConfigSetValue(cfg *config.Config, k ConfigKey, key, value string) (configSetValue, error) {
+	switch k.Kind {
+	case ConfigKeyPort:
+		p, perr := strconv.Atoi(value)
+		if perr != nil {
+			return configSetValue{}, &cli.Error{
+				Code:    "USAGE",
+				Message: "config set: listen.port must be a whole number between 1 and 65535",
+				Exit:    cli.ExitUsage,
+			}
+		}
+		return configSetValue{port: p, changed: cfg.Listen.Port != p}, nil
+	case ConfigKeyBool:
+		b, berr := parseConfigBool(value)
+		if !berr {
+			return configSetValue{}, &cli.Error{
+				Code:    "USAGE",
+				Message: "config set: auth.allow_init_remote must be true or false",
+				Exit:    cli.ExitUsage,
+			}
+		}
+		return configSetValue{boolean: b, changed: cfg.Auth.AllowInitRemote != b}, nil
+	case ConfigKeyPassword:
+		text, changed, err := passwordSetValue(cfg.Auth.Password, value)
+		return configSetValue{text: text, changed: changed}, err
+	default:
+		text, changed := textSetValue(cfg, key, value)
+		return configSetValue{text: text, changed: changed}, nil
+	}
+}
+
+// passwordSetValue returns the stored auth.password for value: a hash, the
+// init placeholder or "" and whether it differs from old.
+func passwordSetValue(old, value string) (string, bool, error) {
+	switch {
+	case value == "" || strings.EqualFold(value, "none"):
+		return "", old != "", nil
+	case value == config.InitPlaceholder:
+		return value, old != value, nil
+	}
+	if len(value) > auth.MaxPasswordLen {
+		return "", false, cli.Usage("config set: auth.password is longer than %d bytes", auth.MaxPasswordLen)
+	}
+	if same, verr := auth.VerifyHash(old, value); verr == nil && same {
+		return old, false, nil
+	}
+	h, herr := auth.Hash(value)
+	if herr != nil {
+		return "", false, &cli.Error{Code: "INTERNAL", Message: "hash the password", Exit: cli.ExitInternal}
+	}
+	return h, true, nil
+}
+
+// textSetValue returns the stored text of a text or proxy key and whether it
+// differs from the loaded config.
+func textSetValue(cfg *config.Config, key, value string) (string, bool) {
+	text := value
+	if configClearableKey(key) && (value == "" || strings.EqualFold(value, "none") && key != "chain.pre_socks5" && key != "chain.post_socks5") {
+		text = ""
+	}
+	var changed bool
+	switch key {
+	case "listen.bind":
+		changed = cfg.Listen.Bind != text
+	case "listen.allowed_clients":
+		changed = cfg.Listen.AllowedClients != text
+	case "auth.login":
+		changed = cfg.Auth.Login != text
+	case "fetch.proxy":
+		changed = cfg.Fetch.Proxy != text
+	case "fetch.mode":
+		changed = cfg.Fetch.Mode != text
+	case "fetch.update_interval":
+		changed = cfg.Fetch.UpdateInterval != text
+	case "chain.pre_socks5":
+		changed = !slices.Equal(cfg.Chain.PreSOCKS5, singletonHop(text))
+	case "chain.post_socks5":
+		changed = !slices.Equal(cfg.Chain.PostSOCKS5, singletonHop(text))
+	}
+	return text, changed
+}
+
+// applyConfigSetValue writes the parsed value of key into cand.
+func applyConfigSetValue(cand *config.Config, key string, v configSetValue) {
+	switch key {
+	case "listen.bind":
+		cand.Listen.Bind = v.text
+	case "listen.port":
+		cand.Listen.Port = v.port
+	case "listen.allowed_clients":
+		cand.Listen.AllowedClients = v.text
+	case "auth.login":
+		cand.Auth.Login = v.text
+	case "auth.password":
+		cand.Auth.Password = v.text
+	case "auth.allow_init_remote":
+		cand.Auth.AllowInitRemote = v.boolean
+	case "fetch.proxy":
+		cand.Fetch.Proxy = v.text
+	case "fetch.mode":
+		cand.Fetch.Mode = v.text
+	case "fetch.update_interval":
+		cand.Fetch.UpdateInterval = v.text
+	case "chain.pre_socks5":
+		cand.Chain.PreSOCKS5 = singletonHop(v.text)
+	case "chain.post_socks5":
+		cand.Chain.PostSOCKS5 = singletonHop(v.text)
+	}
+}
+
 // ConfigSet validates and applies one settings value. Nothing is
 // written when the value is invalid: the whole resulting configuration
 // is validated on a candidate copy first and the loaded config is left
@@ -268,111 +388,19 @@ func ConfigSet(home, key, value string) (ConfigSetResult, error) {
 	if err != nil {
 		return ConfigSetResult{}, err
 	}
-
-	var (
-		text    string
-		port    int
-		boolean bool
-		changed bool
-	)
-	switch k.Kind {
-	case ConfigKeyPort:
-		p, perr := strconv.Atoi(value)
-		if perr != nil {
-			return ConfigSetResult{}, &cli.Error{
-				Code:    "USAGE",
-				Message: "config set: listen.port must be a whole number between 1 and 65535",
-				Exit:    cli.ExitUsage,
-			}
-		}
-		port, changed = p, cfg.Listen.Port != p
-	case ConfigKeyBool:
-		b, berr := parseConfigBool(value)
-		if !berr {
-			return ConfigSetResult{}, &cli.Error{
-				Code:    "USAGE",
-				Message: "config set: auth.allow_init_remote must be true or false",
-				Exit:    cli.ExitUsage,
-			}
-		}
-		boolean, changed = b, cfg.Auth.AllowInitRemote != b
-	case ConfigKeyPassword:
-		old := cfg.Auth.Password
-		switch {
-		case value == "" || strings.EqualFold(value, "none"):
-			text, changed = "", old != ""
-		case value == config.InitPlaceholder:
-			text, changed = value, old != value
-		default:
-			if len(value) > auth.MaxPasswordLen {
-				return ConfigSetResult{}, cli.Usage("config set: auth.password is longer than %d bytes", auth.MaxPasswordLen)
-			}
-			if same, verr := auth.VerifyHash(old, value); verr == nil && same {
-				changed, text = false, old
-			} else {
-				h, herr := auth.Hash(value)
-				if herr != nil {
-					return ConfigSetResult{}, &cli.Error{Code: "INTERNAL", Message: "hash the password", Exit: cli.ExitInternal}
-				}
-				changed, text = true, h
-			}
-		}
-	default:
-		text = value
-		if configClearableKey(key) && (value == "" || strings.EqualFold(value, "none") && key != "chain.pre_socks5" && key != "chain.post_socks5") {
-			text = ""
-		}
-		switch key {
-		case "listen.bind":
-			changed = cfg.Listen.Bind != text
-		case "listen.allowed_clients":
-			changed = cfg.Listen.AllowedClients != text
-		case "auth.login":
-			changed = cfg.Auth.Login != text
-		case "fetch.proxy":
-			changed = cfg.Fetch.Proxy != text
-		case "fetch.mode":
-			changed = cfg.Fetch.Mode != text
-		case "fetch.update_interval":
-			changed = cfg.Fetch.UpdateInterval != text
-		case "chain.pre_socks5":
-			changed = !slices.Equal(cfg.Chain.PreSOCKS5, singletonHop(text))
-		case "chain.post_socks5":
-			changed = !slices.Equal(cfg.Chain.PostSOCKS5, singletonHop(text))
-		}
+	v, err := parseConfigSetValue(cfg, k, key, value)
+	if err != nil {
+		return ConfigSetResult{}, err
 	}
 
 	// Validate the whole candidate before touching the loaded config:
 	// Validate only reads, so a shallow copy is enough.
 	cand := *cfg
-	switch key {
-	case "listen.bind":
-		cand.Listen.Bind = text
-	case "listen.port":
-		cand.Listen.Port = port
-	case "listen.allowed_clients":
-		cand.Listen.AllowedClients = text
-	case "auth.login":
-		cand.Auth.Login = text
-	case "auth.password":
-		cand.Auth.Password = text
-	case "auth.allow_init_remote":
-		cand.Auth.AllowInitRemote = boolean
-	case "fetch.proxy":
-		cand.Fetch.Proxy = text
-	case "fetch.mode":
-		cand.Fetch.Mode = text
-	case "fetch.update_interval":
-		cand.Fetch.UpdateInterval = text
-	case "chain.pre_socks5":
-		cand.Chain.PreSOCKS5 = singletonHop(text)
-	case "chain.post_socks5":
-		cand.Chain.PostSOCKS5 = singletonHop(text)
-	}
+	applyConfigSetValue(&cand, key, v)
 	if err := cand.Validate(); err != nil {
 		return ConfigSetResult{}, err
 	}
-	if !changed {
+	if !v.changed {
 		return ConfigSetResult{Key: key, Changed: false, RestartNeeded: false}, nil
 	}
 	*cfg = cand

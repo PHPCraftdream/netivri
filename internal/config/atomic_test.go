@@ -13,7 +13,7 @@ func TestExportedWriteFileAtomic(t *testing.T) {
 	if err := WriteFileAtomic(path, []byte(`{"a":1}`)); err != nil {
 		t.Fatalf("WriteFileAtomic: %v", err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestExportedWriteFileAtomic(t *testing.T) {
 	if err := WriteFileAtomic(path, []byte(`{"a":2}`)); err != nil {
 		t.Fatalf("second WriteFileAtomic: %v", err)
 	}
-	data, _ = os.ReadFile(path)
+	data, _ = os.ReadFile(filepath.Clean(path))
 	if string(data) != `{"a":2}` {
 		t.Fatalf("content after overwrite = %q", data)
 	}

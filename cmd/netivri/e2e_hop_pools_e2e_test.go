@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -45,7 +46,7 @@ type e2ePostPoolFake struct {
 
 func newE2EPostPoolFake(t *testing.T, backend, target string) *e2ePostPoolFake {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("post-hop fake listen: %v", err)
 	}
@@ -137,12 +138,12 @@ func (s *e2ePostPoolFake) serve(c net.Conn) {
 	}
 	// Approved .test targets are fixed by this test and map directly to the
 	// loopback echo endpoint; the fake performs no DNS or external network access.
-	out, err := net.DialTimeout("tcp", s.backend, 3*time.Second)
+	out, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(context.Background(), "tcp", s.backend)
 	if err != nil {
 		_, _ = c.Write(e2eSOCKS5Reply(5))
 		return
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_ = out.SetDeadline(time.Now().Add(e2eIOTimeout))
 	if _, err := c.Write(e2eSOCKS5Reply(0)); err != nil {
 		return
@@ -170,8 +171,11 @@ func e2eSOCKS5ClientGreeting(c net.Conn) error {
 
 func e2eSOCKS5Negotiate(c net.Conn) error {
 	var greeting [2]byte
-	if _, err := io.ReadFull(c, greeting[:]); err != nil || greeting[0] != 5 {
-		return fmt.Errorf("invalid SOCKS5 greeting: %v", err)
+	if _, err := io.ReadFull(c, greeting[:]); err != nil {
+		return fmt.Errorf("invalid SOCKS5 greeting: %w", err)
+	}
+	if greeting[0] != 5 {
+		return fmt.Errorf("invalid SOCKS5 greeting: version %d", greeting[0])
 	}
 	methods := make([]byte, int(greeting[1]))
 	if _, err := io.ReadFull(c, methods); err != nil {
@@ -193,7 +197,7 @@ func readE2ESOCKS5Target(r io.Reader) (string, error) {
 		return "", err
 	}
 	if request[0] != 5 || request[1] != 1 {
-		return "", fmt.Errorf("expected SOCKS5 CONNECT")
+		return "", errors.New("expected SOCKS5 CONNECT")
 	}
 	var host string
 	switch request[3] {
@@ -308,16 +312,26 @@ func (s *e2ePostPoolFake) summary() string {
 
 func e2eWriteSOCKS5Connect(c net.Conn, target string) error {
 	host, rawPort, err := net.SplitHostPort(target)
-	if err != nil || len(host) == 0 || len(host) > 255 {
-		return fmt.Errorf("invalid test target")
+	if err != nil || len(host) == 0 {
+		return errors.New("invalid test target")
+	}
+	hostLen := len(host)
+	if hostLen > 255 {
+		return errors.New("invalid test target")
 	}
 	port, err := strconv.Atoi(rawPort)
-	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("invalid test target port")
+	if err != nil {
+		return errors.New("invalid test target port")
 	}
-	request := []byte{5, 1, 0, 3, byte(len(host))}
+	if port < 1 {
+		return errors.New("invalid test target port")
+	}
+	if port > 65535 {
+		return errors.New("invalid test target port")
+	}
+	request := []byte{5, 1, 0, 3, byte(hostLen)}
 	request = append(request, host...)
-	request = append(request, byte(port>>8), byte(port))
+	request = binary.BigEndian.AppendUint16(request, uint16(port))
 	_, err = c.Write(request)
 	return err
 }
@@ -357,7 +371,7 @@ func e2ePostPoolClient(ctx context.Context, proxy, login, password, target strin
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.SetDeadline(deadline)
 	}
@@ -386,12 +400,21 @@ func e2ePostPoolClient(ctx context.Context, proxy, login, password, target strin
 	if method[0] != 5 || method[1] != 2 {
 		return fmt.Errorf("account proxy selected SOCKS5 method %v", method)
 	}
-	if len(login) == 0 || len(login) > 255 || len(password) > 255 {
-		return fmt.Errorf("invalid SOCKS5 account credentials")
+	if len(login) == 0 {
+		return errors.New("invalid SOCKS5 account credentials")
 	}
-	auth := []byte{1, byte(len(login))}
+	loginLen := len(login)
+	if loginLen > 255 {
+		return errors.New("invalid SOCKS5 account credentials")
+	}
+	passLen := len(password)
+	if passLen > 255 {
+		return errors.New("invalid SOCKS5 account credentials")
+	}
+	auth := make([]byte, 0, 2+len(login)+1+len(password))
+	auth = append(auth, 1, byte(loginLen))
 	auth = append(auth, login...)
-	auth = append(auth, byte(len(password)))
+	auth = append(auth, byte(passLen))
 	auth = append(auth, password...)
 	if err := write(auth); err != nil {
 		return err
@@ -401,7 +424,7 @@ func e2ePostPoolClient(ctx context.Context, proxy, login, password, target strin
 		return err
 	}
 	if authReply[0] != 1 || authReply[1] != 0 {
-		return fmt.Errorf("account authentication failed")
+		return errors.New("account authentication failed")
 	}
 	if err := e2eWriteSOCKS5Connect(c, target); err != nil {
 		return err
@@ -418,7 +441,7 @@ func e2ePostPoolClient(ctx context.Context, proxy, login, password, target strin
 		return err
 	}
 	if string(got) != string(payload) {
-		return fmt.Errorf("test echo mismatch")
+		return errors.New("test echo mismatch")
 	}
 	return nil
 }
@@ -451,7 +474,7 @@ func e2ePostPoolReady(ctx context.Context, fake *e2ePostPoolFake) error {
 	if err != nil {
 		return fmt.Errorf("readiness dial failed: %w", err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.SetDeadline(deadline)
 	}
@@ -470,7 +493,7 @@ func TestE2EAccountPostHopPoolBindingAndRecovery(t *testing.T) {
 	wholeTest, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	home := t.TempDir()
-	password := "post-pool-account-password"
+	password := "post-pool-account-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 	hash, err := auth.Hash(password)
 	if err != nil {
 		t.Fatal("hash account password")
@@ -534,7 +557,7 @@ func TestE2EAccountPostHopPoolBindingAndRecovery(t *testing.T) {
 		target,
 	}
 	boundBefore, alternateBefore := bound.forwardedCount(), alternate.forwardedCount()
-	for connection := 0; connection < 12; connection++ {
+	for connection := range 12 {
 		appTarget := targets[connection%len(targets)]
 		boundTargetBefore := bound.forwardedTargetCount(appTarget)
 		boundObservedBefore := bound.recordedTargetCount(appTarget)

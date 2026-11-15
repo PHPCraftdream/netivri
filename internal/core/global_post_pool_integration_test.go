@@ -41,7 +41,7 @@ func TestGlobalPostPoolServesConnectionsWithoutAnAccount(t *testing.T) {
 	roundTrip := func() {
 		t.Helper()
 		c := socks5ConnectNoAuth(t, instance.Addr(), backend)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		echoRoundTrip(t, c, c)
 	}
 	roundTrip()
@@ -91,6 +91,30 @@ func TestGlobalPostPoolServesConnectionsWithoutAnAccount(t *testing.T) {
 // no poller; it is reconfigured in place through reorder, add and remove of a
 // hop, health and bindings follow the hops by identity, and an open
 // connection is not interrupted.
+// firstHop checks where the first held connection went: exactly one request on
+// hop1 or hop2, and alice's binding names that hop. It returns the index of the hop.
+func firstHop(t *testing.T, recorders []*chainRecorder, binder *pool.Binder, hop1, hop2 string) int {
+	t.Helper()
+	totals := recorderTotals(recorders...)
+	bound := -1
+	for i, n := range totals {
+		if n == 1 {
+			bound = i
+		}
+	}
+	if bound < 0 || bound > 1 || totals[0]+totals[1]+totals[2] != 1 {
+		t.Fatalf("recorder totals = %v, want one request on hop 1 or 2", totals)
+	}
+	hop := hop1
+	if bound == 1 {
+		hop = hop2
+	}
+	if key, ok := binder.Get("alice", "127.0.0.1"); !ok || key != hopPoolKey(hop) {
+		t.Fatalf("binding = %q, %v, want the hop that served the connection", key, ok)
+	}
+	return bound
+}
+
 func TestReconfigureDirectPostPoolRouteInPlace(t *testing.T) {
 	r1, addr1 := startChainRecorder(t)
 	r2, addr2 := startChainRecorder(t)
@@ -126,23 +150,11 @@ func TestReconfigureDirectPostPoolRouteInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open the held connection: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	if err := accountEcho(held); err != nil {
 		t.Fatalf("held echo: %v", err)
 	}
-	totals := recorderTotals(recorders...)
-	bound := -1
-	for i, n := range totals {
-		if n == 1 {
-			bound = i
-		}
-	}
-	if bound < 0 || bound > 1 || totals[0]+totals[1]+totals[2] != 1 {
-		t.Fatalf("recorder totals = %v, want one request on hop 1 or 2", totals)
-	}
-	if key, ok := binder.Get("alice", "127.0.0.1"); !ok || key != hopPoolKey([]string{hop1, hop2}[bound]) {
-		t.Fatalf("binding = %q, %v, want the hop that served the connection", key, ok)
-	}
+	bound := firstHop(t, recorders, binder, hop1, hop2)
 
 	roundTrip := func(want []int) {
 		t.Helper()
@@ -150,7 +162,7 @@ func TestReconfigureDirectPostPoolRouteInPlace(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open connection: %v", err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if err := accountEcho(c); err != nil {
 			t.Fatalf("echo: %v", err)
 		}

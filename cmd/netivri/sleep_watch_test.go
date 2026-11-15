@@ -78,7 +78,7 @@ func TestSleepWatchRunReportsOneWake(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the sleep was not reported")
 	}
-	for i := 0; i < 20; i++ { // more ticks, no more wakes
+	for range 20 { // more ticks, no more wakes
 		time.Sleep(every)
 	}
 	cancel()
@@ -109,7 +109,7 @@ func TestAfterWakeTheConnectionLogDoesNotWarn(t *testing.T) {
 	l := newLiveAngel(upOptions{}, func(format string, args ...any) { infos = append(infos, fmt.Sprintf(format, args...)) }, func() {})
 	l.warnf = func(format string, args ...any) { warns = append(warns, fmt.Sprintf(format, args...)) }
 	feed := func() {
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			l.connLog().event(core.ConnEvent{Kind: core.ConnDialFailed, Login: "alice", Label: "main/us", Why: "timeout"})
 		}
 		l.connLog().flush()
@@ -133,8 +133,8 @@ func TestNodeLogRightAfterWakingUpIsQuiet(t *testing.T) {
 	f := newBurstFixture(t, 8)
 	quiet := true
 	f.log.quiet = func() bool { return quiet }
-	for round := 0; round < 4; round++ { // the same nodes drop four times: no flapping either
-		for i := 0; i < 8; i++ {
+	for range 4 { // the same nodes drop four times: no flapping either
+		for i := range 8 {
 			f.down(i, "2 probe failures (timeout)")
 		}
 		f.now = f.now.Add(time.Second)
@@ -159,7 +159,7 @@ func TestConnLogMovesBetweenManyPairsAreOneLine(t *testing.T) {
 	var detail []string
 	f.log.debug = func(format string, args ...any) { detail = append(detail, fmt.Sprintf(format, args...)) }
 	move := func(login, from, to, why string, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: login, From: from, Label: to, Why: why})
 		}
 	}
@@ -188,7 +188,7 @@ func TestConnLogWhenQuietKeepsWarningsAsInfo(t *testing.T) {
 	f.log.quiet = func() bool { return true }
 	f.dialFail("alice", "main/us", "timeout", 11)
 	f.ended("alice", "main/us", "timeout", 10, 50)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		f.log.event(core.ConnEvent{Kind: core.ConnSiteMoved, Login: "alice", From: "main/us", Label: "own/nl", Why: core.MoveNodeDown})
 	}
 	f.log.flush()

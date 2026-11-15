@@ -46,7 +46,7 @@ func TestWizardReviewMasksSecret(t *testing.T) {
 }
 
 func TestWizardReviewRedactsSecretErrors(t *testing.T) {
-	secret := "https://alice:password@example.test/path?token=query-secret"
+	secret := "https://alice:password@example.test/path?token=query-secret" //nolint:gosec // G101: test fixture URL, asserted never echoed
 	p := NewPrompt(SecretPrompt, "Secret", "Token", "", "")
 	w := NewWizard("Add", []WizardStep{{Key: "token", Prompt: p, Optional: true}})
 	w.Values["token"] = secret
@@ -61,7 +61,7 @@ func TestWizardReviewRedactsSecretErrors(t *testing.T) {
 }
 
 func TestWizardValidationErrorRedactsSecret(t *testing.T) {
-	secret := "https://alice:password@example.test/path?token=query-secret"
+	secret := "https://alice:password@example.test/path?token=query-secret" //nolint:gosec // G101: test fixture URL, asserted never echoed
 	p := NewPrompt(SecretPrompt, "Secret", "Token", "", secret)
 	p.Validate = func(string) error { return errors.New("invalid query-secret for alice") }
 	w := NewWizard("Add", []WizardStep{{Key: "token", Prompt: p}})

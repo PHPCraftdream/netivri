@@ -28,16 +28,18 @@ var commands = map[string]func(args []string, stdout io.Writer) error{
 	"logs":    runLogs,
 	"diag":    runDiag,
 	"doctor":  runDoctor,
-	"version": runVersion,
+	"version": func(args []string, stdout io.Writer) error { //nolint:unparam // the commands table fixes the runner signature; version has no failure path
+		runVersion(args, stdout)
+		return nil
+	},
 }
 
-func runVersion(_ []string, stdout io.Writer) error {
+func runVersion(_ []string, stdout io.Writer) {
 	data := map[string]string{"version": version}
 	if commit := buildCommit(); commit != "" {
 		data["commit"] = commit
 	}
 	cli.Success(stdout, data)
-	return nil
 }
 
 // dispatch routes the arguments and returns the failure to report, if any.

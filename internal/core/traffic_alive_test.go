@@ -24,7 +24,7 @@ func trafficHealth(t *testing.T) (*healthTable, *fakeClockNow, *[]NodeEvent) {
 func TestFailedProbesDoNotCountWhileDataFlows(t *testing.T) {
 	table, clock, _ := trafficHealth(t)
 	table.noteTraffic("a")
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		clock.advance(10 * time.Second)
 		table.recordProbe("a", false, 0)
 	}
@@ -102,7 +102,7 @@ func TestThroughputPollerNotesTraffic(t *testing.T) {
 	}}
 	poller.source = &fakeTrackerSource{trackers: []throughputTracker{tracker}}
 
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second) // baseline
+	poller.collectAt(base, 5*time.Second) // baseline
 	clock.advance(5 * time.Second)
 	health.recordProbe("a", false, 0)
 	health.recordProbe("a", false, 0)
@@ -111,26 +111,26 @@ func TestThroughputPollerNotesTraffic(t *testing.T) {
 	}
 	// A few bytes come back, far below the throughput sample gate.
 	tracker.info.DownloadTotal.Add(512)
-	poller.collectAt(base.Add(5*time.Second), base.Add(10*time.Second), 5*time.Second)
+	poller.collectAt(base.Add(5*time.Second), 5*time.Second)
 	if health.down("a") {
 		t.Fatal("data came back through the node but it stayed down")
 	}
 }
 
-func dialFail(table *healthTable, label, site string, err error) {
-	table.recordDialAt(label, site, err, 0)
+func dialFail(table *healthTable, site string, err error) {
+	table.recordDialAt("a", site, err, 0)
 }
 
 func TestFailedDialsToTwoSitesBringANodeDown(t *testing.T) {
 	table, _, events := trafficHealth(t)
 	boom := errors.New("connection refused")
-	dialFail(table, "a", "x.example", boom)
-	dialFail(table, "a", "x.example", boom)
-	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "x.example", boom)
+	dialFail(table, "x.example", boom)
+	dialFail(table, "x.example", boom)
 	if table.down("a") {
 		t.Fatal("three failed dials to one site brought the node down")
 	}
-	dialFail(table, "a", "y.example", boom)
+	dialFail(table, "y.example", boom)
 	if !table.down("a") {
 		t.Fatal("failed dials to two sites did not bring the node down")
 	}
@@ -143,13 +143,13 @@ func TestFailedDialsToTwoSitesBringANodeDown(t *testing.T) {
 func TestFailedDialsOfOneSiteNeedTenToBringANodeDown(t *testing.T) {
 	table, _, _ := trafficHealth(t)
 	boom := errors.New("connection refused")
-	for i := 0; i < downDialFailuresOneSite-1; i++ {
-		dialFail(table, "a", "dead.example", boom)
+	for range downDialFailuresOneSite - 1 {
+		dialFail(table, "dead.example", boom)
 	}
 	if table.down("a") {
 		t.Fatal("nine failed dials to one site brought the node down")
 	}
-	dialFail(table, "a", "dead.example", boom)
+	dialFail(table, "dead.example", boom)
 	if !table.down("a") {
 		t.Fatal("ten failed dials to one site did not bring the node down")
 	}
@@ -166,12 +166,12 @@ func TestDialFailuresWithoutASiteCountAsBefore(t *testing.T) {
 func TestSuccessForgetsTheSitesOfFailedDials(t *testing.T) {
 	table, _, _ := trafficHealth(t)
 	boom := errors.New("timeout")
-	dialFail(table, "a", "x.example", boom)
-	dialFail(table, "a", "y.example", boom)
+	dialFail(table, "x.example", boom)
+	dialFail(table, "y.example", boom)
 	table.recordDial("a", true, time.Millisecond)
-	dialFail(table, "a", "x.example", boom)
-	dialFail(table, "a", "x.example", boom)
-	dialFail(table, "a", "x.example", boom)
+	dialFail(table, "x.example", boom)
+	dialFail(table, "x.example", boom)
+	dialFail(table, "x.example", boom)
 	if table.down("a") {
 		t.Fatal("the sites of failures before a success were remembered")
 	}
@@ -181,7 +181,7 @@ func TestDialFailureKindIsAFixedWord(t *testing.T) {
 	table, _, events := trafficHealth(t)
 	odd := errors.New("dial tcp secret-host: weird failure of kind xyz")
 	for _, site := range []string{"a.example", "b.example", "c.example"} {
-		dialFail(table, "a", site, odd)
+		dialFail(table, site, odd)
 	}
 	got := *events
 	if len(got) != 1 || got[0].Reason != "3 dial failures (error)" {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -121,7 +122,8 @@ func TestAccountExitRawValuesFailConfigInvalid(t *testing.T) {
 				t.Fatal(err)
 			}
 			_, err := Load(path)
-			ce, ok := err.(*cli.Error)
+			var ce *cli.Error
+			ok := errors.As(err, &ce)
 			if !ok || ce.Code != CodeConfigInvalid || !strings.Contains(ce.Message, "accounts[0].exit") {
 				t.Fatalf("error = %#v", err)
 			}
@@ -236,7 +238,8 @@ func TestValidateAccounts(t *testing.T) {
 			c := valid()
 			tc.mutate(c)
 			err := c.Validate()
-			ce, ok := err.(*cli.Error)
+			var ce *cli.Error
+			ok := errors.As(err, &ce)
 			if !ok || ce.Code != CodeConfigInvalid || ce.Exit != cli.ExitUsage || !strings.Contains(ce.Message, tc.want) {
 				t.Fatalf("error = %#v", err)
 			}
@@ -245,7 +248,7 @@ func TestValidateAccounts(t *testing.T) {
 }
 
 func TestAccountValidationErrorsDoNotLeakValues(t *testing.T) {
-	cases := []*Config{}
+	cases := make([]*Config, 0, 4)
 	dup := Default()
 	dup.Accounts = []Account{{Login: "secret-login", Password: "init"}, {Login: "secret-login", Password: "init"}}
 	cases = append(cases, dup)
@@ -264,7 +267,8 @@ func TestAccountValidationErrorsDoNotLeakValues(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		ce, ok := err.(*cli.Error)
+		var ce *cli.Error
+		ok := errors.As(err, &ce)
 		if !ok || ce.Code != CodeConfigInvalid {
 			t.Fatalf("error type/code: %T %v", err, err)
 		}
@@ -400,7 +404,8 @@ func TestValidateAccountProvider(t *testing.T) {
 	}
 	for _, provider := range []string{"bad provider", "a/b", "é", strings.Repeat("x", 65)} {
 		err := valid(provider).Validate()
-		ce, ok := err.(*cli.Error)
+		var ce *cli.Error
+		ok := errors.As(err, &ce)
 		if !ok || ce.Code != CodeConfigInvalid || ce.Exit != cli.ExitUsage {
 			t.Fatalf("provider %q: error = %#v", provider, err)
 		}

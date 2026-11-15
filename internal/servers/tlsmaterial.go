@@ -100,7 +100,7 @@ func validTLSHost(host string) bool {
 			return false
 		}
 		for _, r := range label {
-			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' {
 				return false
 			}
 		}
@@ -123,11 +123,11 @@ func NewTLSMaterial(params map[string]string, host string) (map[string]string, e
 		if err != nil {
 			return nil, errors.New("key_file path resolution failed")
 		}
-		certBytes, err := os.ReadFile(absCert)
+		certBytes, err := os.ReadFile(absCert) //nolint:gosec // G304: cert_file is the operator-configured TLS certificate path, read by design
 		if err != nil {
 			return nil, errors.New("cert_file could not be read")
 		}
-		keyBytes, err := os.ReadFile(absKey)
+		keyBytes, err := os.ReadFile(absKey) //nolint:gosec // G304: key_file is the operator-configured TLS private key path, read by design
 		if err != nil {
 			return nil, errors.New("key_file could not be read")
 		}
@@ -212,16 +212,17 @@ func parsePairLeaf(pair tls.Certificate) (*x509.Certificate, error) {
 func readTLSLeaf(material map[string]string) (*x509.Certificate, error) {
 	var certPEM []byte
 	field := tlsCertKey
-	if material[tlsCertKey] != "" {
+	switch {
+	case material[tlsCertKey] != "":
 		certPEM = []byte(material[tlsCertKey])
-	} else if material[tlsCertFileKey] != "" {
+	case material[tlsCertFileKey] != "":
 		field = tlsCertFileKey
 		var err error
 		certPEM, err = os.ReadFile(material[tlsCertFileKey])
 		if err != nil {
 			return nil, errors.New("cert_file could not be read")
 		}
-	} else {
+	default:
 		return nil, errors.New("cert_pem or cert_file is required")
 	}
 	leaf, err := parseCertificateLeaf(certPEM)

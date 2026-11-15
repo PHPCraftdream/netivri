@@ -67,52 +67,62 @@ func TestSnellValidationAndSecrets(t *testing.T) {
 func TestSnellMihomoSnippetRoundTripAndErrors(t *testing.T) {
 	p := snell{}
 	for _, tc := range []struct{ version, obfs, host string }{{"2", "none", ""}, {"2", "http", "proxy.example"}, {"2", "http", ""}, {"3", "tls", "proxy.example"}} {
-		params := map[string]string{"version": tc.version, "obfs": tc.obfs}
-		if tc.host != "" {
-			params["obfs_host"] = tc.host
-		}
-		key := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
-		s := Spec{Name: "snell.case", Protocol: "snell", Port: 8388, Accounts: []string{"alice"}, Params: params, Users: UserSecrets{"alice": {"psk": key}}}
-		if err := s.Validate(); err != nil {
-			t.Fatal("valid Snell spec rejected")
-		}
-		for _, f := range []string{fmt.Sprintf("%v", s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s)} {
-			if strings.Contains(f, key) {
-				t.Fatal("Spec formatting exposed PSK")
-			}
-		}
-		snippet, err := p.Mihomo(s, "alice", "2001:db8::1")
-		if err != nil {
-			t.Fatal("snippet generation failed")
-		}
-		var doc struct {
-			Proxies []map[string]any `yaml:"proxies"`
-		}
-		if err := yaml.Unmarshal([]byte(snippet), &doc); err != nil || len(doc.Proxies) != 1 {
-			t.Fatal("snippet YAML import failed")
-		}
-		proxy, err := adapter.ParseProxy(doc.Proxies[0])
-		if err != nil {
-			t.Fatal("Mihomo rejected snippet")
-		}
-		if proxy.Name() != s.Name || proxy.Type() != C.Snell || proxy.Addr() != "[2001:db8::1]:8388" {
-			t.Fatal("imported proxy fields mismatch")
-		}
-		if doc.Proxies[0]["psk"] != key || fmt.Sprint(doc.Proxies[0]["version"]) != tc.version || doc.Proxies[0]["server"] != "2001:db8::1" || fmt.Sprint(doc.Proxies[0]["port"]) != "8388" || doc.Proxies[0]["udp"] != false {
-			t.Fatal("imported proxy configuration mismatch")
-		}
-		_ = proxy.Close()
-		if tc.obfs != "none" {
-			obfs, ok := doc.Proxies[0]["obfs-opts"].(map[string]any)
-			wantHost := tc.host
-			if wantHost == "" {
-				wantHost = "bing.com"
-			}
-			if !ok || obfs["mode"] != tc.obfs || obfs["host"] != wantHost {
-				t.Fatal("imported obfs fields mismatch")
-			}
+		snellSnippetRoundTrip(t, p, tc)
+	}
+	snellLinkAndStartErrors(t, p)
+}
+
+func snellSnippetRoundTrip(t *testing.T, p snell, tc struct{ version, obfs, host string }) {
+	t.Helper()
+	params := map[string]string{"version": tc.version, "obfs": tc.obfs}
+	if tc.host != "" {
+		params["obfs_host"] = tc.host
+	}
+	key := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("s", 32)))
+	s := Spec{Name: "snell.case", Protocol: "snell", Port: 8388, Accounts: []string{"alice"}, Params: params, Users: UserSecrets{"alice": {"psk": key}}}
+	if err := s.Validate(); err != nil {
+		t.Fatal("valid Snell spec rejected")
+	}
+	for _, f := range []string{fmt.Sprintf("%v", s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s)} {
+		if strings.Contains(f, key) {
+			t.Fatal("Spec formatting exposed PSK")
 		}
 	}
+	snippet, err := p.Mihomo(s, "alice", "2001:db8::1")
+	if err != nil {
+		t.Fatal("snippet generation failed")
+	}
+	var doc struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(snippet), &doc); err != nil || len(doc.Proxies) != 1 {
+		t.Fatal("snippet YAML import failed")
+	}
+	proxy, err := adapter.ParseProxy(doc.Proxies[0])
+	if err != nil {
+		t.Fatal("Mihomo rejected snippet")
+	}
+	if proxy.Name() != s.Name || proxy.Type() != C.Snell || proxy.Addr() != "[2001:db8::1]:8388" {
+		t.Fatal("imported proxy fields mismatch")
+	}
+	if doc.Proxies[0]["psk"] != key || fmt.Sprint(doc.Proxies[0]["version"]) != tc.version || doc.Proxies[0]["server"] != "2001:db8::1" || fmt.Sprint(doc.Proxies[0]["port"]) != "8388" || doc.Proxies[0]["udp"] != false {
+		t.Fatal("imported proxy configuration mismatch")
+	}
+	_ = proxy.Close()
+	if tc.obfs != "none" {
+		obfs, ok := doc.Proxies[0]["obfs-opts"].(map[string]any)
+		wantHost := tc.host
+		if wantHost == "" {
+			wantHost = "bing.com"
+		}
+		if !ok || obfs["mode"] != tc.obfs || obfs["host"] != wantHost {
+			t.Fatal("imported obfs fields mismatch")
+		}
+	}
+}
+
+func snellLinkAndStartErrors(t *testing.T, p snell) {
+	t.Helper()
 	if _, err := convert.ConvertsV2Ray([]byte("snell://host.example:8388#invalid")); err == nil {
 		t.Fatal("unsupported Snell URI unexpectedly converted")
 	}

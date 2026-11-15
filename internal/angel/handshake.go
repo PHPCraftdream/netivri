@@ -69,10 +69,10 @@ func readHandshake(path string) (handshake, error) {
 		return h, fmt.Errorf("decode handshake: %w", err)
 	}
 	if h.OK && h.State == nil {
-		return h, fmt.Errorf("success handshake without state")
+		return h, errors.New("success handshake without state")
 	}
 	if !h.OK && h.Error == nil {
-		return h, fmt.Errorf("error handshake without error")
+		return h, errors.New("error handshake without error")
 	}
 	return h, nil
 }

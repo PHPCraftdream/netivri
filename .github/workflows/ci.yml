@@ -154,6 +154,16 @@ jobs:
           go vet ./...
           go vet -tags integration,e2e,bench ./...
 
+      # Zero findings is the rule; the linters and their settings are in
+      # .golangci.yml (it also lints the tagged test files). The version is
+      # pinned so that a new release cannot turn the job red by itself: raise
+      # it together with the fixes it asks for.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.10.1
+          args: ./cmd/... ./internal/... ./pkg/hopkit/...
+
       - name: Build (all levels)
         shell: bash
         run: go build -tags integration,e2e,bench ./...

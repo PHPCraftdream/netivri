@@ -50,7 +50,7 @@ func TestTrojanRoutesAuthenticationPolicyRotationAndClose(t *testing.T) {
 	closed := false
 	defer func() {
 		if !closed {
-			defer instance.Close()
+			defer func() { _ = instance.Close() }()
 			waitTrojanConnections(t, instance)
 		}
 	}()
@@ -135,7 +135,7 @@ func TestTrojanRoutesAuthenticationPolicyRotationAndClose(t *testing.T) {
 		t.Fatal("instance close failed")
 	}
 	closed = true
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal("Close did not free listener port")
 	}
@@ -198,12 +198,12 @@ func trojanRoundTrip(t *testing.T, port int, password, fingerprint, host string,
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)})
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: servertest.MustUint16(t, backendPort)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(trojanTestTimeout)); err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ type trojanRecorder struct {
 func startTrojanRecorder(t *testing.T) (*trojanRecorder, string) {
 	t.Helper()
 	recorder := &trojanRecorder{}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listen failed")
 	}
@@ -286,7 +286,7 @@ func (r *trojanRecorder) snapshot() []string {
 }
 
 func (r *trojanRecorder) serve(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(trojanTestTimeout))
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(conn, header); err != nil || header[0] != 5 {
@@ -338,12 +338,12 @@ func (r *trojanRecorder) serve(conn net.Conn) {
 	r.mu.Lock()
 	r.targets = append(r.targets, destination)
 	r.mu.Unlock()
-	upstream, err := net.DialTimeout("tcp", destination, trojanTestTimeout)
+	upstream, err := (&net.Dialer{Timeout: trojanTestTimeout}).DialContext(context.Background(), "tcp", destination)
 	if err != nil {
 		_, _ = conn.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 	_ = upstream.SetDeadline(time.Now().Add(trojanTestTimeout))
 	if _, err := conn.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
@@ -359,7 +359,7 @@ func (r *trojanRecorder) serve(conn net.Conn) {
 
 func startTrojanEcho(t *testing.T) (string, int) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("echo listen failed")
 	}
@@ -375,7 +375,7 @@ func startTrojanEcho(t *testing.T) (string, int) {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(trojanTestTimeout))
 				_, _ = io.Copy(conn, conn)
 			}()

@@ -15,7 +15,7 @@ func TestWriteFileAtomic(t *testing.T) {
 	if err := writeFileAtomic(path, []byte("listen.port: 7890")); err != nil {
 		t.Fatalf("writeFileAtomic: %v", err)
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestWriteFileAtomicOverwrites(t *testing.T) {
 	if err := writeFileAtomic(path, []byte("a: 2")); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestSaveConcurrentWriters(t *testing.T) {
 			t.Fatalf("concurrent Save: %v", err)
 		}
 	}
-	got, err := os.ReadFile(path)
+	got, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}

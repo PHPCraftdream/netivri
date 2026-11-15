@@ -163,6 +163,16 @@ versions; every such change is listed here.
 
 ### Changed
 
+- **The linter runs in CI and the code has no findings.** The `lint` job runs `golangci-lint` with
+  the settings of `.golangci.yml` (a pinned version, the tagged test files included) and any finding
+  fails it. The tree was brought to zero: errors of `Close`, `Rollback` and writes are handled,
+  contexts are passed down, type assertions are checked, long functions and tests were split into
+  helpers, and the few false positives carry a `//nolint` with the linter and the reason. Visible
+  effects: a few messages start with a lowercase letter (`subscription URL cannot be blank` and
+  `enter a different name` in the provider screen, and the `snell`, `sudoku` and `reality` errors of
+  `server`), an error wrapped by another one is now recognized by `errors.As` where a direct type
+  check missed it, and an out-of-range port or length in the SOCKS5 and hop code is an error instead
+  of a silent wrap.
 - **A configured proxy is the reserve channel of a subscription fetch, and `fetch.mode` chooses.**
   `fetch.proxy` and the per-provider `--via` used to be strict: every fetch went through the proxy
   and never directly. The new `fetch.mode` (`config set fetch.mode`, the Settings screen, or the

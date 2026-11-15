@@ -323,8 +323,9 @@ func isWarmLeaf(p C.Proxy) bool {
 	case C.Direct, C.Compatible, C.Pass, C.PassRule, C.Reject, C.RejectDrop, C.Dns, C.Rematch,
 		C.Relay, C.Selector, C.Fallback, C.URLTest, C.LoadBalance:
 		return false
+	default:
+		return true
 	}
-	return true
 }
 
 func defaultWarmProbe(ctx context.Context, p C.Proxy, target string) (uint16, error) {
@@ -489,9 +490,9 @@ func (w *warmer) probeGroup(parent context.Context, group []scheduled) {
 }
 
 // probeOne runs a single probe and records its result.
-func (w *warmer) probeOne(parent context.Context, p C.Proxy, index int) {
+func (w *warmer) probeOne(parent context.Context, p C.Proxy) {
 	if measured, ok, err := w.measure(parent, p); ok {
-		w.record(p, index, measured, err)
+		w.record(p, 0, measured, err)
 	}
 }
 
@@ -509,7 +510,7 @@ func (w *warmer) measure(parent context.Context, p C.Proxy) (measured time.Durat
 		cancel()
 	}
 	if parent.Err() != nil {
-		return 0, false, nil
+		return 0, false, parent.Err()
 	}
 	if err == nil {
 		measured = time.Duration(delay) * time.Millisecond

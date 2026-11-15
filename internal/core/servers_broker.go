@@ -14,8 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/servers"
 	C "github.com/metacubex/mihomo/constant"
+
+	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
 type socketBroker struct {
@@ -94,7 +95,7 @@ func (b *socketBroker) stage() *socketStage {
 	return &socketStage{broker: b, endpointKeys: map[string]struct{}{}}
 }
 func (s *socketStage) Listen(ctx context.Context, n, a string) (net.Listener, error) {
-	return s.broker.newLease(s, n, a, nil)
+	return s.broker.newLease(ctx, s, n, a, nil)
 }
 
 type serverListenConfig struct {
@@ -103,7 +104,7 @@ type serverListenConfig struct {
 }
 
 func (c serverListenConfig) Listen(ctx context.Context, n, a string) (net.Listener, error) {
-	return c.stage.broker.newLease(c.stage, n, a, &c.spec)
+	return c.stage.broker.newLease(ctx, c.stage, n, a, &c.spec)
 }
 func (c serverListenConfig) ListenPacket(ctx context.Context, n, a string) (net.PacketConn, error) {
 	return c.stage.ListenPacket(ctx, n, a)
@@ -123,7 +124,7 @@ func (s *socketStage) setServers(specs []servers.Spec) {
 func (s *socketStage) ListenPacket(context.Context, string, string) (net.PacketConn, error) {
 	return nil, errors.New("UDP listeners are unsupported")
 }
-func (b *socketBroker) newLease(s *socketStage, n, a string, sp *servers.Spec) (*socketLease, error) {
+func (b *socketBroker) newLease(ctx context.Context, s *socketStage, n, a string, sp *servers.Spec) (*socketLease, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.finished {
@@ -148,7 +149,7 @@ func (b *socketBroker) newLease(s *socketStage, n, a string, sp *servers.Spec) (
 	}
 	ep := b.endpoints[key]
 	if ep == nil {
-		ln, e := net.Listen(n, a)
+		ln, e := (&net.ListenConfig{}).Listen(ctx, n, a)
 		if e != nil {
 			return nil, e
 		}
@@ -199,57 +200,12 @@ func (s *socketStage) commit() error {
 	if b.closed {
 		return net.ErrClosed
 	}
-	for _, l := range s.leases {
-		if l.endpoint.closed {
-			return net.ErrClosed
-		}
-		if !containsLease(l.endpoint.leases, l) {
-			return errors.New("listener stage lease is closed")
-		}
+	if err := s.leasesOpen(); err != nil {
+		return err
 	}
-	involved := map[*socketEndpoint]bool{}
-	for _, l := range s.leases {
-		involved[l.endpoint] = true
-	}
-	if s.desiredSet {
-		for _, ep := range b.endpoints {
-			if len(ep.members) > 0 {
-				involved[ep] = true
-			}
-		}
-	}
-	for _, sp := range s.desired {
-		for _, ep := range b.endpoints {
-			if ep.key.address == sp.ListenAddress() {
-				involved[ep] = true
-			}
-		}
-	}
-	s.previous = map[*socketEndpoint]endpointSnapshot{}
-	for ep := range involved {
-		m := map[string]*socketLease{}
-		for k, v := range ep.members {
-			m[k] = v
-		}
-		s.previous[ep] = endpointSnapshot{active: ep.active, members: m}
-	}
-	desired := map[string]*socketLease{}
-	for _, sp := range s.desired {
-		for _, l := range s.leases {
-			if l.name == sp.Name && l.spec != nil && l.spec.Equal(sp) {
-				desired[sp.Name] = l
-				break
-			}
-		}
-		if desired[sp.Name] == nil {
-			for ep := range involved {
-				if l := ep.members[sp.Name]; l != nil && l.spec != nil && l.spec.Equal(sp) {
-					desired[sp.Name] = l
-					break
-				}
-			}
-		}
-	}
+	involved := s.involvedEndpoints(b)
+	s.snapshotPrevious(involved)
+	desired := s.desiredLeases(involved)
 	for ep := range involved {
 		next := map[string]*socketLease{}
 		for _, sp := range s.desired {
@@ -271,6 +227,81 @@ func (s *socketStage) commit() error {
 	s.finished = true
 	return nil
 }
+
+// leasesOpen reports a closed endpoint or lease among the stage's leases. b.mu is held.
+func (s *socketStage) leasesOpen() error {
+	for _, l := range s.leases {
+		if l.endpoint.closed {
+			return net.ErrClosed
+		}
+		if !containsLease(l.endpoint.leases, l) {
+			return errors.New("listener stage lease is closed")
+		}
+	}
+	return nil
+}
+
+// involvedEndpoints lists the endpoints the commit changes: those of the
+// stage's leases, the ones with members when the stage sets the member set,
+// and the ones a desired spec listens on. b.mu is held.
+func (s *socketStage) involvedEndpoints(b *socketBroker) map[*socketEndpoint]bool {
+	involved := map[*socketEndpoint]bool{}
+	for _, l := range s.leases {
+		involved[l.endpoint] = true
+	}
+	if s.desiredSet {
+		for _, ep := range b.endpoints {
+			if len(ep.members) > 0 {
+				involved[ep] = true
+			}
+		}
+	}
+	for _, sp := range s.desired {
+		for _, ep := range b.endpoints {
+			if ep.key.address == sp.ListenAddress() {
+				involved[ep] = true
+			}
+		}
+	}
+	return involved
+}
+
+// snapshotPrevious records the members and active lease of the involved
+// endpoints, for rollbackActivation. b.mu is held.
+func (s *socketStage) snapshotPrevious(involved map[*socketEndpoint]bool) {
+	s.previous = map[*socketEndpoint]endpointSnapshot{}
+	for ep := range involved {
+		m := map[string]*socketLease{}
+		for k, v := range ep.members {
+			m[k] = v
+		}
+		s.previous[ep] = endpointSnapshot{active: ep.active, members: m}
+	}
+}
+
+// desiredLeases picks the lease that serves each desired spec: a stage lease
+// first, else a lease already on an involved endpoint. b.mu is held.
+func (s *socketStage) desiredLeases(involved map[*socketEndpoint]bool) map[string]*socketLease {
+	desired := map[string]*socketLease{}
+	for _, sp := range s.desired {
+		for _, l := range s.leases {
+			if l.name == sp.Name && l.spec != nil && l.spec.Equal(sp) {
+				desired[sp.Name] = l
+				break
+			}
+		}
+		if desired[sp.Name] == nil {
+			for ep := range involved {
+				if l := ep.members[sp.Name]; l != nil && l.spec != nil && l.spec.Equal(sp) {
+					desired[sp.Name] = l
+					break
+				}
+			}
+		}
+	}
+	return desired
+}
+
 func (s *socketStage) rollbackActivation() {
 	s.mu.Lock()
 	if !s.activated {
@@ -446,25 +477,12 @@ func (b *socketBroker) classify(ep *socketEndpoint, c *brokerConn, initial []*so
 		if released {
 			return
 		}
-		b.mu.Lock()
-		if ep.pending != nil {
-			ep.pending[src]--
-			if ep.pending[src] <= 0 {
-				delete(ep.pending, src)
-			}
-		}
-		b.mu.Unlock()
+		b.releasePending(ep, src)
 		released = true
 	}
 	defer release()
+	limit := initialReadLimit(initial)
 	buf := make([]byte, 0, 4<<10)
-	limit := 4 << 10
-	for _, l := range initial {
-		if leaseUsesTLS(l) {
-			limit = servers.MaxClientHelloBytes
-			break
-		}
-	}
 	if limit > cap(buf) {
 		buf = make([]byte, 0, limit)
 	}
@@ -475,6 +493,98 @@ func (b *socketBroker) classify(ep *socketEndpoint, c *brokerConn, initial []*so
 		b.reject(ep, c)
 		return
 	}
+	r := &helloRead{
+		buf:       buf,
+		limit:     limit,
+		trials:    sortedTrials(initial),
+		tried:     map[*socketLease]bool{},
+		trialKeys: make(map[*socketLease][]byte),
+	}
+	b.readHello(ep, c, r)
+	release()
+	b.mu.Lock()
+	if ep.closed {
+		b.mu.Unlock()
+		b.reject(ep, c)
+		return
+	}
+	chosen, good, ambiguous := b.pickLease(ep, r)
+	if ambiguous {
+		ep.ambiguous.Add(1)
+		ep.unclassified.Add(1)
+		b.mu.Unlock()
+		b.reject(ep, c)
+		return
+	}
+	if chosen == nil || r.readFailed {
+		b.mu.Unlock()
+		ep.unclassified.Add(1)
+		b.reject(ep, c)
+		return
+	}
+	if len(good) == 1 && good[0].trial != nil {
+		if b.replayCheckAndRecord(ep, r.trialKeys[good[0]], good[0].spec.Protocol) {
+			ep.replayed.Add(1)
+			b.mu.Unlock()
+			b.reject(ep, c)
+			return
+		}
+	}
+	select {
+	case <-chosen.done:
+		b.mu.Unlock()
+		b.reject(ep, c)
+		return
+	case chosen.tcp <- &replayConn{Conn: c, prefix: r.buf}:
+		_ = c.SetReadDeadline(time.Time{})
+		b.mu.Unlock()
+		return
+	default:
+		b.mu.Unlock()
+		b.reject(ep, c)
+		return
+	}
+}
+
+// helloRead is what classify learns from the first bytes of a connection.
+type helloRead struct {
+	buf        []byte
+	limit      int
+	trials     []*socketLease // the leases with a trial, shortest first
+	tried      map[*socketLease]bool
+	accepted   []*socketLease
+	trialKeys  map[*socketLease][]byte
+	hello      servers.ClientHello
+	tlsValid   bool
+	tlsBad     bool
+	readFailed bool
+}
+
+// releasePending gives back the pending connection slot of src on ep.
+func (b *socketBroker) releasePending(ep *socketEndpoint, src netip.Addr) {
+	b.mu.Lock()
+	if ep.pending != nil {
+		ep.pending[src]--
+		if ep.pending[src] <= 0 {
+			delete(ep.pending, src)
+		}
+	}
+	b.mu.Unlock()
+}
+
+// initialReadLimit is how many first bytes classify reads: a TLS ClientHello
+// when an initial lease speaks TLS, else 4 KiB.
+func initialReadLimit(initial []*socketLease) int {
+	for _, l := range initial {
+		if leaseUsesTLS(l) {
+			return servers.MaxClientHelloBytes
+		}
+	}
+	return 4 << 10
+}
+
+// sortedTrials lists the leases that have a trial, the shortest first.
+func sortedTrials(initial []*socketLease) []*socketLease {
 	trials := make([]*socketLease, 0, len(initial))
 	for _, l := range initial {
 		if l.trial != nil {
@@ -488,52 +598,30 @@ func (b *socketBroker) classify(ep *socketEndpoint, c *brokerConn, initial []*so
 		}
 		return trials[i].name < trials[j].name
 	})
-	tried := map[*socketLease]bool{}
-	var accepted []*socketLease
-	trialKeys := make(map[*socketLease][]byte)
-	var hello servers.ClientHello
-	tlsValid := false
-	tlsBad := false
-	readFailed := false
+	return trials
+}
+
+// readHello reads the first bytes of c into r until a lease accepts them, the
+// bytes are settled, or the read ends or reaches r.limit.
+func (b *socketBroker) readHello(ep *socketEndpoint, c *brokerConn, r *helloRead) {
 	tmp := make([]byte, 4096)
-	for len(buf) < limit {
+	for len(r.buf) < r.limit {
 		nmax := len(tmp)
-		if rem := limit - len(buf); nmax > rem {
+		if rem := r.limit - len(r.buf); nmax > rem {
 			nmax = rem
 		}
 		n, e := c.Read(tmp[:nmax])
 		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-			for _, l := range trials {
-				if l.trial == nil || tried[l] || len(buf) < l.trial.MinBytes() {
-					continue
-				}
-				tried[l] = true
-				v, key := l.trial.Try(buf[:l.trial.MinBytes()], b.clock())
-				if v == servers.Accept {
-					accepted = append(accepted, l)
-					trialKeys[l] = append([]byte(nil), key...)
-				} else if v == servers.NeedMore {
-					tried[l] = false
-				}
-			}
-			if len(buf) >= 2 && buf[0] == 0x16 && buf[1] == 3 && !tlsValid && !tlsBad {
-				h, pe := servers.ParseClientHello(buf)
-				if pe == nil {
-					hello = h
-					tlsValid = true
-				} else if !errors.Is(pe, servers.ErrClientHelloIncomplete) {
-					tlsBad = true
-				}
-			}
-			allTrialsDone := len(tried) == len(trials)
-			if len(accepted) > 0 || (tlsValid && allTrialsDone) || ((tlsBad || len(buf) >= 2 && !(buf[0] == 0x16 && buf[1] == 3)) && allTrialsDone) {
+			r.buf = append(r.buf, tmp[:n]...)
+			b.tryTrials(r)
+			r.parseHello()
+			if r.settled() {
 				break
 			}
 		}
 		if e != nil {
 			if n == 0 {
-				readFailed = true
+				r.readFailed = true
 			}
 			var ne net.Error
 			if errors.As(e, &ne) && ne.Timeout() {
@@ -542,99 +630,118 @@ func (b *socketBroker) classify(ep *socketEndpoint, c *brokerConn, initial []*so
 			break
 		}
 	}
-	release()
-	b.mu.Lock()
-	if ep.closed {
-		b.mu.Unlock()
-		b.reject(ep, c)
-		return
+}
+
+// tryTrials runs every lease trial that has enough bytes in r.buf, once, unless
+// it asked for more bytes.
+func (b *socketBroker) tryTrials(r *helloRead) {
+	for _, l := range r.trials {
+		if l.trial == nil || r.tried[l] || len(r.buf) < l.trial.MinBytes() {
+			continue
+		}
+		r.tried[l] = true
+		v, key := l.trial.Try(r.buf[:l.trial.MinBytes()], b.clock())
+		switch v {
+		case servers.Accept:
+			r.accepted = append(r.accepted, l)
+			r.trialKeys[l] = append([]byte(nil), key...)
+		case servers.NeedMore:
+			r.tried[l] = false
+		case servers.Reject:
+			// A rejected trial records nothing; the link stays tried.
+		}
 	}
-	live := func(l *socketLease) bool {
-		return !l.endpoint.closed && containsLease(l.endpoint.leases, l) && (l.endpoint.members[l.name] == l || l.endpoint.active == l)
+}
+
+// parseHello reads a TLS ClientHello from the start of r.buf, until one parses
+// or is ruled out.
+func (r *helloRead) parseHello() {
+	if len(r.buf) >= 2 && r.buf[0] == 0x16 && r.buf[1] == 3 && !r.tlsValid && !r.tlsBad {
+		h, pe := servers.ParseClientHello(r.buf)
+		if pe == nil {
+			r.hello = h
+			r.tlsValid = true
+		} else if !errors.Is(pe, servers.ErrClientHelloIncomplete) {
+			r.tlsBad = true
+		}
 	}
-	var chosen *socketLease
-	good := make([]*socketLease, 0, len(accepted))
-	for _, l := range accepted {
-		if live(l) {
+}
+
+// settled reports whether reading can stop: a lease accepted the bytes, or they
+// are a TLS hello or not TLS at all and every trial has had its say.
+func (r *helloRead) settled() bool {
+	allTrialsDone := len(r.tried) == len(r.trials)
+	return len(r.accepted) > 0 || (r.tlsValid && allTrialsDone) || ((r.tlsBad || len(r.buf) >= 2 && (r.buf[0] != 0x16 || r.buf[1] != 3)) && allTrialsDone)
+}
+
+// pickLease chooses the lease that takes the connection read into r: the one
+// live accepted lease, else the TLS lease the hello names. good lists the live
+// accepted leases; ambiguous reports more than one candidate. b.mu is held.
+func (b *socketBroker) pickLease(ep *socketEndpoint, r *helloRead) (chosen *socketLease, good []*socketLease, ambiguous bool) {
+	good = make([]*socketLease, 0, len(r.accepted))
+	for _, l := range r.accepted {
+		if leaseLive(l) {
 			good = append(good, l)
 		}
 	}
 	if len(good) > 1 {
-		ep.ambiguous.Add(1)
-		ep.unclassified.Add(1)
-		b.mu.Unlock()
-		b.reject(ep, c)
-		return
+		return nil, good, true
 	}
 	if len(good) == 1 {
 		chosen = good[0]
 	}
-	if chosen == nil && tlsValid {
-		matches := 0
-		var fallback *socketLease
-		for _, l := range activeMembers(ep) {
-			if l.spec == nil || !leaseUsesTLS(l) {
-				continue
-			}
-			if l.spec.Default && fallback == nil {
-				fallback = l
-			}
-			if servers.MatchClientHello(*l.spec, hello) {
-				chosen = l
-				matches++
-			}
-		}
-		if matches > 1 {
-			ep.ambiguous.Add(1)
-			ep.unclassified.Add(1)
-			b.mu.Unlock()
-			b.reject(ep, c)
-			return
-		}
-		if matches == 0 {
-			chosen = fallback
+	if chosen == nil && r.tlsValid {
+		var ok bool
+		if chosen, ok = matchTLSLease(ep, r.hello); !ok {
+			return nil, good, true
 		}
 	}
-	if chosen != nil && len(good) == 0 && len(trials) > 0 {
-		allRejected := true
-		for _, l := range trials {
-			if !tried[l] {
-				allRejected = false
-				break
-			}
+	if chosen != nil && len(good) == 0 && len(r.trials) > 0 && !allTrialsTried(r) {
+		chosen = nil
+	}
+	return chosen, good, false
+}
+
+// leaseLive reports whether l is still served by its endpoint.
+func leaseLive(l *socketLease) bool {
+	return !l.endpoint.closed && containsLease(l.endpoint.leases, l) && (l.endpoint.members[l.name] == l || l.endpoint.active == l)
+}
+
+// matchTLSLease picks the TLS lease of ep that hello names, else the default
+// one. ok is false when more than one lease matches.
+func matchTLSLease(ep *socketEndpoint, hello servers.ClientHello) (chosen *socketLease, ok bool) {
+	matches := 0
+	var fallback *socketLease
+	for _, l := range activeMembers(ep) {
+		if l.spec == nil || !leaseUsesTLS(l) {
+			continue
 		}
-		if !allRejected {
-			chosen = nil
+		if l.spec.Default && fallback == nil {
+			fallback = l
+		}
+		if servers.MatchClientHello(*l.spec, hello) {
+			chosen = l
+			matches++
 		}
 	}
-	if chosen == nil || readFailed {
-		b.mu.Unlock()
-		ep.unclassified.Add(1)
-		b.reject(ep, c)
-		return
+	if matches > 1 {
+		return nil, false
 	}
-	if len(good) == 1 && good[0].trial != nil {
-		if b.replayCheckAndRecord(ep, trialKeys[good[0]], good[0].spec.Protocol) {
-			ep.replayed.Add(1)
-			b.mu.Unlock()
-			b.reject(ep, c)
-			return
+	if matches == 0 {
+		return fallback, true
+	}
+	return chosen, true
+}
+
+// allTrialsTried reports whether every lease trial has been tried and not
+// left waiting for more bytes.
+func allTrialsTried(r *helloRead) bool {
+	for _, l := range r.trials {
+		if !r.tried[l] {
+			return false
 		}
 	}
-	select {
-	case <-chosen.done:
-		b.mu.Unlock()
-		b.reject(ep, c)
-		return
-	case chosen.tcp <- &replayConn{Conn: c, prefix: buf}:
-		_ = c.SetReadDeadline(time.Time{})
-		b.mu.Unlock()
-		return
-	default:
-		b.mu.Unlock()
-		b.reject(ep, c)
-		return
-	}
+	return true
 }
 func (b *socketBroker) replayCheckAndRecord(ep *socketEndpoint, key []byte, protocol string) bool {
 	h := sha256.Sum256(append([]byte(protocol+"\x00"), key...))

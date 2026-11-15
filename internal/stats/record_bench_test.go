@@ -59,7 +59,7 @@ func BenchmarkRecord(b *testing.B) {
 	at := time.Now()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		s.Record(benchSample(i, at))
 	}
 	b.StopTimer()
@@ -88,7 +88,7 @@ func BenchmarkNodesQuery(b *testing.B) {
 	s := benchStore(b, 1<<17)
 	const samples = 100000
 	at := time.Now()
-	for i := 0; i < samples; i++ {
+	for i := range samples {
 		s.Record(benchSample(i, at))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -102,7 +102,7 @@ func BenchmarkNodesQuery(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		got, err := s.Nodes(Query{})
 		if err != nil {
 			b.Fatal(err)
@@ -120,8 +120,8 @@ func BenchmarkFlushBatch(b *testing.B) {
 	at := time.Now()
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for j := 0; j < 256; j++ {
+	for i := range b.N {
+		for j := range 256 {
 			s.Record(benchSample(i*256+j, at))
 		}
 		if err := s.Flush(ctx); err != nil {

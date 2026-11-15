@@ -80,7 +80,7 @@ func (trojanServer) Validate(params map[string]string) error {
 		}
 	}
 	if host := params["public_host"]; host != "" && !validTLSHost(host) {
-		return fmt.Errorf("invalid public_host")
+		return errors.New("invalid public_host")
 	}
 	return ValidateTLSParams(params)
 }
@@ -100,7 +100,7 @@ func (trojanServer) NewSecret(_ string, params map[string]string) (map[string]st
 	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return nil, fmt.Errorf("generate Trojan secret failed")
+		return nil, errors.New("generate Trojan secret failed")
 	}
 	return map[string]string{"password": base64.RawURLEncoding.EncodeToString(raw)}, nil
 }
@@ -109,14 +109,14 @@ func (trojanServer) Start(spec Spec, env Env) (io.Closer, error) {
 		return nil, err
 	}
 	if spec.Protocol != "trojan" {
-		return nil, fmt.Errorf("trojan protocol mismatch")
+		return nil, errors.New("trojan protocol mismatch")
 	}
 	users := make([]LC.TrojanUser, 0, len(spec.Accounts))
 	passwords := make(map[string]struct{}, len(spec.Accounts))
 	for _, login := range spec.Accounts {
 		password := spec.Users[login]["password"]
 		if password == "" {
-			return nil, fmt.Errorf("trojan secret missing")
+			return nil, errors.New("trojan secret missing")
 		}
 		if _, exists := passwords[password]; exists {
 			return nil, errors.New("trojan secrets must be unique per account")
@@ -126,11 +126,11 @@ func (trojanServer) Start(spec Spec, env Env) (io.Closer, error) {
 	}
 	address := spec.ListenAddress()
 	if env.Tunnel == nil || env.ListenConfig == nil {
-		return nil, fmt.Errorf("trojan start requires tunnel and listen config")
+		return nil, errors.New("trojan start requires tunnel and listen config")
 	}
 	certificate, privateKey := TLSFiles(spec.Material)
 	if certificate == "" || privateKey == "" {
-		return nil, fmt.Errorf("trojan TLS material missing")
+		return nil, errors.New("trojan TLS material missing")
 	}
 	prepared := &preparedListenConfig{address: address}
 	listener, err := env.ListenConfig.Listen(context.Background(), "tcp", address)
@@ -151,14 +151,14 @@ func (trojanServer) Link(spec Spec, login, host string) (string, error) {
 		return "", err
 	}
 	if spec.Protocol != "trojan" {
-		return "", fmt.Errorf("trojan protocol mismatch")
+		return "", errors.New("trojan protocol mismatch")
 	}
 	if !trojanHasAccount(spec, login) || host == "" {
-		return "", fmt.Errorf("host and configured account are required")
+		return "", errors.New("host and configured account are required")
 	}
 	password := spec.Users[login]["password"]
 	if password == "" {
-		return "", fmt.Errorf("trojan secret missing")
+		return "", errors.New("trojan secret missing")
 	}
 	query := url.Values{"security": {"tls"}, "sni": {trojanSNI(spec.Params, host)}, "type": {"tcp"}, "allowInsecure": {"0"}}
 	if alpn := spec.Params["alpn"]; alpn != "" {
@@ -176,14 +176,14 @@ func (p trojanServer) Mihomo(spec Spec, login, host string) (string, error) {
 		return "", err
 	}
 	if spec.Protocol != "trojan" {
-		return "", fmt.Errorf("trojan protocol mismatch")
+		return "", errors.New("trojan protocol mismatch")
 	}
 	if !trojanHasAccount(spec, login) || host == "" {
-		return "", fmt.Errorf("host and configured account are required")
+		return "", errors.New("host and configured account are required")
 	}
 	password := spec.Users[login]["password"]
 	if password == "" {
-		return "", fmt.Errorf("trojan secret missing")
+		return "", errors.New("trojan secret missing")
 	}
 	if TLSFingerprint(spec.Material) == "" {
 		return "", errors.New("trojan TLS fingerprint unavailable")

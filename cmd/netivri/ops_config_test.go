@@ -227,235 +227,259 @@ func TestConfigKeyMetadata(t *testing.T) {
 }
 
 func TestConfigSetEachKey(t *testing.T) {
-	t.Run("port", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "listen.port", "8080")
+	t.Run("port", checkConfigSetPort)
+	t.Run("bind", checkConfigSetBind)
+	t.Run("allowed_clients", checkConfigSetAllowedClients)
+	t.Run("login", checkConfigSetLogin)
+	t.Run("password plain", checkConfigSetPasswordPlain)
+	t.Run("password init", checkConfigSetPasswordInit)
+	t.Run("allow_init_remote", checkConfigSetAllowInitRemote)
+	t.Run("fetch.proxy", checkConfigSetFetchProxy)
+	t.Run("fetch.mode", checkConfigSetFetchMode)
+	t.Run("update_interval", checkConfigSetUpdateInterval)
+	t.Run("chain.pre_socks5", checkConfigSetChainPreSOCKS5)
+	t.Run("chain.post_socks5", checkConfigSetChainPostSOCKS5)
+}
+
+func checkConfigSetPort(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "listen.port", "8080")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded || res.Key != "listen.port" {
+		t.Errorf("result = %+v", res)
+	}
+	cfg, err := loadConfig(home)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if cfg.Listen.Port != 8080 {
+		t.Errorf("port = %d, want 8080", cfg.Listen.Port)
+	}
+}
+
+func checkConfigSetBind(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "listen.bind", "localhost")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	cfg, _ := loadConfig(home)
+	if cfg.Listen.Bind != "localhost" {
+		t.Errorf("bind = %q", cfg.Listen.Bind)
+	}
+}
+
+func checkConfigSetAllowedClients(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "listen.allowed_clients", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	cfg, _ := loadConfig(home)
+	if cfg.Listen.AllowedClients != "127.0.0.1" {
+		t.Errorf("allowed_clients = %q", cfg.Listen.AllowedClients)
+	}
+}
+
+func checkConfigSetLogin(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Auth.Login, cfg.Auth.Password = "old", config.InitPlaceholder
+	writeTestConfig(t, home, cfg)
+	res, err := ConfigSet(home, "auth.login", "bob")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if lc.Auth.Login != "bob" || lc.Auth.Password != config.InitPlaceholder {
+		t.Errorf("auth = %+v", lc.Auth)
+	}
+}
+
+func checkConfigSetPasswordPlain(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	cfg.Auth.Login, cfg.Auth.Password = "alice", config.InitPlaceholder
+	writeTestConfig(t, home, cfg)
+	res, err := ConfigSet(home, "auth.password", "sup3rsecret-pw")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if !strings.HasPrefix(lc.Auth.Password, "$argon2id$") {
+		t.Errorf("stored password is not an argon2id hash")
+	}
+	if ok, verr := auth.VerifyHash(lc.Auth.Password, "sup3rsecret-pw"); verr != nil || !ok {
+		t.Errorf("VerifyHash = %v, %v", ok, verr)
+	}
+	if blob := readTestConfigBytes(t, home); bytes.Contains(blob, []byte("sup3rsecret-pw")) {
+		t.Errorf("saved file contains the plain password")
+	}
+}
+
+func checkConfigSetPasswordInit(t *testing.T) {
+	home := t.TempDir()
+	cfg := config.Default()
+	oldHash, herr := auth.Hash("old-password")
+	if herr != nil {
+		t.Fatalf("hash: %v", herr)
+	}
+	cfg.Auth.Login, cfg.Auth.Password = "alice", oldHash
+	writeTestConfig(t, home, cfg)
+	res, err := ConfigSet(home, "auth.password", "init")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if lc.Auth.Password != "init" {
+		t.Errorf("password = %q, want literal init", lc.Auth.Password)
+	}
+}
+
+func checkConfigSetAllowInitRemote(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "auth.allow_init_remote", "true")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if !lc.Auth.AllowInitRemote {
+		t.Errorf("allow_init_remote = false")
+	}
+}
+
+func checkConfigSetFetchProxy(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "fetch.proxy", "socks5://p.example:1080")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if lc.Fetch.Proxy != "socks5://p.example:1080" {
+		t.Errorf("proxy = %q", lc.Fetch.Proxy)
+	}
+}
+
+func checkConfigSetFetchMode(t *testing.T) {
+	home := t.TempDir()
+	for _, mode := range []string{"proxy", "direct", "reserve"} {
+		res, err := ConfigSet(home, "fetch.mode", mode)
 		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded || res.Key != "listen.port" {
-			t.Errorf("result = %+v", res)
-		}
-		cfg, err := loadConfig(home)
-		if err != nil {
-			t.Fatalf("reload: %v", err)
-		}
-		if cfg.Listen.Port != 8080 {
-			t.Errorf("port = %d, want 8080", cfg.Listen.Port)
-		}
-	})
-	t.Run("bind", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "listen.bind", "localhost")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		cfg, _ := loadConfig(home)
-		if cfg.Listen.Bind != "localhost" {
-			t.Errorf("bind = %q", cfg.Listen.Bind)
-		}
-	})
-	t.Run("allowed_clients", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "listen.allowed_clients", "127.0.0.1")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		cfg, _ := loadConfig(home)
-		if cfg.Listen.AllowedClients != "127.0.0.1" {
-			t.Errorf("allowed_clients = %q", cfg.Listen.AllowedClients)
-		}
-	})
-	t.Run("login", func(t *testing.T) {
-		home := t.TempDir()
-		cfg := config.Default()
-		cfg.Auth.Login, cfg.Auth.Password = "old", config.InitPlaceholder
-		writeTestConfig(t, home, cfg)
-		res, err := ConfigSet(home, "auth.login", "bob")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ := loadConfig(home)
-		if lc.Auth.Login != "bob" || lc.Auth.Password != config.InitPlaceholder {
-			t.Errorf("auth = %+v", lc.Auth)
-		}
-	})
-	t.Run("password plain", func(t *testing.T) {
-		home := t.TempDir()
-		cfg := config.Default()
-		cfg.Auth.Login, cfg.Auth.Password = "alice", config.InitPlaceholder
-		writeTestConfig(t, home, cfg)
-		res, err := ConfigSet(home, "auth.password", "sup3rsecret-pw")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ := loadConfig(home)
-		if !strings.HasPrefix(lc.Auth.Password, "$argon2id$") {
-			t.Errorf("stored password is not an argon2id hash")
-		}
-		if ok, verr := auth.VerifyHash(lc.Auth.Password, "sup3rsecret-pw"); verr != nil || !ok {
-			t.Errorf("VerifyHash = %v, %v", ok, verr)
-		}
-		if blob := readTestConfigBytes(t, home); bytes.Contains(blob, []byte("sup3rsecret-pw")) {
-			t.Errorf("saved file contains the plain password")
-		}
-	})
-	t.Run("password init", func(t *testing.T) {
-		home := t.TempDir()
-		cfg := config.Default()
-		oldHash, herr := auth.Hash("old-password")
-		if herr != nil {
-			t.Fatalf("hash: %v", herr)
-		}
-		cfg.Auth.Login, cfg.Auth.Password = "alice", oldHash
-		writeTestConfig(t, home, cfg)
-		res, err := ConfigSet(home, "auth.password", "init")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ := loadConfig(home)
-		if lc.Auth.Password != "init" {
-			t.Errorf("password = %q, want literal init", lc.Auth.Password)
-		}
-	})
-	t.Run("allow_init_remote", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "auth.allow_init_remote", "true")
-		if err != nil {
-			t.Fatalf("set: %v", err)
+			t.Fatalf("set %s: %v", mode, err)
 		}
 		if !res.Changed || res.RestartNeeded {
-			t.Errorf("result = %+v", res)
+			t.Errorf("set %s: result = %+v", mode, res)
 		}
 		lc, _ := loadConfig(home)
-		if !lc.Auth.AllowInitRemote {
-			t.Errorf("allow_init_remote = false")
+		if lc.Fetch.Mode != mode {
+			t.Errorf("mode = %q, want %q", lc.Fetch.Mode, mode)
 		}
-	})
-	t.Run("fetch.proxy", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "fetch.proxy", "socks5://p.example:1080")
-		if err != nil {
-			t.Fatalf("set: %v", err)
+		if got := ConfigDisplayValue(lc, "fetch.mode"); got != mode {
+			t.Errorf("display after set %s = %v", mode, got)
 		}
-		if !res.Changed || res.RestartNeeded {
-			t.Errorf("result = %+v", res)
+		if raw, ok := ConfigRawValue(lc, "fetch.mode"); !ok || raw != mode {
+			t.Errorf("raw after set %s = %q %v", mode, raw, ok)
 		}
-		lc, _ := loadConfig(home)
-		if lc.Fetch.Proxy != "socks5://p.example:1080" {
-			t.Errorf("proxy = %q", lc.Fetch.Proxy)
+	}
+	if res, err := ConfigSet(home, "fetch.mode", "reserve"); err != nil || res.Changed {
+		t.Errorf("setting the same mode again: %+v %v, want no change", res, err)
+	}
+	// none (or an empty value) restores the default: the key is not written.
+	for _, how := range []string{"none", "NONE", ""} {
+		if _, err := ConfigSet(home, "fetch.mode", "proxy"); err != nil {
+			t.Fatalf("set proxy: %v", err)
 		}
-	})
-	t.Run("fetch.mode", func(t *testing.T) {
-		home := t.TempDir()
-		for _, mode := range []string{"proxy", "direct", "reserve"} {
-			res, err := ConfigSet(home, "fetch.mode", mode)
-			if err != nil {
-				t.Fatalf("set %s: %v", mode, err)
-			}
-			if !res.Changed || res.RestartNeeded {
-				t.Errorf("set %s: result = %+v", mode, res)
-			}
-			lc, _ := loadConfig(home)
-			if lc.Fetch.Mode != mode {
-				t.Errorf("mode = %q, want %q", lc.Fetch.Mode, mode)
-			}
-			if got := ConfigDisplayValue(lc, "fetch.mode"); got != mode {
-				t.Errorf("display after set %s = %v", mode, got)
-			}
-			if raw, ok := ConfigRawValue(lc, "fetch.mode"); !ok || raw != mode {
-				t.Errorf("raw after set %s = %q %v", mode, raw, ok)
-			}
-		}
-		if res, err := ConfigSet(home, "fetch.mode", "reserve"); err != nil || res.Changed {
-			t.Errorf("setting the same mode again: %+v %v, want no change", res, err)
-		}
-		// none (or an empty value) restores the default: the key is not written.
-		for _, how := range []string{"none", "NONE", ""} {
-			if _, err := ConfigSet(home, "fetch.mode", "proxy"); err != nil {
-				t.Fatalf("set proxy: %v", err)
-			}
-			res, err := ConfigSet(home, "fetch.mode", how)
-			if err != nil || !res.Changed {
-				t.Fatalf("clear with %q: %+v %v", how, res, err)
-			}
-			lc, _ := loadConfig(home)
-			if lc.Fetch.Mode != "" {
-				t.Errorf("mode after clearing with %q = %q, want empty", how, lc.Fetch.Mode)
-			}
-			if got := ConfigDisplayValue(lc, "fetch.mode"); got != "reserve" {
-				t.Errorf("display after clearing = %v, want the default reserve", got)
-			}
-		}
-	})
-	t.Run("update_interval", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "fetch.update_interval", "30m")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || res.RestartNeeded {
-			t.Errorf("result = %+v", res)
+		res, err := ConfigSet(home, "fetch.mode", how)
+		if err != nil || !res.Changed {
+			t.Fatalf("clear with %q: %+v %v", how, res, err)
 		}
 		lc, _ := loadConfig(home)
-		if lc.Fetch.UpdateInterval != "30m" {
-			t.Errorf("update_interval = %q", lc.Fetch.UpdateInterval)
+		if lc.Fetch.Mode != "" {
+			t.Errorf("mode after clearing with %q = %q, want empty", how, lc.Fetch.Mode)
 		}
-		res, err = ConfigSet(home, "fetch.update_interval", "off")
-		if err != nil {
-			t.Fatalf("set off: %v", err)
+		if got := ConfigDisplayValue(lc, "fetch.mode"); got != "reserve" {
+			t.Errorf("display after clearing = %v, want the default reserve", got)
 		}
-		if !res.Changed || res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ = loadConfig(home)
-		if lc.Fetch.UpdateInterval != "off" {
-			t.Errorf("update_interval = %q, want off", lc.Fetch.UpdateInterval)
-		}
-	})
-	t.Run("chain.pre_socks5", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "chain.pre_socks5", "http://pre.example:8080")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ := loadConfig(home)
-		if !reflect.DeepEqual(lc.Chain.PreSOCKS5, config.HopList{"http://pre.example:8080"}) {
-			t.Errorf("pre = %q", lc.Chain.PreSOCKS5)
-		}
-	})
-	t.Run("chain.post_socks5", func(t *testing.T) {
-		home := t.TempDir()
-		res, err := ConfigSet(home, "chain.post_socks5", "socks5://post.example:1080")
-		if err != nil {
-			t.Fatalf("set: %v", err)
-		}
-		if !res.Changed || !res.RestartNeeded {
-			t.Errorf("result = %+v", res)
-		}
-		lc, _ := loadConfig(home)
-		if !reflect.DeepEqual(lc.Chain.PostSOCKS5, config.HopList{"socks5://post.example:1080"}) {
-			t.Errorf("post = %q", lc.Chain.PostSOCKS5)
-		}
-	})
+	}
+}
+
+func checkConfigSetUpdateInterval(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "fetch.update_interval", "30m")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if lc.Fetch.UpdateInterval != "30m" {
+		t.Errorf("update_interval = %q", lc.Fetch.UpdateInterval)
+	}
+	res, err = ConfigSet(home, "fetch.update_interval", "off")
+	if err != nil {
+		t.Fatalf("set off: %v", err)
+	}
+	if !res.Changed || res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ = loadConfig(home)
+	if lc.Fetch.UpdateInterval != "off" {
+		t.Errorf("update_interval = %q, want off", lc.Fetch.UpdateInterval)
+	}
+}
+
+func checkConfigSetChainPreSOCKS5(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "chain.pre_socks5", "http://pre.example:8080")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if !reflect.DeepEqual(lc.Chain.PreSOCKS5, config.HopList{"http://pre.example:8080"}) {
+		t.Errorf("pre = %q", lc.Chain.PreSOCKS5)
+	}
+}
+
+func checkConfigSetChainPostSOCKS5(t *testing.T) {
+	home := t.TempDir()
+	res, err := ConfigSet(home, "chain.post_socks5", "socks5://post.example:1080")
+	if err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !res.Changed || !res.RestartNeeded {
+		t.Errorf("result = %+v", res)
+	}
+	lc, _ := loadConfig(home)
+	if !reflect.DeepEqual(lc.Chain.PostSOCKS5, config.HopList{"socks5://post.example:1080"}) {
+		t.Errorf("post = %q", lc.Chain.PostSOCKS5)
+	}
 }
 
 func TestConfigSetClear(t *testing.T) {

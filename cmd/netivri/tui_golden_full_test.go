@@ -5,9 +5,10 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/PHPCraftdream/netivri/internal/tui"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+
+	"github.com/PHPCraftdream/netivri/internal/tui"
 )
 
 const goldenProviders80Empty = `Service stopped
@@ -363,117 +364,133 @@ const goldenTooSmall = `
            
            `
 
+// fullScreenSnapshotCase describes one screen rendered in TestFullScreenSnapshots.
+type fullScreenSnapshotCase struct {
+	name, title string
+	new         func(tui.Env) tui.Screen
+	seed        func(*testing.T, tui.Screen, bool)
+}
+
 func TestFullScreenSnapshots(t *testing.T) {
 	t.Setenv("NETIVRI_ASCII", "1")
 	t.Setenv("NO_COLOR", "1")
 	t.Setenv("LC_ALL", "C.UTF-8")
-	cases := []struct {
-		name, title string
-		new         func(tui.Env) tui.Screen
-		seed        func(tui.Screen, bool)
-	}{
-		{"providers", "Providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, func(x tui.Screen, p bool) {
-			two, three := 2, 3
-			s := x.(*providersScreen)
-			if p {
-				s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "alpha", Nodes: &two, State: "ready"}, {Name: "beta", Nodes: &three, State: "ready"}}})
-				s.selected = "alpha"
-			} else {
-				s.setProviders(ProviderListResult{})
-			}
-			s.updateCard()
-		}},
-		{"accounts", "Accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, func(x tui.Screen, p bool) {
-			s := x.(*accountsScreen)
-			if p {
-				s.rows = []accountInfo{{Login: "alpha", Provider: "provider-a", Exit: "us"}, {Login: "beta", Provider: "provider-b", Exit: "de"}}
-				s.syncRows("alpha")
-			} else {
-				s.rows = nil
-				s.syncRows("")
-			}
-			s.refreshSelectedCard(true)
-		}},
-		{"servers", "Servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, func(x tui.Screen, p bool) {
-			s := x.(*serversScreen)
-			if p {
-				s.rows = []serverView{{Name: "alpha", Protocol: "socks5", Port: 1080}, {Name: "beta", Protocol: "http", Port: 8080}}
-			} else {
-				s.rows = nil
-			}
-			s.syncWorkspace()
-		}},
+	cases := []fullScreenSnapshotCase{
+		{"providers", "Providers", func(e tui.Env) tui.Screen { return newProvidersScreenWith("", e, nil, nil) }, seedProvidersSnapshot},
+		{"accounts", "Accounts", func(e tui.Env) tui.Screen { return newAccountsScreen("", e) }, seedAccountsSnapshot},
+		{"servers", "Servers", func(e tui.Env) tui.Screen { return newServersScreen("", e) }, seedServersSnapshot},
 	}
-	// Hand-derived frame literals: every line, including trailing spaces, was traced
-	// from the frame/list/card renderers (docs/design/tui-ux.md). No production data
-	// is consulted at runtime.
 	sizes := [][2]int{{60, 16}, {80, 24}, {100, 30}}
-	literalWant := func(name string, populated bool, w int) string {
-		switch {
-		case w == 60:
-			return goldenTooSmall
-		case name == "Providers" && populated == false && w == 80:
-			return goldenProviders80Empty
-		case name == "Providers" && populated == false && w == 100:
-			return goldenProviders100Empty
-		case name == "Providers" && populated == true && w == 80:
-			return goldenProviders80Populated
-		case name == "Providers" && populated == true && w == 100:
-			return goldenProviders100Populated
-		case name == "Accounts" && populated == false && w == 80:
-			return goldenAccounts80Empty
-		case name == "Accounts" && populated == false && w == 100:
-			return goldenAccounts100Empty
-		case name == "Accounts" && populated == true && w == 80:
-			return goldenAccounts80Populated
-		case name == "Accounts" && populated == true && w == 100:
-			return goldenAccounts100Populated
-		case name == "Servers" && populated == false && w == 80:
-			return goldenServers80Empty
-		case name == "Servers" && populated == false && w == 100:
-			return goldenServers100Empty
-		case name == "Servers" && populated == true && w == 80:
-			return goldenServers80Populated
-		case name == "Servers" && populated == true && w == 100:
-			return goldenServers100Populated
-		}
-		return ""
-	}
 
 	for _, tc := range cases {
 		for _, pop := range []bool{false, true} {
 			for _, size := range sizes {
 				t.Run(tc.name+map[bool]string{false: "/empty", true: "/populated"}[pop]+"/"+string(rune('0'+size[0]/10)), func(t *testing.T) {
-					env := tui.Env{Theme: tui.NewTheme()}
-					screen := tc.new(env)
-					frame := tui.NewFrame(tui.Options{Env: env, Tabs: []tui.Tab{{Title: tc.title, New: func(tui.Env) tui.Screen { return screen }}}})
-					_, _ = frame.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
-					tc.seed(screen, pop)
-					switch s := screen.(type) {
-					case *providersScreen:
-						s.workspace.SetTheme(tui.NewTheme())
-					case *serversScreen:
-						s.workspace.SetTheme(tui.NewTheme())
-					case *accountsScreen:
-						s.workspace.SetTheme(tui.NewTheme())
-					}
-					got := ansi.Strip(frame.View().Content)
-					want := literalWant(tc.title, pop, size[0])
-					if lines := strings.Split(want, "\n"); len(lines) != size[1] {
-						t.Fatalf("literal lines %d, want %d", len(lines), size[1])
-					} else {
-						for i, line := range lines {
-							if lw := runewidth.StringWidth(line); lw > size[0] {
-								t.Fatalf("literal line %d width %d exceeds %d", i, lw, size[0])
-							}
-						}
-					}
-					if got != want {
-						t.Errorf("%dx%d mismatch | got: %q | want: %q", size[0], size[1], got, want)
-					}
+					runFullScreenSnapshotCase(t, tc, pop, size)
 				})
 			}
 		}
+	}
+}
+
+func seedProvidersSnapshot(t *testing.T, x tui.Screen, p bool) {
+	t.Helper()
+	two, three := 2, 3
+	s := mustAs[*providersScreen](t, x)
+	if p {
+		s.setProviders(ProviderListResult{Providers: []ProviderInfo{{Name: "alpha", Nodes: &two, State: "ready"}, {Name: "beta", Nodes: &three, State: "ready"}}})
+		s.selected = "alpha"
+	} else {
+		s.setProviders(ProviderListResult{})
+	}
+	s.updateCard()
+}
+
+func seedAccountsSnapshot(t *testing.T, x tui.Screen, p bool) {
+	t.Helper()
+	s := mustAs[*accountsScreen](t, x)
+	if p {
+		s.rows = []accountInfo{{Login: "alpha", Provider: "provider-a", Exit: "us"}, {Login: "beta", Provider: "provider-b", Exit: "de"}}
+		s.syncRows("alpha")
+	} else {
+		s.rows = nil
+		s.syncRows("")
+	}
+	s.refreshSelectedCard()
+}
+
+func seedServersSnapshot(t *testing.T, x tui.Screen, p bool) {
+	t.Helper()
+	s := mustAs[*serversScreen](t, x)
+	if p {
+		s.rows = []serverView{{Name: "alpha", Protocol: "socks5", Port: 1080}, {Name: "beta", Protocol: "http", Port: 8080}}
+	} else {
+		s.rows = nil
+	}
+	s.syncWorkspace()
+}
+
+// goldenFrameKey identifies a hand-derived frame by screen title, populated flag and width.
+type goldenFrameKey struct {
+	title     string
+	populated bool
+	width     int
+}
+
+// goldenFrameLiterals: 60 columns always uses goldenTooSmall, see goldenFrameLiteral.
+var goldenFrameLiterals = map[goldenFrameKey]string{
+	{"Providers", false, 80}:  goldenProviders80Empty,
+	{"Providers", false, 100}: goldenProviders100Empty,
+	{"Providers", true, 80}:   goldenProviders80Populated,
+	{"Providers", true, 100}:  goldenProviders100Populated,
+	{"Accounts", false, 80}:   goldenAccounts80Empty,
+	{"Accounts", false, 100}:  goldenAccounts100Empty,
+	{"Accounts", true, 80}:    goldenAccounts80Populated,
+	{"Accounts", true, 100}:   goldenAccounts100Populated,
+	{"Servers", false, 80}:    goldenServers80Empty,
+	{"Servers", false, 100}:   goldenServers100Empty,
+	{"Servers", true, 80}:     goldenServers80Populated,
+	{"Servers", true, 100}:    goldenServers100Populated,
+}
+
+// goldenFrameLiteral returns the expected frame; every line, including trailing spaces, was traced
+// from the frame/list/card renderers (docs/design/tui-ux.md). No production data
+// is consulted at runtime.
+func goldenFrameLiteral(name string, populated bool, w int) string {
+	if w == 60 {
+		return goldenTooSmall
+	}
+	return goldenFrameLiterals[goldenFrameKey{name, populated, w}]
+}
+
+func runFullScreenSnapshotCase(t *testing.T, tc fullScreenSnapshotCase, pop bool, size [2]int) {
+	t.Helper()
+	env := tui.Env{Theme: tui.NewTheme()}
+	screen := tc.new(env)
+	frame := tui.NewFrame(tui.Options{Env: env, Tabs: []tui.Tab{{Title: tc.title, New: func(tui.Env) tui.Screen { return screen }}}})
+	_, _ = frame.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
+	tc.seed(t, screen, pop)
+	switch s := screen.(type) {
+	case *providersScreen:
+		s.workspace.SetTheme(tui.NewTheme())
+	case *serversScreen:
+		s.workspace.SetTheme(tui.NewTheme())
+	case *accountsScreen:
+		s.workspace.SetTheme(tui.NewTheme())
+	}
+	got := ansi.Strip(frame.View().Content)
+	want := goldenFrameLiteral(tc.title, pop, size[0])
+	if lines := strings.Split(want, "\n"); len(lines) != size[1] {
+		t.Fatalf("literal lines %d, want %d", len(lines), size[1])
+	} else {
+		for i, line := range lines {
+			if lw := runewidth.StringWidth(line); lw > size[0] {
+				t.Fatalf("literal line %d width %d exceeds %d", i, lw, size[0])
+			}
+		}
+	}
+	if got != want {
+		t.Errorf("%dx%d mismatch | got: %q | want: %q", size[0], size[1], got, want)
 	}
 }
 
@@ -486,14 +503,15 @@ func TestFullFrameLayoutContracts(t *testing.T) {
 			t.Run(name+"/layout/"+string(rune('0'+size[0]/10)), func(t *testing.T) {
 				env := tui.Env{Theme: tui.NewTheme()}
 				var screen tui.Screen
-				title := name
-				if name == "providers" {
+				var title string
+				switch name {
+				case "providers":
 					title = "Providers"
 					screen = newProvidersScreenWith("", env, nil, nil)
-				} else if name == "accounts" {
+				case "accounts":
 					title = "Accounts"
 					screen = newAccountsScreen("", env)
-				} else {
+				default:
 					title = "Servers"
 					screen = newServersScreen("", env)
 				}

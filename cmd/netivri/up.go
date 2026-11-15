@@ -335,9 +335,9 @@ func snapshotReloadCredentials(a mihauth.Authenticator, applied, candidate *conf
 		if cfg == nil {
 			return nil
 		}
-		copy := *cfg
-		copy.Accounts = append([]config.Account(nil), cfg.Accounts...)
-		return &copy
+		cloned := *cfg
+		cloned.Accounts = append([]config.Account(nil), cfg.Accounts...)
+		return &cloned
 	}
 	appliedSnapshot, candidateSnapshot := clone(applied), clone(candidate)
 	for a != nil {

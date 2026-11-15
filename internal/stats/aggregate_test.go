@@ -26,9 +26,10 @@ func dial(at time.Time, label string, ok bool, ms int) Sample {
 	return Sample{At: at, Label: label, Kind: KindDial, OK: ok, Delay: time.Duration(ms) * time.Millisecond}
 }
 
-func throughput(at time.Time, label string, bytes int64, ms int) Sample {
+// throughput builds a 1 s throughput window sample.
+func throughput(at time.Time, label string, bytes int64) Sample {
 	return Sample{At: at, Label: label, Kind: KindThroughput, OK: true,
-		Delay: time.Duration(ms) * time.Millisecond, Bytes: bytes}
+		Delay: time.Second, Bytes: bytes}
 }
 
 func TestNodesExactAggregates(t *testing.T) {
@@ -48,8 +49,8 @@ func TestNodesExactAggregates(t *testing.T) {
 		probe(t0.Add(3*time.Second), "p1/a", false, 50),
 		dial(t0.Add(4*time.Second), "p1/a", true, 400),
 		dial(t0.Add(5*time.Second), "p1/a", false, 10),
-		throughput(t0.Add(6*time.Second), "p1/a", 20480, 1000), // 20 KiB/s
-		throughput(t0.Add(7*time.Second), "p1/a", 40960, 1000), // 40 KiB/s
+		throughput(t0.Add(6*time.Second), "p1/a", 20480), // 20 KiB/s
+		throughput(t0.Add(7*time.Second), "p1/a", 40960), // 40 KiB/s
 		probe(t0, "p2/b", false, 20),
 	} {
 		s.Record(sm)
@@ -252,10 +253,10 @@ func TestNodesMeasurementQueriesApplyFiltersRawAndHourly(t *testing.T) {
 	old := base.Add(-20 * 24 * time.Hour).Truncate(time.Hour)
 	recent := base.Add(-time.Hour)
 	for _, sm := range []Sample{
-		probe(old, "keep/node", true, 100), dial(old, "keep/node", true, 200), throughput(old, "keep/node", 1024, 1000),
-		probe(old, "drop/node", true, 900), dial(old, "drop/node", true, 800), throughput(old, "drop/node", 8192, 1000),
-		probe(recent, "keep/node", true, 300), dial(recent, "keep/node", true, 400), throughput(recent, "keep/node", 2048, 1000),
-		probe(recent, "drop/node", true, 700), dial(recent, "drop/node", true, 600), throughput(recent, "drop/node", 4096, 1000),
+		probe(old, "keep/node", true, 100), dial(old, "keep/node", true, 200), throughput(old, "keep/node", 1024),
+		probe(old, "drop/node", true, 900), dial(old, "drop/node", true, 800), throughput(old, "drop/node", 8192),
+		probe(recent, "keep/node", true, 300), dial(recent, "keep/node", true, 400), throughput(recent, "keep/node", 2048),
+		probe(recent, "drop/node", true, 700), dial(recent, "drop/node", true, 600), throughput(recent, "drop/node", 4096),
 	} {
 		s.Record(sm)
 	}
@@ -264,7 +265,7 @@ func TestNodesMeasurementQueriesApplyFiltersRawAndHourly(t *testing.T) {
 	filter := Query{Provider: "keep", Country: "DE"}
 	run := func(since time.Duration, from time.Time) []NodeStats {
 		t.Helper()
-		tx, err := s.db.Begin()
+		tx, err := s.db.BeginTx(t.Context(), nil)
 		if err != nil {
 			t.Fatalf("begin query: %v", err)
 		}
@@ -331,7 +332,7 @@ func TestNodesReadTransactionKeepsSnapshotAfterCounts(t *testing.T) {
 	s.Record(probe(t0.Add(time.Second), "p1/a", true, 300))
 	mustFlush(t, s)
 
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(t.Context(), nil)
 	if err != nil {
 		t.Fatalf("begin query: %v", err)
 	}
@@ -346,7 +347,7 @@ func TestNodesReadTransactionKeepsSnapshotAfterCounts(t *testing.T) {
 	writer := openRaw(t, s.opts.Path)
 	audit := &measurementQueryRecorder{querier: tx}
 	q := &insertAfterCountsQuerier{querier: audit, afterCounts: func() error {
-		_, err := writer.Exec(`INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, ?, ?, 1, ?, 0)`,
+		_, err := writer.ExecContext(t.Context(), `INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, ?, ?, 1, ?, 0)`,
 			t0.Add(2*time.Second).UnixMilli(), metas[0].id, int(KindProbe), 900)
 		return err
 	}}
@@ -391,8 +392,8 @@ func TestQueueFullDropsAndCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("openStore: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
-	for i := 0; i < 5; i++ {
+	t.Cleanup(func() { _ = s.Close() })
+	for range 5 {
 		s.Record(probe(t0, "p1/a", true, 100))
 	}
 	if got := s.Dropped(); got != 3 {
@@ -410,14 +411,14 @@ func TestConcurrentRecordExactTotal(t *testing.T) {
 	s := newTestStore(t, nil)
 	const goroutines, per = 8, 100
 	var wg sync.WaitGroup
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		wg.Add(1)
-		go func(g int) {
+		go func() {
 			defer wg.Done()
-			for i := 0; i < per; i++ {
+			for range per {
 				s.Record(probe(t0, "p1/a", true, 100))
 			}
-		}(g)
+		}()
 	}
 	wg.Wait()
 	mustFlush(t, s)
@@ -494,7 +495,7 @@ func TestReadOnlyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	t.Cleanup(func() { ro.Close() })
+	t.Cleanup(func() { _ = ro.Close() })
 	// Writes are silently ignored, reads work (WAL, same process).
 	ro.Record(probe(t0, "p1/a", true, 500))
 	if err := ro.SetNodes([]NodeInfo{{Label: "p1/a", Provider: "x", Country: "DE"}}); err != nil {
@@ -585,7 +586,7 @@ func TestCloseWhileSetNodesBlockedOnFullQueue(t *testing.T) {
 	// Registered after nothing else: runs first, so the store is closable.
 	t.Cleanup(func() {
 		startWriter()
-		s.Close()
+		_ = s.Close()
 	})
 
 	// The queue (capacity 1) is full: the next send blocks.
@@ -637,11 +638,11 @@ func TestCloseWhileSetNodesBlockedOnFullQueue(t *testing.T) {
 func TestCloseRacesWithWriters(t *testing.T) {
 	s := newTestStore(t, func(o *Options) { o.QueueSize = 1 })
 	var wg sync.WaitGroup
-	for g := 0; g < 4; g++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				s.Record(probe(t0, "p1/a", true, 100))
 				// After Close this is a no-op without error.
 				if err := s.SetNodes([]NodeInfo{{Label: "p1/a", Provider: "prov1", Country: "DE"}}); err != nil {

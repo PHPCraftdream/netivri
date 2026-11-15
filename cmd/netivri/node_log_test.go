@@ -22,8 +22,8 @@ type burstFixture struct {
 func newBurstFixture(t *testing.T, nodes int) *burstFixture {
 	t.Helper()
 	f := &burstFixture{now: time.Unix(10_000, 0)}
-	var infos []stats.NodeInfo
-	for i := 0; i < nodes; i++ {
+	infos := make([]stats.NodeInfo, 0, nodes)
+	for i := range nodes {
 		infos = append(infos, stats.NodeInfo{Label: fmt.Sprintf("p/n%d", i), Provider: "p", Country: "DE"})
 	}
 	f.log = newNodeLog(infos,
@@ -76,7 +76,7 @@ func TestNodeLogIsolatedFailuresStayIndividualWarnings(t *testing.T) {
 
 func TestNodeLogBurstIsOneWarningAndTheRestInfo(t *testing.T) {
 	f := newBurstFixture(t, 12)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		f.down(i, "2 probe failures (timeout)")
 		f.now = f.now.Add(500 * time.Millisecond)
 	}
@@ -119,7 +119,7 @@ func TestNodeLogBurstNamesMixedReasonsAndTheStart(t *testing.T) {
 
 func TestNodeLogSlowFailuresDoNotMakeABurst(t *testing.T) {
 	f := newBurstFixture(t, 6)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		f.down(i, "2 probe failures (timeout)")
 		f.now = f.now.Add(burstWindow + time.Second)
 	}
@@ -130,11 +130,11 @@ func TestNodeLogSlowFailuresDoNotMakeABurst(t *testing.T) {
 
 func TestNodeLogClosesTheBurstWhenTheLastNodeIsBack(t *testing.T) {
 	f := newBurstFixture(t, 6)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	f.now = f.now.Add(41 * time.Second)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.back(i, 41*time.Second)
 	}
 	if f.count("INFO node burst over") != 0 {
@@ -159,7 +159,7 @@ func TestNodeLogClosesTheBurstWhenTheLastNodeIsBack(t *testing.T) {
 
 func TestNodeLogFlappingNodeIsOneWarning(t *testing.T) {
 	f := newBurstFixture(t, 4)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f.down(0, "2 probe failures (timeout)")
 		f.now = f.now.Add(40 * time.Second)
 		f.back(0, 40*time.Second)
@@ -187,12 +187,12 @@ func TestNodeLogFlappingNodeIsOneWarning(t *testing.T) {
 
 func TestNodeLogFlappingNodesDoNotMakeABurst(t *testing.T) {
 	f := newBurstFixture(t, 6)
-	for round := 0; round < 3; round++ {
-		for i := 0; i < 3; i++ {
+	for range 3 {
+		for i := range 3 {
 			f.down(i, "2 probe failures (timeout)")
 		}
 		f.now = f.now.Add(time.Minute)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			f.back(i, time.Minute)
 		}
 		f.now = f.now.Add(time.Minute)
@@ -209,7 +209,7 @@ func TestNodeLogFlappingNodesDoNotMakeABurst(t *testing.T) {
 
 func TestNodeLogForgetsOldDowns(t *testing.T) {
 	f := newBurstFixture(t, 3)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		f.down(0, "2 probe failures (timeout)")
 		f.now = f.now.Add(flapWindow/2 + time.Minute)
 	}
@@ -237,20 +237,20 @@ func TestNodeLogNeverAnsweredCollapsesUniqueServers(t *testing.T) {
 	for _, label := range labels {
 		l.event(core.NodeEvent{Label: label, Down: true, NeverOK: true, Reason: "2 probe failures (timeout)"})
 	}
-	wantInfo := []string{
+	wantInfo := append(make([]string, 0, 7),
 		"node p/s1 (provider p, country FI) has never answered: 2 probe failures (timeout)",
 		"node q/s1 (provider q, country FI) has never answered: 2 probe failures (timeout), same server as p/s1",
 		"node p/s2 (provider p, country US) has never answered: 2 probe failures (timeout)",
 		"node q/s2 (provider q, country US) has never answered: 2 probe failures (timeout), same server as p/s2",
 		"3 servers have never answered since start (probe failures (timeout) x3; DE x1, FI x1, US x1); probed rarely, one DEBUG line each",
-	}
-	wantDebug := []string{
+	)
+	wantDebug := append(make([]string, 0, 6),
 		"node p/s3 (provider p, country DE) has never answered: 2 probe failures (timeout)",
 		"node q/s3 (provider q, country DE) has never answered: 2 probe failures (timeout), same server as p/s3",
 		"node p/s4 (provider p, country NL) has never answered: 2 probe failures (timeout)",
 		"node q/s4 (provider q, country NL) has never answered: 2 probe failures (timeout), same server as p/s4",
 		"node p/s5 (provider p, country SE) has never answered: 2 probe failures (timeout)",
-	}
+	)
 	if !reflect.DeepEqual(infoLines, wantInfo) {
 		t.Fatalf("INFO lines = %q, want %q", infoLines, wantInfo)
 	}
@@ -296,7 +296,7 @@ func TestNodeLogNeverAnsweredMixedKindsAndUnknownCountry(t *testing.T) {
 
 func TestNodeLogNeverAnsweredForceFlushSummary(t *testing.T) {
 	f := newBurstFixture(t, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	before := f.count("INFO 5 servers have never answered")
@@ -312,7 +312,7 @@ func TestNodeLogNeverAnsweredForceFlushSummary(t *testing.T) {
 
 func TestNodeLogNeverAnsweredWindowExpiresOnEvent(t *testing.T) {
 	f := newBurstFixture(t, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	f.now = f.now.Add(neverWindow)
@@ -324,7 +324,7 @@ func TestNodeLogNeverAnsweredWindowExpiresOnEvent(t *testing.T) {
 
 func TestNodeLogNeverAnsweredFirstTwoStayIndividual(t *testing.T) {
 	f := newBurstFixture(t, 4)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	before := append([]string(nil), f.lines...)
@@ -342,7 +342,7 @@ func TestNodeLogNeverAnsweredFirstTwoStayIndividual(t *testing.T) {
 
 func TestNodeLogNeverAnsweredFlushWithoutGrowthDoesNothing(t *testing.T) {
 	f := newBurstFixture(t, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	if f.count("INFO 3 servers have never answered since start") != 1 {
@@ -360,10 +360,10 @@ func TestNodeLogNeverAnsweredFlushWithoutGrowthDoesNothing(t *testing.T) {
 	}
 }
 
-func TestNodeLogNeverAnsweredNilFlush(t *testing.T) { var l *nodeLog; l.flush() }
+func TestNodeLogNeverAnsweredNilFlush(_ *testing.T) { var l *nodeLog; l.flush() }
 func TestNodeLogNeverAnsweredRecoveryIsInfo(t *testing.T) {
 	f := newBurstFixture(t, 4).withDebug()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, NeverOK: true, Reason: "timeout"})
 	}
 	f.back(2, time.Minute)
@@ -388,7 +388,7 @@ func TestNodeLogNeverAnsweredDoesNotChangeOutageAccounting(t *testing.T) {
 }
 func TestNodeLogNeverAnsweredNodesAreInfoAndOutsideTheBurst(t *testing.T) {
 	f := newBurstFixture(t, 10).withDebug()
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		f.log.event(core.NodeEvent{Label: fmt.Sprintf("p/n%d", i), Down: true, Reason: "2 probe failures (timeout)", NeverOK: true})
 	}
 	if f.count("INFO node p/n") != 2 || f.count("INFO ") != 3 || f.count("DEBUG node p/") != 6 || f.count("WARN") != 0 {
@@ -434,7 +434,7 @@ func TestIsNodeDownMessageCoversTheNewForms(t *testing.T) {
 func twinFixture(t *testing.T) *burstFixture {
 	t.Helper()
 	f := &burstFixture{now: time.Unix(10_000, 0)}
-	var infos []stats.NodeInfo
+	infos := make([]stats.NodeInfo, 0, 6)
 	for _, label := range []string{"own/a", "main/a", "own/b", "main/b", "own/c", "own/d"} {
 		provider, _, _ := strings.Cut(label, "/")
 		infos = append(infos, stats.NodeInfo{Label: label, Provider: provider, Country: "FI"})
@@ -485,7 +485,7 @@ func TestNodeLogTwinsAreOneServerForBurstAndFlapping(t *testing.T) {
 	// The same server dropping three times, reported by both labels each
 	// time, flaps once, after its third drop and not its second.
 	g := twinFixture(t)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		g.downLabel("own/a")
 		g.downLabel("main/a")
 		g.now = g.now.Add(3 * time.Minute)
@@ -556,7 +556,7 @@ func TestNodeLogOnlyFirstTierNodesWarn(t *testing.T) {
 		t.Errorf("fallback node must be INFO: %q", f.lines)
 	}
 	// Flapping of a fallback node is INFO too.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.now = f.now.Add(time.Minute)
 		f.down(2, "2 probe failures (timeout)")
 	}
@@ -607,7 +607,7 @@ func debugFixture(t *testing.T) *burstFixture {
 func TestNodeLogRepeatsOfFlappingFallbackNodesAreDebug(t *testing.T) {
 	f := debugFixture(t)
 	// own/c is a fallback node: three downs make it flap, the rest is DEBUG.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f.downLabel("own/c")
 		f.now = f.now.Add(30 * time.Second)
 		f.log.event(core.NodeEvent{Label: "own/c", Downtime: 30 * time.Second})
@@ -630,7 +630,7 @@ func TestNodeLogRepeatsOfFlappingFallbackNodesAreDebug(t *testing.T) {
 
 func TestNodeLogFirstTierRepeatsStayInfo(t *testing.T) {
 	f := debugFixture(t)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		f.downLabel("own/a")
 		f.now = f.now.Add(30 * time.Second)
 		f.log.event(core.NodeEvent{Label: "own/a", Downtime: 30 * time.Second})
@@ -736,7 +736,7 @@ func TestNodeLogSlowOutageIsOneWarningAndTheRestDebug(t *testing.T) {
 	}
 
 	// The backs are DEBUG; it ends when fewer than a quarter are still down.
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		f.back(i, time.Hour)
 	}
 	if f.countContaining("node outage over") != 0 {
@@ -786,8 +786,8 @@ func TestNodeLogOutageCountsServersThatHaveAnswered(t *testing.T) {
 }
 
 func TestNodeLogOutageCountsServersNotLabels(t *testing.T) {
-	var infos []stats.NodeInfo
-	for i := 0; i < 8; i++ {
+	infos := make([]stats.NodeInfo, 0, 16)
+	for i := range 8 {
 		for _, p := range []string{"own", "main"} {
 			infos = append(infos, stats.NodeInfo{Label: fmt.Sprintf("%s/s%d", p, i), Provider: p, Country: "FI"})
 		}
@@ -799,7 +799,7 @@ func TestNodeLogOutageCountsServersNotLabels(t *testing.T) {
 		func() time.Time { return f.now })
 	f.log.debug = func(format string, args ...any) { f.lines = append(f.lines, "DEBUG "+fmt.Sprintf(format, args...)) }
 	f.now = f.now.Add(10 * time.Minute)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		f.downLabel(fmt.Sprintf("own/s%d", i))
 		f.now = f.now.Add(twinWindow + time.Second) // the twin comes late: its own event
 		f.downLabel(fmt.Sprintf("main/s%d", i))
@@ -815,7 +815,7 @@ func TestNodeLogOutageCountsServersNotLabels(t *testing.T) {
 
 func TestNodeLogBurstInProgressKeepsItsOwnLines(t *testing.T) {
 	f := newBurstFixture(t, 12).withDebug()
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		f.down(i, "2 probe failures (timeout)")
 	}
 	f.slowly(3, 10)
@@ -838,7 +838,7 @@ func TestNodeLogOutageDemotesFirstTierRepeats(t *testing.T) {
 		t.Fatalf("no outage: %q", f.lines)
 	}
 	// A first-tier node that is down and flaps during the outage is DEBUG too.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		f.down(0, "2 probe failures (timeout)")
 		f.now = f.now.Add(time.Minute)
 		f.back(0, time.Minute)
@@ -867,7 +867,7 @@ func TestNodeLogOutageStateSurvivesRouteRefresh(t *testing.T) {
 	if f.count("WARN") != warns || f.count("DEBUG node p/n6") != 1 {
 		t.Fatalf("refreshed outage did not suppress per-node warning: %q", f.lines)
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if i == 3 {
 			f.log.event(core.NodeEvent{Label: "q/n3", Downtime: time.Minute})
 		} else {
@@ -916,7 +916,7 @@ func TestNodeLogRefreshPrunesNeverNodesBeforeOutageDenominator(t *testing.T) {
 	if !f.log.outage || f.log.live() != 6 {
 		t.Fatalf("fixture live/outage: live=%d active=%v", f.log.live(), f.log.outage)
 	}
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.back(i, time.Minute)
 	}
 	if !f.log.outage || f.log.live() != 6 || len(f.log.downNow) != 2 {
@@ -924,13 +924,13 @@ func TestNodeLogRefreshPrunesNeverNodesBeforeOutageDenominator(t *testing.T) {
 	}
 
 	infos := make([]stats.NodeInfo, 0, 13)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		infos = append(infos, f.log.byLabel[fmt.Sprintf("p/n%d", i)])
 	}
 	for i := 6; i < 10; i++ {
 		infos = append(infos, f.log.byLabel[fmt.Sprintf("p/n%d", i)])
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		infos = append(infos, stats.NodeInfo{Label: fmt.Sprintf("q/new%d", i), Provider: "q", Country: "DE"})
 	}
 	f.log.refresh(infos, nil)
@@ -963,7 +963,7 @@ func TestNodeLogRefreshPrunesRemovedServerState(t *testing.T) {
 	f := newBurstFixture(t, 6)
 	f.down(0, "timeout")
 	f.log.event(core.NodeEvent{Label: "p/n1", Down: true, NeverOK: true, Reason: "timeout"})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		f.down(2, "timeout")
 		f.back(2, time.Second)
 		f.now = f.now.Add(time.Minute)
@@ -1001,13 +1001,11 @@ func TestNodeLogRefreshPrunesRemovedServerState(t *testing.T) {
 	}
 	lines := len(f.lines)
 	f.log.event(core.NodeEvent{Label: "p/n1", Down: true, NeverOK: true, Reason: "timeout"})
-	neverPresent := false
-	_, neverPresent = f.log.never["n1"]
+	_, neverPresent := f.log.never["n1"]
 	if len(f.lines) != lines || neverPresent || f.log.lastNever["n1"].label != "" {
 		t.Errorf("late event from removed node changed logger state: %q", f.lines[lines:])
 	}
-	burstN3 := false
-	_, burstN3 = f.log.burst["n3"]
+	_, burstN3 := f.log.burst["n3"]
 	if f.log.flapping["n2"] || f.log.neverMeta["n1"].label != "" || len(f.log.window) != 3 || len(f.log.burst) != 3 || !containsLabel(f.log.window, "q/n3") || !burstN3 {
 		t.Errorf("removed server state survived refresh: flapping=%v never=%v window=%v burst=%v", f.log.flapping, f.log.neverMeta, f.log.window, f.log.burst)
 	}
@@ -1050,7 +1048,7 @@ func TestNodeLogRefreshSerializesAnInFlightEvent(t *testing.T) {
 
 func TestNodeLogRefreshPreservesBurstPeak(t *testing.T) {
 	f := newBurstFixture(t, 6)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		f.down(i, "timeout")
 	}
 	f.back(0, time.Second)
@@ -1075,7 +1073,7 @@ func TestNodeLogRefreshPreservesBurstPeak(t *testing.T) {
 
 func TestNodeLogRefreshRetainsFlappingAndNeverAnsweredState(t *testing.T) {
 	f := newBurstFixture(t, 6).withDebug()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		f.down(0, "timeout")
 		f.back(0, time.Second)
 		f.now = f.now.Add(time.Minute)

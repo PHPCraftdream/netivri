@@ -37,7 +37,7 @@ func multiportRoundTrip(t *testing.T, client C.ProxyAdapter, backend netip.Addr,
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(multiportProtocolTimeout)); err != nil {
 		t.Fatal(err)
 	}
@@ -54,9 +54,17 @@ func multiportRoundTrip(t *testing.T, client C.ProxyAdapter, backend netip.Addr,
 	}
 }
 
+// multiportEchoTarget is the echo backend of the protocol tests.
 func multiportEchoTarget(t *testing.T) (netip.Addr, uint16) {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	return multiportEchoServer(t, multiportProtocolTimeout)
+}
+
+// multiportEchoServer starts a TCP echo server on 127.0.0.1 whose connections
+// and accept loop give up after timeout; it is stopped at test cleanup.
+func multiportEchoServer(t *testing.T, timeout time.Duration) (netip.Addr, uint16) {
+	t.Helper()
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +83,8 @@ func multiportEchoTarget(t *testing.T) (netip.Addr, uint16) {
 			go func(conn net.Conn) {
 				defer workers.Done()
 				defer conns.Delete(conn)
-				defer conn.Close()
-				_ = conn.SetDeadline(time.Now().Add(multiportProtocolTimeout))
+				defer func() { _ = conn.Close() }()
+				_ = conn.SetDeadline(time.Now().Add(timeout))
 				_, _ = io.Copy(conn, conn)
 			}(conn)
 		}
@@ -85,20 +93,31 @@ func multiportEchoTarget(t *testing.T) (netip.Addr, uint16) {
 		_ = listener.Close()
 		select {
 		case <-done:
-		case <-time.After(multiportProtocolTimeout):
+		case <-time.After(timeout):
 			t.Errorf("echo accept loop did not stop")
 		}
-		conns.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+		conns.Range(func(key, _ any) bool {
+			c, ok := key.(net.Conn)
+			if !ok {
+				t.Errorf("tracked connection is %T, want net.Conn", key)
+				return true
+			}
+			_ = c.Close()
+			return true
+		})
 		wait := make(chan struct{})
 		go func() { workers.Wait(); close(wait) }()
 		select {
 		case <-wait:
-		case <-time.After(multiportProtocolTimeout):
+		case <-time.After(timeout):
 			t.Errorf("echo handlers did not stop")
 		}
 	})
-	addr := listener.Addr().(*net.TCPAddr)
-	return netip.MustParseAddr("127.0.0.1"), uint16(addr.Port)
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", listener.Addr())
+	}
+	return netip.MustParseAddr("127.0.0.1"), toUint16(t, addr.Port)
 }
 
 func multiportRealityCamouflage(t *testing.T) string {
@@ -117,7 +136,7 @@ func multiportRealityCamouflage(t *testing.T) string {
 		t.Fatal(err)
 	}
 	certificate := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,9 +157,9 @@ func multiportRealityCamouflage(t *testing.T) string {
 			go func(conn *tls.Conn) {
 				defer workers.Done()
 				defer conns.Delete(conn)
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(multiportProtocolTimeout))
-				if conn.Handshake() == nil {
+				if conn.HandshakeContext(context.Background()) == nil {
 					_, _ = io.Copy(io.Discard, conn)
 				}
 			}(tlsConn)
@@ -153,7 +172,15 @@ func multiportRealityCamouflage(t *testing.T) string {
 		case <-time.After(multiportProtocolTimeout):
 			t.Errorf("Reality camouflage accept loop did not stop")
 		}
-		conns.Range(func(key, _ any) bool { _ = key.(*tls.Conn).Close(); return true })
+		conns.Range(func(key, _ any) bool {
+			c, ok := key.(*tls.Conn)
+			if !ok {
+				t.Errorf("tracked connection is %T, want *tls.Conn", key)
+				return true
+			}
+			_ = c.Close()
+			return true
+		})
 		wait := make(chan struct{})
 		go func() { workers.Wait(); close(wait) }()
 		select {
@@ -218,12 +245,12 @@ func TestMultiportVlessRealityAndTrustTunnelClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer realityClient.Close()
+	defer func() { _ = realityClient.Close() }()
 	t.Run("vless-reality", func(t *testing.T) { multiportRoundTrip(t, realityClient, backendIP, backendPort) })
 	trustClient, err := outbound.NewTrustTunnel(outbound.TrustTunnelOption{Name: "multiport-trust-client", Server: "127.0.0.1", Port: port, UserName: "bob", Password: trustSecret["password"], SNI: trustParams["sni"], Fingerprint: trustMaterial["fingerprint"], ALPN: []string{"h2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer trustClient.Close()
+	defer func() { _ = trustClient.Close() }()
 	t.Run("trusttunnel", func(t *testing.T) { multiportRoundTrip(t, trustClient, backendIP, backendPort) })
 }

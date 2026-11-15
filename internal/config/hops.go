@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -17,7 +18,7 @@ type HopList []string
 func (h *HopList) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
-		return fmt.Errorf("hop list must be a string or array of strings")
+		return errors.New("hop list must be a string or array of strings")
 	}
 	if data[0] == '"' {
 		var hop string
@@ -32,11 +33,11 @@ func (h *HopList) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-		return fmt.Errorf("hop list must be a string or array of strings")
+		return errors.New("hop list must be a string or array of strings")
 	}
 	var hops []string
 	if err := json.Unmarshal(data, &hops); err != nil || hops == nil {
-		return fmt.Errorf("hop list must be a string or array of strings")
+		return errors.New("hop list must be a string or array of strings")
 	}
 	*h = HopList(hops)
 	return nil

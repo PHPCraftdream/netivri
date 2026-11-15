@@ -51,11 +51,11 @@ func TestSoftFailureInterruptsHardFailureStreak(t *testing.T) {
 func TestRepeatedHardFailureDuringQuarantineDoesNotChangeBackoff(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	before := requireSnapshot(t, p, "hop")
-	for i := 0; i < 7; i++ {
+	for range 7 {
 		p.RecordHard("hop")
 	}
 	after := requireSnapshot(t, p, "hop")
@@ -67,7 +67,7 @@ func TestRepeatedHardFailureDuringQuarantineDoesNotChangeBackoff(t *testing.T) {
 func TestSuccessClearsCountsTripsAndRestoresInitialBackoff(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	clock.Set(testEpoch.Add(5 * time.Second))
@@ -77,7 +77,7 @@ func TestSuccessClearsCountsTripsAndRestoresInitialBackoff(t *testing.T) {
 		t.Fatalf("success did not clear quarantine history: %#v", snapshot)
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	snapshot = requireSnapshot(t, p, "hop")
@@ -89,7 +89,7 @@ func TestSuccessClearsCountsTripsAndRestoresInitialBackoff(t *testing.T) {
 func TestProbeBackoffProgressionAndTripCounts(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 
@@ -148,7 +148,7 @@ func TestMaxIntRestoredTripsRemainSaturatedWithCappedBackoff(t *testing.T) {
 func TestProbeLeaseDueExpiryStaleReportsAndSuccess(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	firstDue := testEpoch.Add(30 * time.Second)
@@ -205,10 +205,10 @@ func TestProbeLeaseDueExpiryStaleReportsAndSuccess(t *testing.T) {
 func TestProbeSuccessReturnsHopToOrderAndHalvesSand(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "recovering", "healthy")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		p.RecordSoft("recovering")
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("recovering")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -232,7 +232,7 @@ func TestProbeSuccessReturnsHopToOrderAndHalvesSand(t *testing.T) {
 func TestProbeHardFailureRetripsWithDoubledBackoff(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -252,7 +252,7 @@ func TestProbeHardFailureRetripsWithDoubledBackoff(t *testing.T) {
 func TestInconclusiveProbeKeepsLeaseUntilTwentyFiveSeconds(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("hop")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -280,7 +280,7 @@ func TestZeroAndForeignProbeClaimsAreRejected(t *testing.T) {
 	first := newTestPool(clock, "hop")
 	foreignPool := newTestPool(clock, "hop")
 	for _, p := range []*Pool{first, foreignPool} {
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			p.RecordHard("hop")
 		}
 	}
@@ -332,7 +332,7 @@ func TestOldProbeClaimsAreIgnoredAfterPoolStateReplacement(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			clock := newTestClock()
 			p := newTestPool(clock, "hop")
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				p.RecordHard("hop")
 			}
 			clock.Set(testEpoch.Add(30 * time.Second))
@@ -373,14 +373,14 @@ func TestSoftStreakQuarantinesAtThresholdAndSuccessResetsIt(t *testing.T) {
 	if got := requireSnapshot(t, p, "hop"); got.SoftStreak != 0 {
 		t.Fatalf("success left soft streak %d, want 0", got.SoftStreak)
 	}
-	for i := 0; i < softTripThreshold; i++ {
+	for range softTripThreshold {
 		p.RecordSoft("hop")
 	}
 	got := requireSnapshot(t, p, "hop")
 	if got.State != Quarantined || got.Trips != 1 || got.SoftStreak != 0 || !got.NextProbe.Equal(clock.Now().Add(30*time.Second)) {
 		t.Fatalf("after %d soft failures: state=%s trips=%d streak=%d next=%v, want quarantined for 30s", softTripThreshold, got.State, got.Trips, got.SoftStreak, got.NextProbe)
 	}
-	for i := 0; i < 2*softTripThreshold; i++ {
+	for range 2 * softTripThreshold {
 		p.RecordSoft("hop")
 	}
 	if again := requireSnapshot(t, p, "hop"); again.Trips != 1 || !again.NextProbe.Equal(got.NextProbe) || again.SoftStreak != 0 {
@@ -394,7 +394,7 @@ func TestSoftStreakQuarantinesAtThresholdAndSuccessResetsIt(t *testing.T) {
 func TestHardFailuresDoNotResetSoftStreak(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < softTripThreshold-1; i++ {
+	for range softTripThreshold - 1 {
 		p.RecordSoft("hop")
 		p.RecordHard("hop")
 	}
@@ -410,7 +410,7 @@ func TestHardFailuresDoNotResetSoftStreak(t *testing.T) {
 func TestRestoreClearsSoftStreak(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < softTripThreshold-1; i++ {
+	for range softTripThreshold - 1 {
 		p.RecordSoft("hop")
 	}
 	p.Restore(nil, clock.Now())

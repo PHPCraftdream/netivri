@@ -24,10 +24,16 @@ func New(network, address string) Prober {
 	return prober{network: network, address: address}
 }
 
-func (p prober) Probe(ctx context.Context, hop dial.Hop) pool.ProbeOutcome {
+// nonNilContext returns ctx, or context.Background() when ctx is nil.
+func nonNilContext(ctx context.Context) context.Context {
 	if ctx == nil {
-		ctx = context.Background()
+		return context.Background()
 	}
+	return ctx
+}
+
+func (p prober) Probe(ctx context.Context, hop dial.Hop) pool.ProbeOutcome {
+	ctx = nonNilContext(ctx)
 	if ctx.Err() != nil || hop == nil {
 		return pool.ProbeInconclusive
 	}

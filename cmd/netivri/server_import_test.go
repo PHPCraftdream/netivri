@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -58,7 +59,7 @@ func assertLinkImports(t *testing.T, protocol servers.Protocol, params map[strin
 		{"mihomo", func() (string, error) {
 			linker, ok := protocol.(servers.MihomoLinker)
 			if !ok {
-				return "", fmt.Errorf("no Mihomo linker")
+				return "", errors.New("no Mihomo linker")
 			}
 			return linker.Mihomo(spec, "alice", "edge.example.org")
 		}},

@@ -30,7 +30,7 @@ func startStallFirstUpstream(t *testing.T) (*stallFirstUpstream, string) {
 	t.Helper()
 	f, _ := startFakeUpstream(t)
 	stall := &stallFirstUpstream{fakeUpstream: f}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("stall upstream listen: %v", err)
 	}
@@ -54,7 +54,7 @@ func startStallFirstUpstream(t *testing.T) (*stallFirstUpstream, string) {
 // stallConn completes the no-auth SOCKS5 greeting and reads the CONNECT
 // request, then never answers; it unblocks when the client disappears.
 func stallConn(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(3 * testTimeout))
 	head := make([]byte, 2)
 	if _, err := io.ReadFull(c, head); err != nil {

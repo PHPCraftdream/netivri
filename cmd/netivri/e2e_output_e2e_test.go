@@ -23,7 +23,7 @@ func runOutput(t *testing.T, extraEnv []string, args ...string) (int, string, st
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), e2eIOTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, args...)
+	cmd := exec.CommandContext(ctx, netivriBin, args...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "NETIVRI_OUTPUT=") {
 			cmd.Env = append(cmd.Env, kv)
@@ -67,7 +67,8 @@ func TestE2EOutputIsKtavByDefault(t *testing.T) {
 		t.Errorf("a Ktav result starts with the schema version and ok: %q", stdout)
 	}
 	doc := loadKtavDoc(t, stdout)
-	if doc["ok"] != true || doc["data"].(map[string]any)["version"] == nil {
+	data, dataOK := doc["data"].(map[string]any)
+	if doc["ok"] != true || !dataOK || data["version"] == nil {
 		t.Errorf("version document = %v", doc)
 	}
 
@@ -86,7 +87,8 @@ func TestE2EOutputIsKtavByDefault(t *testing.T) {
 		t.Fatalf("account rm ghost: exit %d, stdout %q", code, stdout)
 	}
 	e := loadKtavDoc(t, stderr)
-	if e["ok"] != false || e["error"].(map[string]any)["code"] != "ACCOUNT_NOT_FOUND" {
+	errObj, _ := e["error"].(map[string]any)
+	if e["ok"] != false || errObj["code"] != "ACCOUNT_NOT_FOUND" {
 		t.Errorf("error document = %v", e)
 	}
 
@@ -95,7 +97,8 @@ func TestE2EOutputIsKtavByDefault(t *testing.T) {
 	if code != cli.ExitUsage {
 		t.Fatalf("unknown command exit = %d", code)
 	}
-	if loadKtavDoc(t, stderr)["error"].(map[string]any)["code"] != "USAGE" {
+	usageErr, _ := loadKtavDoc(t, stderr)["error"].(map[string]any)
+	if usageErr["code"] != "USAGE" {
 		t.Errorf("usage error = %s", stderr)
 	}
 }

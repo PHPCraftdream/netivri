@@ -5,6 +5,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sort"
@@ -30,7 +31,7 @@ const (
 // benchEchoBackend starts a TCP echo server on 127.0.0.1:0.
 func benchEchoBackend(b *testing.B) string {
 	b.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func benchEchoBackend(b *testing.B) string {
 			conns.Add(1)
 			go func(c net.Conn) {
 				defer conns.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(benchBulkTimeout))
 				_, _ = io.Copy(c, c)
 			}(c)
@@ -70,7 +71,7 @@ type benchUpstream struct {
 // answers CONNECT (IPv4 target) and pipes both ways.
 func benchFakeUpstream(b *testing.B) *benchUpstream {
 	b.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func benchFakeUpstream(b *testing.B) *benchUpstream {
 			conns.Add(1)
 			go func(c net.Conn) {
 				defer conns.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(benchBulkTimeout))
 				head, ok := benchReadN(c, 2)
 				if !ok || head[0] != 5 {
@@ -112,13 +113,12 @@ func benchFakeUpstream(b *testing.B) *benchUpstream {
 					return
 				}
 				port := int(portBytes[0])<<8 | int(portBytes[1])
-				up, err := net.DialTimeout("tcp",
-					net.JoinHostPort(net.IP(ip).String(), strconv.Itoa(port)),
-					benchConnectTimeout)
+				up, err := (&net.Dialer{Timeout: benchConnectTimeout}).DialContext(context.Background(), "tcp",
+					net.JoinHostPort(net.IP(ip).String(), strconv.Itoa(port)))
 				if err != nil {
 					return
 				}
-				defer up.Close()
+				defer func() { _ = up.Close() }()
 				_ = up.SetDeadline(time.Now().Add(benchBulkTimeout))
 				l.hits.Add(1)
 				if _, err := c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
@@ -197,14 +197,17 @@ func benchEcho(c net.Conn) error {
 
 // benchNodeMap builds a socks5 node mapping for the upstream listener.
 func benchNodeMap(l net.Listener) map[string]any {
-	port := l.Addr().(*net.TCPAddr).Port
-	return map[string]any{"type": "socks5", "server": "127.0.0.1", "port": port}
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		panic(fmt.Sprintf("bench listener address is %T, want *net.TCPAddr", l.Addr()))
+	}
+	return map[string]any{"type": "socks5", "server": "127.0.0.1", "port": addr.Port}
 }
 
 // benchSocksConnect dials the proxy and completes the SOCKS5 handshake
 // (username/password when user is not empty) with an IPv4 CONNECT to target.
 func benchSocksConnect(addr, target, user, pass string, deadline time.Time) (net.Conn, error) {
-	c, err := net.DialTimeout("tcp", addr, benchConnectTimeout)
+	c, err := (&net.Dialer{Timeout: benchConnectTimeout}).DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -232,9 +235,10 @@ func benchSocksConnect(addr, target, user, pass string, deadline time.Time) (net
 			return nil, io.ErrUnexpectedEOF
 		}
 	case reply[1] == 2:
-		sub := []byte{1, byte(len(user))}
+		sub := make([]byte, 0, 2+len(user)+1+len(pass))
+		sub = append(sub, 1, mustByte(len(user)))
 		sub = append(sub, user...)
-		sub = append(sub, byte(len(pass)))
+		sub = append(sub, mustByte(len(pass)))
 		sub = append(sub, pass...)
 		if _, err := c.Write(sub); err != nil {
 			_ = c.Close()
@@ -264,7 +268,7 @@ func benchSocksConnect(addr, target, user, pass string, deadline time.Time) (net
 		_ = c.Close()
 		return nil, io.ErrUnexpectedEOF
 	}
-	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], byte(port >> 8), byte(port)}
+	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], mustByte(port >> 8), mustByte(port)}
 	if _, err := c.Write(req); err != nil {
 		_ = c.Close()
 		return nil, err
@@ -341,7 +345,7 @@ func benchConnectOnce(addr, backend, user, pass string) error {
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	return benchEcho(c)
 }
 
@@ -351,7 +355,7 @@ func BenchmarkConnectDirect(b *testing.B) {
 	latencies := make([]time.Duration, 0, b.N)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		start := time.Now()
 		if err := benchConnectOnce(inst.Addr(), backend, "", ""); err != nil {
 			b.Fatal(err)
@@ -370,7 +374,7 @@ func BenchmarkConnectRouted(b *testing.B) {
 	latencies := make([]time.Duration, 0, b.N)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		start := time.Now()
 		if err := benchConnectOnce(inst.Addr(), backend, "bench", "bench"); err != nil {
 			b.Fatal(err)
@@ -413,7 +417,7 @@ func BenchmarkThroughputRouted(b *testing.B) {
 	b.SetBytes(2 * eachWay)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		c, err := benchSocksConnect(inst.Addr(), backend, "bench", "bench",
 			time.Now().Add(benchBulkTimeout))
 		if err != nil {
@@ -463,12 +467,12 @@ func BenchmarkParallelConnects1000(b *testing.B) {
 	inst := benchStart(b, benchRoutedOptions(b.TempDir(), []*benchUpstream{n0, n1}))
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		start := make(chan struct{})
 		errs := make(chan error, workers)
 		var wg sync.WaitGroup
 		wg.Add(workers)
-		for w := 0; w < workers; w++ {
+		for range workers {
 			go func() {
 				defer wg.Done()
 				<-start

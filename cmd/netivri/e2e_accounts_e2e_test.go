@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,7 +39,7 @@ type accountsUpstream struct {
 
 func accountsServer(t *testing.T) *accountsUpstream {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +97,13 @@ func (s *accountsUpstream) serve(c net.Conn) {
 	if _, err := io.ReadFull(c, addr[:]); err != nil {
 		return
 	}
-	target := net.JoinHostPort(net.IP(addr[:4]).String(), fmt.Sprint(binary.BigEndian.Uint16(addr[4:])))
-	out, err := net.DialTimeout("tcp", target, 5*time.Second)
+	target := net.JoinHostPort(net.IP(addr[:4]).String(), strconv.FormatUint(uint64(binary.BigEndian.Uint16(addr[4:])), 10))
+	out, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", target)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_ = out.SetDeadline(time.Now().Add(20 * time.Second))
 	s.count.Add(1)
 	if _, err := c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
@@ -118,7 +120,7 @@ func (s *accountsUpstream) serve(c net.Conn) {
 
 func accountsEcho(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +164,11 @@ func accountsEcho(t *testing.T) string {
 
 func accountsClient(t *testing.T, proxy, user, pass, target string) {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", proxy, 5*time.Second)
+	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp", proxy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	if _, err = c.Write([]byte{5, 1, 2}); err != nil {
 		t.Fatal(err)
@@ -178,7 +180,7 @@ func accountsClient(t *testing.T, proxy, user, pass, target string) {
 	if len(user) > 255 || len(pass) > 255 {
 		t.Fatal("credentials too long")
 	}
-	if _, err = c.Write(append([]byte{1, byte(len(user))}, append(append([]byte(user), byte(len(pass))), []byte(pass)...)...)); err != nil {
+	if _, err = c.Write(append([]byte{1, e2eByte(t, len(user))}, append(append([]byte(user), e2eByte(t, len(pass))), []byte(pass)...)...)); err != nil {
 		t.Fatal(err)
 	}
 	var authReply [2]byte
@@ -197,7 +199,8 @@ func accountsClient(t *testing.T, proxy, user, pass, target string) {
 	if _, err := fmt.Sscanf(portText, "%d", &port); err != nil {
 		t.Fatal(err)
 	}
-	request := []byte{5, 1, 0, 1}
+	request := make([]byte, 0, 4+len(ip)+2)
+	request = append(request, 5, 1, 0, 1)
 	request = append(request, ip...)
 	request = append(request, byte(port>>8), byte(port))
 	if _, err = c.Write(request); err != nil {
@@ -219,7 +222,7 @@ func accountsClient(t *testing.T, proxy, user, pass, target string) {
 
 func accountsCommand(t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	return accountsRun(t, home, append([]string{"account"}, args...)...)
+	return accountsRun(t.Context(), t, home, append([]string{"account"}, args...)...)
 }
 
 func TestE2EAccountsRoutingAndCLI(t *testing.T) {
@@ -331,11 +334,11 @@ func TestE2EAccountsMissingCountryFailsClosed(t *testing.T) {
 	writeConfig(t, home, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: hash, ExitCountry: "DE"}}
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	_, port, err := net.SplitHostPort(listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)

@@ -150,10 +150,16 @@ func (d *Dialer) DialSite(ctx context.Context, network, address, login, site str
 	return d.dial(ctx, network, address, login, site)
 }
 
-func (d *Dialer) dial(ctx context.Context, network, address, login, site string) (net.Conn, error) {
+// nonNilContext returns ctx, or context.Background() when ctx is nil.
+func nonNilContext(ctx context.Context) context.Context {
 	if ctx == nil {
-		ctx = context.Background()
+		return context.Background()
 	}
+	return ctx
+}
+
+func (d *Dialer) dial(ctx context.Context, network, address, login, site string) (net.Conn, error) {
+	ctx = nonNilContext(ctx)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -161,40 +167,55 @@ func (d *Dialer) dial(ctx context.Context, network, address, login, site string)
 		return nil, ErrNoHops
 	}
 	order := d.pool.Order(d.clock())
-	boundKey := ""
-	if d.post && login != "" && site != "" && d.binder != nil {
-		if bound, ok := d.binder.Get(login, site); ok {
-			if d.healthy(bound) {
-				if _, exists := d.hops[bound]; exists {
-					boundKey = bound
-				} else {
-					d.binder.Unbind(login, site)
-				}
-			} else {
-				d.binder.Unbind(login, site)
-			}
+	candidates := candidateHops(d.hops, order, d.boundKey(login, site))
+	if len(candidates) == 0 {
+		return nil, ErrNoHops
+	}
+	return d.tryCandidates(ctx, candidates, network, address, login, site)
+}
+
+// boundKey returns the hop bound to login at site while it is healthy and configured; a stale binding is removed.
+func (d *Dialer) boundKey(login, site string) string {
+	if !d.post || login == "" || site == "" || d.binder == nil {
+		return ""
+	}
+	bound, ok := d.binder.Get(login, site)
+	if !ok {
+		return ""
+	}
+	if d.healthy(bound) {
+		if _, exists := d.hops[bound]; exists {
+			return bound
 		}
 	}
+	d.binder.Unbind(login, site)
+	return ""
+}
+
+// candidateHops lists the hops to try: the bound hop first, then the pool order, each hop once.
+func candidateHops(hops map[string]Hop, order []string, boundKey string) []Hop {
 	candidates := make([]Hop, 0, len(order))
 	seen := make(map[string]struct{}, len(order)+1)
 	if boundKey != "" {
 		seen[boundKey] = struct{}{}
-		candidates = append(candidates, d.hops[boundKey])
+		candidates = append(candidates, hops[boundKey])
 	}
 	for _, key := range order {
 		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
-		hop, exists := d.hops[key]
+		hop, exists := hops[key]
 		if !exists {
 			continue
 		}
 		seen[key] = struct{}{}
 		candidates = append(candidates, hop)
 	}
-	if len(candidates) == 0 {
-		return nil, ErrNoHops
-	}
+	return candidates
+}
+
+// tryCandidates dials the candidates in order and returns the first connection that succeeds.
+func (d *Dialer) tryCandidates(ctx context.Context, candidates []Hop, network, address, login, site string) (net.Conn, error) {
 	var last error
 	nextUnreachable := 0
 	for _, hop := range candidates {
@@ -215,10 +236,7 @@ func (d *Dialer) dial(ctx context.Context, network, address, login, site string)
 			err = ErrNoConnection
 		}
 		if err == nil {
-			d.change(hop.Key(), func() { d.pool.RecordSuccess(hop.Key()) })
-			if d.post && d.binder != nil && login != "" && site != "" {
-				d.binder.Bind(login, site, hop.Key())
-			}
+			d.recordSuccess(hop, login, site)
 			return conn, nil
 		}
 		last = err
@@ -238,6 +256,14 @@ func (d *Dialer) dial(ctx context.Context, network, address, login, site string)
 		}
 	}
 	return nil, last
+}
+
+// recordSuccess marks hop healthy and, for a post dial, binds login at site to it.
+func (d *Dialer) recordSuccess(hop Hop, login, site string) {
+	d.change(hop.Key(), func() { d.pool.RecordSuccess(hop.Key()) })
+	if d.post && d.binder != nil && login != "" && site != "" {
+		d.binder.Bind(login, site, hop.Key())
+	}
 }
 
 // maxNextUnreachable bounds the pre hops tried once hops report the next

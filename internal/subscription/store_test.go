@@ -15,6 +15,15 @@ import (
 
 // Numbers inside Raw are float64 here because that is what a decoded file
 // returns; Mihomo's decoder accepts them for integer fields.
+func mustMarshalJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	return b
+}
+
 func testSnap(fetched time.Time) Snapshot {
 	return Snapshot{
 		FetchedAt: fetched,
@@ -51,7 +60,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 	// The snapshot is a Ktav file with the raw mappings in it; node JSON keeps
 	// them out.
-	data, err := os.ReadFile(filepath.Join(dir, "subscriptions", "main.ktav"))
+	data, err := os.ReadFile(filepath.Clean(filepath.Join(dir, "subscriptions", "main.ktav")))
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
@@ -64,7 +73,7 @@ func TestStoreRoundTrip(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "subscriptions", "main.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a .json file was written next to the .ktav one: %v", err)
 	}
-	nodeJSON, _ := json.Marshal(snap.Nodes[0])
+	nodeJSON := mustMarshalJSON(t, snap.Nodes[0])
 	if strings.Contains(string(nodeJSON), "password") {
 		t.Error("node JSON leaks credentials")
 	}
@@ -119,8 +128,8 @@ func TestStoreRoundTripOfAwkwardValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want, _ := json.Marshal(snap.Nodes)
-	have, _ := json.Marshal(got.Nodes)
+	want := mustMarshalJSON(t, snap.Nodes)
+	have := mustMarshalJSON(t, got.Nodes)
 	if string(want) != string(have) {
 		t.Errorf("values changed on the way through the store:\n got %s\nwant %s", have, want)
 	}
@@ -227,8 +236,8 @@ func TestStoreFallsBackToJSONWhenKtavWouldChangeAValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	want, _ := json.Marshal(snap.Nodes)
-	have, _ := json.Marshal(got.Nodes)
+	want := mustMarshalJSON(t, snap.Nodes)
+	have := mustMarshalJSON(t, got.Nodes)
 	if string(want) != string(have) {
 		t.Fatalf("a snapshot was damaged:\n got %s\nwant %s", have, want)
 	}
@@ -420,7 +429,7 @@ func TestStoreLoadMissing(t *testing.T) {
 func TestStoreConcurrentSave(t *testing.T) {
 	s := NewStore(filepath.Join(t.TempDir(), "subscriptions"))
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

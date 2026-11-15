@@ -245,7 +245,7 @@ func TestRunAccountRejectsDirectAndRemoteInitWrites(t *testing.T) {
 			c.Auth.Login = "legacy"
 			c.Auth.Password = "$argon2id$valid-enough-for-validator"
 			c.Listen.Bind = "0.0.0.0"
-			c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$valid-enough-for-validator"}}
+			c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$valid-enough-for-validator"}} //nolint:gosec // G101: fake credential, test fixture only
 			if err := c.Validate(); err != nil {
 				return err
 			}
@@ -285,7 +285,7 @@ func TestRunAccountRejectsDirectAndRemoteInitWrites(t *testing.T) {
 func TestRunAccountUnchangedSettersSucceedWithoutSnapshots(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Default()
-	cfg.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$valid-enough-for-validator"}}
+	cfg.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$valid-enough-for-validator"}} //nolint:gosec // G101: fake credential, test fixture only
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}

@@ -40,7 +40,7 @@ func init() {
 func dualAccountAt(d *dualShell, pos int) {
 	d.t.Helper()
 	d.Keys("home")
-	for i := 0; i < pos; i++ {
+	for range pos {
 		d.Keys("down")
 	}
 }
@@ -81,7 +81,7 @@ func dualChooseAccountHopOperation(t *testing.T, d *dualShell, value string) {
 	if choice < 0 {
 		t.Fatalf("account hop picker has no operation %q", value)
 	}
-	for i := 0; i < len(s.dialog.prompt.Options); i++ {
+	for range len(s.dialog.prompt.Options) {
 		selected, err := s.dialog.prompt.GetAnswer()
 		if err != nil {
 			t.Fatalf("read account hop picker choice: %v", err)

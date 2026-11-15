@@ -98,16 +98,16 @@ func Spawn(ctx context.Context, o SpawnOptions) (State, error) {
 		return zero, &cli.Error{Code: "INTERNAL", Message: "generate handshake name: " + err.Error(), Exit: cli.ExitInternal}
 	}
 	handshakePath := filepath.Join(RunDir(o.Home), "start-"+suffix+".json")
-	defer os.Remove(handshakePath)
+	defer func() { _ = os.Remove(handshakePath) }()
 
 	_ = RotateLog(o.Home, MaxLogBytes) // best effort: a log kept whole is only larger
 	log, err := os.OpenFile(LogPath(o.Home), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return zero, &cli.Error{Code: "INTERNAL", Message: "open angel log: " + err.Error(), Exit: cli.ExitInternal}
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 
-	cmd, err := startChild(o.Exe, handshakeArgs(o.Args, handshakePath), log, log)
+	cmd, err := startChild(ctx, o.Exe, handshakeArgs(o.Args, handshakePath), log, log)
 	if err != nil {
 		return zero, &cli.Error{Code: "ANGEL_START_FAILED", Message: "start angel: " + err.Error(), Exit: cli.ExitInternal}
 	}

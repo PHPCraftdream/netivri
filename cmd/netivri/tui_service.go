@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -150,7 +153,8 @@ func (s *serviceScreen) toast(text string) tea.Cmd {
 }
 
 func serviceErrorText(err error) string {
-	if ce, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		if ce.Hint != "" {
 			return ce.Message + " (" + ce.Hint + ")"
 		}
@@ -285,7 +289,7 @@ func (s *serviceScreen) requestStop(restart bool) tea.Cmd {
 	if restart {
 		verb, mode = "Restart", "confirm-restart"
 	}
-	text := fmt.Sprintf("%s the angel?", verb)
+	text := verb + " the angel?"
 	if n := s.openConnections(); n > 0 {
 		text += fmt.Sprintf(" %d open connection%s will be dropped.", n, map[bool]string{true: "", false: "s"}[n == 1])
 	}
@@ -427,7 +431,7 @@ func (s *serviceScreen) buildCard(kind string) *tui.Card {
 func (s *serviceScreen) angelCard() *tui.Card {
 	state, listen, process, up, version := "stopped", "—", "—", "—", "—"
 	if s.running {
-		state, listen, process, up, version = "running", s.status.Listen, fmt.Sprint(s.status.PID), s.uptime(), s.status.Version
+		state, listen, process, up, version = "running", s.status.Listen, strconv.Itoa(s.status.PID), s.uptime(), s.status.Version
 	}
 	if !s.probed {
 		state = "checking…"

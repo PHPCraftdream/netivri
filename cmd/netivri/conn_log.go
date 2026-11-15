@@ -129,14 +129,14 @@ func (a *answerTimes) add(d time.Duration) {
 
 // median and p95 are the middle and the 95th percentile of the times; zero
 // for none.
-func (a answerTimes) median() time.Duration { return a.percentile(50) }
-func (a answerTimes) p95() time.Duration    { return a.percentile(95) }
+func (a *answerTimes) median() time.Duration { return a.percentile(50) }
+func (a *answerTimes) p95() time.Duration    { return a.percentile(95) }
 
-func (a answerTimes) percentile(p int) time.Duration {
-	if len(a) == 0 {
+func (a *answerTimes) percentile(p int) time.Duration {
+	if len(*a) == 0 {
 		return 0
 	}
-	sorted := append([]time.Duration(nil), a...)
+	sorted := append([]time.Duration(nil), *a...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
 	idx := (p*len(sorted)+99)/100 - 1
 	return sorted[min(max(idx, 0), len(sorted)-1)]
@@ -144,8 +144,8 @@ func (a answerTimes) percentile(p int) time.Duration {
 
 // detail says how long the answers took to start: ", answers started after
 // 0.4s median, 1.8s 95th"; nothing when no connection got one.
-func (a answerTimes) detail() string {
-	if len(a) == 0 {
+func (a *answerTimes) detail() string {
+	if len(*a) == 0 {
 		return ""
 	}
 	return fmt.Sprintf(", answers started after %s median, %s 95th", waitText(a.median()), waitText(a.p95()))

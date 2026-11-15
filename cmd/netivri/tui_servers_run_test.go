@@ -12,12 +12,13 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/ktav-lang/golang/pure"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/servers"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
-	"github.com/ktav-lang/golang/pure"
 )
 
 // serversDrain recursively executes commands the way the real program would:
@@ -159,7 +160,7 @@ func TestServersEditPortDrainsReloadAndCardShowsNewValue(t *testing.T) {
 	if cmd := s.cardAction("port"); cmd != nil || s.dialog == nil || s.dialog.prompt == nil {
 		t.Fatal("port edit dialog did not open")
 	}
-	serversBackspaces(s, 4)
+	serversBackspaces(s)
 	serversTypeKeys(s, "4599")
 	if s.dialog.prompt.Value != "4599" {
 		t.Fatalf("prompt value = %q", s.dialog.prompt.Value)
@@ -212,8 +213,8 @@ func serversMultiAccountHome(t *testing.T) string {
 	h := t.TempDir()
 	c := config.Default()
 	c.Accounts = []config.Account{
-		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
-		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},
+		{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}, //nolint:gosec // G101: fake credential, test fixture only
+		{Login: "bob", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"},   //nolint:gosec // G101: fake credential, test fixture only
 	}
 	c.Servers = []config.Server{{Name: "mm", Protocol: "mieru", Bind: "127.0.0.1", Port: 3400, PublicHost: "pub.test", Accounts: "alice,bob"}}
 	if err := c.Validate(); err != nil {
@@ -268,7 +269,6 @@ func TestServersLinkMultiAccountChooseSecondAccount(t *testing.T) {
 		t.Fatalf("credential warning did not open after account pick: %+v", s.dialog)
 	}
 	// ConfirmPrompt 'y' -> confirmButton(1) -> result(false) -> onResult.
-	c = nil
 	if _, c = s.Update(serversKey('y', "y")); c == nil {
 		t.Fatal("show confirm produced no command")
 	}
@@ -303,7 +303,7 @@ func TestServersUpdatePortConflictKeepsPromptAndAnswer(t *testing.T) {
 	if cmd := s.cardAction("port"); cmd != nil || s.dialog == nil || s.dialog.prompt == nil {
 		t.Fatal("port edit dialog did not open")
 	}
-	serversBackspaces(s, 4)
+	serversBackspaces(s)
 	serversTypeKeys(s, "2345")
 	c := serversEnterKey(s)
 	if c == nil {
@@ -395,7 +395,7 @@ func TestServersAddDuplicateNameKeepsWizardOpenWithAnswers(t *testing.T) {
 
 func serversStoredSecrets(t *testing.T, home string) map[string]map[string]string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(home, "server-secrets.ktav"))
+	b, err := os.ReadFile(filepath.Clean(filepath.Join(home, "server-secrets.ktav")))
 	if err != nil {
 		t.Fatalf("secrets store: %v", err)
 	}
@@ -622,7 +622,7 @@ func serversGoldenHome(t *testing.T) string {
 	t.Helper()
 	h := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}} //nolint:gosec // G101: fake credential, test fixture only
 	c.Servers = []config.Server{
 		{Name: "ss", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 1234, Accounts: "alice", Params: map[string]string{"cipher": "aes-128-gcm"}},
 		{Name: "vl", Protocol: "vless-reality", Bind: "127.0.0.1", Port: 2345, Accounts: "alice", Params: map[string]string{"sni": "golden.example"}},
@@ -664,16 +664,17 @@ func serversAssertGolden(t *testing.T, got, want []string) {
 
 // Single-pane (width<100): list inner width = w-2.
 func serversGoldenList(w int, rows []string) []string {
-	out := []string{borderRow("╭", "─", "╮", w-2)}
+	out := make([]string, 0, len(rows)+2)
+	out = append(out, borderRow("╭", "╮", w-2))
 	for _, r := range rows {
 		out = append(out, "│"+r+strings.Repeat(" ", w-2-len([]rune(r)))+"│")
 	}
-	out = append(out, borderRow("╰", "─", "╯", w-2))
+	out = append(out, borderRow("╰", "╯", w-2))
 	return out
 }
 
-func borderRow(left, fill, right string, inner int) string {
-	return left + strings.Repeat(fill, inner) + right
+func borderRow(left, right string, inner int) string {
+	return left + strings.Repeat("─", inner) + right
 }
 
 // Split pane (width>=100): left = width*35/100 (inner left-2), gap " ",
@@ -683,7 +684,7 @@ func serversGoldenSplit(width int, leftRows, rightRows [][]string) []string {
 	right := width - left - 1
 	li, ri := left-2, right-2
 	out := []string{
-		borderRow("╭", "─", "╮", li) + " " + borderRow("╭", "─", "╮", ri),
+		borderRow("╭", "╮", li) + " " + borderRow("╭", "╮", ri),
 	}
 	for i := 1; i < maxLen(leftRows, rightRows)-1; i++ {
 		l, r := "", ""
@@ -695,7 +696,7 @@ func serversGoldenSplit(width int, leftRows, rightRows [][]string) []string {
 		}
 		out = append(out, "│"+l+strings.Repeat(" ", li-len([]rune(l)))+"│"+" "+"│"+r+strings.Repeat(" ", ri-len([]rune(r)))+"│")
 	}
-	out = append(out, borderRow("╰", "─", "╯", li)+" "+borderRow("╰", "─", "╯", ri))
+	out = append(out, borderRow("╰", "╯", li)+" "+borderRow("╰", "╯", ri))
 	return out
 }
 
@@ -726,13 +727,13 @@ func TestServersGoldenEmptyList(t *testing.T) {
 	s.syncWorkspace()
 
 	// 80x24: single list pane, no rows, only the add line selected.
-	rows := []string{
+	rows := append(make([]string, 0, 22),
 		"Servers",
 		serversGoldenHeader80,
 		"No servers configured",
 		"› + Add a server [a]",
-	}
-	for i := 0; i < 17; i++ {
+	)
+	for range 17 {
 		rows = append(rows, "")
 	}
 	rows = append(rows, "1/1")
@@ -741,14 +742,14 @@ func TestServersGoldenEmptyList(t *testing.T) {
 	// 100x30: left list pane (35) + placeholder card pane (64).
 	// Status row: list.go puts fmtPosition at content index h-2-1 = 27,
 	// i.e. frame row 28.
-	left := goldenRows(30, map[int]string{
+	left := goldenRows(map[int]string{
 		1:  "Servers",
 		2:  serversGoldenHeader35,
 		3:  "No servers configured",
 		4:  "› + Add a server [a]",
 		28: "1/1",
 	})
-	right := goldenRows(30, map[int]string{
+	right := goldenRows(map[int]string{
 		1: "Server",
 		2: "No servers configured. Add a server to start.",
 		3: "  Add a server...  [a]",
@@ -758,13 +759,13 @@ func TestServersGoldenEmptyList(t *testing.T) {
 }
 
 // goldenRows builds a full-height row table with content at fixed frame rows.
-func goldenRows(h int, at map[int]string) [][]string {
-	out := make([][]string, h)
+func goldenRows(at map[int]string) [][]string {
+	out := make([][]string, 30)
 	for i := range out {
 		out[i] = []string{""}
 	}
 	for i, s := range at {
-		if i >= 0 && i < h {
+		if i >= 0 && i < 30 {
 			out[i] = []string{s}
 		}
 	}
@@ -779,14 +780,14 @@ func TestServersGoldenTwoServerList(t *testing.T) {
 
 	// 80x24: widths [18,14,5,14]; ss row gaps 18/5/3, vl gaps 18/3/3
 	// (cell padding + the 2-cell joiner).
-	rows := []string{
+	rows := append(make([]string, 0, 22),
 		"Servers",
 		serversGoldenHeader80Two,
 		"› ss                 shadowsocks     1234   angel stopped",
 		"  vl                 vless-reality   2345   angel stopped",
 		"  + Add a server [a]",
-	}
-	for i := 0; i < 16; i++ {
+	)
+	for range 16 {
 		rows = append(rows, "")
 	}
 	rows = append(rows, "1/3")
@@ -794,7 +795,7 @@ func TestServersGoldenTwoServerList(t *testing.T) {
 
 	// 100x30 split: cells shrink to [5,8,5,8]; each row totals 34 cells and
 	// is clipped to inner 33 (the last char of "angel stopped" is cut).
-	left := goldenRows(30, map[int]string{
+	left := goldenRows(map[int]string{
 		1:  "Servers",
 		2:  serversGoldenHeader35,
 		3:  "› ss     shadowso  1234   angel s",
@@ -802,7 +803,7 @@ func TestServersGoldenTwoServerList(t *testing.T) {
 		5:  "  + Add a server [a]",
 		28: "1/3",
 	})
-	right := goldenRows(30, map[int]string{
+	right := goldenRows(map[int]string{
 		1: "Server",
 		2: "Select a server to see details.",
 		3: "  Add a server...  [a]",
@@ -914,7 +915,7 @@ func serversRevealBodyRows(t *testing.T, view string, h int) []string {
 func TestServersRevealShowsFullLinkAndScrolls(t *testing.T) {
 	home := serversFixture(t)
 	s := newServersTestScreen(t, home)
-	var frames []string
+	frames := make([]string, 0, 3)
 	serversDrain(t, s, s.Init())
 	serversLoadDetailDrained(t, s)
 	link, err := ServerLink(home, "ss", ServerLinkOptions{Account: "alice", Format: "uri"})
@@ -1031,7 +1032,7 @@ func (serversYAMLTestProtocol) NewMaterial(map[string]string) (map[string]string
 	return map[string]string{}, nil
 }
 func (serversYAMLTestProtocol) NewSecret(string, map[string]string) (map[string]string, error) {
-	return map[string]string{"token": "yaml-token-material"}, nil
+	return map[string]string{"token": "yaml-token-material"}, nil //nolint:gosec // G101: fake credential, test fixture only
 }
 func (serversYAMLTestProtocol) Start(servers.Spec, servers.Env) (io.Closer, error) {
 	return nil, nil
@@ -1047,7 +1048,7 @@ func TestServersYAMLOnlyProtocolRevealsMihomoYAML(t *testing.T) {
 	servers.Register(serversYAMLTestProtocol{})
 	home := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$fake-hash"}} //nolint:gosec // G101: fake credential, test fixture only
 	c.Servers = []config.Server{{Name: "ys", Protocol: "yamlsrv-test", Bind: "127.0.0.1", Port: 3500, PublicHost: "pub.test", Accounts: "alice"}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("yaml protocol fixture invalid: %v", err)

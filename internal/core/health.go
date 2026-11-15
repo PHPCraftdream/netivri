@@ -2,9 +2,6 @@ package core
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -202,8 +199,24 @@ func (h *nodeHealth) noteProbeError(kind string) {
 // probeFailKind names a probe or dial error in a few words, without any address. A
 // cause it does not know is "error: " and a scrubbed excerpt of the message.
 func probeFailKind(err error) string {
-	var netErr net.Error
 	msg := strings.ToLower(err.Error())
+	kind := probeFailKindOfDial(err, msg)
+	if kind == "" {
+		kind = probeFailKindOfLink(err, msg)
+	}
+	if kind != "" {
+		return kind
+	}
+	if text := scrubError(msg); text != "" {
+		return "error: " + text
+	}
+	return "error"
+}
+
+// probeFailKindOfDial names the timeout, auth and refusal causes; "" when none
+// matches. The cases are checked in order, as one switch.
+func probeFailKindOfDial(err error, msg string) string {
+	var netErr net.Error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) || strings.Contains(msg, "timeout") ||
 		strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "did not properly respond") || strings.Contains(msg, "failed to respond"):
@@ -218,6 +231,13 @@ func probeFailKind(err error) string {
 		return "proxy refused"
 	case strings.Contains(msg, "refused"):
 		return "connection refused"
+	}
+	return ""
+}
+
+// probeFailKindOfLink names the broken-link causes; "" when none matches.
+func probeFailKindOfLink(err error, msg string) string {
+	switch {
 	case strings.Contains(msg, "reset") || strings.Contains(msg, "forcibly closed") || strings.Contains(msg, "broken pipe"):
 		return "connection reset"
 	case strings.Contains(msg, "no such host") || strings.Contains(msg, "lookup"):
@@ -229,10 +249,7 @@ func probeFailKind(err error) string {
 	case strings.Contains(msg, "tls") || strings.Contains(msg, "handshake") || strings.Contains(msg, "certificate"):
 		return "handshake failed"
 	}
-	if text := scrubError(msg); text != "" {
-		return "error: " + text
-	}
-	return "error"
+	return ""
 }
 
 const (
@@ -466,7 +483,7 @@ func (h *nodeHealth) failRate() float64 {
 		return 0
 	}
 	fails := 0
-	for i := 0; i < h.ringLen; i++ {
+	for i := range h.ringLen {
 		if !h.ring[i] {
 			fails++
 		}
@@ -531,13 +548,9 @@ func healthMemberKey(label, pre, post string) string {
 		if server, ok := mapping["server"].(string); ok {
 			mapping["server"] = strings.ToLower(server)
 		}
-		data, _ := json.Marshal(mapping)
-		sum := sha256.Sum256(data)
-		return hex.EncodeToString(sum[:])
+		return jsonSHA256Hex(mapping)
 	}
-	raw, _ := json.Marshal([3]string{label, hopKey(pre), hopKey(post)})
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	return jsonSHA256Hex([3]string{label, hopKey(pre), hopKey(post)})
 }
 
 func healthMembersForPlans(plans []routePlan) []healthMember {
@@ -770,10 +783,6 @@ func (t *healthTable) noteTrafficKey(key string) {
 	if h := t.entries[key]; h != nil {
 		h.noteTraffic()
 	}
-}
-
-func (t *healthTable) recordThroughput(label string, bytes int64, window time.Duration) {
-	t.recordThroughputKey(label, bytes, window)
 }
 
 func (t *healthTable) recordThroughputKey(key string, bytes int64, window time.Duration) {

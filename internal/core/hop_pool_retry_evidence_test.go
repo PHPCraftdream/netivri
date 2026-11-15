@@ -59,7 +59,7 @@ func TestNativePostStaleEvidenceHandshakeRetriesBoundHopHealth(t *testing.T) {
 
 func TestNativePostConnectQuarantineAndLifecycleHandshakeBackoffAreBounded(t *testing.T) {
 	now := time.Unix(4000, 0)
-	connectListener, err := net.Listen("tcp", "127.0.0.1:0")
+	connectListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("TLS fixture listener failed")
 	}
@@ -77,7 +77,11 @@ func TestNativePostConnectQuarantineAndLifecycleHandshakeBackoffAreBounded(t *te
 			}()
 		}
 	}()
-	connectPort := connectListener.Addr().(*net.TCPAddr).Port
+	connectAddr, ok := connectListener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", connectListener.Addr())
+	}
+	connectPort := connectAddr.Port
 	connectURI := "https://localhost:" + strconv.Itoa(connectPort)
 	connectSpec := newHopPoolSpec(postHopPool, []string{connectURI}, 0)
 	p := pool.New(connectSpec.keys, pool.Options{Clock: func() time.Time { return now }})

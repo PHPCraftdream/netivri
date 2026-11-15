@@ -92,8 +92,8 @@ func TestParseUpUsageErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := parseUp(tc.args, okEnv, okConfig)
-			ce, ok := err.(*cli.Error)
-			if !ok {
+			var ce *cli.Error
+			if !errors.As(err, &ce) {
 				t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 			}
 			if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {
@@ -170,8 +170,8 @@ func TestParseUpHomePrecedence(t *testing.T) {
 
 func TestParseUpUserConfigDirError(t *testing.T) {
 	_, err := parseUp([]string{"--foreground"}, okEnv, func() (string, error) { return "", errors.New("no config dir") })
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "INTERNAL" || ce.Exit != cli.ExitInternal {

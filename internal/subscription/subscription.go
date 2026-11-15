@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,6 +197,9 @@ func toInt(v any) (int, bool) {
 	case int64:
 		return int(t), true
 	case uint64:
+		if t > math.MaxInt {
+			return 0, false
+		}
 		return int(t), true
 	case float64:
 		return int(t), true

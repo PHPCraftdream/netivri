@@ -232,8 +232,8 @@ func poolSocketAlive(conn net.Conn) bool {
 	if n != 0 || err == nil {
 		return false
 	}
-	ne, ok := err.(net.Error)
-	return ok && ne.Timeout()
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 func (p *poolDialer) ListenPacket(ctx context.Context, network, address string, remote netip.AddrPort) (net.PacketConn, error) {

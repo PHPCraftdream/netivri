@@ -83,7 +83,7 @@ func TestNodeEventForDialFailures(t *testing.T) {
 	table, clock, events := eventTable("p/a")
 	table.recordDial("p/a", true, time.Millisecond)
 	clock.advance(time.Minute)
-	for i := 0; i < downDialFailures; i++ {
+	for range downDialFailures {
 		table.recordDial("p/a", false, 0)
 	}
 	got := events()
@@ -189,7 +189,7 @@ func TestProbeErrorHookReachesTheNodeAndTheCallersHook(t *testing.T) {
 		next = append(next, name)
 	})
 	probe := probeHook(map[string]string{"netivri-r0-0": "p/a"}, table, nil, nil)
-	for i := 0; i < downProbeFailures; i++ {
+	for range downProbeFailures {
 		hook("netivri-r0-0", context.DeadlineExceeded)
 		probe("netivri-r0-0", false, 0)
 	}
@@ -218,7 +218,7 @@ func TestWarmerReportsTheProbeErrorBeforeTheResult(t *testing.T) {
 	w.options.OnProbeError = func(name string, err error) {
 		mu.Lock()
 		defer mu.Unlock()
-		if err != boom {
+		if !errors.Is(err, boom) {
 			t.Errorf("OnProbeError got %v, want the probe's error", err)
 		}
 		order = append(order, "err:"+name)

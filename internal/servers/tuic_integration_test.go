@@ -26,7 +26,49 @@ import (
 
 const tuicIntegrationTimeout = 20 * time.Second
 
+// tuicRun holds the state shared by the phases of TestTUICCoreStartReconfigureAndClose.
+type tuicRun struct {
+	t             *testing.T
+	protocol      servers.Protocol
+	params        map[string]string
+	material      map[string]string
+	newMaterial   map[string]string
+	alice         map[string]string
+	bob           map[string]string
+	rotated       map[string]string
+	aliceRecorder *trojanRecorder
+	bobRecorder   *trojanRecorder
+	aliceRoute    string
+	bobRoute      string
+	host          string
+	backendPort   int
+	home          string
+	instance      *core.Instance
+	alicePort     int
+	bobPort       int
+	closed        bool
+}
+
 func TestTUICCoreStartReconfigureAndClose(t *testing.T) {
+	r := newTUICRun(t)
+	defer func() {
+		if !r.closed {
+			defer func() { _ = r.instance.Close() }()
+			waitTUICConnections(t, r.instance)
+		}
+	}()
+	r.startBobPort()
+	servertest.TrustForTest(t, r.material)
+	r.checkAliceRouteAndAuthFailures()
+	r.checkBobRoute()
+	r.checkGlobalPolicy()
+	r.checkAccountPolicy()
+	r.checkRotation()
+	r.checkNewPortAndClose()
+}
+
+func newTUICRun(t *testing.T) *tuicRun {
+	t.Helper()
 	protocol, ok := servers.Lookup("tuic")
 	if !ok {
 		t.Fatal("TUIC protocol is not registered")
@@ -51,142 +93,168 @@ func TestTUICCoreStartReconfigureAndClose(t *testing.T) {
 	aliceRecorder, aliceRoute := startTrojanRecorder(t)
 	bobRecorder, bobRoute := startTrojanRecorder(t)
 	host, backendPort := startTrojanEcho(t)
-	home := t.TempDir()
-	var instance *core.Instance
-	var alicePort, bobPort int
-	alicePort = servertest.StartOnFreePort(t, func(p int) error {
-		candidate, e := core.Start(context.Background(), tuicOptions(t, home, p, 0, alice, bob, material, aliceRoute, bobRoute, nil, nil))
+	r := &tuicRun{
+		t: t, protocol: protocol, params: params, material: material,
+		alice: alice, bob: bob, rotated: rotated,
+		aliceRecorder: aliceRecorder, bobRecorder: bobRecorder,
+		aliceRoute: aliceRoute, bobRoute: bobRoute,
+		host: host, backendPort: backendPort, home: t.TempDir(),
+	}
+	r.alicePort = servertest.StartOnFreePort(t, func(p int) error {
+		candidate, e := core.Start(context.Background(), tuicOptions(t, r.home, p, 0, r.alice, r.bob, r.material, r.aliceRoute, r.bobRoute, nil, nil))
 		if e != nil {
 			return portCollision(e)
 		}
-		instance = candidate
+		r.instance = candidate
 		return nil
 	})
-	closed := false
-	defer func() {
-		if !closed {
-			defer instance.Close()
-			waitTUICConnections(t, instance)
-		}
-	}()
-	bobPort = servertest.StartOnFreePort(t, func(p int) error {
-		if p == alicePort {
+	return r
+}
+
+func (r *tuicRun) startBobPort() {
+	r.bobPort = servertest.StartOnFreePort(r.t, func(p int) error {
+		if p == r.alicePort {
 			return syscall.EADDRINUSE
 		}
-		if e := instance.Reconfigure(tuicOptions(t, home, alicePort, p, alice, bob, material, aliceRoute, bobRoute, nil, nil)); e != nil {
+		if e := r.instance.Reconfigure(tuicOptions(r.t, r.home, r.alicePort, p, r.alice, r.bob, r.material, r.aliceRoute, r.bobRoute, nil, nil)); e != nil {
 			return portCollision(e)
 		}
 		return nil
 	})
-	servertest.TrustForTest(t, material)
-	if err := tuicRoundTrip(t, alicePort, alice, material["fingerprint"], host, backendPort); err != nil {
+}
+
+func (r *tuicRun) checkAliceRouteAndAuthFailures() {
+	t := r.t
+	if err := tuicRoundTrip(t, r.alicePort, r.alice, r.material["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("Alice TUIC round trip failed")
 	}
-	waitTUICConnections(t, instance)
-	if got := aliceRecorder.snapshot(); len(got) != 1 || got[0] != net.JoinHostPort(host, strconv.Itoa(backendPort)) {
+	waitTUICConnections(t, r.instance)
+	if got := r.aliceRecorder.snapshot(); len(got) != 1 || got[0] != net.JoinHostPort(r.host, strconv.Itoa(r.backendPort)) {
 		t.Fatal("Alice traffic did not reach its backend")
 	}
-	if len(bobRecorder.snapshot()) != 0 {
+	if len(r.bobRecorder.snapshot()) != 0 {
 		t.Fatal("Alice traffic reached Bob backend")
 	}
-	if err := tuicAuthenticationFailure(t, alicePort, badTUICSecret(alice), material["fingerprint"], host, backendPort); err != nil {
+	if err := tuicAuthenticationFailure(t, r.alicePort, badTUICSecret(r.alice), r.material["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("wrong credentials were not rejected as authentication")
 	}
-	waitTUICConnections(t, instance)
-	if err := tuicAuthenticationFailure(t, alicePort, bob, material["fingerprint"], host, backendPort); err != nil {
+	waitTUICConnections(t, r.instance)
+	if err := tuicAuthenticationFailure(t, r.alicePort, r.bob, r.material["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("wrong UUID was not rejected as authentication")
 	}
-	waitTUICConnections(t, instance)
-	if len(aliceRecorder.snapshot()) != 1 || len(bobRecorder.snapshot()) != 0 {
+	waitTUICConnections(t, r.instance)
+	if len(r.aliceRecorder.snapshot()) != 1 || len(r.bobRecorder.snapshot()) != 0 {
 		t.Fatal("wrong UUID changed backend recorder counts")
 	}
-	if err := tuicRoundTrip(t, bobPort, bob, material["fingerprint"], host, backendPort); err != nil {
+}
+
+func (r *tuicRun) checkBobRoute() {
+	t := r.t
+	if err := tuicRoundTrip(t, r.bobPort, r.bob, r.material["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("Bob TUIC round trip failed")
 	}
-	waitTUICConnections(t, instance)
-	if got := bobRecorder.snapshot(); len(got) != 1 || got[0] != net.JoinHostPort(host, strconv.Itoa(backendPort)) {
+	waitTUICConnections(t, r.instance)
+	if got := r.bobRecorder.snapshot(); len(got) != 1 || got[0] != net.JoinHostPort(r.host, strconv.Itoa(r.backendPort)) {
 		t.Fatal("Bob traffic did not reach its backend")
 	}
+}
+
+func (r *tuicRun) checkGlobalPolicy() {
+	t := r.t
 	blocked := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
-	baselineDrops := tuicDropped(instance, "tuic-alice")
-	if err := instance.Reconfigure(tuicOptions(t, home, alicePort, bobPort, alice, bob, material, aliceRoute, bobRoute, blocked, nil)); err != nil {
+	baselineDrops := tuicDropped(r.instance)
+	if err := r.instance.Reconfigure(tuicOptions(t, r.home, r.alicePort, r.bobPort, r.alice, r.bob, r.material, r.aliceRoute, r.bobRoute, blocked, nil)); err != nil {
 		t.Fatal("client policy update failed")
 	}
-	if err := tuicRoundTrip(t, alicePort, alice, material["fingerprint"], host, backendPort); err == nil {
+	if err := tuicRoundTrip(t, r.alicePort, r.alice, r.material["fingerprint"], r.host, r.backendPort); err == nil {
 		t.Fatal("disallowed client accepted")
 	}
-	waitTUICConnections(t, instance)
-	if tuicDropped(instance, "tuic-alice") <= baselineDrops {
+	waitTUICConnections(t, r.instance)
+	if tuicDropped(r.instance) <= baselineDrops {
 		t.Fatal("disallowed client was not counted")
 	}
-	if len(aliceRecorder.snapshot()) != 1 || len(bobRecorder.snapshot()) != 1 {
+	if len(r.aliceRecorder.snapshot()) != 1 || len(r.bobRecorder.snapshot()) != 1 {
 		t.Fatal("global filter changed backend recorder counts")
 	}
-	if err := instance.Reconfigure(tuicOptions(t, home, alicePort, bobPort, alice, bob, material, aliceRoute, bobRoute, nil, map[string][]netip.Prefix{"alice": blocked})); err != nil {
+}
+
+func (r *tuicRun) checkAccountPolicy() {
+	t := r.t
+	blocked := []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+	if err := r.instance.Reconfigure(tuicOptions(t, r.home, r.alicePort, r.bobPort, r.alice, r.bob, r.material, r.aliceRoute, r.bobRoute, nil, map[string][]netip.Prefix{"alice": blocked})); err != nil {
 		t.Fatal("per-account policy update failed")
 	}
-	aliceDrops := tuicDropped(instance, "tuic-alice")
-	if err := tuicRoundTrip(t, alicePort, alice, material["fingerprint"], host, backendPort); err == nil {
+	aliceDrops := tuicDropped(r.instance)
+	if err := tuicRoundTrip(t, r.alicePort, r.alice, r.material["fingerprint"], r.host, r.backendPort); err == nil {
 		t.Fatal("per-account disallowed client accepted")
 	}
-	waitTUICConnections(t, instance)
-	if tuicDropped(instance, "tuic-alice") <= aliceDrops || len(aliceRecorder.snapshot()) != 1 {
+	waitTUICConnections(t, r.instance)
+	if tuicDropped(r.instance) <= aliceDrops || len(r.aliceRecorder.snapshot()) != 1 {
 		t.Fatal("per-account filter was not counted or changed Alice route")
 	}
-	if err := tuicRoundTrip(t, bobPort, bob, material["fingerprint"], host, backendPort); err != nil {
+	if err := tuicRoundTrip(t, r.bobPort, r.bob, r.material["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("Bob failed under Alice per-account filter")
 	}
-	waitTUICConnections(t, instance)
-	if len(bobRecorder.snapshot()) != 2 {
+	waitTUICConnections(t, r.instance)
+	if len(r.bobRecorder.snapshot()) != 2 {
 		t.Fatal("Bob route changed under Alice per-account filter")
 	}
-	if err := instance.Reconfigure(tuicOptions(t, home, alicePort, bobPort, alice, bob, material, aliceRoute, bobRoute, nil, nil)); err != nil {
+	if err := r.instance.Reconfigure(tuicOptions(t, r.home, r.alicePort, r.bobPort, r.alice, r.bob, r.material, r.aliceRoute, r.bobRoute, nil, nil)); err != nil {
 		t.Fatal("client policy reset failed")
 	}
-	newMaterial, err := protocol.NewMaterial(params)
+}
+
+func (r *tuicRun) checkRotation() {
+	t := r.t
+	newMaterial, err := r.protocol.NewMaterial(r.params)
 	if err != nil {
 		t.Fatal("TLS rotation generation failed")
 	}
-	if err := instance.Reconfigure(tuicOptions(t, home, alicePort, bobPort, rotated, bob, newMaterial, aliceRoute, bobRoute, nil, nil)); err != nil {
+	r.newMaterial = newMaterial
+	if err := r.instance.Reconfigure(tuicOptions(t, r.home, r.alicePort, r.bobPort, r.rotated, r.bob, newMaterial, r.aliceRoute, r.bobRoute, nil, nil)); err != nil {
 		t.Fatal("credential rotation failed")
 	}
 	servertest.TrustForTest(t, newMaterial)
-	if err := tuicRoundTrip(t, alicePort, rotated, newMaterial["fingerprint"], host, backendPort); err != nil {
+	if err := tuicRoundTrip(t, r.alicePort, r.rotated, newMaterial["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("rotated credential failed")
 	}
-	waitTUICConnections(t, instance)
-	if err := tuicAuthenticationFailure(t, alicePort, alice, newMaterial["fingerprint"], host, backendPort); err != nil {
+	waitTUICConnections(t, r.instance)
+	if err := tuicAuthenticationFailure(t, r.alicePort, r.alice, newMaterial["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("old credential was not rejected as authentication")
 	}
-	waitTUICConnections(t, instance)
-	if err := tuicRoundTrip(t, bobPort, bob, newMaterial["fingerprint"], host, backendPort); err != nil {
+	waitTUICConnections(t, r.instance)
+	if err := tuicRoundTrip(t, r.bobPort, r.bob, newMaterial["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("Bob failed after Alice rotation")
 	}
-	waitTUICConnections(t, instance)
+	waitTUICConnections(t, r.instance)
+}
+
+func (r *tuicRun) checkNewPortAndClose() {
+	t := r.t
 	newPort := servertest.StartOnFreePort(t, func(p int) error {
-		if p == alicePort || p == bobPort {
+		if p == r.alicePort || p == r.bobPort {
 			return syscall.EADDRINUSE
 		}
-		if e := instance.Reconfigure(tuicOptions(t, home, p, bobPort, rotated, bob, newMaterial, aliceRoute, bobRoute, nil, nil)); e != nil {
+		if e := r.instance.Reconfigure(tuicOptions(t, r.home, p, r.bobPort, r.rotated, r.bob, r.newMaterial, r.aliceRoute, r.bobRoute, nil, nil)); e != nil {
 			return portCollision(e)
 		}
 		return nil
 	})
-	probe, err := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(alicePort)))
+	probe, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.alicePort)))
 	if err != nil {
 		t.Fatal("old UDP port was not released")
 	}
 	_ = probe.Close()
-	if err := tuicRoundTrip(t, newPort, rotated, newMaterial["fingerprint"], host, backendPort); err != nil {
+	if err := tuicRoundTrip(t, newPort, r.rotated, r.newMaterial["fingerprint"], r.host, r.backendPort); err != nil {
 		t.Fatal("new UDP port failed")
 	}
-	waitTUICConnections(t, instance)
-	if err := instance.Close(); err != nil {
+	waitTUICConnections(t, r.instance)
+	if err := r.instance.Close(); err != nil {
 		t.Fatal("instance close failed")
 	}
-	closed = true
-	for _, p := range []int{alicePort, bobPort, newPort} {
-		pc, e := net.ListenPacket("udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+	r.closed = true
+	for _, p := range []int{r.alicePort, r.bobPort, newPort} {
+		pc, e := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
 		if e != nil {
 			t.Fatal("Close did not free UDP port")
 		}
@@ -245,12 +313,12 @@ func tuicRoundTrip(t *testing.T, port int, secret map[string]string, fingerprint
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)})
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: servertest.MustUint16(t, backendPort)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err = conn.SetDeadline(time.Now().Add(tuicIntegrationTimeout)); err != nil {
 		return err
 	}
@@ -275,19 +343,19 @@ func tuicAuthenticationFailure(t *testing.T, port int, secret map[string]string,
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	classify := func(err error) bool {
 		var app *quic.ApplicationError
 		return errors.As(err, &app) && app.ErrorCode == v5.AuthenticationFailed
 	}
-	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)})
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: servertest.MustUint16(t, backendPort)})
 	if err != nil {
 		if classify(err) {
 			return nil
 		}
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err = conn.SetDeadline(time.Now().Add(tuicIntegrationTimeout)); err != nil {
 		return err
 	}
@@ -303,9 +371,9 @@ func tuicAuthenticationFailure(t *testing.T, port int, secret map[string]string,
 	}
 	return errors.New("connection did not fail with TUIC authentication error")
 }
-func tuicDropped(inst *core.Instance, name string) uint64 {
+func tuicDropped(inst *core.Instance) uint64 {
 	for _, server := range inst.Servers() {
-		if server.Name == name {
+		if server.Name == "tuic-alice" {
 			return server.DroppedClients
 		}
 	}

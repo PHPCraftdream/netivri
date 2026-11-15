@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -29,7 +30,7 @@ func reserveSocks(t *testing.T) (*socksProxy, string) {
 // The direct attempt fails (the name does not resolve), the reserve proxy
 // resolves it and brings the body: one connection to the proxy.
 func TestReserveTakenWhenDirectFails(t *testing.T) {
-	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, subBody) })
+	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, subBody) })
 	p, reserve := reserveSocks(t)
 	res, err := Get(context.Background(), "http://"+invalidHost+":"+portOf(t, srv.URL)+"/sub", Options{Reserve: reserve, Timeout: 5 * time.Second})
 	if err != nil {
@@ -46,7 +47,7 @@ func TestReserveTakenWhenDirectFails(t *testing.T) {
 
 // A direct fetch that works never touches the reserve proxy.
 func TestReserveUntouchedWhenDirectWorks(t *testing.T) {
-	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, subBody) })
+	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, subBody) })
 	p := newHTTPProxy(t)
 	res, err := Get(context.Background(), srv.URL+"/sub", Options{Reserve: "http://" + p.addr()})
 	if err != nil || string(res.Body) != subBody {
@@ -61,14 +62,14 @@ func TestReserveUntouchedWhenDirectWorks(t *testing.T) {
 // reserve; the second request carries the answer.
 func TestReserveTakenWhenAddressRefused(t *testing.T) {
 	for _, status := range []int{http.StatusForbidden, http.StatusTooManyRequests, http.StatusUnavailableForLegalReasons} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			var hits atomic.Int32
 			srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 				if hits.Add(1) == 1 {
 					w.WriteHeader(status)
 					return
 				}
-				fmt.Fprint(w, subBody)
+				_, _ = fmt.Fprint(w, subBody)
 			})
 			p := newHTTPProxy(t)
 			res, err := Get(context.Background(), srv.URL+"/sub", Options{Reserve: "http://" + p.addr()})
@@ -96,7 +97,7 @@ func TestReserveNotTakenForAnswersAProxyWouldNotChange(t *testing.T) {
 	}{
 		{"404", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNotFound) }, Options{}, "FETCH_HTTP_STATUS"},
 		{"401", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusUnauthorized) }, Options{}, "FETCH_HTTP_STATUS"},
-		{"too large", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, strings.Repeat("x", 100)) }, Options{MaxBytes: 10}, "FETCH_FAILED"},
+		{"too large", func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, strings.Repeat("x", 100)) }, Options{MaxBytes: 10}, "FETCH_FAILED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,7 +154,7 @@ func TestStrictProxyIgnoresReserve(t *testing.T) {
 	var hits atomic.Int32
 	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		fmt.Fprint(w, subBody)
+		_, _ = fmt.Fprint(w, subBody)
 	})
 	p := newHTTPProxy(t)
 	_, err := Get(context.Background(), srv.URL+"/sub", Options{Proxy: "socks5://" + closed, Reserve: "http://" + p.addr(), Timeout: 3 * time.Second})
@@ -167,7 +168,7 @@ func TestStrictProxyIgnoresReserve(t *testing.T) {
 
 // A caller that gave up (a canceled context) does not get a second attempt.
 func TestReserveSkippedWhenCallerCanceled(t *testing.T) {
-	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, subBody) })
+	srv := newTarget(t, func(w http.ResponseWriter, r *http.Request) { _, _ = fmt.Fprint(w, subBody) })
 	p := newHTTPProxy(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

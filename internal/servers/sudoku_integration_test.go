@@ -22,11 +22,11 @@ import (
 )
 
 func TestSudokuCoreRoutePolicyRotationAndClose(t *testing.T) {
-	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	backend, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer backend.Close()
+	defer func() { _ = backend.Close() }()
 	go func() {
 		for {
 			c, e := backend.Accept()
@@ -34,7 +34,7 @@ func TestSudokuCoreRoutePolicyRotationAndClose(t *testing.T) {
 				return
 			}
 			go func(conn net.Conn) {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 				_, _ = io.Copy(conn, conn)
 			}(c)
@@ -87,7 +87,7 @@ func TestSudokuCoreRoutePolicyRotationAndClose(t *testing.T) {
 	closed := false
 	defer func() {
 		if !closed && inst != nil {
-			defer inst.Close()
+			defer func() { _ = inst.Close() }()
 			sudokuWaitConnections(t, inst)
 		}
 	}()
@@ -105,12 +105,12 @@ func TestSudokuCoreRoutePolicyRotationAndClose(t *testing.T) {
 		if e != nil {
 			return e
 		}
-		defer client.Close()
-		conn, e := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(backendHost), DstPort: uint16(backendPort)})
+		defer func() { _ = client.Close() }()
+		conn, e := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(backendHost), DstPort: servertest.MustUint16(t, backendPort)})
 		if e != nil {
 			return e
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		payload := []byte("sudoku-routed-echo")
 		if _, e = conn.Write(payload); e != nil {
@@ -163,7 +163,7 @@ func TestSudokuCoreRoutePolicyRotationAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 	closed = true
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatalf("port not released: %v", err)
 	}
@@ -176,7 +176,7 @@ func sudokuBoolPointer(value bool) *bool { return &value }
 
 func sudokuStartRecorder(t *testing.T) (*sudokuRecorder, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func sudokuStartRecorder(t *testing.T) (*sudokuRecorder, string) {
 	return r, ln.Addr().String()
 }
 func (r *sudokuRecorder) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	h := make([]byte, 2)
 	if _, e := io.ReadFull(c, h); e != nil || h[0] != 5 {
@@ -247,12 +247,12 @@ func (r *sudokuRecorder) serve(c net.Conn) {
 	case r.targets <- target:
 	default:
 	}
-	up, e := net.DialTimeout("tcp", target, 5*time.Second)
+	up, e := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", target)
 	if e != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, e = c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); e != nil {
 		return

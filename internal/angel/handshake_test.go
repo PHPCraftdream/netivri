@@ -43,8 +43,8 @@ func TestHandshakeErrorRoundTrip(t *testing.T) {
 		t.Fatal("handshake did not contain the expected failure")
 	}
 	_, herr := handshakeResult(h)
-	ce, ok := herr.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(herr, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", herr, herr)
 	}
 	if ce.Code != "PORT_IN_USE" || ce.Exit != cli.ExitConflict {

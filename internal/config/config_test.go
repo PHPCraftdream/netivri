@@ -14,7 +14,7 @@ import (
 // removed rule makes its test fail.
 func validBaseline() *Config {
 	cfg := Default()
-	cfg.Auth = Auth{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash"}
+	cfg.Auth = Auth{Login: "alice", Password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHQ$hashhashhash"} //nolint:gosec // G101: fixture argon2 hash, not a real credential
 	cfg.Fetch = Fetch{Proxy: "socks5://alice:pw@proxy.example:1080"}
 	cfg.Subscriptions = []Subscription{
 		{Name: "one", URL: "https://one.example/sub"},
@@ -143,7 +143,8 @@ func TestValidateInvalid(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected an error")
 			}
-			cliErr, ok := err.(*cli.Error)
+			var cliErr *cli.Error
+			ok := errors.As(err, &cliErr)
 			if !ok {
 				t.Fatalf("error type = %T, want *cli.Error", err)
 			}
@@ -163,7 +164,7 @@ func TestValidateInvalid(t *testing.T) {
 // TestErrorsNeverEchoSecrets feeds secret-looking values into invalid
 // configurations and asserts no error message carries them.
 func TestErrorsNeverEchoSecrets(t *testing.T) {
-	secretURL := "https://secret.example/sub/TOKEN"
+	secretURL := "https://secret.example/sub/TOKEN" //nolint:gosec // G101: test fixture, asserted never to appear in errors
 	secretPassword := "hunter2-secret-value"
 	secretProxy := "secretpw"
 
@@ -190,27 +191,31 @@ func TestErrorsNeverEchoSecrets(t *testing.T) {
 		}
 	}
 	if err := dup.Validate(); err != nil {
-		if cliErr := err.(*cli.Error); !strings.Contains(cliErr.Message, "duplicates subscriptions[0]") {
+		var cliErr *cli.Error
+		if !errors.As(err, &cliErr) {
+			t.Fatalf("duplicate error type = %T, want *cli.Error", err)
+		}
+		if !strings.Contains(cliErr.Message, "duplicates subscriptions[0]") {
 			t.Errorf("duplicate error should name positions: %q", cliErr.Message)
 		}
 	}
 }
 
 func TestFetchEffectiveMode(t *testing.T) {
-	cases := map[string]string{
-		"":            FetchReserve,
-		FetchReserve:  FetchReserve,
-		FetchProxy:    FetchProxy,
-		FetchDirect:   FetchDirect,
-		"unknown":     FetchReserve,
-		"Proxy":       FetchReserve,
-		" proxy":      FetchReserve,
-		"reserve\n":   FetchReserve,
-		"directional": FetchReserve,
+	cases := []struct{ raw, want string }{
+		{"", FetchReserve},
+		{FetchReserve, FetchReserve},
+		{FetchProxy, FetchProxy},
+		{FetchDirect, FetchDirect},
+		{"unknown", FetchReserve},
+		{"Proxy", FetchReserve},
+		{" proxy", FetchReserve},
+		{"reserve\n", FetchReserve},
+		{"directional", FetchReserve},
 	}
-	for raw, want := range cases {
-		if got := (Fetch{Mode: raw}).EffectiveMode(); got != want {
-			t.Errorf("EffectiveMode(%q) = %q, want %q", raw, got, want)
+	for _, c := range cases {
+		if got := (Fetch{Mode: c.raw}).EffectiveMode(); got != c.want {
+			t.Errorf("EffectiveMode(%q) = %q, want %q", c.raw, got, c.want)
 		}
 	}
 }

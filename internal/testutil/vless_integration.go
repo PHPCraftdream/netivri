@@ -41,7 +41,7 @@ type countWaiter struct {
 	waiters map[int][]chan struct{}
 }
 
-func (w *countWaiter) add() int {
+func (w *countWaiter) add() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.count++
@@ -53,7 +53,6 @@ func (w *countWaiter) add() int {
 			delete(w.waiters, n)
 		}
 	}
-	return w.count
 }
 
 func (w *countWaiter) value() int {
@@ -254,7 +253,7 @@ type EchoDest struct {
 // closed via t.Cleanup.
 func StartEchoDest(t testing.TB) *EchoDest {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen echo dest: %v", err)
 	}
@@ -268,7 +267,7 @@ func StartEchoDest(t testing.TB) *EchoDest {
 			}
 			d.cw.add()
 			go func() {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_, _ = io.Copy(conn, conn)
 			}()
 		}

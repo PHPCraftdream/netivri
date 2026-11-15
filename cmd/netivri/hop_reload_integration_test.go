@@ -19,7 +19,7 @@ import (
 func TestHopReloadCarriesQuarantinedHealthAcrossPoolEdits(t *testing.T) {
 	reserveLoopback := func() string {
 		t.Helper()
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("reserve loopback address: %v", err)
 		}
@@ -84,8 +84,8 @@ func TestHopReloadCarriesQuarantinedHealthAcrossPoolEdits(t *testing.T) {
 	var metadata *core.HopPoolSnapshot
 	for _, snapshot := range inst.SnapshotHopPools() {
 		if snapshot.Role == "post" && snapshot.RouteKey == route && snapshot.Key == key {
-			copy := snapshot
-			metadata = &copy
+			picked := snapshot
+			metadata = &picked
 			break
 		}
 	}

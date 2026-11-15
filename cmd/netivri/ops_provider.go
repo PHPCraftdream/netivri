@@ -250,10 +250,15 @@ func ProviderList(home string) (ProviderListResult, error) {
 	return out, nil
 }
 func ProviderAdd(home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time) (ProviderAddResult, error) {
-	return providerAddWith(home, o, get, now, nil)
+	return providerAddCtx(context.Background(), home, o, get, now)
 }
 
-func providerAddWith(home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time, saveConfig func(string, *config.Config) error) (ProviderAddResult, error) {
+// providerAddCtx is ProviderAdd for a caller that holds a context.
+func providerAddCtx(ctx context.Context, home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time) (ProviderAddResult, error) {
+	return providerAddWith(ctx, home, o, get, now, nil)
+}
+
+func providerAddWith(ctx context.Context, home string, o ProviderAddOptions, get func(context.Context, string, fetch.Options) (*fetch.Result, error), now func() time.Time, saveConfig func(string, *config.Config) error) (ProviderAddResult, error) {
 	if saveConfig == nil {
 		saveConfig = config.Save
 	}
@@ -298,7 +303,7 @@ func providerAddWith(home string, o ProviderAddOptions, get func(context.Context
 			return ProviderAddResult{}, err
 		}
 	}
-	snap, e := fetchSnapshot(context.Background(), get, now, cfg, config.Subscription{Name: name, URL: o.URL, Via: o.Via})
+	snap, e := fetchSnapshot(ctx, get, now, cfg, config.Subscription{Name: name, URL: o.URL, Via: o.Via})
 	if e != nil {
 		return ProviderAddResult{}, e
 	}
@@ -473,11 +478,16 @@ func ProviderCountriesAll(home string) (ProviderCountriesAllResult, error) {
 	return r, nil
 }
 func ProviderCountriesURL(home, rawURL, via string, get func(context.Context, string, fetch.Options) (*fetch.Result, error)) (int, []subscription.CountryCount, int, error) {
+	return providerCountriesURLCtx(context.Background(), home, rawURL, via, get)
+}
+
+// providerCountriesURLCtx is ProviderCountriesURL for a caller that holds a context.
+func providerCountriesURLCtx(ctx context.Context, home, rawURL, via string, get func(context.Context, string, fetch.Options) (*fetch.Result, error)) (int, []subscription.CountryCount, int, error) {
 	cfg, e := loadConfig(home)
 	if e != nil {
 		return 0, nil, 0, e
 	}
-	res, e := get(context.Background(), rawURL, fetchOptions(via, cfg.Fetch))
+	res, e := get(ctx, rawURL, fetchOptions(via, cfg.Fetch))
 	if e != nil {
 		return 0, nil, 0, e
 	}

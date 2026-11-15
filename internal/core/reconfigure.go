@@ -51,19 +51,8 @@ var startWarmForReconfigure = startWarm
 // nothing has changed. Any other error leaves the instance in an undefined
 // routing state; the caller should close it and start a new one.
 func (i *Instance) Reconfigure(o Options) error {
-	if o.AffinityTTL < 0 {
-		return nodeInvalid("affinity TTL is negative")
-	}
-	if o.Node != nil {
-		return ErrReconfigureUnsupported
-	}
-	if o.Warm != nil {
-		if _, err := normalizeWarmOptions(*o.Warm); err != nil {
-			return err
-		}
-	}
-	if len(o.AccountRoute) == 0 && len(o.Servers) == 0 && len(i.Servers()) == 0 && !i.state().rule {
-		return ErrReconfigureUnsupported
+	if err := i.checkReconfigure(o); err != nil {
+		return err
 	}
 
 	lifecycleMu.Lock()
@@ -82,70 +71,62 @@ func (i *Instance) Reconfigure(o Options) error {
 		return i.reconfigureDirect(old, o)
 	}
 	if old.table == nil || i.route != routeDirect || i.poller == nil {
-		if old.table != nil || i.route != routeDirect || len(i.state().accountRoutes) != 0 {
-			return ErrReconfigureUnsupported
-		}
-		if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || o.globalPostActive() {
-			return ErrReconfigureUnsupported
-		}
-		tx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
-		if err != nil {
-			return err
-		}
-		if err := tx.commit(); err != nil {
-			tx.rollback()
-			return err
-		}
-		return nil
+		return i.reconfigureUnrouted(old, o)
 	}
+	return i.reconfigureRouted(old, o)
+}
 
+// checkReconfigure refuses, before any lock is taken, the options that no
+// in-place change can apply.
+func (i *Instance) checkReconfigure(o Options) error {
+	if o.AffinityTTL < 0 {
+		return nodeInvalid("affinity TTL is negative")
+	}
+	if o.Node != nil {
+		return ErrReconfigureUnsupported
+	}
+	if o.Warm != nil {
+		if _, err := normalizeWarmOptions(*o.Warm); err != nil {
+			return err
+		}
+	}
+	if len(o.AccountRoute) == 0 && len(o.Servers) == 0 && len(i.Servers()) == 0 && !i.state().rule {
+		return ErrReconfigureUnsupported
+	}
+	return nil
+}
+
+// reconfigureUnrouted applies o to an instance without sticky groups: only its
+// servers change, and only when o has no route either.
+func (i *Instance) reconfigureUnrouted(old *routingState, o Options) error {
+	if old.table != nil || i.route != routeDirect || len(old.accountRoutes) != 0 {
+		return ErrReconfigureUnsupported
+	}
+	if len(o.AccountRoute) != 0 || len(o.RouteNodes) != 0 || len(o.RoutePre) != 0 || len(o.RoutePost) != 0 || o.globalPostActive() {
+		return ErrReconfigureUnsupported
+	}
+	tx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
+	if err != nil {
+		return err
+	}
+	if err := tx.commit(); err != nil {
+		tx.rollback()
+		return err
+	}
+	return nil
+}
+
+// reconfigureRouted applies o to an instance with sticky groups: the next
+// routing generation is built first, then published in one step.
+func (i *Instance) reconfigureRouted(old *routingState, o Options) error {
 	// Everything that can fail runs before the instance changes.
 	gen := old.gen + 1
-	rawProxies, rawGroups, rawRules, err := prepareRoutesGen(o, gen)
+	g, err := buildRouteGeneration(o, gen)
 	if err != nil {
 		return err
 	}
-	plans, err := buildRoutePlansGen(o, gen)
-	if err != nil {
-		return err
-	}
-	members, err := parseMembers(rawProxies)
-	if err != nil {
-		return err
-	}
-	names := generationProxyNames(plans, rawProxies, rawGroups)
-	proxies := tunnel.Proxies()
-	// Route members may intentionally use Mihomo's built-in DIRECT adapter.
-	if direct := proxies["DIRECT"]; direct != nil {
-		members["DIRECT"] = direct
-	}
-	known := make(map[string]bool, len(names))
-	for _, name := range names {
-		known[name] = true
-	}
-	rules, err := parseRouteRules(rawRules, func(name string) bool {
-		_, builtin := proxies[name]
-		return known[name] || builtin
-	})
-	if err != nil {
-		return err
-	}
-	for _, plan := range plans {
-		for index, name := range plan.names {
-			if index < len(plan.postPools) && plan.postPools[index] != nil && len(plan.postPools[index].keys) > 1 {
-				continue // parser placeholder; lifecycle installs the real post adapter.
-			}
-			if members[name] == nil {
-				return errors.New("core: missing route member proxy")
-			}
-		}
-	}
-	for _, mapping := range rawProxies {
-		name, _ := mapping["name"].(string)
-		if members[name] == nil {
-			return errors.New("core: missing route helper proxy")
-		}
-	}
+	plans, members, names, rules := g.plans, g.members, g.names, g.rules
+	proxies := g.proxies
 
 	// Stop old probes before carrying their schedules into the next generation.
 	serverTx, err := i.servers.prepare(o.Servers, i.tt, o.AllowedClients, o.AccountAllowedClients)
@@ -168,50 +149,15 @@ func (i *Instance) Reconfigure(o Options) error {
 	// The poller also feeds the nodes that only open connections still use;
 	// their records are made now, before the new groups read the table
 	// without a lock.
-	connLabels := liveConnLabels(managerSource{statistic.DefaultManager}, old.connLabels)
-	connHealthKeys := liveConnHealthKeys(managerSource{statistic.DefaultManager}, old.connHealthKeys, old.connLabels)
-	healthMembers := healthMembersForPlans(plans)
-	for name, label := range connLabels {
-		key := connHealthKeys[name]
-		if key == "" {
-			key = label
-			connHealthKeys[name] = key
-		}
-		var hops hopSet
-		if old.health != nil {
-			hops = old.health.hops[key]
-		}
-		healthMembers = append(healthMembers, healthMember{key: key, label: label, hops: hops})
-	}
-	for name, label := range nameToLabel {
-		connLabels[name] = label
-	}
-	for name, key := range nameToHealthKey {
-		connHealthKeys[name] = key
-	}
-	health := old.health
-	if health != nil {
-		health = carryHealthMembers(old.health, healthMembers, o.OnNodeHealth)
-	} else {
-		health = newHealthTable()
-		health.notify = o.OnNodeHealth
-	}
+	connLabels, connHealthKeys, healthMembers := connTargets(old, plans, nameToLabel, nameToHealthKey)
+	health := carriedHealth(old, healthMembers, o.OnNodeHealth)
 	health.registerMembers(healthMembersForPlans(plans))
 	table := newAffinityTable(nil, o.AffinityTTL)
 	table.setReturnAfter(o.TierReturnAfter)
 	table.carryCounters(old.table)
 	loadInitialBindings(table, plans, o.AccountRoute, sameRouteBindings(old.snapshotBindings(), old.accountRoutes, o.AccountRoute))
-	poolInputs := make(map[string]C.Proxy, len(proxies)+len(members))
-	for name, proxy := range proxies {
-		poolInputs[name] = proxy
-	}
-	for name, proxy := range members {
-		poolInputs[name] = proxy
-	}
-	hopPools := old.hopPools
-	if hopPools == nil {
-		hopPools = newHopPoolLifecycle(o.OnHopEvent)
-	}
+	poolInputs := poolInputsOf(proxies, members)
+	hopPools := hopPoolsFor(old, o)
 	poolMap, poolNames, err := hopPools.installGen(o, plans, poolInputs, health, gen)
 	if err != nil {
 		return err
@@ -221,16 +167,7 @@ func (i *Instance) Reconfigure(o Options) error {
 		return err
 	}
 
-	updated := make(map[string]C.Proxy, len(poolMap)+len(groups))
-	for name, proxy := range poolMap {
-		updated[name] = proxy
-	}
-	for _, name := range old.prevNames {
-		delete(updated, name)
-	}
-	for name, group := range groups {
-		updated[name] = group
-	}
+	updated := updatedProxies(poolMap, groups, old.prevNames)
 	names = append(names, poolNames...)
 	// Proxies before rules: in between, the old rules still find the old
 	// groups, and afterwards the new rules find the new ones.
@@ -244,33 +181,8 @@ func (i *Instance) Reconfigure(o Options) error {
 			warm.Close()
 		}
 	}()
-	if o.Warm != nil {
-		wo := *o.Warm
-		nameToHealthKey := memberNameHealthKeys(plans)
-		wo.OnProbe = probeHookKeys(nameToLabel, nameToHealthKey, nil, o.Observer, o.Warm.OnProbe)
-		wo.OnProbeError = probeErrorHookKeys(nameToLabel, nameToHealthKey, nil, o.Warm.OnProbeError)
-		wo.onProbeGroup = probeGroupHealthHook(nameToHealthKey, health)
-		wo.Down = func(name string) bool { return health.downKey(nameToHealthKey[name]) }
-		wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
-		wo.Idle = fallbackIdle(plans, health)
-		keys := memberProbeKeys(plans, o)
-		wo.Same = func(name string) string { return keys[name] }
-		wo.seed = backoff
-		wo.probeBaseNames = hopPools.baseProbeNames(plans)
-		if len(hopPools.uses) > 0 {
-			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
-			if normalizeErr != nil {
-				return normalizeErr
-			}
-			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
-			if reviveErr != nil {
-				return reviveErr
-			}
-			wo.hopRevive = reviver.Round
-		}
-		if warm, err = startWarmForReconfigure(wo, nil); err != nil {
-			return err
-		}
+	if warm, err = buildReconfigureWarm(o, plans, nameToLabel, health, backoff, hopPools); err != nil {
+		return err
 	}
 
 	if err := serverTx.commit(); err != nil {
@@ -296,6 +208,204 @@ func (i *Instance) Reconfigure(o Options) error {
 	})
 	warmPublished = true
 	return nil
+}
+
+// routeGeneration is the routing of a new generation, built before the
+// instance changes.
+type routeGeneration struct {
+	plans   []routePlan
+	proxies map[string]C.Proxy // Mihomo's proxy map as it is now
+	members map[string]C.Proxy // the parsed member and helper proxies
+	names   []string           // the proxies the generation adds to the map
+	rules   []C.Rule
+}
+
+// buildRouteGeneration plans and parses routing generation gen of o. It changes
+// nothing.
+func buildRouteGeneration(o Options, gen int) (routeGeneration, error) {
+	rawProxies, rawGroups, rawRules, err := prepareRoutesGen(o, gen)
+	if err != nil {
+		return routeGeneration{}, err
+	}
+	plans, err := buildRoutePlansGen(o, gen)
+	if err != nil {
+		return routeGeneration{}, err
+	}
+	members, err := parseMembers(rawProxies)
+	if err != nil {
+		return routeGeneration{}, err
+	}
+	names := generationProxyNames(plans, rawProxies, rawGroups)
+	proxies := tunnel.Proxies()
+	// Route members may intentionally use Mihomo's built-in DIRECT adapter.
+	if direct := proxies["DIRECT"]; direct != nil {
+		members["DIRECT"] = direct
+	}
+	known := make(map[string]bool, len(names))
+	for _, name := range names {
+		known[name] = true
+	}
+	rules, err := parseRouteRules(rawRules, func(name string) bool {
+		_, builtin := proxies[name]
+		return known[name] || builtin
+	})
+	if err != nil {
+		return routeGeneration{}, err
+	}
+	if err := checkGenerationMembers(plans, rawProxies, members); err != nil {
+		return routeGeneration{}, err
+	}
+	return routeGeneration{plans: plans, proxies: proxies, members: members, names: names, rules: rules}, nil
+}
+
+// checkGenerationMembers checks that every member and helper proxy of a
+// generation has been parsed.
+func checkGenerationMembers(plans []routePlan, rawProxies []map[string]any, members map[string]C.Proxy) error {
+	for _, plan := range plans {
+		for index, name := range plan.names {
+			if index < len(plan.postPools) && plan.postPools[index] != nil && len(plan.postPools[index].keys) > 1 {
+				continue // parser placeholder; lifecycle installs the real post adapter.
+			}
+			if members[name] == nil {
+				return errors.New("core: missing route member proxy")
+			}
+		}
+	}
+	for _, mapping := range rawProxies {
+		name, _ := mapping["name"].(string)
+		if members[name] == nil {
+			return errors.New("core: missing route helper proxy")
+		}
+	}
+	return nil
+}
+
+// connTargets returns the poller targets of a new generation: the nodes that
+// only open connections still use, then the planned members. healthMembers
+// carries the health of the former into the new table.
+func connTargets(old *routingState, plans []routePlan, nameToLabel, nameToHealthKey map[string]string) (connLabels, connHealthKeys map[string]string, healthMembers []healthMember) {
+	// The poller also feeds the nodes that only open connections still use;
+	// their records are made now, before the new groups read the table
+	// without a lock.
+	connLabels = liveConnLabels(managerSource{statistic.DefaultManager}, old.connLabels)
+	connHealthKeys = liveConnHealthKeys(managerSource{statistic.DefaultManager}, old.connHealthKeys, old.connLabels)
+	healthMembers = healthMembersForPlans(plans)
+	for name, label := range connLabels {
+		key := connHealthKeys[name]
+		if key == "" {
+			key = label
+			connHealthKeys[name] = key
+		}
+		var hops hopSet
+		if old.health != nil {
+			hops = old.health.hops[key]
+		}
+		healthMembers = append(healthMembers, healthMember{key: key, label: label, hops: hops})
+	}
+	for name, label := range nameToLabel {
+		connLabels[name] = label
+	}
+	for name, key := range nameToHealthKey {
+		connHealthKeys[name] = key
+	}
+	return connLabels, connHealthKeys, healthMembers
+}
+
+// carriedHealth is the health table of a new generation: the old one with
+// healthMembers carried over, or a new one when there was none.
+func carriedHealth(old *routingState, healthMembers []healthMember, notify func(NodeEvent)) *healthTable {
+	if old.health != nil {
+		return carryHealthMembers(old.health, healthMembers, notify)
+	}
+	health := newHealthTable()
+	health.notify = notify
+	return health
+}
+
+// hopPoolsFor is the hop pool lifecycle that carries over from old, or a new one.
+func hopPoolsFor(old *routingState, o Options) *hopPoolLifecycle {
+	if old.hopPools != nil {
+		return old.hopPools
+	}
+	return newHopPoolLifecycle(o.OnHopEvent)
+}
+
+// poolInputsOf is the proxy map the pool lifecycle reads: Mihomo's proxies and
+// the members of the generation.
+func poolInputsOf(proxies, members map[string]C.Proxy) map[string]C.Proxy {
+	inputs := make(map[string]C.Proxy, len(proxies)+len(members))
+	for name, proxy := range proxies {
+		inputs[name] = proxy
+	}
+	for name, proxy := range members {
+		inputs[name] = proxy
+	}
+	return inputs
+}
+
+// updatedProxies is the proxy map to publish: the pool proxies and the sticky
+// groups, without the proxies of the generation before last.
+func updatedProxies(poolMap, groups map[string]C.Proxy, prevNames []string) map[string]C.Proxy {
+	updated := make(map[string]C.Proxy, len(poolMap)+len(groups))
+	for name, proxy := range poolMap {
+		updated[name] = proxy
+	}
+	for _, name := range prevNames {
+		delete(updated, name)
+	}
+	for name, group := range groups {
+		updated[name] = group
+	}
+	return updated
+}
+
+// buildReconfigureWarm starts the warmer of a new sticky generation, or returns
+// nil without Options.Warm.
+func buildReconfigureWarm(o Options, plans []routePlan, nameToLabel map[string]string, health *healthTable, backoff map[string]probeSchedule, hopPools *hopPoolLifecycle) (*warmer, error) {
+	if o.Warm == nil {
+		return nil, nil
+	}
+	wo := *o.Warm
+	planProbeHooks(&wo, o, plans, nameToLabel, health)
+	wo.only = func(name string) bool { return generatedMemberName(name) && nameToLabel[name] != "" }
+	wo.seed = backoff
+	wo.probeBaseNames = hopPools.baseProbeNames(plans)
+	wo, err := reviveWarmOptions(hopPools, wo)
+	if err != nil {
+		return nil, err
+	}
+	return startWarmForReconfigure(wo, nil)
+}
+
+// planProbeHooks routes the probe results of the plans to the health table and
+// the observer, and feeds the down state and the idle schedule back into the
+// probes. o.Warm must be set.
+func planProbeHooks(wo *WarmOptions, o Options, plans []routePlan, nameToLabel map[string]string, health *healthTable) {
+	nameToHealthKey := memberNameHealthKeys(plans)
+	wo.OnProbe = probeHookKeys(nameToLabel, nameToHealthKey, nil, o.Observer, o.Warm.OnProbe)
+	wo.OnProbeError = probeErrorHookKeys(nameToLabel, nameToHealthKey, nil, o.Warm.OnProbeError)
+	wo.onProbeGroup = probeGroupHealthHook(nameToHealthKey, health)
+	wo.Down = func(name string) bool { return health.downKey(nameToHealthKey[name]) }
+	wo.Idle = fallbackIdle(plans, health)
+	keys := memberProbeKeys(plans, o)
+	wo.Same = func(name string) string { return keys[name] }
+}
+
+// reviveWarmOptions sets the hop revive of wo when a hop pool is in use.
+func reviveWarmOptions(hopPools *hopPoolLifecycle, wo WarmOptions) (WarmOptions, error) {
+	if len(hopPools.uses) == 0 {
+		return wo, nil
+	}
+	normalized, err := normalizeWarmOptions(wo)
+	if err != nil {
+		return wo, err
+	}
+	reviver, err := hopPools.newReviver(normalized)
+	if err != nil {
+		return wo, err
+	}
+	wo.hopRevive = reviver.Round
+	return wo, nil
 }
 
 // hasNodeRoute reports whether any account route of o is backed by nodes.
@@ -369,17 +479,8 @@ func (i *Instance) reconfigureDirect(old *routingState, o Options) error {
 		}
 	}()
 	old.warm.Close()
-	poolInputs := make(map[string]C.Proxy, len(proxies)+len(members))
-	for name, proxy := range proxies {
-		poolInputs[name] = proxy
-	}
-	for name, proxy := range members {
-		poolInputs[name] = proxy
-	}
-	hopPools := old.hopPools
-	if hopPools == nil {
-		hopPools = newHopPoolLifecycle(o.OnHopEvent)
-	}
+	poolInputs := poolInputsOf(proxies, members)
+	hopPools := hopPoolsFor(old, o)
 	poolMap, poolNames, err := hopPools.installGen(o, nil, poolInputs, nil, gen)
 	if err != nil {
 		return err
@@ -403,16 +504,8 @@ func (i *Instance) reconfigureDirect(old *routingState, o Options) error {
 		wo := *o.Warm
 		wo.only = matchProbeFilter(o, gen)
 		wo.probeBaseNames = hopPools.baseProbeNames(nil)
-		if len(hopPools.uses) > 0 {
-			normalizedWarm, normalizeErr := normalizeWarmOptions(wo)
-			if normalizeErr != nil {
-				return normalizeErr
-			}
-			reviver, reviveErr := hopPools.newReviver(normalizedWarm)
-			if reviveErr != nil {
-				return reviveErr
-			}
-			wo.hopRevive = reviver.Round
+		if wo, err = reviveWarmOptions(hopPools, wo); err != nil {
+			return err
 		}
 		if warm, err = startWarmForReconfigure(wo, nil); err != nil {
 			return err
@@ -491,7 +584,14 @@ func sameRouteBindings(records []BindingRecord, oldRoutes, newRoutes map[string]
 
 // planLabels lists the node labels of every plan, in plan and member order.
 func planLabels(plans []routePlan) []string {
+	total := 0
+	for _, plan := range plans {
+		total += len(plan.labels)
+	}
 	var labels []string
+	if total > 0 {
+		labels = make([]string, 0, total)
+	}
 	for _, plan := range plans {
 		labels = append(labels, plan.labels...)
 	}

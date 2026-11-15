@@ -19,7 +19,7 @@ func runInteractiveBinary(t *testing.T, home string, args ...string) (int, strin
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), e2eFirstLineTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, netivriBin, args...)
+	cmd := exec.CommandContext(ctx, netivriBin, args...) //nolint:gosec // G204: args are built by the test, binary built by TestMain
 	cmd.Stdin = strings.NewReader("")
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home, "NETIVRI_OUTPUT=ktav")
 	var stdout, stderr bytes.Buffer

@@ -43,7 +43,7 @@ func TestProvidersFilterWalkKeepsInputInList(t *testing.T) {
 		config.Subscription{Name: "arqnet", URL: "https://arq.invalid"},
 		config.Subscription{Name: "rune", URL: "https://rune.invalid"},
 	)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 
@@ -98,7 +98,7 @@ func TestProvidersFilterWalkKeepsInputInList(t *testing.T) {
 }
 
 func TestAccountsFilterWalkKeepsInputInList(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", Provider: "p"}, {Login: "arnold", Provider: "p"}, {Login: "bob", Provider: "p"}}
 	s.syncRows("alice")
 	s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
@@ -162,7 +162,7 @@ func TestAccountsFrameSlashQDoesNotQuit(t *testing.T) {
 	var screen *accountsScreen
 	frame := tui.NewFrame(tui.Options{
 		Tabs: []tui.Tab{{Title: "Accounts", New: func(env tui.Env) tui.Screen {
-			screen = newAccountsScreen(env.Home, env).(*accountsScreen)
+			screen = mustAs[*accountsScreen](t, newAccountsScreen(env.Home, env))
 			return screen
 		}}},
 	})
@@ -188,7 +188,7 @@ func TestProvidersListResultSelectHiddenRowClearsFilter(t *testing.T) {
 		config.Subscription{Name: "beta", URL: "https://beta.invalid"},
 		config.Subscription{Name: "gamma", URL: "https://gamma.invalid"},
 	)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	pl := ProviderListResult{Providers: []ProviderInfo{{Name: "alpha"}, {Name: "beta"}, {Name: "gamma"}}}
 	// Only beta matches the filter, so pendingSelect=gamma is hidden.
@@ -213,7 +213,7 @@ func TestProvidersListResultSelectVisibleRowKeepsFilter(t *testing.T) {
 		config.Subscription{Name: "beta", URL: "https://beta.invalid"},
 		config.Subscription{Name: "gamma", URL: "https://gamma.invalid"},
 	)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	pl := ProviderListResult{Providers: []ProviderInfo{{Name: "alpha"}, {Name: "beta"}, {Name: "gamma"}}}
 	s.list.Filter, s.list.Filtering = "beta", true
@@ -235,7 +235,7 @@ func TestProvidersListResultSelectVisibleRowKeepsFilter(t *testing.T) {
 }
 
 func TestAccountsSyncRowsSelectUnderFilter(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", Provider: "p"}, {Login: "arnold", Provider: "p"}, {Login: "bob", Provider: "p"}}
 	s.syncRows("alice")
 	// Only alice matches; arnold is hidden, so syncRows must clear the filter.

@@ -18,6 +18,15 @@ func decodeEnvelope(t *testing.T, buf *bytes.Buffer) map[string]any {
 	return m
 }
 
+func errorObject(t *testing.T, m map[string]any) map[string]any {
+	t.Helper()
+	errObj, ok := m["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("error = %T, want map[string]any", m["error"])
+	}
+	return errObj
+}
+
 func TestSuccessEnvelopeShape(t *testing.T) {
 	var buf bytes.Buffer
 	Success(&buf, map[string]string{"version": "1"})
@@ -83,7 +92,7 @@ func TestErrorEnvelopeHintPresent(t *testing.T) {
 	e := &Error{Code: "AUTH_REQUIRED", Message: "m", Hint: "h", Exit: ExitUsage}
 	Render(&buf, e)
 	m := decodeEnvelope(t, &buf)
-	errObj := m["error"].(map[string]any)
+	errObj := errorObject(t, m)
 	if errObj["hint"] != "h" {
 		t.Errorf("hint = %v, want h", errObj["hint"])
 	}
@@ -96,7 +105,7 @@ func TestRenderPlainErrorBecomesInternal(t *testing.T) {
 		t.Errorf("exit = %d, want %d", code, ExitInternal)
 	}
 	m := decodeEnvelope(t, &buf)
-	errObj := m["error"].(map[string]any)
+	errObj := errorObject(t, m)
 	if errObj["code"] != "INTERNAL" {
 		t.Errorf("code = %v, want INTERNAL", errObj["code"])
 	}
@@ -113,7 +122,7 @@ func TestRenderWrappedErrorKeepsCode(t *testing.T) {
 		t.Errorf("exit = %d, want %d", code, ExitNetwork)
 	}
 	m := decodeEnvelope(t, &buf)
-	errObj := m["error"].(map[string]any)
+	errObj := errorObject(t, m)
 	if errObj["code"] != "NODE_UNREACHABLE" {
 		t.Errorf("wrapped *Error must keep its code, got %v", errObj["code"])
 	}
@@ -168,14 +177,17 @@ func TestExitCodeConstants(t *testing.T) {
 // fakeDumps renders a map as "key: value" lines, enough to see what the
 // envelope hands to the Ktav renderer.
 func fakeDumps(v any) (string, error) {
-	m := v.(map[string]any)
-	var out string
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("fakeDumps: value is %T, want map[string]any", v)
+	}
+	var out strings.Builder
 	for _, k := range []string{"data", "error"} {
 		if x, ok := m[k]; ok {
-			out += fmt.Sprintf("%s: %v\n", k, x)
+			_, _ = fmt.Fprintf(&out, "%s: %v\n", k, x)
 		}
 	}
-	return out, nil
+	return out.String(), nil
 }
 
 func TestKtavSuccessStartsWithTheFixedKeys(t *testing.T) {

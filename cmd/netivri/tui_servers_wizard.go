@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -9,10 +10,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -83,14 +85,18 @@ func (d *serversDialog) View(w, h int) string {
 func (d *serversDialog) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 	if d.modal != nil {
 		m, c := d.modal.Update(msg)
-		d.modal = m.(*serversMenuModal)
+		if mm, ok := m.(*serversMenuModal); ok {
+			d.modal = mm
+		}
 		return d, c
 	}
 	if d.wizard != nil {
 		return d.updateWizard(msg)
 	}
 	m, c := d.prompt.Update(msg)
-	d.prompt = m.(*tui.Prompt)
+	if pr, ok := m.(*tui.Prompt); ok {
+		d.prompt = pr
+	}
 	if c != nil {
 		return d, func() tea.Msg {
 			v := c()
@@ -104,7 +110,9 @@ func (d *serversDialog) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 }
 func (d *serversDialog) updateWizard(msg tea.Msg) (tui.Modal, tea.Cmd) {
 	m, c := d.wizard.Update(msg)
-	d.wizard = m.(*tui.Wizard)
+	if w, ok := m.(*tui.Wizard); ok {
+		d.wizard = w
+	}
 	var out tea.Cmd
 	if c != nil {
 		out = func() tea.Msg {
@@ -131,7 +139,9 @@ func (d *serversDialog) updateWizard(msg tea.Msg) (tui.Modal, tea.Cmd) {
 			break
 		}
 		m2, _ := d.wizard.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		d.wizard = m2.(*tui.Wizard)
+		if w, ok := m2.(*tui.Wizard); ok {
+			d.wizard = w
+		}
 	}
 	return d, out
 }
@@ -162,10 +172,10 @@ func newServersMenuModal(theme tui.Theme, title string, lines []string, labels [
 	return &serversMenuModal{title: title, lines: lines, buttons: tui.Buttons{Labels: labels, Focus: focus}, onPick: onPick, theme: theme}
 }
 func newServersLinkModal(theme tui.Theme, name, link, format string) *serversMenuModal {
-	lines := []string{"", "The link below contains credentials and is shown in plain text.", "", "Server: " + name}
-	for _, l := range strings.Split(link, "\n") {
-		lines = append(lines, l)
-	}
+	linkLines := strings.Split(link, "\n")
+	lines := make([]string, 0, 6+len(linkLines))
+	lines = append(lines, "", "The link below contains credentials and is shown in plain text.", "", "Server: "+name)
+	lines = append(lines, linkLines...)
 	lines = append(lines, "", "Clear the link from your scrollback after copying.")
 	title := "Client link · " + name
 	if format == "mihomo" {
@@ -210,9 +220,10 @@ func (m *serversMenuModal) Update(msg tea.Msg) (tui.Modal, tea.Cmd) {
 		return m, nil
 	}
 	if wl, ok := msg.(tea.MouseWheelMsg); ok {
-		if wl.Button == tea.MouseWheelUp {
+		switch wl.Button {
+		case tea.MouseWheelUp:
 			m.scroll(-1)
-		} else if wl.Button == tea.MouseWheelDown {
+		case tea.MouseWheelDown:
 			m.scroll(1)
 		}
 		return m, nil
@@ -230,7 +241,7 @@ func (m *serversMenuModal) scroll(d int) {
 	m.offset = max(0, min(max(0, len(body)-slots), m.offset+d))
 }
 func (m *serversMenuModal) wrappedBody(w int) []string {
-	var body []string
+	body := make([]string, 0, len(m.lines))
 	for _, l := range m.lines {
 		body = append(body, serversWrapLine(l, w)...)
 	}
@@ -256,7 +267,7 @@ func (m *serversMenuModal) View(w, h int) string {
 		m.offset = max(0, min(m.offset, len(body)-slots))
 		first, last := m.offset+1, min(m.offset+slots, len(body))
 		put(indicator, fmt.Sprintf("lines %d-%d of %d · ↑/↓ scroll", first, last, len(body)))
-		for i := 0; i < slots; i++ {
+		for i := range slots {
 			put(2+i, body[m.offset+i])
 		}
 	} else {
@@ -350,7 +361,7 @@ func newServerWizard(s *serversScreen, protocol string, keep map[string]string) 
 	}
 	protos := ServerProtocols()
 	proto, hasProto := serverProtocolByName(protocol)
-	opts := []tui.PromptOption{}
+	opts := make([]tui.PromptOption, 0, len(protos))
 	for _, p := range protos {
 		opts = append(opts, tui.PromptOption{Label: p.Label, Value: p.Name, Description: serversSafeDetailValue(p.Description) + " · " + p.Transport})
 	}
@@ -443,12 +454,12 @@ func serverParamStep(p ServerParameter, shared func(string, string) string) tui.
 		if current != "" {
 			prompt := tui.NewPrompt(tui.NumberPrompt, title, p.Label, serversSafeDetailValue(p.Description), current)
 			if p.Min > 0 {
-				min := p.Min
-				prompt.Min = &min
+				lo := p.Min
+				prompt.Min = &lo
 			}
 			if p.Max > 0 {
-				max := p.Max
-				prompt.Max = &max
+				hi := p.Max
+				prompt.Max = &hi
 			}
 			return tui.WizardStep{Key: key, Prompt: prompt}
 		}
@@ -473,7 +484,7 @@ func serverParamStep(p ServerParameter, shared func(string, string) string) tui.
 func serverPortConflicts(home, protocol, bind string, port int) error {
 	c, e := loadConfig(home)
 	if e != nil {
-		return nil
+		return nil //nolint:nilerr // an unreadable config has no port conflicts to report; the config load reports it
 	}
 	entry := config.Server{Protocol: protocol, Bind: strings.TrimSpace(bind), Port: port}
 	if entry.Bind == "" {
@@ -489,12 +500,16 @@ func serverPickPortAddress(bind string) string {
 	return net.JoinHostPort(host, "0")
 }
 func serverPickPort(bind string) (int, error) {
-	l, e := net.Listen("tcp", serverPickPortAddress(bind))
+	l, e := (&net.ListenConfig{}).Listen(context.Background(), "tcp", serverPickPortAddress(bind))
 	if e != nil {
 		return 0, &cli.Error{Code: "CONFIG_INVALID", Message: "could not find a free port", Hint: "set the port manually and try again", Exit: cli.ExitUsage}
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	defer func() { _ = l.Close() }()
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, &cli.Error{Code: "CONFIG_INVALID", Message: "could not find a free port", Hint: "set the port manually and try again", Exit: cli.ExitUsage}
+	}
+	return addr.Port, nil
 }
 
 func serverAddOptionsFromWizard(v map[string]string) ServerAddOptions {
@@ -611,8 +626,8 @@ func (s *serversScreen) openServerFieldEdit(name, id string) tea.Cmd {
 		p = tui.NewPrompt(tui.TextPrompt, title+" · Bind", "Bind address", "Address to listen on.", v.Bind)
 	case id == "port":
 		p = tui.NewPrompt(tui.NumberPrompt, title+" · Port", "Port", "Port to listen on.", strconv.Itoa(v.Port))
-		min, max := 1, 65535
-		p.Min, p.Max = &min, &max
+		lo, hi := 1, 65535
+		p.Min, p.Max = &lo, &hi
 	case id == "publichost":
 		p = tui.NewPrompt(tui.TextPrompt, title+" · Public host", "Public host", "Host advertised in generated links; leave empty for none.", v.PublicHost)
 	case id == "accounts":
@@ -647,19 +662,19 @@ func (s *serversScreen) openServerFieldEdit(name, id string) tea.Cmd {
 			return nil
 		}
 		o := ServerUpdateOptions{}
-		switch {
-		case id == "bind":
+		switch id {
+		case "bind":
 			o.Bind = &x
-		case id == "port":
+		case "port":
 			n, e := strconv.Atoi(x)
 			if e != nil {
 				s.dialog = nil
 				return nil
 			}
 			o.Port = &n
-		case id == "publichost":
+		case "publichost":
 			o.PublicHost = &x
-		case id == "accounts":
+		case "accounts":
 			o.Accounts = &x
 		default:
 			o.Params = map[string]string{strings.TrimPrefix(id, serverParamPrefix): x}
@@ -694,17 +709,17 @@ func serverFieldPrompt(title string, sp ServerParameter, current string) *tui.Pr
 		if val != "" {
 			p := tui.NewPrompt(tui.NumberPrompt, title+" · "+label, label, serversSafeDetailValue(sp.Description), val)
 			if sp.Min > 0 {
-				min := sp.Min
-				p.Min = &min
+				lo := sp.Min
+				p.Min = &lo
 			}
 			if sp.Max > 0 {
-				max := sp.Max
-				p.Max = &max
+				hi := sp.Max
+				p.Max = &hi
 			}
 			return p
 		}
 		p := tui.NewPrompt(tui.TextPrompt, title+" · "+label, label, serversSafeDetailValue(sp.Description)+" Leave empty for the protocol default.", "")
-		min, mx := sp.Min, sp.Max
+		lo, mx := sp.Min, sp.Max
 		p.Validate = func(v string) error {
 			if v == "" {
 				return nil
@@ -713,8 +728,8 @@ func serverFieldPrompt(title string, sp ServerParameter, current string) *tui.Pr
 			if e != nil {
 				return errors.New("enter a whole number")
 			}
-			if min > 0 && n < min {
-				return errors.New("must be at least " + strconv.Itoa(min))
+			if lo > 0 && n < lo {
+				return errors.New("must be at least " + strconv.Itoa(lo))
 			}
 			if mx > 0 && n > mx {
 				return errors.New("must be at most " + strconv.Itoa(mx))

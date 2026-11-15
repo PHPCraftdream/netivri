@@ -45,7 +45,7 @@ func startInstance(t *testing.T, authenticator auth.Authenticator) *Instance {
 // echoServer starts a TCP echo backend on 127.0.0.1:0 and returns its address.
 func echoServer(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("echo listen: %v", err)
 	}
@@ -67,7 +67,7 @@ func echoServer(t *testing.T) string {
 
 func dialProxy(t *testing.T, addr string) net.Conn {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, testTimeout)
+	c, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)
 	}
@@ -103,9 +103,10 @@ func echoRoundTrip(t *testing.T, w io.Writer, r io.Reader) {
 // returns the 2-byte auth reply.
 func socks5SendAuth(t *testing.T, c net.Conn, user, pass string) []byte {
 	t.Helper()
-	buf := []byte{1, byte(len(user))}
+	buf := make([]byte, 0, 2+len(user)+1+len(pass))
+	buf = append(buf, 1, toByte(t, len(user)))
 	buf = append(buf, user...)
-	buf = append(buf, byte(len(pass)))
+	buf = append(buf, toByte(t, len(pass)))
 	buf = append(buf, pass...)
 	if _, err := c.Write(buf); err != nil {
 		t.Fatalf("socks5 auth write: %v", err)
@@ -130,7 +131,7 @@ func socks5ConnectRequest(t *testing.T, c net.Conn, target string) {
 	} else {
 		t.Fatalf("target %q is not an IPv4 literal", target)
 	}
-	req[8], req[9] = byte(port>>8), byte(port)
+	req[8], req[9] = toByte(t, port>>8), toByte(t, port)
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("socks5 request write: %v", err)
 	}
@@ -173,7 +174,7 @@ func socks5ConnectNoAuth(t *testing.T, proxyAddr, target string) net.Conn {
 func socks4Connect(t *testing.T, proxyAddr, targetIP, targetHost string, port int, user string) (net.Conn, byte) {
 	t.Helper()
 	c := dialProxy(t, proxyAddr)
-	req := []byte{4, 1, byte(port >> 8), byte(port), 0, 0, 0, 0}
+	req := []byte{4, 1, toByte(t, port>>8), toByte(t, port), 0, 0, 0, 0}
 	if targetHost != "" {
 		req[4], req[5], req[6], req[7] = 0, 0, 0, 1
 	} else {
@@ -244,7 +245,7 @@ func proxyHTTPClient(t *testing.T, proxyURL string) *http.Client {
 // return (or for inst.done) first, so a single dial is enough, no polling.
 func assertPortClosed(t *testing.T, addr string) {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", addr, testTimeout)
+	c, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", addr)
 	if err == nil {
 		_ = c.Close()
 		t.Fatalf("port %s still accepts connections after Close", addr)
@@ -255,7 +256,7 @@ func TestMixedPortSocks5ConnectNoAuth(t *testing.T) {
 	inst := startInstance(t, nil)
 	backend := echoServer(t)
 	c := socks5ConnectNoAuth(t, inst.Addr(), backend)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, c)
 }
 
@@ -263,7 +264,7 @@ func TestMixedPortHTTPConnectSamePort(t *testing.T) {
 	inst := startInstance(t, nil)
 	backend := echoServer(t)
 	c, br := httpConnect(t, inst.Addr(), backend, "")
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, br)
 }
 
@@ -273,7 +274,7 @@ func TestMixedPortAllProtocolsOneInstance(t *testing.T) {
 	inst := startInstance(t, nil)
 	backend := echoServer(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "one-port-body")
+		_, _ = fmt.Fprint(w, "one-port-body")
 	}))
 	t.Cleanup(ts.Close)
 
@@ -283,11 +284,11 @@ func TestMixedPortAllProtocolsOneInstance(t *testing.T) {
 	c2, br := httpConnect(t, inst.Addr(), backend, "")
 	echoRoundTrip(t, c2, br)
 
-	resp, err := proxyHTTPClient(t, "http://"+inst.Addr()).Get(ts.URL + "/x")
+	resp, err := getWithContext(t, proxyHTTPClient(t, "http://"+inst.Addr()), ts.URL+"/x")
 	if err != nil {
 		t.Fatalf("GET via proxy: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil || string(body) != "one-port-body" {
 		t.Fatalf("body = %q, err = %v, want one-port-body", body, err)
@@ -300,16 +301,16 @@ func TestMixedPortAllProtocolsOneInstance(t *testing.T) {
 func TestMixedPortPlainHTTPGet(t *testing.T) {
 	inst := startInstance(t, nil)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "netivri-body")
+		_, _ = fmt.Fprint(w, "netivri-body")
 	}))
 	t.Cleanup(ts.Close)
 
 	client := proxyHTTPClient(t, "http://"+inst.Addr())
-	resp, err := client.Get(ts.URL + "/hello")
+	resp, err := getWithContext(t, client, ts.URL+"/hello")
 	if err != nil {
 		t.Fatalf("GET via proxy: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
@@ -337,7 +338,7 @@ func TestMixedPortSocks4(t *testing.T) {
 
 	t.Run("socks4-ip-literal", func(t *testing.T) {
 		c, code := socks4Connect(t, inst.Addr(), ip, "", port, "tester")
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if code != 90 {
 			t.Fatalf("socks4 reply code = %d, want 90 (granted)", code)
 		}
@@ -349,7 +350,7 @@ func TestMixedPortSocks4(t *testing.T) {
 	// ambiguity), but the 4a parsing path is still exercised.
 	t.Run("socks4a-hostname", func(t *testing.T) {
 		c, code := socks4Connect(t, inst.Addr(), "", ip, port, "tester")
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if code != 90 {
 			t.Fatalf("socks4a reply code = %d, want 90 (granted)", code)
 		}
@@ -378,7 +379,7 @@ func TestMixedPortAuth(t *testing.T) {
 
 	t.Run("socks5-username-password-ok", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if _, err := c.Write([]byte{5, 1, 2}); err != nil {
 			t.Fatalf("greeting write: %v", err)
 		}
@@ -396,7 +397,7 @@ func TestMixedPortAuth(t *testing.T) {
 
 	t.Run("socks5-wrong-password", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if _, err := c.Write([]byte{5, 1, 2}); err != nil {
 			t.Fatalf("greeting write: %v", err)
 		}
@@ -415,7 +416,7 @@ func TestMixedPortAuth(t *testing.T) {
 	// is a protocol mismatch, and the server never reaches a CONNECT.
 	t.Run("socks5-noauth-offer-refused", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if _, err := c.Write([]byte{5, 1, 0}); err != nil {
 			t.Fatalf("greeting write: %v", err)
 		}
@@ -427,15 +428,15 @@ func TestMixedPortAuth(t *testing.T) {
 
 	t.Run("http-correct-credentials", func(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Fprint(w, "authed-body")
+			_, _ = fmt.Fprint(w, "authed-body")
 		}))
 		t.Cleanup(ts.Close)
 		client := proxyHTTPClient(t, "http://"+user+":"+pass+"@"+addr)
-		resp, err := client.Get(ts.URL + "/secure")
+		resp, err := getWithContext(t, client, ts.URL+"/secure")
 		if err != nil {
 			t.Fatalf("GET via proxy with credentials: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatalf("read body: %v", err)
@@ -452,11 +453,11 @@ func TestMixedPortAuth(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 		t.Cleanup(ts.Close)
 		client := proxyHTTPClient(t, "http://"+addr)
-		resp, err := client.Get(ts.URL + "/secure")
+		resp, err := getWithContext(t, client, ts.URL+"/secure")
 		if err != nil {
 			t.Fatalf("GET via proxy without credentials: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode != http.StatusProxyAuthRequired {
 			t.Fatalf("status = %d, want 407", resp.StatusCode)
@@ -472,11 +473,11 @@ func TestMixedPortAuth(t *testing.T) {
 		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 		t.Cleanup(ts.Close)
 		client := proxyHTTPClient(t, "http://"+user+":not-the-password@"+addr)
-		resp, err := client.Get(ts.URL + "/secure")
+		resp, err := getWithContext(t, client, ts.URL+"/secure")
 		if err != nil {
 			t.Fatalf("GET via proxy with wrong credentials: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403", resp.StatusCode)
@@ -487,7 +488,7 @@ func TestMixedPortAuth(t *testing.T) {
 	// invalid, so Mihomo grants with code 93 (identd mismatch) and closes.
 	t.Run("socks4-rejected-when-auth-enabled", func(t *testing.T) {
 		c, code := socks4Connect(t, addr, ip, "", port, "tester")
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if code != 93 {
 			t.Fatalf("socks4 reply code = %d, want 93 (identd mismatch / rejected)", code)
 		}
@@ -522,12 +523,16 @@ func TestMixedPortLifecycle(t *testing.T) {
 
 	// A port held by another listener: PORT_IN_USE / ExitConflict, and the
 	// failed Start must not keep the claim.
-	held, err := net.Listen("tcp", "127.0.0.1:0")
+	held, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("hold port: %v", err)
 	}
 	t.Cleanup(func() { _ = held.Close() })
-	heldPort := held.Addr().(*net.TCPAddr).Port
+	heldAddr, ok := held.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("held listener address is %T, want *net.TCPAddr", held.Addr())
+	}
+	heldPort := heldAddr.Port
 	_, err = Start(context.Background(), Options{HomeDir: home, Port: heldPort})
 	var cliErr *cli.Error
 	if !errors.As(err, &cliErr) {
@@ -547,7 +552,7 @@ func TestMixedPortLifecycle(t *testing.T) {
 	if addr2 == "" {
 		t.Fatal("restarted instance has empty address")
 	}
-	c, err := net.DialTimeout("tcp", addr2, testTimeout)
+	c, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", addr2)
 	if err != nil {
 		t.Fatalf("dial restarted instance: %v", err)
 	}
@@ -569,7 +574,7 @@ func TestMixedPortRobustness(t *testing.T) {
 	backend := echoServer(t)
 
 	// Connect and immediately close: the server must survive.
-	c0, err := net.DialTimeout("tcp", addr, testTimeout)
+	c0, err := (&net.Dialer{Timeout: testTimeout}).DialContext(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -596,6 +601,6 @@ func TestMixedPortRobustness(t *testing.T) {
 
 	// A normal request still works afterwards.
 	c := socks5ConnectNoAuth(t, addr, backend)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, c)
 }

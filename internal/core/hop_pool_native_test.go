@@ -47,7 +47,7 @@ type nativeLoopbackProxy struct {
 
 func newNativeLoopbackProxy(t *testing.T, scheme string) *nativeLoopbackProxy {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,9 +138,10 @@ func (p *nativeLoopbackProxy) handleSOCKS(conn net.Conn) {
 	}
 	rep := byte(0)
 	if mode == nativeProxyREP {
-		rep = byte(p.rep.Load())
+		rep = mustByte(int(p.rep.Load()))
 	}
-	response := []byte{5, rep, 0, 1, 127, 0, 0, 1, 0, 1}
+	response := make([]byte, 0, 10+len(p.welcome))
+	response = append(response, 5, rep, 0, 1, 127, 0, 0, 1, 0, 1)
 	response = append(response, p.welcome...)
 	if _, err := conn.Write(response); err != nil {
 		return
@@ -411,7 +412,7 @@ func TestNativePostPoolSuccessThroughCarrier(t *testing.T) {
 				t.Fatal("native post request did not preserve the site target")
 			}
 			host, port, user, metadataType, network := carrier.lastMetadata()
-			if host != parsed.Hostname() || port != uint16(mustNativePort(t, parsed.Port())) || user != "" || metadataType != C.INNER || network != C.TCP {
+			if host != parsed.Hostname() || port != toUint16(t, mustNativePort(t, parsed.Port())) || user != "" || metadataType != C.INNER || network != C.TCP {
 				t.Fatal("carrier metadata contained values beyond the requested hop address")
 			}
 			welcome := make([]byte, len(proxy.welcome))
@@ -501,7 +502,7 @@ func TestNativePostPoolStatusBlameAndHealth(t *testing.T) {
 }
 
 func TestNativePostTLSSetupFailureBlamesPostHop(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("TLS fixture listener failed")
 	}
@@ -517,7 +518,11 @@ func TestNativePostTLSSetupFailureBlamesPostHop(t *testing.T) {
 		_, _ = conn.Write([]byte("not tls"))
 		_ = conn.Close()
 	}()
-	port := listener.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", listener.Addr())
+	}
+	port := tcpAddr.Port
 	uri := "https://localhost:" + strconv.Itoa(port)
 	spec := newHopPoolSpec(postHopPool, []string{uri}, 0)
 	now := time.Now()

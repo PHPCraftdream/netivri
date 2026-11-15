@@ -31,7 +31,7 @@ const finalizerDrainRounds = 4
 // collection queued.
 func drainFinalizers() {
 	deadline := time.Now().Add(finalizerDrainTimeout)
-	for i := 0; i < finalizerDrainRounds; i++ {
+	for range finalizerDrainRounds {
 		if !drainFinalizersOnce(deadline) {
 			return
 		}
@@ -43,10 +43,7 @@ func drainFinalizers() {
 func drainFinalizersOnce(deadline time.Time) bool {
 	runtime.GC()
 	done := make(chan struct{})
-	// Large enough to bypass the tiny allocator, which may never finalize.
-	sentinel := new([128]byte)
-	runtime.SetFinalizer(sentinel, func(*[128]byte) { close(done) })
-	sentinel = nil
+	armSentinel(done)
 	runtime.GC()
 	select {
 	case <-done:
@@ -54,4 +51,13 @@ func drainFinalizersOnce(deadline time.Time) bool {
 	case <-time.After(time.Until(deadline)):
 		return false
 	}
+}
+
+// armSentinel queues a finalizer that closes done once the sentinel is
+// collected. The sentinel is unreachable as soon as this returns, so the next
+// collection queues the finalizer. It is large enough to bypass the tiny
+// allocator, which may never finalize.
+func armSentinel(done chan struct{}) {
+	sentinel := new([128]byte)
+	runtime.SetFinalizer(sentinel, func(*[128]byte) { close(done) })
 }

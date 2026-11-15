@@ -58,7 +58,8 @@ func (c *Confirm) View(w, h int) string {
 	if t.Accent == nil {
 		t = NewTheme()
 	}
-	lines := []string{c.Prompt, "", c.buttons().View(t), "←/→ or Tab focus · Enter select · y confirm · n/Esc cancel"}
+	buttons := c.buttons()
+	lines := []string{c.Prompt, "", buttons.View(t), "←/→ or Tab focus · Enter select · y confirm · n/Esc cancel"}
 	if t.ASCII {
 		lines[3] = "Left/Right or Tab focus - Enter select - y confirm - n/Esc cancel"
 	}

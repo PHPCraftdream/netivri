@@ -191,7 +191,8 @@ func (s *logsScreen) pollCmd() tea.Cmd {
 func (s *logsScreen) Init() tea.Cmd { return tea.Batch(s.readCmd(), s.tickCmd()) }
 
 func logsErrorText(err error) string {
-	if ce, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		if ce.Hint != "" {
 			return ce.Message + " (" + ce.Hint + ")"
 		}
@@ -201,122 +202,179 @@ func logsErrorText(err error) string {
 }
 
 func logsUsageText(err error) string {
-	if ce, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		return strings.TrimPrefix(ce.Message, "logs: ")
 	}
 	return "That value is not valid."
 }
 
 func (s *logsScreen) Update(m tea.Msg) (tui.Screen, tea.Cmd) {
-	switch x := m.(type) {
-	case tea.WindowSizeMsg:
-		s.width, s.height = x.Width, x.Height
-		s.workspace.SetSize(x.Width, x.Height)
-		return s, nil
-	case tui.ThemeMsg:
-		s.theme = x.Theme
-		s.workspace.SetTheme(x.Theme)
-		if s.prompt != nil {
-			s.prompt.SetTheme(x.Theme)
-		}
-		return s, nil
-	case tui.BackgroundMsg:
+	if x, ok := m.(tui.BackgroundMsg); ok {
 		return s.Update(x.Value)
-	case logsReadMsg:
-		if x.err != nil {
-			s.notice = logsErrorText(x.err)
-		} else {
-			s.notice = ""
-			s.missing = x.missing
-			if !x.missing {
-				s.entries, s.offset = x.entries, x.offset
-			}
-		}
-		s.refresh()
-		if s.follow {
-			s.pinBottom()
-		}
-		return s, nil
-	case logsPollMsg:
-		if x.err != nil {
-			if errors.Is(x.err, os.ErrNotExist) {
-				s.missing = true
-			} else {
-				s.notice = logsErrorText(x.err)
-			}
-		} else {
-			s.missing = false
-			s.notice = ""
-			s.offset = x.offset
-			s.entries = append(s.entries, x.entries...)
-			if s.tail > 0 && len(s.entries) > s.tail {
-				dropped := len(s.entries) - s.tail
-				s.entries = s.entries[dropped:]
-				if !s.follow && s.list.Filter == "" {
-					s.list.Selected = max(0, s.list.Selected-dropped)
-				}
-			}
-		}
-		s.refresh()
-		if s.follow {
-			s.pinBottom()
-		}
-		return s, nil
-	case logsTick:
-		return s, tea.Batch(s.pollCmd(), s.tickCmd())
-	case tui.PromptResultMsg:
-		switch s.mode {
-		case "since-prompt":
-			return s.applySince(x)
-		case "tail-prompt":
-			return s.applyTail(x)
-		}
+	}
+	if scr, cmd, handled := s.updateMsg(m); handled {
+		return scr, cmd
 	}
 	if s.dialog != nil {
 		_, c := s.dialog.Update(m)
 		return s, c
 	}
 	if k, ok := m.(tea.KeyPressMsg); ok && !s.list.Filtering {
-		switch k.String() {
-		case "f":
-			s.follow = !s.follow
-			s.refresh()
-			if s.follow {
-				s.pinBottom()
-			}
-			return s, nil
-		case "l":
-			s.level = nextLogLevel(s.level)
-			s.refresh()
-			return s, s.readCmd()
-		case "s":
-			s.openSince()
-			return s, nil
-		case "n":
-			s.openTail()
-			return s, nil
-		case "/":
-			s.startSearch()
-			return s, nil
-		case "end":
-			if !s.follow {
-				s.follow = true
-				s.refresh()
-			}
-		case "up", "pgup", "home":
-			if s.follow {
-				s.follow = false
-				s.refresh()
-			}
-		case "esc":
-			if s.list.Filter != "" {
-				s.list.EndFilter(false)
-				s.lastFilter = s.list.Filter
-				s.refresh()
-				return s, nil
+		if cmd, handled := s.logsKey(k); handled {
+			return s, cmd
+		}
+	}
+	return s.updateWorkspace(m)
+}
+
+// updateMsg reports false for messages that fall through to the dialog and key handling.
+func (s *logsScreen) updateMsg(m tea.Msg) (tui.Screen, tea.Cmd, bool) {
+	switch x := m.(type) {
+	case tea.WindowSizeMsg:
+		s.onWindowSize(x)
+		return s, nil, true
+	case tui.ThemeMsg:
+		s.onTheme(x)
+		return s, nil, true
+	case logsReadMsg:
+		s.onRead(x)
+		return s, nil, true
+	case logsPollMsg:
+		s.onPoll(x)
+		return s, nil, true
+	case logsTick:
+		return s, tea.Batch(s.pollCmd(), s.tickCmd()), true
+	case tui.PromptResultMsg:
+		return s.promptResult(x)
+	}
+	return nil, nil, false
+}
+func (s *logsScreen) onWindowSize(x tea.WindowSizeMsg) {
+	s.width, s.height = x.Width, x.Height
+	s.workspace.SetSize(x.Width, x.Height)
+}
+func (s *logsScreen) onTheme(x tui.ThemeMsg) {
+	s.theme = x.Theme
+	s.workspace.SetTheme(x.Theme)
+	if s.prompt != nil {
+		s.prompt.SetTheme(x.Theme)
+	}
+}
+func (s *logsScreen) onRead(x logsReadMsg) {
+	if x.err != nil {
+		s.notice = logsErrorText(x.err)
+	} else {
+		s.notice = ""
+		s.missing = x.missing
+		if !x.missing {
+			s.entries, s.offset = x.entries, x.offset
+		}
+	}
+	s.refresh()
+	if s.follow {
+		s.pinBottom()
+	}
+}
+func (s *logsScreen) onPoll(x logsPollMsg) {
+	if x.err != nil {
+		if errors.Is(x.err, os.ErrNotExist) {
+			s.missing = true
+		} else {
+			s.notice = logsErrorText(x.err)
+		}
+	} else {
+		s.missing = false
+		s.notice = ""
+		s.offset = x.offset
+		s.entries = append(s.entries, x.entries...)
+		if s.tail > 0 && len(s.entries) > s.tail {
+			dropped := len(s.entries) - s.tail
+			s.entries = s.entries[dropped:]
+			if !s.follow && s.list.Filter == "" {
+				s.list.Selected = max(0, s.list.Selected-dropped)
 			}
 		}
 	}
+	s.refresh()
+	if s.follow {
+		s.pinBottom()
+	}
+}
+func (s *logsScreen) promptResult(x tui.PromptResultMsg) (tui.Screen, tea.Cmd, bool) {
+	switch s.mode {
+	case "since-prompt":
+		scr, cmd := s.applySince(x)
+		return scr, cmd, true
+	case "tail-prompt":
+		scr, cmd := s.applyTail(x)
+		return scr, cmd, true
+	}
+	return nil, nil, false
+}
+
+// logsKey reports false for keys that also reach the workspace (end, up, pgup, home, unfiltered esc).
+func (s *logsScreen) logsKey(k tea.KeyPressMsg) (tea.Cmd, bool) {
+	switch k.String() {
+	case "f":
+		s.keyFollow()
+		return nil, true
+	case "l":
+		return s.keyLevel(), true
+	case "s":
+		s.openSince()
+		return nil, true
+	case "n":
+		s.openTail()
+		return nil, true
+	case "/":
+		s.startSearch()
+		return nil, true
+	case "end":
+		s.keyEnd()
+	case "up", "pgup", "home":
+		s.keyUp()
+	case "esc":
+		return nil, s.keyEsc()
+	}
+	return nil, false
+}
+func (s *logsScreen) keyFollow() {
+	s.follow = !s.follow
+	s.refresh()
+	if s.follow {
+		s.pinBottom()
+	}
+}
+func (s *logsScreen) keyLevel() tea.Cmd {
+	s.level = nextLogLevel(s.level)
+	s.refresh()
+	return s.readCmd()
+}
+func (s *logsScreen) keyEnd() {
+	if !s.follow {
+		s.follow = true
+		s.refresh()
+	}
+}
+func (s *logsScreen) keyUp() {
+	if s.follow {
+		s.follow = false
+		s.refresh()
+	}
+}
+
+// keyEsc clears a non-empty filter and reports whether it did.
+func (s *logsScreen) keyEsc() bool {
+	if s.list.Filter == "" {
+		return false
+	}
+	s.list.EndFilter(false)
+	s.lastFilter = s.list.Filter
+	s.refresh()
+	return true
+}
+func (s *logsScreen) updateWorkspace(m tea.Msg) (tui.Screen, tea.Cmd) {
 	if w, ok := m.(tea.MouseWheelMsg); ok && w.Button == tea.MouseWheelUp && s.follow {
 		s.follow = false
 		s.refresh()

@@ -22,7 +22,7 @@ func TestFreeLoopbackAddr(t *testing.T) {
 
 	// The address must be bindable again: proves the helper closed its
 	// listener before returning.
-	l, err := net.Listen("tcp", addr)
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("rebind %q: %v", addr, err)
 	}

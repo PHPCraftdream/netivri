@@ -24,7 +24,7 @@ func appendLog(t *testing.T, home, text string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(text); err != nil {
 		t.Fatal(err)
 	}
@@ -90,11 +90,13 @@ func TestParseLogLineEmptyMessage(t *testing.T) {
 }
 
 func TestNormalizeLevel(t *testing.T) {
-	cases := map[string]string{"debug": LevelDebug, "INFO": LevelInfo, " Warn ": LevelWarn, "warning": LevelWarn, "error": LevelError}
-	for in, want := range cases {
-		got, ok := NormalizeLevel(in)
-		if !ok || got != want {
-			t.Errorf("NormalizeLevel(%q) = %q, %v; want %q", in, got, ok, want)
+	cases := []struct{ in, want string }{
+		{"debug", LevelDebug}, {"INFO", LevelInfo}, {" Warn ", LevelWarn}, {"warning", LevelWarn}, {"error", LevelError},
+	}
+	for _, c := range cases {
+		got, ok := NormalizeLevel(c.in)
+		if !ok || got != c.want {
+			t.Errorf("NormalizeLevel(%q) = %q, %v; want %q", c.in, got, ok, c.want)
 		}
 	}
 	for _, bad := range []string{"", "fatal", "trace", "5"} {

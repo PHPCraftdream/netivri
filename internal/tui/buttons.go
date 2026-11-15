@@ -13,7 +13,7 @@ type Buttons struct {
 	Danger map[int]bool
 }
 
-func (b Buttons) segments(theme Theme) []string {
+func (b *Buttons) segments(theme Theme) []string {
 	parts := make([]string, len(b.Labels))
 	for i, label := range b.Labels {
 		marker := "  "
@@ -69,14 +69,15 @@ func (b *Buttons) Update(msg tea.Msg, y int) (int, bool) {
 	}
 	return -1, false
 }
-func (b Buttons) View(theme Theme) string {
+func (b *Buttons) View(theme Theme) string {
 	parts := b.segments(theme)
 	for i, s := range parts {
-		if b.Danger[i] {
+		switch {
+		case b.Danger[i]:
 			parts[i] = theme.DangerButton.Render(s)
-		} else if i == b.Focus {
+		case i == b.Focus:
 			parts[i] = theme.FocusedButton.Render(s)
-		} else {
+		default:
 			parts[i] = theme.Button.Render(s)
 		}
 	}

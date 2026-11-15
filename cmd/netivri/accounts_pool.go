@@ -2,8 +2,8 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -37,10 +37,7 @@ func routeKey(providers, countries string) string {
 
 // credentialRouteKey keeps credentials out of core route keys and Mihomo rule names.
 func credentialRouteKey(providers, countries, pre, post string, extra ...string) string {
-	payload := providers + "\x00" + countries + "\x00" + pre + "\x00" + post
-	for _, value := range extra {
-		payload += "\x00" + value
-	}
+	payload := strings.Join(append([]string{providers, countries, pre, post}, extra...), "\x00")
 	sum := sha256.Sum256([]byte(payload))
 	return routeKey(providers, countries) + "~" + hex.EncodeToString(sum[:])
 }
@@ -81,18 +78,14 @@ func routeIdentityKey(login, providers, countries string, pre, post config.HopLi
 
 func appendRouteIdentity(dst []byte, value string) []byte {
 	var size [8]byte
-	for i := 0; i < len(size); i++ {
-		size[len(size)-1-i] = byte(uint64(len(value)) >> (8 * i))
-	}
+	binary.BigEndian.PutUint64(size[:], uint64(len(value)))
 	dst = append(dst, size[:]...)
 	return append(dst, value...)
 }
 
 func appendRouteHopIdentity(dst []byte, hops config.HopList) []byte {
 	var size [8]byte
-	for i := 0; i < len(size); i++ {
-		size[len(size)-1-i] = byte(uint64(len(hops)) >> (8 * i))
-	}
+	binary.BigEndian.PutUint64(size[:], uint64(len(hops)))
 	dst = append(dst, size[:]...)
 	for _, hop := range hops {
 		dst = appendRouteIdentity(dst, hop)
@@ -248,8 +241,7 @@ func (h providerHops) tag(providers []string, rawPre, rawPost config.HopList) st
 	if allSingleton {
 		return strings.Join(singletonParts, "\x02")
 	}
-	data, _ := json.Marshal(parts)
-	return string(data)
+	return string(jsonText(parts))
 }
 
 func (h providerHops) hasMulti(providers []string, rawPre, rawPost config.HopList) bool {
@@ -321,33 +313,8 @@ func buildAccountRoutePoolHops(accounts []config.Account, snapshots map[string]*
 }
 
 func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshots map[string]*subscription.Snapshot, globalPre, globalPost config.HopList, hops providerHops, validate func(field string, hops config.HopList) error) (routePool, error) {
-	for _, item := range []struct {
-		field string
-		hops  config.HopList
-	}{{"chain.pre_socks5", globalPre}, {"chain.post_socks5", globalPost}} {
-		if err := validate(item.field, item.hops); err != nil {
-			return routePool{}, err
-		}
-	}
-	for _, provider := range hops.validation {
-		for _, item := range []struct {
-			field string
-			hops  config.HopList
-		}{{provider.preField, provider.pre}, {provider.postField, provider.post}} {
-			if err := validate(item.field, item.hops); err != nil {
-				return routePool{}, err
-			}
-		}
-	}
-	for i, account := range accounts {
-		for _, item := range []struct {
-			field string
-			hops  config.HopList
-		}{{fmt.Sprintf("accounts[%d].pre_socks5", i), account.PreSOCKS5}, {fmt.Sprintf("accounts[%d].post_socks5", i), account.PostSOCKS5}} {
-			if err := validate(item.field, item.hops); err != nil {
-				return routePool{}, err
-			}
-		}
+	if err := validateRouteHops(validate, accounts, globalPre, globalPost, hops); err != nil {
+		return routePool{}, err
 	}
 	pool := routePool{
 		nodePre:       map[string][]config.HopList{},
@@ -360,68 +327,12 @@ func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshot
 		routePost:     map[string]config.HopList{},
 	}
 	infoSeen := make(map[string]bool)
-	type demand struct {
-		providers []string
-		countries []string
-		key       string
-		pre       config.HopList
-		post      config.HopList
-		rawPre    config.HopList
-		rawPost   config.HopList
-		perNode   bool
-		direct    bool
-	}
-	sortedProviders := make([]string, 0, len(snapshots))
-	for name := range snapshots {
-		sortedProviders = append(sortedProviders, name)
-	}
-	sort.Strings(sortedProviders)
-	seen := make(map[string]bool)
-	var wanted []demand // in account order, so the first failure is stable
-	for _, a := range accounts {
-		providers, countries := routeLists(a)
-		pre, post := inheritChain(a.PreSOCKS5, globalPre), inheritChain(a.PostSOCKS5, globalPost)
-		direct := a.Exit == "direct" || (len(providers) == 0 && len(countries) == 0)
-		if a.Exit == "direct" {
-			pre = config.HopList{"none"}
-		}
-		relevant := providers
-		if len(relevant) == 0 {
-			relevant = sortedProviders
-		}
-		tag := ""
-		if !direct {
-			tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
-		}
-		multiPool := len(pre) > 1 || len(post) > 1 || hops.hasMulti(relevant, a.PreSOCKS5, a.PostSOCKS5)
-		key := routeIdentityKey(a.Login, config.JoinList(providers), config.JoinList(countries), pre, post, multiPool, tagArgs(tag)...)
-		if direct {
-			// Keep implicit default-direct behavior unchanged. Explicit direct
-			// accounts get distinct keys based on their effective post hop.
-			if a.Exit != "direct" && (len(post) == 0 || (isNoneHops(post) && (!isNoneHops(a.PostSOCKS5) || len(globalPost) == 0 || isNoneHops(globalPost)))) {
-				continue
-			}
-			pre = config.HopList{"none"}
-			if a.Exit == "direct" && len(post) == 0 {
-				post = config.HopList{"none"}
-			}
-			key = routeIdentityKey(a.Login, "", "", pre, post, len(pre) > 1 || len(post) > 1)
-		}
-		pool.accountRoutes[a.Login] = key
-		if !seen[key] {
-			seen[key] = true
-			wanted = append(wanted, demand{providers: providers, countries: countries, key: key, pre: pre, post: post, rawPre: a.PreSOCKS5, rawPost: a.PostSOCKS5, perNode: tag != "", direct: direct})
-		}
-	}
+	wanted := collectRouteDemands(accounts, sortedSnapshotNames(snapshots), globalPre, globalPost, hops, &pool)
 	if len(wanted) == 0 {
 		return pool, nil
 	}
 	// Deterministic provider order: sorted provider names.
-	allProviders := make([]string, 0, len(snapshots))
-	for name := range snapshots {
-		allProviders = append(allProviders, name)
-	}
-	sort.Strings(allProviders)
+	allProviders := sortedSnapshotNames(snapshots)
 	for _, d := range wanted {
 		pool.routePre[d.key], pool.routePost[d.key] = d.pre, d.post
 		if d.direct {
@@ -429,90 +340,238 @@ func buildAccountRoutePoolHopsWithValidation(accounts []config.Account, snapshot
 			pool.routePost[d.key] = d.post
 			continue
 		}
-		// Each group is the set of providers that share a tier.
-		var groups [][]string
-		if len(d.providers) > 0 {
-			for _, name := range d.providers {
-				groups = append(groups, []string{name})
-			}
-		} else {
-			groups = [][]string{allProviders}
-		}
-		countries := d.countries
-		if len(countries) == 0 {
-			countries = []string{config.AnyCountry}
-		}
-		// "*" takes the nodes of every country the list does not name.
-		named := make(map[string]bool, len(countries))
-		for _, c := range countries {
-			named[c] = true
-		}
-		type poolNode struct {
-			provider string
-			id       string
-			country  string
-			name     string
-			raw      map[string]any
-		}
-		key := d.key
-		tier := 0
-		for _, country := range countries {
-			for _, names := range groups {
-				var nodes []poolNode
-				for _, name := range names {
-					snap := snapshots[name]
-					if snap == nil {
-						continue
-					}
-					for _, n := range snap.Nodes {
-						if country == config.AnyCountry {
-							if named[n.Country] {
-								continue
-							}
-						} else if n.Country != country {
-							continue
-						}
-						nodes = append(nodes, poolNode{provider: name, id: n.ID, country: n.Country, name: stats.SanitizeName(n.Name), raw: n.Raw})
-					}
-				}
-				if len(nodes) == 0 {
-					continue
-				}
-				sort.Slice(nodes, func(i, j int) bool {
-					if nodes[i].id != nodes[j].id {
-						return nodes[i].id < nodes[j].id
-					}
-					return nodes[i].provider < nodes[j].provider
-				})
-				for _, n := range nodes {
-					label := nodeLabel(n.provider, n.id)
-					pool.nodes[key] = append(pool.nodes[key], n.raw)
-					pool.labels[key] = append(pool.labels[key], label)
-					pool.tiers[key] = append(pool.tiers[key], tier)
-					if d.perNode {
-						pre, post := d.pre, d.post
-						if len(d.rawPre) == 0 && len(hops.pre[n.provider]) > 0 {
-							pre = hops.pre[n.provider]
-						}
-						if len(d.rawPost) == 0 && len(hops.post[n.provider]) > 0 {
-							post = hops.post[n.provider]
-						}
-						pool.nodePre[key] = append(pool.nodePre[key], pre)
-						pool.nodePost[key] = append(pool.nodePost[key], post)
-					}
-					if !infoSeen[label] {
-						infoSeen[label] = true
-						pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country, Name: n.name})
-					}
-				}
-				tier++
-			}
-		}
-		if len(pool.nodes[key]) == 0 {
+		fillDemandNodes(&pool, infoSeen, d, snapshots, hops, allProviders)
+		if len(pool.nodes[d.key]) == 0 {
 			return routePool{}, noNodesError(d.providers, d.countries)
 		}
 	}
 	return pool, nil
+}
+
+// hopField is one hop list with the config field it is reported under.
+type hopField struct {
+	field string
+	hops  config.HopList
+}
+
+func validateHopFields(validate func(field string, hops config.HopList) error, fields ...hopField) error {
+	for _, f := range fields {
+		if err := validate(f.field, f.hops); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRouteHops checks the global, provider and account hop lists in that order.
+func validateRouteHops(validate func(field string, hops config.HopList) error, accounts []config.Account, globalPre, globalPost config.HopList, hops providerHops) error {
+	if err := validateHopFields(validate, hopField{"chain.pre_socks5", globalPre}, hopField{"chain.post_socks5", globalPost}); err != nil {
+		return err
+	}
+	for _, provider := range hops.validation {
+		if err := validateHopFields(validate, hopField{provider.preField, provider.pre}, hopField{provider.postField, provider.post}); err != nil {
+			return err
+		}
+	}
+	for i, account := range accounts {
+		if err := validateHopFields(validate,
+			hopField{fmt.Sprintf("accounts[%d].pre_socks5", i), account.PreSOCKS5},
+			hopField{fmt.Sprintf("accounts[%d].post_socks5", i), account.PostSOCKS5},
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// sortedSnapshotNames returns the provider names of snapshots in ascending order.
+func sortedSnapshotNames(snapshots map[string]*subscription.Snapshot) []string {
+	names := make([]string, 0, len(snapshots))
+	for name := range snapshots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// routeDemand is one distinct route of the accounts and what to build for it.
+type routeDemand struct {
+	providers []string
+	countries []string
+	key       string
+	pre       config.HopList
+	post      config.HopList
+	rawPre    config.HopList
+	rawPost   config.HopList
+	perNode   bool
+	direct    bool
+}
+
+// collectRouteDemands returns the distinct routes in account order, so the
+// first failure is stable, and records each account's route key in pool.
+func collectRouteDemands(accounts []config.Account, sortedProviders []string, globalPre, globalPost config.HopList, hops providerHops, pool *routePool) []routeDemand {
+	seen := make(map[string]bool)
+	var wanted []routeDemand
+	for _, a := range accounts {
+		d, ok := accountRouteDemand(a, sortedProviders, globalPre, globalPost, hops)
+		if !ok {
+			continue
+		}
+		pool.accountRoutes[a.Login] = d.key
+		if !seen[d.key] {
+			seen[d.key] = true
+			wanted = append(wanted, d)
+		}
+	}
+	return wanted
+}
+
+// accountRouteDemand returns the route of one account; ok is false when the
+// account has no route.
+func accountRouteDemand(a config.Account, sortedProviders []string, globalPre, globalPost config.HopList, hops providerHops) (routeDemand, bool) {
+	providers, countries := routeLists(a)
+	pre, post := inheritChain(a.PreSOCKS5, globalPre), inheritChain(a.PostSOCKS5, globalPost)
+	direct := a.Exit == "direct" || (len(providers) == 0 && len(countries) == 0)
+	if a.Exit == "direct" {
+		pre = config.HopList{"none"}
+	}
+	relevant := providers
+	if len(relevant) == 0 {
+		relevant = sortedProviders
+	}
+	tag := ""
+	if !direct {
+		tag = hops.tag(relevant, a.PreSOCKS5, a.PostSOCKS5)
+	}
+	multiPool := len(pre) > 1 || len(post) > 1 || hops.hasMulti(relevant, a.PreSOCKS5, a.PostSOCKS5)
+	key := routeIdentityKey(a.Login, config.JoinList(providers), config.JoinList(countries), pre, post, multiPool, tagArgs(tag)...)
+	if direct {
+		// Keep implicit default-direct behavior unchanged. Explicit direct
+		// accounts get distinct keys based on their effective post hop.
+		if a.Exit != "direct" && (len(post) == 0 || (isNoneHops(post) && (!isNoneHops(a.PostSOCKS5) || len(globalPost) == 0 || isNoneHops(globalPost)))) {
+			return routeDemand{}, false
+		}
+		pre = config.HopList{"none"}
+		if a.Exit == "direct" && len(post) == 0 {
+			post = config.HopList{"none"}
+		}
+		key = routeIdentityKey(a.Login, "", "", pre, post, len(pre) > 1 || len(post) > 1)
+	}
+	return routeDemand{providers: providers, countries: countries, key: key, pre: pre, post: post, rawPre: a.PreSOCKS5, rawPost: a.PostSOCKS5, perNode: tag != "", direct: direct}, true
+}
+
+// demandGroups splits the providers of a route into tiers of one country: one
+// group per listed provider, or all providers together when none is listed.
+func demandGroups(d routeDemand, allProviders []string) [][]string {
+	if len(d.providers) == 0 {
+		return [][]string{allProviders}
+	}
+	groups := make([][]string, 0, len(d.providers))
+	for _, name := range d.providers {
+		groups = append(groups, []string{name})
+	}
+	return groups
+}
+
+// routePoolNode is a candidate node of a route before it joins the pool.
+type routePoolNode struct {
+	provider string
+	id       string
+	country  string
+	name     string
+	raw      map[string]any
+}
+
+// collectPoolNodes returns the nodes of the providers in names that belong to
+// country; for config.AnyCountry, the nodes of every country not in named.
+func collectPoolNodes(snapshots map[string]*subscription.Snapshot, names []string, country string, named map[string]bool) []routePoolNode {
+	var nodes []routePoolNode
+	for _, name := range names {
+		snap := snapshots[name]
+		if snap == nil {
+			continue
+		}
+		for _, n := range snap.Nodes {
+			if country == config.AnyCountry {
+				if named[n.Country] {
+					continue
+				}
+			} else if n.Country != country {
+				continue
+			}
+			nodes = append(nodes, routePoolNode{provider: name, id: n.ID, country: n.Country, name: stats.SanitizeName(n.Name), raw: n.Raw})
+		}
+	}
+	return nodes
+}
+
+func sortPoolNodes(nodes []routePoolNode) {
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].id != nodes[j].id {
+			return nodes[i].id < nodes[j].id
+		}
+		return nodes[i].provider < nodes[j].provider
+	})
+}
+
+// fillDemandNodes adds the nodes of route d to pool: country by country, then
+// tier by tier, where a tier is the non-empty provider group of one country.
+func fillDemandNodes(pool *routePool, infoSeen map[string]bool, d routeDemand, snapshots map[string]*subscription.Snapshot, hops providerHops, allProviders []string) {
+	groups := demandGroups(d, allProviders)
+	countries := d.countries
+	if len(countries) == 0 {
+		countries = []string{config.AnyCountry}
+	}
+	// "*" takes the nodes of every country the list does not name.
+	named := make(map[string]bool, len(countries))
+	for _, c := range countries {
+		named[c] = true
+	}
+	tier := 0
+	for _, country := range countries {
+		for _, names := range groups {
+			nodes := collectPoolNodes(snapshots, names, country, named)
+			if len(nodes) == 0 {
+				continue
+			}
+			sortPoolNodes(nodes)
+			for _, n := range nodes {
+				addRouteNode(pool, infoSeen, d, hops, tier, n)
+			}
+			tier++
+		}
+	}
+}
+
+// addRouteNode appends node n to route d at tier, with its hops when the route
+// takes provider hops, and records the node's info the first time it is seen.
+func addRouteNode(pool *routePool, infoSeen map[string]bool, d routeDemand, hops providerHops, tier int, n routePoolNode) {
+	label := nodeLabel(n.provider, n.id)
+	pool.nodes[d.key] = append(pool.nodes[d.key], n.raw)
+	pool.labels[d.key] = append(pool.labels[d.key], label)
+	pool.tiers[d.key] = append(pool.tiers[d.key], tier)
+	if d.perNode {
+		pre, post := nodeHops(d, hops, n.provider)
+		pool.nodePre[d.key] = append(pool.nodePre[d.key], pre)
+		pool.nodePost[d.key] = append(pool.nodePost[d.key], post)
+	}
+	if !infoSeen[label] {
+		infoSeen[label] = true
+		pool.infos = append(pool.infos, stats.NodeInfo{Label: label, Provider: n.provider, Country: n.country, Name: n.name})
+	}
+}
+
+// nodeHops returns the hops of a node of a per-node route: a side the account
+// leaves to inherit takes the provider's hops when the provider has any.
+func nodeHops(d routeDemand, hops providerHops, provider string) (pre, post config.HopList) {
+	pre, post = d.pre, d.post
+	if len(d.rawPre) == 0 && len(hops.pre[provider]) > 0 {
+		pre = hops.pre[provider]
+	}
+	if len(d.rawPost) == 0 && len(hops.post[provider]) > 0 {
+		post = hops.post[provider]
+	}
+	return pre, post
 }
 
 // noNodesError reports a route without nodes. The message names the

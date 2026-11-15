@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -47,9 +48,9 @@ func TestStatusChainComesFromRealProducerAndIsRedacted(t *testing.T) {
 	)
 	stubStatus(t, angel.Status{Accounts: []angel.AccountInfo{{Login: "alice", Chain: status}}})
 	data := runStatusData(t)
-	accounts := data["accounts"].([]any)
-	account := accounts[0].(map[string]any)
-	chain := account["chain"].(map[string]any)
+	accounts := mustAs[[]any](t, data["accounts"])
+	account := mustAs[map[string]any](t, accounts[0])
+	chain := mustAs[map[string]any](t, account["chain"])
 	if !reflect.DeepEqual(chain["pre_socks5"], []any{"socks5://account.example:1080"}) || chain["pre_socks5_source"] != "account" || chain["pre_socks5_auth"] != true {
 		t.Fatalf("account pre chain = %#v", chain)
 	}
@@ -84,7 +85,7 @@ func TestStatusShowsAppliedChainWhileDiskHasPendingChain(t *testing.T) {
 	status := live.status("")
 	stubStatus(t, status)
 	data := runStatusData(t)
-	chain := data["accounts"].([]any)[0].(map[string]any)["chain"].(map[string]any)
+	chain := mustAs[map[string]any](t, mustAs[map[string]any](t, mustAs[[]any](t, data["accounts"])[0])["chain"])
 	if !reflect.DeepEqual(chain["pre_socks5"], []any{"socks5://live.example:1080"}) || !reflect.DeepEqual(chain["post_socks5"], []any{"none"}) {
 		t.Fatalf("status did not report applied chain: %#v", chain)
 	}
@@ -199,8 +200,8 @@ func TestWarmInfoOfNodeDescriptors(t *testing.T) {
 func TestStatusUnknownFlagIsUsage(t *testing.T) {
 	stubStatus(t, angel.Status{})
 	err := runStatus([]string{"--home", t.TempDir(), "--wat"}, &bytes.Buffer{})
-	ce, ok := err.(*cli.Error)
-	if !ok || ce.Code != "USAGE" {
+	var ce *cli.Error
+	if !errors.As(err, &ce) || ce.Code != "USAGE" {
 		t.Fatalf("err = %v (%T), want USAGE", err, err)
 	}
 }
@@ -264,7 +265,7 @@ func runStatusKtavDoc(t *testing.T, args ...string) map[string]any {
 	if err != nil {
 		t.Fatalf("output is not Ktav: %v\n%s", err, out.String())
 	}
-	return got.(map[string]any)
+	return mustAs[map[string]any](t, got)
 }
 
 // ktavStatus is the stubbed angel status shared by the Ktav status tests.
@@ -334,7 +335,7 @@ func TestStatusKtavFullKeepsStatsAffinityWarmNodes(t *testing.T) {
 	if !ok || len(nodes) != 1 {
 		t.Fatalf("warm.nodes = %v", warm["nodes"])
 	}
-	node := nodes[0].(map[string]any)
+	node := mustAs[map[string]any](t, nodes[0])
 	if node["name"] != "netivri-DE-0" || node["delay_ms"] != int64(7) {
 		t.Errorf("node = %v", node)
 	}
@@ -361,8 +362,8 @@ func TestStatusKeepsCountersAbove53Bits(t *testing.T) {
 	}
 
 	useKtavOutput(t)
-	data := runStatusKtavDoc(t)["data"].(map[string]any)
-	warm := data["warm"].(map[string]any)
+	data := mustAs[map[string]any](t, runStatusKtavDoc(t)["data"])
+	warm := mustAs[map[string]any](t, data["warm"])
 	if warm["probes"] != int64(9007199254740993) {
 		t.Errorf("Ktav warm.probes = %v (%T)", warm["probes"], warm["probes"])
 	}

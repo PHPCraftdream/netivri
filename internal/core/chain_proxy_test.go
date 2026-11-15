@@ -52,7 +52,11 @@ func TestPrepareRoutesHTTPPostHop(t *testing.T) {
 	}
 	byName := map[string]map[string]any{}
 	for _, p := range proxies {
-		byName[p["name"].(string)] = p
+		name, ok := p["name"].(string)
+		if !ok {
+			t.Fatalf("proxy name is %T, want string", p["name"])
+		}
+		byName[name] = p
 	}
 	pre, node, post := byName["netivri-r0-0-pre"], byName["netivri-r0-0"], byName["netivri-r0-0-post"]
 	if pre == nil || node == nil || post == nil {

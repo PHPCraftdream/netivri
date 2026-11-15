@@ -9,10 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"golang.org/x/term"
 )
 
 type tuiHeader struct {
@@ -47,7 +48,7 @@ func (h tuiHeader) Header() (tui.Header, error) {
 	if uptime < 0 {
 		uptime = 0
 	}
-	uptime = uptime / time.Second * time.Second
+	uptime = uptime.Truncate(time.Second)
 	return tui.Header{Running: true, Listen: st.Listen, Uptime: uptime, Version: v}, nil
 }
 
@@ -71,8 +72,7 @@ func interactiveOptions(w io.Writer, home string, start int) tui.Options {
 func scanInteractiveArgs(args []string) ([]string, bool, error) {
 	out := make([]string, 0, len(args))
 	enabled := false
-	for i := 0; i < len(args); i++ {
-		a := args[i]
+	for i, a := range args {
 		if a == "--" {
 			out = append(out, args[i:]...)
 			break
@@ -108,9 +108,9 @@ const interactiveEntryHint = "use one of: netivri -i; netivri sub -i; netivri ac
 func interactiveUsageHint(err error) error {
 	var ce *cli.Error
 	if errors.As(err, &ce) && ce.Code == "USAGE" {
-		copy := *ce
-		copy.Hint = interactiveEntryHint
-		return &copy
+		hinted := *ce
+		hinted.Hint = interactiveEntryHint
+		return &hinted
 	}
 	return err
 }
@@ -156,10 +156,11 @@ func interactiveCommand(args []string) (string, []string, error) {
 			return "", nil, cli.Usage("interactive mode does not accept arguments after --")
 		}
 		if a == "--home" || a == "-home" {
-			if i+1 >= len(args) || args[i+1] == "--" {
+			value := args[i+1:] // i < len(args): the slice is valid and empty when no value follows
+			if len(value) == 0 || value[0] == "--" {
 				return "", nil, cli.Usage("interactive: flag needs an argument: --home")
 			}
-			out = append(out, a, args[i+1])
+			out = append(out, a, value[0])
 			i++
 			continue
 		}

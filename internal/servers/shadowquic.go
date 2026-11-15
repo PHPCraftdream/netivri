@@ -32,6 +32,22 @@ func (shadowquic) SingleUser() bool { return false }
 func (shadowquic) UDPBound() bool   { return true }
 
 func (shadowquic) Validate(p map[string]string) error {
+	if err := validateShadowQUICKeys(p); err != nil {
+		return err
+	}
+	if err := ValidateTLSParams(p); err != nil {
+		return err
+	}
+	if err := validateShadowQUICHosts(p); err != nil {
+		return err
+	}
+	if err := validateShadowQUICLimits(p); err != nil {
+		return err
+	}
+	return validateShadowQUICTransport(p)
+}
+
+func validateShadowQUICKeys(p map[string]string) error {
 	allowed := map[string]bool{
 		"sni": true, "public_host": true, "cert_file": true, "key_file": true,
 		"alpn": true, "quic_versions": true, "max_idle_time": true,
@@ -44,15 +60,20 @@ func (shadowquic) Validate(p map[string]string) error {
 			return fmt.Errorf("unknown parameter %q", k)
 		}
 	}
-	if err := ValidateTLSParams(p); err != nil {
-		return err
-	}
+	return nil
+}
+
+func validateShadowQUICHosts(p map[string]string) error {
 	if v, ok := p["public_host"]; ok && (v == "" || !validTLSHost(v)) {
 		return errors.New("invalid public_host")
 	}
 	if v, ok := p["sni"]; ok && (v == "" || !validTLSHost(v)) {
 		return errors.New("invalid sni")
 	}
+	return nil
+}
+
+func validateShadowQUICLimits(p map[string]string) error {
 	if v, ok := p["max_idle_time"]; ok {
 		if v == "" {
 			return errors.New("invalid max_idle_time")
@@ -82,6 +103,10 @@ func (shadowquic) Validate(p map[string]string) error {
 			}
 		}
 	}
+	return nil
+}
+
+func validateShadowQUICTransport(p map[string]string) error {
 	if v, ok := p["disable_mtu_discovery"]; ok && v != "true" && v != "false" {
 		return errors.New("invalid disable_mtu_discovery")
 	}
@@ -188,14 +213,14 @@ func (shadowquic) Start(s Spec, env Env) (io.Closer, error) {
 		return nil, errors.New("ShadowQUIC TLS material missing")
 	}
 	if !strings.HasPrefix(cert, "-----BEGIN ") {
-		certBytes, err := os.ReadFile(cert)
+		certBytes, err := os.ReadFile(cert) //nolint:gosec // G304: cert_file is the operator-configured TLS certificate path, read by design
 		if err != nil {
 			return nil, errors.New("ShadowQUIC TLS material invalid")
 		}
 		cert = string(certBytes)
 	}
 	if !strings.HasPrefix(key, "-----BEGIN ") {
-		keyBytes, err := os.ReadFile(key)
+		keyBytes, err := os.ReadFile(key) //nolint:gosec // G304: key_file is the operator-configured TLS private key path, read by design
 		if err != nil {
 			return nil, errors.New("ShadowQUIC TLS material invalid")
 		}
@@ -235,14 +260,14 @@ func (shadowquic) Start(s Spec, env Env) (io.Closer, error) {
 	if n := shadowquicInt(s.Params, "recv_window_conn", 0); n == 0 {
 		qc.InitialStreamReceiveWindow = tuic.DefaultStreamReceiveWindow / 10
 		qc.MaxStreamReceiveWindow = tuic.DefaultStreamReceiveWindow
-	} else {
+	} else if n > 0 {
 		qc.InitialStreamReceiveWindow = uint64(n)
 		qc.MaxStreamReceiveWindow = uint64(n)
 	}
 	if n := shadowquicInt(s.Params, "recv_window", 0); n == 0 {
 		qc.InitialConnectionReceiveWindow = tuic.DefaultConnectionReceiveWindow / 10
 		qc.MaxConnectionReceiveWindow = tuic.DefaultConnectionReceiveWindow
-	} else {
+	} else if n > 0 {
 		qc.InitialConnectionReceiveWindow = uint64(n)
 		qc.MaxConnectionReceiveWindow = uint64(n)
 	}

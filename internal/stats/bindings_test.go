@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 	"time"
@@ -21,23 +22,23 @@ func makeV3DB(t *testing.T, path string) {
 	t.Helper()
 	db := openRaw(t, path)
 	for _, stmt := range []string{schemaV1, schemaV2, schemaV3, "PRAGMA user_version = 3"} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
 	}
-	if _, err := db.Exec(
-		"INSERT INTO node (id, label, provider, country, name, first_seen, last_seen) VALUES (1, 'p1/a', 'prov1', 'DE', '" + v3NodeName + "', 100, 100)"); err != nil {
+	if _, err := db.ExecContext(t.Context(),
+		"INSERT INTO node (id, label, provider, country, name, first_seen, last_seen) VALUES (1, 'p1/a', 'prov1', 'DE', '"+v3NodeName+"', 100, 100)"); err != nil {
 		t.Fatalf("insert node: %v", err)
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)", bindingBase.UnixMilli()); err != nil {
 		t.Fatalf("insert sample: %v", err)
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO account (id, login, first_seen, last_seen) VALUES (1, 'alice', 100, 100)"); err != nil {
 		t.Fatalf("insert account: %v", err)
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down) VALUES (?, 1, 1, 2, 1, 100, 0, 0, 0)",
 		bindingBase.UnixMilli()); err != nil {
 		t.Fatalf("insert account_sample: %v", err)
@@ -52,13 +53,13 @@ func TestMigrateV3ToV4KeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open on a v3 database: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if s.version != 4 {
 		t.Fatalf("version = %d, want 4", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 4 {
@@ -81,35 +82,43 @@ func TestMigrateV3ToV4KeepsData(t *testing.T) {
 	if len(nodes) != 1 || nodes[0].Name != v3NodeName {
 		t.Fatalf("Nodes on migrated v3 = %+v", nodes)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'example.com', 'p1/a', 1, 2)"); err != nil {
 		t.Fatalf("insert binding: %v", err)
 	}
 }
 
-func TestMigrateV2ToV4KeepsData(t *testing.T) {
-	path := t.TempDir() + "/stats.db"
-	makeV2DB(t, path)
+// openMigratedTo4 opens the database at path, created at schema version from,
+// and checks that it migrated to version 4. It returns a raw connection.
+func openMigratedTo4(t *testing.T, path string, from int) *sql.DB {
+	t.Helper()
 	s, err := Open(Options{Path: path, Now: clock(0)})
 	if err != nil {
-		t.Fatalf("Open on a v2 database: %v", err)
+		t.Fatalf("Open on a v%d database: %v", from, err)
 	}
-	defer s.Close()
+	t.Cleanup(func() { _ = s.Close() })
 	raw := openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 4 || s.version != 4 {
 		t.Fatalf("version = %d/%d, want 4", s.version, version)
 	}
+	return raw
+}
+
+func TestMigrateV2ToV4KeepsData(t *testing.T) {
+	path := t.TempDir() + "/stats.db"
+	makeV2DB(t, path)
+	raw := openMigratedTo4(t, path, 2)
 	if n := countRows(t, raw, "node"); n != 1 {
 		t.Fatalf("node rows = %d, want 1 (v2 data kept)", n)
 	}
 	if n := countRows(t, raw, "account_sample"); n != 1 {
 		t.Fatalf("account_sample rows = %d, want 1 (v2 data kept)", n)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'example.com', 'p1/a', 1, 2)"); err != nil {
 		t.Fatalf("insert binding: %v", err)
 	}
@@ -118,26 +127,14 @@ func TestMigrateV2ToV4KeepsData(t *testing.T) {
 func TestMigrateV1ToV4KeepsData(t *testing.T) {
 	path := t.TempDir() + "/stats.db"
 	makeV1DB(t, path)
-	s, err := Open(Options{Path: path, Now: clock(0)})
-	if err != nil {
-		t.Fatalf("Open on a v1 database: %v", err)
-	}
-	defer s.Close()
-	raw := openRaw(t, path)
-	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		t.Fatalf("read user_version: %v", err)
-	}
-	if version != 4 || s.version != 4 {
-		t.Fatalf("version = %d/%d, want 4", s.version, version)
-	}
+	raw := openMigratedTo4(t, path, 1)
 	if n := countRows(t, raw, "node"); n != 1 {
 		t.Fatalf("node rows = %d, want 1 (v1 data kept)", n)
 	}
 	if n := countRows(t, raw, "sample"); n != 3 {
 		t.Fatalf("sample rows = %d, want 3 (v1 data kept)", n)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'example.com', 'p1/a', 1, 2)"); err != nil {
 		t.Fatalf("insert binding: %v", err)
 	}
@@ -147,13 +144,13 @@ func TestFreshOpenCreatesSchemaV4(t *testing.T) {
 	s := newTestStore(t, nil)
 	raw := openRaw(t, s.opts.Path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 4 {
 		t.Fatalf("user_version = %d, want 4", version)
 	}
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'example.com', 'p1/a', 1, 2)"); err != nil {
 		t.Fatalf("insert binding on a fresh database: %v", err)
 	}
@@ -223,7 +220,7 @@ func TestLoadBindingsDeletesStaleRows(t *testing.T) {
 		t.Fatalf("ReplaceBindings: %v", err)
 	}
 	raw := openRaw(t, s.opts.Path)
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'stale.example', 'p1/b', ?, ?)",
 		bindingBase.Add(-2*BindingTTL).UnixMilli(), bindingBase.Add(-2*BindingTTL).UnixMilli()); err != nil {
 		t.Fatalf("insert stale row: %v", err)
@@ -296,7 +293,7 @@ func TestBindingsSurviveReopen(t *testing.T) {
 	}
 	// A stale row on a read-only store is filtered, not deleted.
 	raw := openRaw(t, opts.Path)
-	if _, err := raw.Exec(
+	if _, err := raw.ExecContext(t.Context(),
 		"INSERT INTO binding (login, site, label, bound_at, last_used) VALUES ('alice', 'stale.example', 'p1/b', ?, ?)",
 		base.Add(-2*BindingTTL).UnixMilli(), base.Add(-2*BindingTTL).UnixMilli()); err != nil {
 		t.Fatalf("insert stale row: %v", err)
@@ -317,7 +314,7 @@ func TestBindingsSurviveReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	if err := s2.ReplaceBindings(nil); err != nil {
 		t.Fatalf("ReplaceBindings: %v", err)
 	}
@@ -356,16 +353,16 @@ func TestBindingsOlderSchemaIsEmpty(t *testing.T) {
 	path1 := t.TempDir() + "/stats.db"
 	db := openRaw(t, path1)
 	for _, stmt := range []string{schemaV1, "PRAGMA user_version = 1"} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
 	}
-	db.Close()
+	_ = db.Close()
 	ro1, err := OpenReadOnly(path1)
 	if err != nil {
 		t.Fatalf("OpenReadOnly v1: %v", err)
 	}
-	t.Cleanup(func() { ro1.Close() })
+	t.Cleanup(func() { _ = ro1.Close() })
 	if got, err := ro1.LoadBindings(bindingBase, BindingTTL, 0); err != nil || len(got) != 0 {
 		t.Fatalf("LoadBindings on v1 = %+v, %v", got, err)
 	}
@@ -374,7 +371,7 @@ func TestBindingsOlderSchemaIsEmpty(t *testing.T) {
 func TestLoadBindingsKeepsTheFreshestWithinTheLimit(t *testing.T) {
 	s := newTestStore(t, nil)
 	rows := make([]Binding, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		rows = append(rows, Binding{
 			Login:    "alice",
 			Site:     fmt.Sprintf("site-%d.example", i),

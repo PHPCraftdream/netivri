@@ -15,7 +15,7 @@ func silentOK(b *siteBlocks, now func() time.Time) (time.Duration, bool) {
 func TestSiteBlocksLossyPathBlocksTheNodeDespiteAnswers(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < silentRatioMin; i++ {
+	for i := range silentRatioMin {
 		if i == 5 || i == 10 {
 			b.answered("a", "s", 0, true)
 		}
@@ -43,10 +43,10 @@ func TestSiteBlocksMostlyAnsweredPathIsNotBlocked(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	b.silentEnd("a", "s", 0, 37*time.Second, true, now().Add(time.Second)) // the window starts
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		b.answered("a", "s", 0, true)
 	}
-	for i := 0; i < 29; i++ { // 30 silent against 10 answered: 75 percent, under 90
+	for i := range 29 { // 30 silent against 10 answered: 75 percent, under 90
 		if _, blocked := silentOK(b, now); blocked {
 			t.Fatalf("blocked with %d silent against 10 answered", i+2)
 		}
@@ -59,7 +59,7 @@ func TestSiteBlocksMostlyAnsweredPathIsNotBlocked(t *testing.T) {
 func TestSiteBlocksFewSilentConnectionsAreNotEnoughForTheRatio(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < silentRatioMin-1; i++ {
+	for i := range silentRatioMin - 1 {
 		if _, blocked := silentOK(b, now); blocked {
 			t.Fatalf("blocked after %d silent connections while the site was answered recently", i+1)
 		}
@@ -69,8 +69,8 @@ func TestSiteBlocksFewSilentConnectionsAreNotEnoughForTheRatio(t *testing.T) {
 func TestSiteBlocksRatioWindowStartsOver(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for round := 0; round < 2; round++ {
-		for i := 0; i < silentRatioMin-1; i++ {
+	for round := range 2 {
+		for i := range silentRatioMin - 1 {
 			if _, blocked := silentOK(b, now); blocked {
 				t.Fatalf("round %d: blocked by %d silent connections of one window", round, i+1)
 			}
@@ -83,7 +83,7 @@ func TestSiteBlocksNodeAnswerAfterTheWindowBeganIsNeededForTheRatio(t *testing.T
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	before := now() // the node last answered a probe at this moment
-	for i := 0; i < 2*silentRatioMin; i++ {
+	for range 2 * silentRatioMin {
 		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, true, before); blocked {
 			t.Fatal("blocked with no probe answer after the window began (the network may be out)")
 		}
@@ -96,7 +96,7 @@ func TestSiteBlocksNodeAnswerAfterTheWindowBeganIsNeededForTheRatio(t *testing.T
 func blockByRatio(t *testing.T, b *siteBlocks, now func() time.Time) time.Duration {
 	t.Helper()
 	var ttl time.Duration
-	for i := 0; i < silentRatioMin; i++ {
+	for range silentRatioMin {
 		if got, blocked := silentOK(b, now); blocked {
 			ttl = got
 		}
@@ -124,7 +124,7 @@ func TestSiteBlocksAnswerDoesNotLiftARatioBlock(t *testing.T) {
 func TestSiteBlocksPlainBlockIsStillLiftedByAnAnswer(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second))
 	}
 	if !b.blocked("a", "s", 0, now()) {
@@ -146,12 +146,12 @@ func TestSiteBlocksRatioStrikesStayWhileMostlySilentAndGrow(t *testing.T) {
 		t.Fatalf("first block = %s, want %s", ttl, siteBlockFirst)
 	}
 	clock.advance(siteBlockFirst + time.Second) // the block is over
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		silentOK(b, now)
 	}
 	b.answered("a", "s", 0, true) // one answer among the silent ones: not healthy
 	var ttl time.Duration
-	for i := 0; i < silentRatioMin; i++ {
+	for range silentRatioMin {
 		if got, blocked := silentOK(b, now); blocked {
 			ttl = got
 		}
@@ -180,7 +180,7 @@ func TestSiteBlocksOnlyFirstAnswersCountInTheWindow(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	b.silentEnd("a", "s", 0, 37*time.Second, true, now().Add(time.Second))
-	for i := 0; i < 100; i++ { // one connection that goes on being answered, reported again and again
+	for range 100 { // one connection that goes on being answered, reported again and again
 		b.answered("a", "s", 0, false)
 	}
 	blockByRatio(t, b, now)
@@ -194,7 +194,7 @@ func TestStickyGroupLossySiteLeavesTheNodeAndTheEventSaysHow(t *testing.T) {
 	answered := connEnd{answer: true, wait: time.Second}
 	lossy := connEnd{wait: 6 * time.Second}
 	endConn(t, g, health, clock, blackholed, answered) // the site works at times: the plain rule is out of play
-	for i := 0; i < silentRatioMin; i++ {
+	for i := range silentRatioMin {
 		if i == 5 || i == 12 {
 			endConn(t, g, health, clock, blackholed, answered)
 		}
@@ -221,7 +221,7 @@ func TestStickyGroupMostlyAnsweredSiteStays(t *testing.T) {
 	answered := connEnd{answer: true, wait: time.Second}
 	lossy := connEnd{wait: 6 * time.Second}
 	endConn(t, g, health, clock, blackholed, lossy)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		endConn(t, g, health, clock, blackholed, lossy)
 		if i%3 == 0 {
 			endConn(t, g, health, clock, blackholed, answered)
@@ -245,7 +245,7 @@ func TestSiteBlocksRatioCountsClientsThatGiveUpEarly(t *testing.T) {
 	if early >= silentMinLife || early < silentRatioMinLife {
 		t.Fatalf("test wait %s must lie in [%s, %s)", early, silentRatioMinLife, silentMinLife)
 	}
-	for i := 0; i < silentRatioMin; i++ {
+	for i := range silentRatioMin {
 		ttl, blocked := b.silentEnd("a", "s", 0, early, true, now().Add(time.Second))
 		if i < silentRatioMin-1 {
 			if blocked {
@@ -266,7 +266,7 @@ func TestSiteBlocksRatioCountsClientsThatGiveUpEarly(t *testing.T) {
 func TestSiteBlocksWaitsUnderTheRatioMinimumLeaveNoEvidence(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < 2*silentRatioMin; i++ {
+	for range 2 * silentRatioMin {
 		if _, blocked := b.silentEnd("a", "s", 0, silentRatioMinLife-time.Millisecond, true, now().Add(time.Second)); blocked {
 			t.Fatalf("blocked by a connection that waited under %s", silentRatioMinLife)
 		}
@@ -284,12 +284,12 @@ func TestSiteBlocksPlainRuleIgnoresWaitsUnderTheMinimumLife(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	short := silentMinLife - time.Second
-	for i := 0; i < silentNeeded+2; i++ {
+	for i := range silentNeeded + 2 {
 		if _, blocked := b.silentEnd("a", "s", 0, short, false, now().Add(time.Second)); blocked {
 			t.Fatalf("the plain rule blocked after %d connections that waited %s", i+1, short)
 		}
 	}
-	for i := 0; i < silentNeeded; i++ {
+	for i := range silentNeeded {
 		ttl, blocked := b.silentEnd("a", "s", 0, silentMinLife, false, now().Add(time.Second))
 		if i < silentNeeded-1 && blocked {
 			t.Fatalf("plain block after %d long waits, want %d", i+1, silentNeeded)
@@ -321,7 +321,7 @@ func TestStickyGroupSiteWhoseClientGivesUpEarlyLeavesTheNode(t *testing.T) {
 	answered := connEnd{answer: true, wait: time.Second}
 	early := connEnd{wait: 3 * time.Second}
 	endConn(t, g, health, clock, blackholed, answered) // the plain rule is out of play
-	for i := 0; i < silentRatioMin; i++ {
+	for i := range silentRatioMin {
 		if n := g.blocks.blockedCount(); n != 0 {
 			t.Fatalf("%d blocks after %d silent connections, want none yet", n, i)
 		}
@@ -345,7 +345,7 @@ func TestDialTimeoutUnderTheMinimumLifeCountsForTheRatioOnly(t *testing.T) {
 	g, _, clock, sink := blockGroup(t, []int{0, 1})
 	md := dialMetadata("alice", "early.example")
 	took := silentMinLife - time.Second
-	for i := 0; i < silentNeeded+1; i++ {
+	for range silentNeeded + 1 {
 		start := clock.now
 		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
 		g.recordDialTimeout("alice", "early.example", 0, "n0", md, start, took)

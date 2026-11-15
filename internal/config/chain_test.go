@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,7 +126,7 @@ func TestHopListValidation(t *testing.T) {
 	if err := ValidateHopList("pre_socks5", valid); err != nil {
 		t.Fatalf("accepted maximum hop list: %v", err)
 	}
-	secret := "socks5://fake-user:fake-password@proxy.example:1080"
+	secret := "socks5://fake-user:fake-password@proxy.example:1080" //nolint:gosec // G101: fake fixture URL, asserted never echoed
 	for _, hops := range []HopList{
 		{secret, secret},
 		{"ftp://fake-user:fake-password@proxy.example:21"},
@@ -262,7 +263,7 @@ type scalarSubscription struct {
 }
 type scalarAccount struct {
 	Login       string `json:"login"`
-	Password    string `json:"password"`
+	Password    string `json:"password"` //nolint:gosec // G117: fixture field mirrors the config credential key
 	Provider    string `json:"provider,omitempty"`
 	ExitCountry string `json:"exit_country,omitempty"`
 	Allowed     string `json:"allowed_clients,omitempty"`
@@ -281,7 +282,7 @@ type configWithScalarHops struct {
 }
 
 func TestLoadHopListShapes(t *testing.T) {
-	const secret = "socks5://fake-user:fake-password@proxy.example:bad"
+	const secret = "socks5://fake-user:fake-password@proxy.example:bad" //nolint:gosec // G101: fake fixture URL, asserted never echoed
 	cases := []struct {
 		name    string
 		source  string
@@ -335,7 +336,8 @@ func TestLoadHopListShapes(t *testing.T) {
 			if err == nil {
 				t.Fatal("Load accepted a malformed hop-list fixture")
 			}
-			cliErr, ok := err.(*cli.Error)
+			var cliErr *cli.Error
+			ok := errors.As(err, &cliErr)
 			if !ok {
 				t.Fatal("Load returned an unexpected error type")
 			}

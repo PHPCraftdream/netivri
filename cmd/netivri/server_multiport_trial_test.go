@@ -108,7 +108,7 @@ func TestServerAddVMessUserLimit(t *testing.T) {
 func TestServerAddTrialGroupLimitIncludesSSMembersNotUsers(t *testing.T) {
 	for _, count := range []int{16, 17} {
 		home := serverTestHome(t)
-		for i := 0; i < count; i++ {
+		for i := range count {
 			proto, name := "shadowsocks", "ss"+strconv.Itoa(i)
 			args := []string{"add", "--protocol", proto, "--name", name, "--account", "alice", "--port", "39211", "--bind", "127.0.0.1", "--param", "cipher=2022-blake3-aes-128-gcm"}
 			err := serverCommandError(t, home, args...)
@@ -181,8 +181,7 @@ func TestRound1CLIAndConfigNonTrialDefaultErrorMatch(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := serverTestHome(t)
-			args := []string{"add", "--protocol", tc.protocol, "--name", "default", "--account", "alice", "--port", strconv.Itoa(39110 + i), "--bind", "127.0.0.1", "--default"}
-			args = append(args, tc.params...)
+			args := append([]string{"add", "--protocol", tc.protocol, "--name", "default", "--account", "alice", "--port", strconv.Itoa(39110 + i), "--bind", "127.0.0.1", "--default"}, tc.params...)
 			err := serverCommandError(t, home, args...)
 			var ce *cli.Error
 			if !errors.As(err, &ce) || ce.Code != "CONFIG_INVALID" || ce.Message != "servers[0].default default requires a TLS-sniffable protocol" || ce.Hint != "fix the value in config.ktav; see netivri help config" || ce.Exit != cli.ExitUsage {
@@ -200,8 +199,7 @@ func TestRound1CLIAndConfigTrialDefaultErrorMatch(t *testing.T) {
 	for i, tc := range cases {
 		home := serverTestHome(t)
 		port := 39120 + i
-		args := []string{"add", "--protocol", tc.protocol, "--name", "trial", "--account", "alice", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--default"}
-		args = append(args, tc.params...)
+		args := append([]string{"add", "--protocol", tc.protocol, "--name", "trial", "--account", "alice", "--port", strconv.Itoa(port), "--bind", "127.0.0.1", "--default"}, tc.params...)
 		err := serverCommandError(t, home, args...)
 		var cliErr *cli.Error
 		if !errors.As(err, &cliErr) {

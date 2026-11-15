@@ -20,7 +20,7 @@ func benchStickyGroup(b *testing.B, n int) *stickyGroup {
 	b.Helper()
 	members := make([]member, n)
 	labels := make([]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		m := &fakeMember{name: fmt.Sprintf("n%d", i)}
 		members[i] = m
 		labels[i] = m.name
@@ -42,7 +42,7 @@ func BenchmarkStickyChooseHit(b *testing.B) {
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = g.choose(login, site)
 	}
 }
@@ -52,7 +52,7 @@ func BenchmarkStickyChooseHitParallel(b *testing.B) {
 	// Pre-bind many keys spread over the shards.
 	const keys = 4096
 	logins := make([]string, keys)
-	for i := 0; i < keys; i++ {
+	for i := range keys {
 		logins[i] = fmt.Sprintf("user%d", i)
 		g.choose(logins[i], "example.com")
 	}
@@ -76,7 +76,7 @@ func BenchmarkStickyChooseMiss(b *testing.B) {
 			g := benchStickyGroup(b, members)
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for i := range b.N {
 				// A new key each iteration forces a full selection.
 				login := fmt.Sprintf("miss%d", i)
 				_, _ = g.choose(login, "miss.example")
@@ -97,7 +97,7 @@ func BenchmarkSiteKey(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_ = siteKey(tc.host, netip.Addr{})
 			}
 		})
@@ -129,7 +129,7 @@ func BenchmarkStickyChooseMissTiered(b *testing.B) {
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for i := range b.N {
 				login := fmt.Sprintf("miss%d", i)
 				_, _ = g.choose(login, "miss.example")
 			}

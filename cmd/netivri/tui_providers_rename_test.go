@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -43,11 +44,18 @@ func TestProviderRenameEndToEndFollowsAccountsAndSnapshot(t *testing.T) {
 	if err = subscription.NewStore(h+"/subscriptions").Save("old", subscription.Snapshot{Nodes: []subscription.Node{{ID: "n1", Country: "DE"}}, FetchedAt: testNow}); err != nil {
 		t.Fatal(err)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	if s.selected != "old" {
 		t.Fatalf("selected %q", s.selected)
 	}
+	checkProviderRenameOpensPrompt(t, s)
+	checkProviderRenameSubmitUpdatesScreen(t, s)
+	checkProviderRenamePersisted(t, s, h)
+}
+
+func checkProviderRenameOpensPrompt(t *testing.T, s *providersScreen) {
+	t.Helper()
 	for i, l := range s.card.Lines {
 		if l.ID == "edit-name" {
 			s.card.Selected = i
@@ -63,6 +71,10 @@ func TestProviderRenameEndToEndFollowsAccountsAndSnapshot(t *testing.T) {
 	if s.prompt.Value != "old" {
 		t.Fatalf("rename prompt not prefilled: %q", s.prompt.Value)
 	}
+}
+
+func checkProviderRenameSubmitUpdatesScreen(t *testing.T, s *providersScreen) {
+	t.Helper()
 	_, _ = s.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	providerType(s, "renamed")
 	_, c := s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -79,7 +91,11 @@ func TestProviderRenameEndToEndFollowsAccountsAndSnapshot(t *testing.T) {
 	if s.message != "Provider renamed" {
 		t.Fatalf("toast message: %q", s.message)
 	}
-	cfg, err = loadConfig(h)
+}
+
+func checkProviderRenamePersisted(t *testing.T, s *providersScreen, h string) {
+	t.Helper()
+	cfg, err := loadConfig(h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,11 +137,11 @@ func TestProviderRenameScreenValidationFailureWritesNothing(t *testing.T) {
 	if err = config.Save(cfgPath, cfg); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(cfgPath)
+	before, err := os.ReadFile(filepath.Clean(cfgPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	for i, l := range s.card.Lines {
 		if l.ID == "edit-name" {
@@ -147,7 +163,7 @@ func TestProviderRenameScreenValidationFailureWritesNothing(t *testing.T) {
 		}
 		t.Fatal("validation error not shown in prompt")
 	}
-	after, err := os.ReadFile(cfgPath)
+	after, err := os.ReadFile(filepath.Clean(cfgPath))
 	if err != nil {
 		t.Fatal(err)
 	}

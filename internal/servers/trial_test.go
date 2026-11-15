@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"io"
+	"math"
 	"net"
 	"net/netip"
 	"sync"
@@ -48,13 +49,34 @@ type trialMemAddr string
 func (a trialMemAddr) Network() string { return "memory" }
 func (a trialMemAddr) String() string  { return string(a) }
 
+// stampTime converts a wire timestamp to a time; a value beyond int64 fails the test.
+func stampTime(t testing.TB, raw uint64) time.Time {
+	t.Helper()
+	if raw > math.MaxInt64 {
+		t.Fatalf("timestamp %d overflows int64", raw)
+		return time.Time{}
+	}
+	return time.Unix(int64(raw), 0)
+}
+
+// unixStamp returns now as a wire timestamp; a time before the Unix epoch fails the test.
+func unixStamp(t testing.TB, now time.Time) uint64 {
+	t.Helper()
+	sec := now.Unix()
+	if sec < 0 {
+		t.Fatalf("time %v precedes the Unix epoch", now)
+		return 0
+	}
+	return uint64(sec)
+}
+
 func TestTrialVMessFromMihomoAdapter(t *testing.T) {
 	const id = "550e8400-e29b-41d4-a716-446655440000"
 	adapter, err := outbound.NewVmess(outbound.VmessOption{Name: "fixture", Server: "127.0.0.1", Port: 443, UUID: id, AlterID: 0, Cipher: "aes-128-gcm", Network: "tcp"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer adapter.Close()
+	defer func() { _ = adapter.Close() }()
 	conn := &trialMemConn{}
 	meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr("192.0.2.8"), DstPort: 443}
 	wrapped, err := adapter.StreamConnContext(context.Background(), conn, meta)
@@ -73,10 +95,14 @@ func TestTrialVMessFromMihomoAdapter(t *testing.T) {
 	if len(flight) < 42 {
 		t.Fatalf("adapter flight length %d", len(flight))
 	}
-	key := trial.(*trialAuth).keys[0]
+	ta, ok := trial.(*trialAuth)
+	if !ok {
+		t.Fatalf("trial is %T, want *trialAuth", trial)
+	}
+	key := ta.keys[0]
 	var authID [16]byte
 	key.auth.Decrypt(authID[:], flight[:16])
-	now := time.Unix(int64(binary.BigEndian.Uint64(authID[:8])), 0)
+	now := stampTime(t, binary.BigEndian.Uint64(authID[:8]))
 	if v, _ := trial.Try(flight, now); v != Accept {
 		t.Fatalf("Mihomo first flight: %v", v)
 	}
@@ -95,7 +121,7 @@ func TestTrialVMessFromMihomoAdapter(t *testing.T) {
 	if v, _ := trial.Try(flight, now.Add(119*time.Second)); v != Reject {
 		t.Fatalf("skew: %v", v)
 	}
-	for n := 0; n < 42; n++ {
+	for n := range 42 {
 		if v, _ := trial.Try(flight[:n], now); v != NeedMore {
 			t.Fatalf("short prefix %d: %v", n, v)
 		}
@@ -172,7 +198,7 @@ func TestTrialShadowsocksAll2022Methods(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			now := time.Unix(int64(binary.BigEndian.Uint64(plain[1:9])), 0)
+			now := stampTime(t, binary.BigEndian.Uint64(plain[1:9]))
 			if v, _ := trial.Try(flight, now); v != Accept {
 				t.Fatalf("Mihomo flight: %v", v)
 			}
@@ -203,7 +229,7 @@ func TestTrialShadowsocksAll2022Methods(t *testing.T) {
 			if v, _ := trial.Try(flight, now.Add(29*time.Second)); v != Reject {
 				t.Fatalf("skew: %v", v)
 			}
-			for n := 0; n < trial.MinBytes(); n++ {
+			for n := range trial.MinBytes() {
 				if v, _ := trial.Try(flight[:n], now); v != NeedMore {
 					t.Fatalf("short prefix %d: %v", n, v)
 				}
@@ -228,7 +254,7 @@ func TestTrialShadowsocksAll2022Methods(t *testing.T) {
 				}
 				fixed := make([]byte, 11)
 				fixed[0] = shadowaead_2022.HeaderTypeClient
-				binary.BigEndian.PutUint64(fixed[1:9], uint64(now.Unix()))
+				binary.BigEndian.PutUint64(fixed[1:9], unixStamp(t, now))
 				collisionFlight := append(append([]byte(nil), tlsSalt...), tlsAEAD.Seal(nil, make([]byte, tlsAEAD.NonceSize()), fixed, nil)...)
 				if v, _ := trial.Try(collisionFlight, now); v != Accept {
 					t.Fatalf("valid TLS-prefix salt: %v", v)

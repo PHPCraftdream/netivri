@@ -14,7 +14,7 @@ import (
 // ProbeNow on a running instance makes the probe loop run a round at once: the
 // interval here is an hour, so only the first round and the asked one happen.
 func TestInstanceProbeNowProbesAtOnce(t *testing.T) {
-	reserved, err := net.Listen("tcp", "127.0.0.1:0")
+	reserved, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

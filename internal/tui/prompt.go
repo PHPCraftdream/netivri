@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -91,7 +92,7 @@ func (p *Prompt) GetAnswer() (string, error) {
 	p.initialize()
 	if p.Kind == ChoicePrompt {
 		if len(p.Options) == 0 {
-			return "", fmt.Errorf("Choose an option")
+			return "", errors.New("Choose an option") //nolint:staticcheck // ST1005: UI-facing message shown verbatim, capitalized on purpose
 		}
 		if p.choice < 0 || p.choice >= len(p.Options) {
 			p.choice = 0
@@ -113,182 +114,211 @@ func (p *Prompt) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		return p, nil
 	}
 	if m, ok := msg.(tea.MouseClickMsg); ok {
-		if m.Button != tea.MouseLeft {
-			return p, nil
-		}
-		if p.discard {
-			if i, hit := p.Buttons.Update(msg, p.buttonY); hit && i >= 0 {
-				if i == 0 {
-					p.resume()
-					return p, nil
-				}
-				return p, p.result(true)
-			}
-		}
-		if m.Y == p.buttonY {
-			if i, hit := p.Buttons.Update(msg, p.buttonY); hit && i >= 0 {
-				if p.discard {
-					return p, p.selectButton(i)
-				}
-				if p.Kind == ConfirmPrompt {
-					return p, p.confirmButton(i)
-				}
-				return p, p.selectButton(i)
-			}
-		}
-		if p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt {
-			slots := max(0, p.height-7)
-			i := p.optionOffset + m.Y - 3
-			if m.Y >= 3 && m.Y < 3+slots && i >= 0 && i < len(p.Options) {
-				p.choice = i
-				if p.Kind == MultiChoicePrompt {
-					p.toggle()
-				}
-			}
-		}
-		if p.Kind == TextPrompt || p.Kind == SecretPrompt || p.Kind == NumberPrompt {
-			if m.Y == 3 {
-				p.input.Focus()
-			}
-		}
-		return p, nil
+		return p, p.handleMouseClick(m, msg)
 	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return p, nil
 	}
-	key := k.String()
-	if p.discard {
-		switch key {
-		case "esc":
-			p.resume()
-			return p, nil
-		case "left", "right", "tab", "shift+tab":
-			if key == "left" || key == "shift+tab" {
-				p.Buttons.Focus = 0
-			} else {
-				p.Buttons.Focus = 1
-			}
-			return p, nil
-		case "enter":
-			if p.Buttons.Focus == 0 {
-				p.resume()
-				return p, nil
-			}
-			return p, p.result(true)
-		}
-		return p, nil
+	return p, p.handleKey(k.String(), msg)
+}
+func (p *Prompt) handleMouseClick(m tea.MouseClickMsg, msg tea.Msg) tea.Cmd {
+	if m.Button != tea.MouseLeft {
+		return nil
 	}
-	if key == "esc" {
-		if p.changed {
-			p.discard = true
-			p.Buttons = Buttons{Labels: []string{"Continue", "Discard"}}
-			p.Buttons.Focus = 0
-			return p, nil
+	if p.discard {
+		if i, hit := p.Buttons.Update(msg, p.buttonY); hit && i >= 0 {
+			if i == 0 {
+				p.resume()
+				return nil
+			}
+			return p.result(true)
 		}
-		p.reveal = false
-		return p, p.result(true)
+	}
+	if m.Y == p.buttonY {
+		if i, hit := p.Buttons.Update(msg, p.buttonY); hit && i >= 0 {
+			return p.clickButton(i)
+		}
+	}
+	p.clickBody(m.Y)
+	return nil
+}
+func (p *Prompt) clickButton(i int) tea.Cmd {
+	if p.discard {
+		return p.selectButton(i)
 	}
 	if p.Kind == ConfirmPrompt {
-		switch key {
-		case "y", "Y":
-			return p, p.confirmButton(1)
-		case "n", "N":
-			return p, p.confirmButton(0)
-		case "left", "right":
-			p.buttonsFocused = true
-			d := 1
-			if key == "left" {
-				d = -1
+		return p.confirmButton(i)
+	}
+	return p.selectButton(i)
+}
+func (p *Prompt) clickBody(y int) {
+	if p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt {
+		slots := max(0, p.height-7)
+		i := p.optionOffset + y - 3
+		if y >= 3 && y < 3+slots && i >= 0 && i < len(p.Options) {
+			p.choice = i
+			if p.Kind == MultiChoicePrompt {
+				p.toggle()
 			}
-			p.Buttons.Move(d)
-			return p, nil
-		case "tab", "shift+tab":
-			p.buttonsFocused = true
-			d := 1
-			if key == "shift+tab" {
-				d = -1
-			}
-			p.Buttons.Move(d)
-			return p, nil
-		case "enter":
-			return p, p.confirmButton(p.Buttons.Focus)
 		}
-		return p, nil
+	}
+	if p.Kind == TextPrompt || p.Kind == SecretPrompt || p.Kind == NumberPrompt {
+		if y == 3 {
+			p.input.Focus()
+		}
+	}
+}
+func (p *Prompt) handleKey(key string, msg tea.Msg) tea.Cmd {
+	if p.discard {
+		return p.handleDiscardKey(key)
+	}
+	if key == "esc" {
+		return p.handleEsc()
+	}
+	if p.Kind == ConfirmPrompt {
+		return p.handleConfirmKey(key)
 	}
 	if key == "tab" || key == "shift+tab" {
-		if !p.buttonsFocused {
-			p.buttonsFocused = true
-			if key == "tab" {
-				p.Buttons.Focus = 0
-			} else {
-				p.Buttons.Focus = len(p.Buttons.Labels) - 1
-			}
-		} else {
-			d := 1
-			if key == "shift+tab" {
-				d = -1
-			}
-			p.Buttons.Move(d)
-			if (key == "shift+tab" && p.Buttons.Focus == len(p.Buttons.Labels)-1) || (key == "tab" && p.Buttons.Focus == 0) {
-				p.buttonsFocused = false
-			}
-		}
-		return p, nil
+		p.cycleButtons(key)
+		return nil
 	}
 	if key == "ctrl+r" && p.Kind == SecretPrompt && p.AllowReveal {
 		p.reveal = !p.reveal
-		return p, nil
+		return nil
 	}
-	if p.buttonsFocused {
-		if key == "left" || key == "right" {
-			p.buttonsFocused = true
-			d := 1
-			if key == "left" {
-				d = -1
-			}
-			p.Buttons.Move(d)
-			return p, nil
-		}
-		if key == "enter" {
-			if p.Kind == ConfirmPrompt {
-				return p, p.confirmButton(p.Buttons.Focus)
-			}
-			return p, p.selectButton(p.Buttons.Focus)
-		}
+	if cmd, ok := p.handleButtonsFocusedKey(key); ok {
+		return cmd
 	}
 	if key == "enter" {
-		if p.Kind == YesNoPrompt {
-			if p.Value == "" {
-				p.Value = "No"
-			}
-			return p, p.accept()
-		}
-		return p, p.accept()
+		return p.acceptEnter()
 	}
+	if p.handleChoiceKey(key) {
+		return nil
+	}
+	return p.updateInput(msg)
+}
+func (p *Prompt) handleDiscardKey(key string) tea.Cmd {
+	switch key {
+	case "esc":
+		p.resume()
+		return nil
+	case "left", "right", "tab", "shift+tab":
+		if key == "left" || key == "shift+tab" {
+			p.Buttons.Focus = 0
+		} else {
+			p.Buttons.Focus = 1
+		}
+		return nil
+	case "enter":
+		if p.Buttons.Focus == 0 {
+			p.resume()
+			return nil
+		}
+		return p.result(true)
+	}
+	return nil
+}
+func (p *Prompt) handleEsc() tea.Cmd {
+	if p.changed {
+		p.discard = true
+		p.Buttons = Buttons{Labels: []string{"Continue", "Discard"}}
+		p.Buttons.Focus = 0
+		return nil
+	}
+	p.reveal = false
+	return p.result(true)
+}
+func (p *Prompt) handleConfirmKey(key string) tea.Cmd {
+	switch key {
+	case "y", "Y":
+		return p.confirmButton(1)
+	case "n", "N":
+		return p.confirmButton(0)
+	case "left", "right":
+		p.stepButtons(key == "left")
+		return nil
+	case "tab", "shift+tab":
+		p.stepButtons(key == "shift+tab")
+		return nil
+	case "enter":
+		return p.confirmButton(p.Buttons.Focus)
+	}
+	return nil
+}
+func (p *Prompt) cycleButtons(key string) {
+	if !p.buttonsFocused {
+		p.buttonsFocused = true
+		if key == "tab" {
+			p.Buttons.Focus = 0
+		} else {
+			p.Buttons.Focus = len(p.Buttons.Labels) - 1
+		}
+		return
+	}
+	p.stepButtons(key == "shift+tab")
+	if (key == "shift+tab" && p.Buttons.Focus == len(p.Buttons.Labels)-1) || (key == "tab" && p.Buttons.Focus == 0) {
+		p.buttonsFocused = false
+	}
+}
+
+// stepButtons focuses the button row and moves the focus one button forward, or back when back is set.
+func (p *Prompt) stepButtons(back bool) {
+	p.buttonsFocused = true
+	d := 1
+	if back {
+		d = -1
+	}
+	p.Buttons.Move(d)
+}
+func (p *Prompt) handleButtonsFocusedKey(key string) (tea.Cmd, bool) {
+	if !p.buttonsFocused {
+		return nil, false
+	}
+	if key == "left" || key == "right" {
+		p.stepButtons(key == "left")
+		return nil, true
+	}
+	if key == "enter" {
+		if p.Kind == ConfirmPrompt {
+			return p.confirmButton(p.Buttons.Focus), true
+		}
+		return p.selectButton(p.Buttons.Focus), true
+	}
+	return nil, false
+}
+func (p *Prompt) acceptEnter() tea.Cmd {
+	if p.Kind == YesNoPrompt && p.Value == "" {
+		p.Value = "No"
+	}
+	return p.accept()
+}
+
+// handleChoiceKey handles keys of choice and yes/no prompts; false lets the text input take the key.
+func (p *Prompt) handleChoiceKey(key string) bool {
 	if key == "up" || key == "down" {
 		if p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt {
 			p.moveChoice(key == "down")
-			return p, nil
+			return true
 		}
 		if p.Kind == YesNoPrompt {
 			p.Value = map[bool]string{true: "Yes", false: "No"}[key == "up"]
 			p.changed = true
-			return p, nil
+			return true
 		}
 	}
 	if (key == " " || key == "space") && p.Kind == MultiChoicePrompt {
 		p.toggle()
-		return p, nil
+		return true
 	}
 	if (key == "y" || key == "n") && p.Kind == YesNoPrompt {
 		p.Value = map[bool]string{true: "Yes", false: "No"}[key == "y"]
 		p.changed = true
-		return p, nil
+		return true
 	}
-	if p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt || p.Kind == YesNoPrompt {
-		return p, nil
-	}
+	return p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt || p.Kind == YesNoPrompt
+}
+func (p *Prompt) updateInput(msg tea.Msg) tea.Cmd {
 	old := p.input.Value()
 	var cmd tea.Cmd
 	p.input, cmd = p.input.Update(msg)
@@ -297,7 +327,7 @@ func (p *Prompt) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		p.changed = true
 		p.Error = nil
 	}
-	return p, cmd
+	return cmd
 }
 func (p *Prompt) resume() {
 	p.discard = false
@@ -355,12 +385,13 @@ func (p *Prompt) accept() tea.Cmd {
 	}
 	if p.Kind == NumberPrompt {
 		n, x := strconv.Atoi(p.Value)
-		if p.Value == "" || x != nil {
-			e = fmt.Errorf("Enter a whole number")
-		} else if p.Min != nil && n < *p.Min {
-			e = fmt.Errorf("Must be at least %d", *p.Min)
-		} else if p.Max != nil && n > *p.Max {
-			e = fmt.Errorf("Must be at most %d", *p.Max)
+		switch {
+		case p.Value == "" || x != nil:
+			e = errors.New("Enter a whole number") //nolint:staticcheck // ST1005: UI-facing message shown verbatim, capitalized on purpose
+		case p.Min != nil && n < *p.Min:
+			e = fmt.Errorf("Must be at least %d", *p.Min) //nolint:staticcheck // ST1005: UI-facing message shown verbatim, capitalized on purpose
+		case p.Max != nil && n > *p.Max:
+			e = fmt.Errorf("Must be at most %d", *p.Max) //nolint:staticcheck // ST1005: UI-facing message shown verbatim, capitalized on purpose
 		}
 	}
 	if e == nil && p.Validate != nil {
@@ -434,7 +465,8 @@ func (p *Prompt) View(w, h int) string {
 	}
 	put(0, p.TitleText)
 	put(1, p.Hint)
-	if p.Kind == ChoicePrompt || p.Kind == MultiChoicePrompt {
+	switch p.Kind {
+	case ChoicePrompt, MultiChoicePrompt:
 		slots := max(0, h-7)
 		if p.choice < p.optionOffset {
 			p.optionOffset = p.choice
@@ -469,11 +501,11 @@ func (p *Prompt) View(w, h int) string {
 			}
 			put(3+n, line)
 		}
-	} else if p.Kind == YesNoPrompt {
+	case YesNoPrompt:
 		put(3, p.Value+" (Yes / No)")
-	} else if p.Kind == ConfirmPrompt {
+	case ConfirmPrompt:
 		put(3, p.Label)
-	} else {
+	default:
 		if p.Kind == SecretPrompt && !p.reveal {
 			p.input.EchoMode = textinput.EchoPassword
 			p.input.EchoCharacter = '*'

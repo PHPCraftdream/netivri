@@ -123,9 +123,9 @@ func TestHealthKeysIsolateCarryBackoffAndWarmStatus(t *testing.T) {
 		&fakeTracker{id: "large", info: &statistic.TrackerInfo{Chain: C.Chain{"member-a"}, Start: base.Add(time.Second)}},
 		&fakeTracker{id: "small", info: &statistic.TrackerInfo{Chain: C.Chain{"member-b"}, Start: base.Add(time.Second)}},
 	}}
-	poller.source.(*fakeTrackerSource).trackers[0].(*fakeTracker).info.DownloadTotal.Add(1 << 20)
-	poller.source.(*fakeTrackerSource).trackers[1].(*fakeTracker).info.DownloadTotal.Add(32 << 10)
-	poller.collectAt(base, base.Add(5*time.Second), 5*time.Second)
+	fakeTrackerAt(t, poller, 0).info.DownloadTotal.Add(1 << 20)
+	fakeTrackerAt(t, poller, 1).info.DownloadTotal.Add(32 << 10)
+	poller.collectAt(base, 5*time.Second)
 	if !health.health(oldKey).hasThroughput || health.health(newKey).hasThroughput {
 		t.Fatalf("throughput was not isolated by health key: old=%v new=%v", health.health(oldKey).hasThroughput, health.health(newKey).hasThroughput)
 	}
@@ -139,4 +139,18 @@ func TestHealthKeysIsolateCarryBackoffAndWarmStatus(t *testing.T) {
 		t.Fatalf("warm status down flags = %v/%v, want true/false", nodes[0].Down, nodes[1].Down)
 	}
 	poller.cancel()
+}
+
+// fakeTrackerAt returns tracker i of the poller's fake source.
+func fakeTrackerAt(t *testing.T, poller *throughputPoller, i int) *fakeTracker {
+	t.Helper()
+	src, ok := poller.source.(*fakeTrackerSource)
+	if !ok {
+		t.Fatalf("source is %T, want *fakeTrackerSource", poller.source)
+	}
+	tracker, ok := src.trackers[i].(*fakeTracker)
+	if !ok {
+		t.Fatalf("tracker %d is %T, want *fakeTracker", i, src.trackers[i])
+	}
+	return tracker
 }

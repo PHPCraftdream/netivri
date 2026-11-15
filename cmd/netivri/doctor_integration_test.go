@@ -15,12 +15,12 @@ import (
 func TestDoctorListenRealSocket(t *testing.T) {
 	doctorFixTime(t)
 	doctorAngelDown(t)
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() }) // a second close after the test's own is harmless
-	port := ln.Addr().(*net.TCPAddr).Port
+	port := mustAs[*net.TCPAddr](t, ln.Addr()).Port
 
 	// The listener is still open: the configured port is taken.
 	home := t.TempDir()

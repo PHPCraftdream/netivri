@@ -14,7 +14,7 @@ func TestSandCapAndEndpointWeights(t *testing.T) {
 	requireClose(t, initial.Sand, 0, 0)
 	requireClose(t, initial.Weight, 1, 1e-12)
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		p.RecordSoft("hop")
 	}
 	capped := requireSnapshot(t, p, "hop")
@@ -25,7 +25,7 @@ func TestSandCapAndEndpointWeights(t *testing.T) {
 func TestSandLazyHalfLifeAt15_30_60Seconds(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		p.RecordSoft("hop")
 	}
 
@@ -47,7 +47,7 @@ func TestSandLazyHalfLifeAt15_30_60Seconds(t *testing.T) {
 func TestSuccessHalvesEffectiveSand(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		p.RecordSoft("hop")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -60,7 +60,7 @@ func TestSuccessHalvesEffectiveSand(t *testing.T) {
 func TestSuccessiveSoftFailureAddsAfterElapsedDecay(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		p.RecordSoft("hop")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -72,7 +72,7 @@ func TestSuccessiveSoftFailureAddsAfterElapsedDecay(t *testing.T) {
 func TestBackwardClockDoesNotInflateSand(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "hop")
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		p.RecordSoft("hop")
 	}
 
@@ -93,7 +93,7 @@ func TestBackwardClockDoesNotInflateSand(t *testing.T) {
 func TestInconclusiveInvalidStrengthAndUnknownKeyAreNoOps(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "known")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordSoft("known")
 	}
 	p.RecordHard("known")

@@ -54,7 +54,7 @@ func StartCrashDump(home, version string, now time.Time) (*CrashDump, error) {
 	pid := os.Getpid()
 	name := fmt.Sprintf("%s%s-%d%s", crashPrefix, now.UTC().Format("20060102T150405Z"), pid, crashPending)
 	path := filepath.Join(dir, name)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // G304: crash file path is under the operator-owned state directory
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func ReportCrashes(home string) CrashReport {
 			continue
 		}
 		path := filepath.Join(dir, name)
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // G304: crash file path is under the operator-owned state directory
 		if err != nil {
 			continue
 		}

@@ -32,7 +32,7 @@ func (f *liveHopCoreFake) ExportHopPools() []core.HopPoolState {
 	return out
 }
 
-func (f *liveHopCoreFake) RestoreHopPools(states []core.HopPoolState) error {
+func (f *liveHopCoreFake) RestoreHopPools(states []core.HopPoolState) error { //nolint:unparam // hopCore.RestoreHopPools (hop_health.go) requires the error result; fake implements it
 	f.restored = append([]core.HopPoolState(nil), states...)
 	return nil
 }

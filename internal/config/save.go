@@ -49,11 +49,11 @@ func writeFileAtomic(path string, data []byte) error {
 		return fmt.Errorf("sync config: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(name)
+		_ = os.Remove(name) //nolint:gosec // G703: name is the temp file CreateTemp made in the operator config directory
 		return fmt.Errorf("close config: %w", err)
 	}
 	if err := renameReplace(name, path); err != nil {
-		_ = os.Remove(name)
+		_ = os.Remove(name) //nolint:gosec // G703: name is the temp file CreateTemp made in the operator config directory
 		return fmt.Errorf("replace config: %w", err)
 	}
 	return nil

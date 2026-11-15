@@ -25,13 +25,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/cli"
-	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/servers"
-	"github.com/PHPCraftdream/netivri/internal/testutil"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	C "github.com/metacubex/mihomo/constant"
 	mihomolog "github.com/metacubex/mihomo/log"
+
+	"github.com/PHPCraftdream/netivri/internal/cli"
+	"github.com/PHPCraftdream/netivri/internal/core"
+	"github.com/PHPCraftdream/netivri/internal/servers"
+	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
+	"github.com/PHPCraftdream/netivri/internal/testutil"
 )
 
 const vlessTestTimeout = 10 * time.Second
@@ -58,7 +60,7 @@ func (r *vlessNodeRecorder) snapshot() []string {
 func (r *vlessNodeRecorder) serveConn(c net.Conn) {
 	defer r.workers.Done()
 	defer r.conns.Delete(c)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(vlessTestTimeout))
 	read := func(n int) ([]byte, error) {
 		b := make([]byte, n)
@@ -120,7 +122,7 @@ func (r *vlessNodeRecorder) serveConn(c net.Conn) {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(vlessTestTimeout))
 	if _, err = c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
@@ -136,7 +138,7 @@ func (r *vlessNodeRecorder) serveConn(c net.Conn) {
 
 func startVlessNodeRecorder(t *testing.T) (*vlessNodeRecorder, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +163,12 @@ func startVlessNodeRecorder(t *testing.T) (*vlessNodeRecorder, string) {
 		case <-time.After(vlessTestTimeout):
 			t.Errorf("recorder accept loop did not stop")
 		}
-		r.conns.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+		r.conns.Range(func(key, _ any) bool {
+			if conn, ok := key.(net.Conn); ok {
+				_ = conn.Close()
+			}
+			return true
+		})
 		if err := waitVlessWorkers(&r.workers); err != nil {
 			t.Errorf("recorder workers: %v", err)
 		}
@@ -184,7 +191,7 @@ func waitVlessWorkers(wg *sync.WaitGroup) error {
 
 func startVlessEcho(t *testing.T) (netip.Addr, uint16) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +210,7 @@ func startVlessEcho(t *testing.T) (netip.Addr, uint16) {
 			go func(c net.Conn) {
 				defer workers.Done()
 				defer conns.Delete(c)
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(vlessTestTimeout))
 				_, _ = io.Copy(c, c)
 			}(c)
@@ -216,13 +223,21 @@ func startVlessEcho(t *testing.T) (netip.Addr, uint16) {
 		case <-time.After(vlessTestTimeout):
 			t.Errorf("echo accept loop did not stop")
 		}
-		conns.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+		conns.Range(func(key, _ any) bool {
+			if conn, ok := key.(net.Conn); ok {
+				_ = conn.Close()
+			}
+			return true
+		})
 		if err := waitVlessWorkers(&workers); err != nil {
 			t.Errorf("echo workers: %v", err)
 		}
 	})
-	a := ln.Addr().(*net.TCPAddr)
-	return netip.MustParseAddr("127.0.0.1"), uint16(a.Port)
+	a, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T", ln.Addr())
+	}
+	return netip.MustParseAddr("127.0.0.1"), servertest.MustUint16(t, a.Port)
 }
 
 type realityTargetObservation struct {
@@ -322,7 +337,7 @@ func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservati
 	if _, err := rand.Read(ticketPadding); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,10 +381,10 @@ func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservati
 			go func(conn net.Conn) {
 				defer workers.Done()
 				defer conns.Delete(conn)
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				_ = conn.SetDeadline(time.Now().Add(vlessTestTimeout))
 				if tlsConn, ok := conn.(*tls.Conn); ok {
-					err := tlsConn.Handshake()
+					err := tlsConn.HandshakeContext(context.Background())
 					state := tlsConn.ConnectionState()
 					obs.mu.Lock()
 					if err == nil {
@@ -394,7 +409,12 @@ func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservati
 		case <-time.After(vlessTestTimeout):
 			t.Errorf("Reality target accept loop did not stop")
 		}
-		conns.Range(func(key, _ any) bool { _ = key.(net.Conn).Close(); return true })
+		conns.Range(func(key, _ any) bool {
+			if conn, ok := key.(net.Conn); ok {
+				_ = conn.Close()
+			}
+			return true
+		})
 		if err := waitVlessWorkers(&workers); err != nil {
 			t.Errorf("Reality target workers: %v", err)
 		}
@@ -404,11 +424,16 @@ func startRealityCamouflageTarget(t *testing.T) (string, *realityTargetObservati
 
 func serverPort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = ln.Close()
+		t.Fatalf("listener address is %T", ln.Addr())
+	}
+	port := addr.Port
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -466,7 +491,54 @@ func waitVlessConnections(t *testing.T, inst *core.Instance) {
 	}
 }
 
+// vlessRealityRun holds the state shared by the phases of TestVlessRealityServerRoutesAndRejectsInvalidCredentials.
+type vlessRealityRun struct {
+	t                         *testing.T
+	protocol                  servers.Protocol
+	params                    map[string]string
+	material                  map[string]string
+	aliceNode                 *vlessNodeRecorder
+	bobNode                   *vlessNodeRecorder
+	aliceAddr                 string
+	bobAddr                   string
+	targetIP                  netip.Addr
+	targetPort                uint16
+	dest                      string
+	targetObservation         *realityTargetObservation
+	backend                   string
+	port                      int
+	home                      string
+	users                     servers.UserSecrets
+	baseOptions               core.Options
+	inst                      *core.Instance
+	closed                    bool
+	publicKey                 string
+	shortIDs                  []string
+	shortID                   string
+	successfulDiagnosticCalls int
+}
+
+// vlessDialResult is one loopback VLESS echo attempt and the stage where it stopped.
+type vlessDialResult struct {
+	stage string
+	err   error
+}
+
 func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
+	r := newVlessRealityRun(t)
+	r.start()
+	if !r.checkFirstAliceRoute() {
+		return
+	}
+	r.checkBobRoute()
+	r.checkWrongCredentials()
+	r.checkAccountDenial()
+	r.checkRotation()
+	r.checkCloseReleasesPort()
+}
+
+func newVlessRealityRun(t *testing.T) *vlessRealityRun {
+	t.Helper()
 	aliceNode, aliceAddr := startVlessNodeRecorder(t)
 	bobNode, bobAddr := startVlessNodeRecorder(t)
 	targetIP, targetPort := startVlessEcho(t)
@@ -481,163 +553,182 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newSecret := func(login string) servers.SecretMap {
-		values, err := protocol.NewSecret(login, params)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return servers.SecretMap(values)
+	r := &vlessRealityRun{
+		t: t, protocol: protocol, params: params, material: material,
+		aliceNode: aliceNode, bobNode: bobNode, aliceAddr: aliceAddr, bobAddr: bobAddr,
+		targetIP: targetIP, targetPort: targetPort, dest: dest, targetObservation: targetObservation,
+		backend: backend,
 	}
-	users := servers.UserSecrets{"alice": newSecret("alice"), "bob": newSecret("bob")}
-	port := serverPort(t)
-	makeSpec := func(users servers.UserSecrets) servers.Spec {
-		return servers.Spec{Name: "vless-test", Protocol: "vless-reality", Bind: "127.0.0.1", Port: port, Accounts: []string{"alice", "bob"}, Params: params, Material: servers.SecretMap(material), Users: users}
+	r.users = servers.UserSecrets{"alice": r.newSecret("alice"), "bob": r.newSecret("bob")}
+	r.port = serverPort(t)
+	r.home = testutil.TempHome(t)
+	r.baseOptions = r.options(r.makeSpec(r.users))
+	r.publicKey = material["public_key"]
+	r.shortIDs = strings.Split(material["short_ids"], ",")
+	r.shortID = r.shortIDs[0]
+	return r
+}
+
+func (r *vlessRealityRun) newSecret(login string) servers.SecretMap {
+	values, err := r.protocol.NewSecret(login, r.params)
+	if err != nil {
+		r.t.Fatal(err)
 	}
-	home := testutil.TempHome(t)
-	options := func(spec servers.Spec, accountPolicy map[string][]netip.Prefix) core.Options {
-		return core.Options{HomeDir: home, GlobalPost: "socks5://" + aliceAddr, AllowedClients: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, RouteNodes: map[string][]map[string]any{
-			"alice": {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(aliceAddr)}},
-			"bob":   {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(bobAddr)}},
-		}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob"}, Servers: []servers.Spec{spec}, AccountAllowedClients: accountPolicy}
-	}
-	baseOptions := options(makeSpec(users), nil)
-	var inst *core.Instance
-	start := func() error {
-		var startErr error
-		inst, startErr = core.Start(context.Background(), baseOptions)
-		return startErr
-	}
+	return servers.SecretMap(values)
+}
+
+func (r *vlessRealityRun) makeSpec(users servers.UserSecrets) servers.Spec {
+	return servers.Spec{Name: "vless-test", Protocol: "vless-reality", Bind: "127.0.0.1", Port: r.port, Accounts: []string{"alice", "bob"}, Params: r.params, Material: servers.SecretMap(r.material), Users: users}
+}
+
+func (r *vlessRealityRun) options(spec servers.Spec) core.Options {
+	return core.Options{HomeDir: r.home, GlobalPost: "socks5://" + r.aliceAddr, AllowedClients: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}, RouteNodes: map[string][]map[string]any{
+		"alice": {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(r.aliceAddr)}},
+		"bob":   {{"type": "socks5", "server": "127.0.0.1", "port": mustVlessPort(r.bobAddr)}},
+	}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob"}, Servers: []servers.Spec{spec}}
+}
+
+func (r *vlessRealityRun) start() {
 	var startErr error
-	for attempts := 0; attempts < 3; attempts++ {
-		startErr = start()
+	for range 3 {
+		r.inst, startErr = core.Start(context.Background(), r.baseOptions)
 		if startErr == nil {
 			break
 		}
 		var cliErr *cli.Error
 		if !errors.As(startErr, &cliErr) || cliErr.Code != "PORT_IN_USE" {
-			t.Fatalf("core.Start: %v", startErr)
+			r.t.Fatalf("core.Start: %v", startErr)
 		}
-		port = serverPort(t)
-		baseOptions.Servers = []servers.Spec{makeSpec(users)}
+		r.port = serverPort(r.t)
+		r.baseOptions.Servers = []servers.Spec{r.makeSpec(r.users)}
 	}
 	if startErr != nil {
-		t.Fatalf("core.Start after port retries: %v", startErr)
+		r.t.Fatalf("core.Start after port retries: %v", startErr)
 	}
-	closed := false
+	t := r.t
 	t.Cleanup(func() {
-		if closed {
+		if r.closed {
 			return
 		}
 		defer func() {
-			if err := inst.Close(); err != nil {
+			if err := r.inst.Close(); err != nil {
 				t.Errorf("Close: %v", err)
 			}
 		}()
-		waitVlessConnections(t, inst)
+		waitVlessConnections(t, r.inst)
 	})
 	if mihomolog.Level() != mihomolog.SILENT {
 		t.Fatalf("Mihomo log level = %v, want SILENT", mihomolog.Level())
 	}
-	publicKey := material["public_key"]
-	shortIDs := strings.Split(material["short_ids"], ",")
-	shortID := shortIDs[0]
-	successfulDiagnosticCalls := 0
-	type diagnosticResult struct {
-		stage string
-		err   error
+}
+
+func (r *vlessRealityRun) dial(uuid, sid, pub, flow, sni string) vlessDialResult {
+	ctx, cancel := context.WithTimeout(context.Background(), vlessTestTimeout)
+	defer cancel()
+	client, err := outbound.NewVless(outbound.VlessOption{Name: "loopback-vless", Server: "127.0.0.1", Port: r.port, UUID: uuid, Flow: flow, TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: sni, RealityOpts: outbound.RealityOptions{PublicKey: pub, ShortID: sid}})
+	if err != nil {
+		return vlessDialResult{"new outbound", err}
 	}
-	dial := func(uuid, sid, pub, flow, sni string) diagnosticResult {
-		ctx, cancel := context.WithTimeout(context.Background(), vlessTestTimeout)
-		defer cancel()
-		client, err := outbound.NewVless(outbound.VlessOption{Name: "loopback-vless", Server: "127.0.0.1", Port: port, UUID: uuid, Flow: flow, TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: sni, RealityOpts: outbound.RealityOptions{PublicKey: pub, ShortID: sid}})
-		if err != nil {
-			return diagnosticResult{"new outbound", err}
-		}
-		defer client.Close()
-		conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: targetIP, DstPort: targetPort})
-		if err != nil {
-			return diagnosticResult{"outbound connect", err}
-		}
-		defer conn.Close()
-		if err = conn.SetDeadline(time.Now().Add(vlessTestTimeout)); err != nil {
-			return diagnosticResult{"set deadline", err}
-		}
-		payload := []byte("vless-reality-route-echo")
-		if _, err = conn.Write(payload); err != nil {
-			return diagnosticResult{"echo write", err}
-		}
-		got := make([]byte, len(payload))
-		if _, err = io.ReadFull(conn, got); err != nil {
-			return diagnosticResult{"echo read", err}
-		}
-		if string(got) != string(payload) {
-			return diagnosticResult{"echo contents", io.ErrUnexpectedEOF}
-		}
-		return diagnosticResult{"echo complete", nil}
+	defer func() { _ = client.Close() }()
+	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: r.targetIP, DstPort: r.targetPort})
+	if err != nil {
+		return vlessDialResult{"outbound connect", err}
 	}
-	var runDiagnosticMatrix func()
-	runDiagnosticMatrix = func() {
-		paddedShortID := shortID + "00000000"
-		cases := []struct {
-			name string
-			flow string
-			sid  string
-			sni  string
-			want bool
-		}{
-			{"vision baseline", "xtls-rprx-vision", shortID, "reality.test", true},
-			{"flow off", "", shortID, "reality.test", true},
-			{"zero padded short ID", "xtls-rprx-vision", paddedShortID, "reality.test", true},
-			{"wrong SNI", "xtls-rprx-vision", shortID, "wrong.test", false},
-		}
-		for _, tc := range cases {
-			t.Run("diagnostic/"+tc.name, func(t *testing.T) {
-				result := dial(users["alice"]["uuid"], tc.sid, publicKey, tc.flow, tc.sni)
-				if tc.want && result.err == nil {
-					successfulDiagnosticCalls++
-					waitVlessConnections(t, inst)
-				}
-				if tc.want && result.err != nil {
-					t.Errorf("expected success; failed at %s: %v", result.stage, result.err)
-				}
-				if !tc.want && (result.stage != "outbound connect" || result.err == nil) {
-					t.Errorf("wrong SNI should fail outbound connect, got stage=%s err=%v", result.stage, result.err)
-				}
-				t.Logf("target stages: %s", targetObservation.snapshot())
-			})
-		}
+	defer func() { _ = conn.Close() }()
+	if err = conn.SetDeadline(time.Now().Add(vlessTestTimeout)); err != nil {
+		return vlessDialResult{"set deadline", err}
 	}
-	if firstResult := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); firstResult.err != nil {
-		if accepted := waitRealityTargetAccepted(t, targetObservation); accepted == 0 {
-			t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", targetObservation.snapshot())
-		}
-		assertVlessNoCamouflageRoute(t, aliceNode, bobNode, dest)
-		assertVlessRouteCounts(t, aliceNode, bobNode, 0, 0, backend)
-		t.Errorf("Alice echo stage %s: %v; camouflage target stages: %s", firstResult.stage, firstResult.err, targetObservation.snapshot())
-		runDiagnosticMatrix()
-		return
-	} else {
-		if accepted := waitRealityTargetAccepted(t, targetObservation); accepted == 0 {
-			t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", targetObservation.snapshot())
-		}
-		assertVlessNoCamouflageRoute(t, aliceNode, bobNode, dest)
-		waitVlessConnections(t, inst)
-		assertVlessRouteCounts(t, aliceNode, bobNode, 1, 0, backend)
+	payload := []byte("vless-reality-route-echo")
+	if _, err = conn.Write(payload); err != nil {
+		return vlessDialResult{"echo write", err}
 	}
-	if result := dial(users["bob"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+	got := make([]byte, len(payload))
+	if _, err = io.ReadFull(conn, got); err != nil {
+		return vlessDialResult{"echo read", err}
+	}
+	if string(got) != string(payload) {
+		return vlessDialResult{"echo contents", io.ErrUnexpectedEOF}
+	}
+	return vlessDialResult{"echo complete", nil}
+}
+
+func (r *vlessRealityRun) runDiagnosticMatrix() {
+	paddedShortID := r.shortID + "00000000"
+	cases := []struct {
+		name string
+		flow string
+		sid  string
+		sni  string
+		want bool
+	}{
+		{"vision baseline", "xtls-rprx-vision", r.shortID, "reality.test", true},
+		{"flow off", "", r.shortID, "reality.test", true},
+		{"zero padded short ID", "xtls-rprx-vision", paddedShortID, "reality.test", true},
+		{"wrong SNI", "xtls-rprx-vision", r.shortID, "wrong.test", false},
+	}
+	for _, tc := range cases {
+		r.t.Run("diagnostic/"+tc.name, func(t *testing.T) {
+			result := r.dial(r.users["alice"]["uuid"], tc.sid, r.publicKey, tc.flow, tc.sni)
+			r.checkDiagnosticCase(t, tc.want, result)
+		})
+	}
+}
+
+func (r *vlessRealityRun) checkDiagnosticCase(t *testing.T, want bool, result vlessDialResult) {
+	if want && result.err == nil {
+		r.successfulDiagnosticCalls++
+		waitVlessConnections(t, r.inst)
+	}
+	if want && result.err != nil {
+		t.Errorf("expected success; failed at %s: %v", result.stage, result.err)
+	}
+	if !want && (result.stage != "outbound connect" || result.err == nil) {
+		t.Errorf("wrong SNI should fail outbound connect, got stage=%s err=%v", result.stage, result.err)
+	}
+	t.Logf("target stages: %s", r.targetObservation.snapshot())
+}
+
+// checkFirstAliceRoute reports whether the first Alice attempt succeeded; on failure it runs the diagnostics.
+func (r *vlessRealityRun) checkFirstAliceRoute() bool {
+	t := r.t
+	if firstResult := r.dial(r.users["alice"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); firstResult.err != nil {
+		if accepted := waitRealityTargetAccepted(t, r.targetObservation); accepted == 0 {
+			t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", r.targetObservation.snapshot())
+		}
+		assertVlessNoCamouflageRoute(t, r.aliceNode, r.bobNode, r.dest)
+		assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 0, 0, r.backend)
+		t.Errorf("Alice echo stage %s: %v; camouflage target stages: %s", firstResult.stage, firstResult.err, r.targetObservation.snapshot())
+		r.runDiagnosticMatrix()
+		return false
+	}
+	if accepted := waitRealityTargetAccepted(t, r.targetObservation); accepted == 0 {
+		t.Errorf("camouflage target accepted no connection after first VLESS attempt; stages: %s", r.targetObservation.snapshot())
+	}
+	assertVlessNoCamouflageRoute(t, r.aliceNode, r.bobNode, r.dest)
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 1, 0, r.backend)
+	return true
+}
+
+func (r *vlessRealityRun) checkBobRoute() {
+	t := r.t
+	if result := r.dial(r.users["bob"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
 		t.Fatalf("Bob echo at %s: %v", result.stage, result.err)
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 1, 1, r.backend)
+}
 
-	badUUID := newSecret("invalid")["uuid"]
+func (r *vlessRealityRun) checkWrongCredentials() {
+	t := r.t
+	badUUID := r.newSecret("invalid")["uuid"]
 	wrongPrivate, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wrongPublic := base64.RawURLEncoding.EncodeToString(wrongPrivate.PublicKey().Bytes())
 	used := make(map[string]bool)
-	for _, id := range shortIDs {
+	for _, id := range r.shortIDs {
 		used[strings.ToLower(id)] = true
 	}
 	wrongIDBytes := make([]byte, 4)
@@ -655,89 +746,100 @@ func TestVlessRealityServerRoutesAndRejectsInvalidCredentials(t *testing.T) {
 		name string
 		args [3]string
 	}{
-		{"UUID", [3]string{badUUID, shortID, publicKey}},
-		{"short ID", [3]string{users["alice"]["uuid"], wrongShortID, publicKey}},
-		{"public key", [3]string{users["alice"]["uuid"], shortID, wrongPublic}},
+		{"UUID", [3]string{badUUID, r.shortID, r.publicKey}},
+		{"short ID", [3]string{r.users["alice"]["uuid"], wrongShortID, r.publicKey}},
+		{"public key", [3]string{r.users["alice"]["uuid"], r.shortID, wrongPublic}},
 	} {
-		result := dial(args.args[0], args.args[1], args.args[2], "xtls-rprx-vision", "reality.test")
-		if result.err == nil {
+		result := r.dial(args.args[0], args.args[1], args.args[2], "xtls-rprx-vision", "reality.test")
+		switch {
+		case result.err == nil:
 			t.Errorf("wrong %s completed echo at %s", args.name, result.stage)
-		} else if args.name == "UUID" && result.stage != "echo read" && result.stage != "echo write" {
+		case args.name == "UUID" && result.stage != "echo read" && result.stage != "echo write":
 			t.Errorf("wrong UUID was rejected before VLESS auth response stage: %s: %v", result.stage, result.err)
-		} else if (args.name == "short ID" || args.name == "public key") && result.stage != "outbound connect" {
+		case (args.name == "short ID" || args.name == "public key") && result.stage != "outbound connect":
 			t.Errorf("wrong %s should fail Reality transport at outbound connect, got %s: %v", args.name, result.stage, result.err)
-		} else {
-			t.Logf("wrong %s rejected at %s: %v; target stages: %s", args.name, result.stage, result.err, targetObservation.snapshot())
+		default:
+			t.Logf("wrong %s rejected at %s: %v; target stages: %s", args.name, result.stage, result.err, r.targetObservation.snapshot())
 		}
-		waitVlessConnections(t, inst)
+		waitVlessConnections(t, r.inst)
 	}
-	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 1, 1, r.backend)
+}
 
-	denied := baseOptions
-	denied.Servers = []servers.Spec{makeSpec(users)}
+// checkAccountDenial denies Alice by account allowlist, checks Bob is unaffected, then restores Alice.
+func (r *vlessRealityRun) checkAccountDenial() {
+	t := r.t
+	denied := r.baseOptions
+	denied.Servers = []servers.Spec{r.makeSpec(r.users)}
 	denied.AccountAllowedClients = map[string][]netip.Prefix{"alice": {netip.MustParsePrefix("192.0.2.0/24")}}
-	if err := inst.Reconfigure(denied); err != nil {
+	if err := r.inst.Reconfigure(denied); err != nil {
 		t.Fatalf("deny Alice client: %v", err)
 	}
-	droppedBefore := inst.Servers()[0].DroppedClients
-	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
+	droppedBefore := r.inst.Servers()[0].DroppedClients
+	if result := r.dial(r.users["alice"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
 		t.Fatal("Alice account allowlist accepted loopback")
 	} else if result.stage != "echo write" && result.stage != "echo read" {
 		t.Errorf("Alice account allowlist rejection stage = %s; want VLESS request stage", result.stage)
 	}
-	waitVlessConnections(t, inst)
-	if dropped := inst.Servers()[0].DroppedClients; dropped <= droppedBefore {
+	waitVlessConnections(t, r.inst)
+	if dropped := r.inst.Servers()[0].DroppedClients; dropped <= droppedBefore {
 		t.Fatal("Alice denial did not increment dropped-client counter")
 	}
-	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 1, backend)
-	if result := dial(users["bob"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 1, 1, r.backend)
+	if result := r.dial(r.users["bob"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
 		t.Fatalf("Bob while Alice policy denies at %s: %v", result.stage, result.err)
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 1, 2, backend)
-	allowed := baseOptions
-	allowed.Servers = []servers.Spec{makeSpec(users)}
-	if err := inst.Reconfigure(allowed); err != nil {
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 1, 2, r.backend)
+	allowed := r.baseOptions
+	allowed.Servers = []servers.Spec{r.makeSpec(r.users)}
+	if err := r.inst.Reconfigure(allowed); err != nil {
 		t.Fatalf("restore Alice client policy: %v", err)
 	}
-	if result := dial(users["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+	if result := r.dial(r.users["alice"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
 		t.Fatalf("Alice after policy restore at %s: %v", result.stage, result.err)
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 2, 2, backend)
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 2, 2, r.backend)
+}
 
-	oldAliceUUID := users["alice"]["uuid"]
-	rotatedUsers := servers.UserSecrets{"alice": newSecret("alice"), "bob": users["bob"]}
+func (r *vlessRealityRun) checkRotation() {
+	t := r.t
+	oldAliceUUID := r.users["alice"]["uuid"]
+	rotatedUsers := servers.UserSecrets{"alice": r.newSecret("alice"), "bob": r.users["bob"]}
 	if rotatedUsers["alice"]["uuid"] == oldAliceUUID {
 		t.Fatal("generated rotation repeated Alice UUID")
 	}
-	rotatedOptions := baseOptions
-	rotatedOptions.Servers = []servers.Spec{makeSpec(rotatedUsers)}
-	if err := inst.Reconfigure(rotatedOptions); err != nil {
+	rotatedOptions := r.baseOptions
+	rotatedOptions.Servers = []servers.Spec{r.makeSpec(rotatedUsers)}
+	if err := r.inst.Reconfigure(rotatedOptions); err != nil {
 		t.Fatalf("rotate Alice UUID: %v", err)
 	}
-	if result := dial(oldAliceUUID, shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
+	if result := r.dial(oldAliceUUID, r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err == nil {
 		t.Fatal("old Alice UUID still works after rotation")
 	} else if result.stage != "echo read" && result.stage != "echo write" {
 		t.Errorf("old Alice UUID rejected before VLESS authentication stage: %s: %v", result.stage, result.err)
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 2, 2, backend)
-	if result := dial(rotatedUsers["alice"]["uuid"], shortID, publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 2, 2, r.backend)
+	if result := r.dial(rotatedUsers["alice"]["uuid"], r.shortID, r.publicKey, "xtls-rprx-vision", "reality.test"); result.err != nil {
 		t.Fatalf("rotated Alice UUID at %s: %v", result.stage, result.err)
 	}
-	waitVlessConnections(t, inst)
-	assertVlessRouteCounts(t, aliceNode, bobNode, 3, 2, backend)
-	users = rotatedUsers
-	runDiagnosticMatrix()
-	assertVlessRouteCounts(t, aliceNode, bobNode, 3+successfulDiagnosticCalls, 2, backend)
+	waitVlessConnections(t, r.inst)
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 3, 2, r.backend)
+	r.users = rotatedUsers
+	r.runDiagnosticMatrix()
+	assertVlessRouteCounts(t, r.aliceNode, r.bobNode, 3+r.successfulDiagnosticCalls, 2, r.backend)
+}
 
-	waitVlessConnections(t, inst)
-	if err := inst.Close(); err != nil {
+func (r *vlessRealityRun) checkCloseReleasesPort() {
+	t := r.t
+	waitVlessConnections(t, r.inst)
+	if err := r.inst.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	closed = true
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	r.closed = true
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
 	if err != nil {
 		t.Fatalf("Close did not free port: %v", err)
 	}

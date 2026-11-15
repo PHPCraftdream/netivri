@@ -2,6 +2,7 @@ package servers
 
 import (
 	"crypto/tls"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -334,7 +335,8 @@ func TestStoreEnsureValidatedRejectsAmbiguousSecretsWithoutWriting(t *testing.T)
 		t.Fatal(err)
 	}
 	_, receipt, err := s.EnsureSecretsValidated(target, []Spec{peer})
-	ce, ok := err.(*cli.Error)
+	var ce *cli.Error
+	ok := errors.As(err, &ce)
 	if !ok || ce.Code != "SERVER_PORT_AMBIGUOUS" || ce.Message != "shared server TLS match keys overlap" || ce.Exit != cli.ExitConflict {
 		t.Fatalf("validation error = %v, want SERVER_PORT_AMBIGUOUS cli.Error", err)
 	}
@@ -361,7 +363,8 @@ func TestStoreEnsureValidatedStorageErrorsAreNotValidationErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("corrupt store was accepted")
 	}
-	if _, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		t.Fatalf("storage error was mapped to a validation error: %v", err)
 	}
 }
@@ -711,7 +714,7 @@ func TestStoreRepairsPartialGeneratedTLSPair(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := NewStore(t.TempDir())
-			material := map[string]string{tlsCertKey: stale[tlsCertKey], tlsFingerprintKey: stale[tlsFingerprintKey], "obfs_password": "stable-obfs", "unrelated": "stable"}
+			material := map[string]string{tlsCertKey: stale[tlsCertKey], tlsFingerprintKey: stale[tlsFingerprintKey], "obfs_password": "stable-obfs", "unrelated": "stable"} //nolint:gosec // G101: obfs_password is a fixture key name, not a credential
 			if tc.keyPresent {
 				material[tlsKeyKey] = ""
 			}

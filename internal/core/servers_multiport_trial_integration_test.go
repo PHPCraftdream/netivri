@@ -16,65 +16,22 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/servers"
-	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/component/auth"
 	C "github.com/metacubex/mihomo/constant"
+
+	"github.com/PHPCraftdream/netivri/internal/servers"
+	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 )
 
 const multiportTrialTimeout = 12 * time.Second
 
-func multiportTrialEcho(t *testing.T) (netip.Addr, uint16) {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	var conns sync.Map
-	go func() {
-		defer close(done)
-		for {
-			c, e := ln.Accept()
-			if e != nil {
-				return
-			}
-			conns.Store(c, struct{}{})
-			wg.Add(1)
-			go func(c net.Conn) {
-				defer wg.Done()
-				defer conns.Delete(c)
-				defer c.Close()
-				_ = c.SetDeadline(time.Now().Add(multiportTrialTimeout))
-				_, _ = io.Copy(c, c)
-			}(c)
-		}
-	}()
-	t.Cleanup(func() {
-		_ = ln.Close()
-		select {
-		case <-done:
-		case <-time.After(multiportTrialTimeout):
-			t.Error("echo accept loop did not stop")
-		}
-		conns.Range(func(k, _ any) bool { _ = k.(net.Conn).Close(); return true })
-		fin := make(chan struct{})
-		go func() { wg.Wait(); close(fin) }()
-		select {
-		case <-fin:
-		case <-time.After(multiportTrialTimeout):
-			t.Error("echo handlers did not stop")
-		}
-	})
-	return netip.MustParseAddr("127.0.0.1"), uint16(ln.Addr().(*net.TCPAddr).Port)
-}
 func multiportTrialCamouflage(t *testing.T) string {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -90,7 +47,7 @@ func multiportTrialCamouflage(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +68,9 @@ func multiportTrialCamouflage(t *testing.T) string {
 			go func(c *tls.Conn) {
 				defer wg.Done()
 				defer conns.Delete(c)
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(multiportTrialTimeout))
-				if c.Handshake() == nil {
+				if c.HandshakeContext(context.Background()) == nil {
 					_, _ = io.Copy(io.Discard, c)
 				}
 			}(tc)
@@ -126,7 +83,15 @@ func multiportTrialCamouflage(t *testing.T) string {
 		case <-time.After(multiportTrialTimeout):
 			t.Error("camouflage accept loop did not stop")
 		}
-		conns.Range(func(k, _ any) bool { _ = k.(*tls.Conn).Close(); return true })
+		conns.Range(func(k, _ any) bool {
+			c, ok := k.(*tls.Conn)
+			if !ok {
+				t.Errorf("tracked connection is %T, want *tls.Conn", k)
+				return true
+			}
+			_ = c.Close()
+			return true
+		})
 		fin := make(chan struct{})
 		go func() { wg.Wait(); close(fin) }()
 		select {
@@ -145,7 +110,7 @@ func multiportTrialRoundTrip(t *testing.T, c C.ProxyAdapter, ip netip.Addr, p ui
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(multiportTrialTimeout))
 	if _, err = io.WriteString(conn, payload); err != nil {
 		t.Fatal(err)
@@ -168,7 +133,7 @@ func (c *multiportTrialCaptureConn) Write(p []byte) (int, error) {
 }
 func multiportTrialCaptureFirstFlight(t *testing.T, c *outbound.ShadowSocks, port int, m *C.Metadata) []byte {
 	t.Helper()
-	raw, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), multiportTrialTimeout)
+	raw, err := (&net.Dialer{Timeout: multiportTrialTimeout}).DialContext(t.Context(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,11 +165,11 @@ func multiportTrialCaptureFirstFlight(t *testing.T, c *outbound.ShadowSocks, por
 }
 func multiportTrialRawReplay(t *testing.T, port int, flight []byte) {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)), multiportTrialTimeout)
+	conn, err := (&net.Dialer{Timeout: multiportTrialTimeout}).DialContext(t.Context(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(multiportTrialTimeout))
 	if _, err = conn.Write(flight); err != nil {
 		t.Fatal(err)
@@ -224,122 +189,203 @@ func multiportTrialRawReplay(t *testing.T, port int, flight []byte) {
 	}
 }
 
-func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	t.Cleanup(cancel)
-	backendIP, backendPort := multiportTrialEcho(t)
-	camouflage := multiportTrialCamouflage(t)
+// trialFixture is the state shared by the phases of
+// TestMultiportTrialSharedSS2022VMessTLSAndRollback.
+type trialFixture struct {
+	backendIP   netip.Addr
+	backendPort uint16
+	camouflage  string
+	port        int
+	home        string
+	ssParams    map[string]string
+	vmParams    map[string]string
+	trParams    map[string]string
+	rlParams    map[string]string
+	ssA         map[string]string
+	ssB         map[string]string
+	vm          map[string]string
+	ts          map[string]string
+	rs          map[string]string
+	tm          map[string]string
+	rm          map[string]string
+	ssAddr      string
+	vmAddr      string
+	trAddr      string
+	rlAddr      string
+	ssRec       *chainRecorder
+	vmRec       *chainRecorder
+	trRec       *chainRecorder
+	rlRec       *chainRecorder
+	inst        *Instance
+	sid         string
+	ss1         *outbound.ShadowSocks
+	ss2         *outbound.ShadowSocks
+	vmc         C.ProxyAdapter
+	trc         C.ProxyAdapter
+	rlc         C.ProxyAdapter
+}
+
+// newTrialFixture builds the echo backend, the camouflage, the chain recorders
+// and the secrets of the trial protocols.
+func newTrialFixture(t *testing.T) *trialFixture {
+	t.Helper()
+	f := &trialFixture{}
+	f.backendIP, f.backendPort = multiportEchoServer(t, multiportTrialTimeout)
+	f.camouflage = multiportTrialCamouflage(t)
 	ssP, _ := servers.Lookup("shadowsocks")
 	vmP, _ := servers.Lookup("vmess")
 	trP, _ := servers.Lookup("trojan")
 	vlP, _ := servers.Lookup("vless-reality")
-	ssRec, ssAddr := startChainRecorder(t)
-	vmRec, vmAddr := startChainRecorder(t)
-	trRec, trAddr := startChainRecorder(t)
-	rlRec, rlAddr := startChainRecorder(t)
-	ssParams := map[string]string{"cipher": "2022-blake3-aes-128-gcm"}
-	vmParams := map[string]string{"cipher": "auto"}
-	trParams := map[string]string{"sni": "trial-trojan.multiport.test"}
-	rlParams := map[string]string{"dest": camouflage, "sni": "trial-reality.multiport.test", "flow": "xtls-rprx-vision", "fingerprint": "chrome"}
-	ssA, _ := ssP.NewSecret("alice", ssParams)
-	ssB, _ := ssP.NewSecret("bob", ssParams)
-	vm, _ := vmP.NewSecret("carol", vmParams)
-	tm, e := trP.NewMaterial(trParams)
+	f.ssRec, f.ssAddr = startChainRecorder(t)
+	f.vmRec, f.vmAddr = startChainRecorder(t)
+	f.trRec, f.trAddr = startChainRecorder(t)
+	f.rlRec, f.rlAddr = startChainRecorder(t)
+	f.ssParams = map[string]string{"cipher": "2022-blake3-aes-128-gcm"}
+	f.vmParams = map[string]string{"cipher": "auto"}
+	f.trParams = map[string]string{"sni": "trial-trojan.multiport.test"}
+	f.rlParams = map[string]string{"dest": f.camouflage, "sni": "trial-reality.multiport.test", "flow": "xtls-rprx-vision", "fingerprint": "chrome"}
+	f.ssA, _ = ssP.NewSecret("alice", f.ssParams)
+	f.ssB, _ = ssP.NewSecret("bob", f.ssParams)
+	f.vm, _ = vmP.NewSecret("carol", f.vmParams)
+	var e error
+	f.tm, e = trP.NewMaterial(f.trParams)
 	if e != nil {
 		t.Fatal(e)
 	}
-	ts, _ := trP.NewSecret("dave", trParams)
-	rm, e := vlP.NewMaterial(rlParams)
+	f.ts, _ = trP.NewSecret("dave", f.trParams)
+	f.rm, e = vlP.NewMaterial(f.rlParams)
 	if e != nil {
 		t.Fatal(e)
 	}
-	rs, _ := vlP.NewSecret("erin", rlParams)
-	port := servertest.FreePort(t)
-	home := t.TempDir()
-	specs := func(bob, bad bool) []servers.Spec {
-		s := []servers.Spec{{Name: "trial-ss-alice", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: port, Accounts: []string{"alice"}, Params: ssParams, Users: servers.UserSecrets{"alice": servers.SecretMap(ssA)}}}
-		if bob {
-			u := ssB
-			if bad {
-				u = ssA
-			}
-			s = append(s, servers.Spec{Name: "trial-ss-bob", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: port, Accounts: []string{"bob"}, Params: ssParams, Users: servers.UserSecrets{"bob": servers.SecretMap(u)}})
+	f.rs, _ = vlP.NewSecret("erin", f.rlParams)
+	f.port = servertest.FreePort(t)
+	f.home = t.TempDir()
+	return f
+}
+
+// specs lists the trial servers. Bob's member is served only when bob is set,
+// and with Alice's secret when bad is set.
+func (f *trialFixture) specs(bob, bad bool) []servers.Spec {
+	port := f.port
+	s := []servers.Spec{{Name: "trial-ss-alice", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: port, Accounts: []string{"alice"}, Params: f.ssParams, Users: servers.UserSecrets{"alice": servers.SecretMap(f.ssA)}}}
+	if bob {
+		u := f.ssB
+		if bad {
+			u = f.ssA
 		}
-		return append(s, servers.Spec{Name: "trial-vmess", Protocol: "vmess", Bind: "127.0.0.1", Port: port, Accounts: []string{"carol"}, Params: vmParams, Users: servers.UserSecrets{"carol": servers.SecretMap(vm)}}, servers.Spec{Name: "trial-trojan", Protocol: "trojan", Bind: "127.0.0.1", Port: port, Accounts: []string{"dave"}, Params: trParams, Material: servers.SecretMap(tm), Users: servers.UserSecrets{"dave": servers.SecretMap(ts)}}, servers.Spec{Name: "trial-reality", Protocol: "vless-reality", Bind: "127.0.0.1", Port: port, Accounts: []string{"erin"}, Params: rlParams, Material: servers.SecretMap(rm), Users: servers.UserSecrets{"erin": servers.SecretMap(rs)}})
+		s = append(s, servers.Spec{Name: "trial-ss-bob", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: port, Accounts: []string{"bob"}, Params: f.ssParams, Users: servers.UserSecrets{"bob": servers.SecretMap(u)}})
 	}
-	options := func(s []servers.Spec) Options {
-		return Options{HomeDir: home, Authenticator: auth.NewAuthenticator(nil), RouteNodes: map[string][]map[string]any{"alice": {nodeMap(ssAddr)}, "bob": {nodeMap(ssAddr)}, "carol": {nodeMap(vmAddr)}, "dave": {nodeMap(trAddr)}, "erin": {nodeMap(rlAddr)}}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob", "carol": "carol", "dave": "dave", "erin": "erin"}, Servers: s}
-	}
-	inst, e := Start(ctx, options(specs(true, false)))
+	return append(s, servers.Spec{Name: "trial-vmess", Protocol: "vmess", Bind: "127.0.0.1", Port: port, Accounts: []string{"carol"}, Params: f.vmParams, Users: servers.UserSecrets{"carol": servers.SecretMap(f.vm)}}, servers.Spec{Name: "trial-trojan", Protocol: "trojan", Bind: "127.0.0.1", Port: port, Accounts: []string{"dave"}, Params: f.trParams, Material: servers.SecretMap(f.tm), Users: servers.UserSecrets{"dave": servers.SecretMap(f.ts)}}, servers.Spec{Name: "trial-reality", Protocol: "vless-reality", Bind: "127.0.0.1", Port: port, Accounts: []string{"erin"}, Params: f.rlParams, Material: servers.SecretMap(f.rm), Users: servers.UserSecrets{"erin": servers.SecretMap(f.rs)}})
+}
+
+// options is the instance options of the trial routes over the server list s.
+func (f *trialFixture) options(s []servers.Spec) Options {
+	return Options{HomeDir: f.home, Authenticator: auth.NewAuthenticator(nil), RouteNodes: map[string][]map[string]any{"alice": {nodeMap(f.ssAddr)}, "bob": {nodeMap(f.ssAddr)}, "carol": {nodeMap(f.vmAddr)}, "dave": {nodeMap(f.trAddr)}, "erin": {nodeMap(f.rlAddr)}}, AccountRoute: map[string]string{"alice": "alice", "bob": "bob", "carol": "carol", "dave": "dave", "erin": "erin"}, Servers: s}
+}
+
+// start opens the instance with Bob and trusts the Trojan material; it keeps
+// the short id of the Reality key.
+func (f *trialFixture) start(ctx context.Context, t *testing.T) {
+	t.Helper()
+	inst, e := Start(ctx, f.options(f.specs(true, false)))
 	if e != nil {
 		t.Fatal(e)
 	}
+	f.inst = inst
 	t.Cleanup(func() {
 		waitServerConnections(t, inst)
 		if e := inst.Close(); e != nil {
 			t.Errorf("close: %v", e)
 		}
 	})
-	servertest.TrustForTest(t, tm)
-	sid := strings.Split(rm["short_ids"], ",")[0]
-	if _, e = hex.DecodeString(sid); e != nil {
+	servertest.TrustForTest(t, f.tm)
+	f.sid = strings.Split(f.rm["short_ids"], ",")[0]
+	if _, e = hex.DecodeString(f.sid); e != nil {
 		t.Fatal(e)
 	}
-	ss1, e := outbound.NewShadowSocks(outbound.ShadowSocksOption{Name: "trial-ss-a", Server: "127.0.0.1", Port: port, Password: ssA["password"], Cipher: ssParams["cipher"]})
+}
+
+// dialClients makes one client per trial route and closes them at cleanup.
+func (f *trialFixture) dialClients(t *testing.T) {
+	t.Helper()
+	var e error
+	f.ss1, e = outbound.NewShadowSocks(outbound.ShadowSocksOption{Name: "trial-ss-a", Server: "127.0.0.1", Port: f.port, Password: f.ssA["password"], Cipher: f.ssParams["cipher"]})
 	if e != nil {
 		t.Fatal(e)
 	}
-	ss2, e := outbound.NewShadowSocks(outbound.ShadowSocksOption{Name: "trial-ss-b", Server: "127.0.0.1", Port: port, Password: ssB["password"], Cipher: ssParams["cipher"]})
+	f.ss2, e = outbound.NewShadowSocks(outbound.ShadowSocksOption{Name: "trial-ss-b", Server: "127.0.0.1", Port: f.port, Password: f.ssB["password"], Cipher: f.ssParams["cipher"]})
 	if e != nil {
 		t.Fatal(e)
 	}
-	vmc, e := outbound.NewVmess(outbound.VmessOption{Name: "trial-vm", Server: "127.0.0.1", Port: port, UUID: vm["uuid"], AlterID: 0, Cipher: "auto", Network: "tcp"})
+	vmc, e := outbound.NewVmess(outbound.VmessOption{Name: "trial-vm", Server: "127.0.0.1", Port: f.port, UUID: f.vm["uuid"], AlterID: 0, Cipher: "auto", Network: "tcp"})
 	if e != nil {
 		t.Fatal(e)
 	}
-	trc, e := outbound.NewTrojan(outbound.TrojanOption{Name: "trial-tr", Server: "127.0.0.1", Port: port, Password: ts["password"], SNI: trParams["sni"], Fingerprint: tm["fingerprint"]})
+	trc, e := outbound.NewTrojan(outbound.TrojanOption{Name: "trial-tr", Server: "127.0.0.1", Port: f.port, Password: f.ts["password"], SNI: f.trParams["sni"], Fingerprint: f.tm["fingerprint"]})
 	if e != nil {
 		t.Fatal(e)
 	}
-	rlc, e := outbound.NewVless(outbound.VlessOption{Name: "trial-rl", Server: "127.0.0.1", Port: port, UUID: rs["uuid"], Flow: "xtls-rprx-vision", TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: rlParams["sni"], RealityOpts: outbound.RealityOptions{PublicKey: rm["public_key"], ShortID: sid}})
+	rlc, e := outbound.NewVless(outbound.VlessOption{Name: "trial-rl", Server: "127.0.0.1", Port: f.port, UUID: f.rs["uuid"], Flow: "xtls-rprx-vision", TLS: true, Network: "tcp", Encryption: "none", ClientFingerprint: "chrome", ServerName: f.rlParams["sni"], RealityOpts: outbound.RealityOptions{PublicKey: f.rm["public_key"], ShortID: f.sid}})
 	if e != nil {
 		t.Fatal(e)
 	}
-	for _, c := range []C.ProxyAdapter{ss1, ss2, vmc, trc, rlc} {
-		c := c
+	f.vmc, f.trc, f.rlc = vmc, trc, rlc
+	for _, c := range []C.ProxyAdapter{f.ss1, f.ss2, f.vmc, f.trc, f.rlc} {
 		t.Cleanup(func() { _ = c.Close() })
 	}
+}
+
+// roundTrips sends one payload over every trial route and checks that the
+// route's recorder saw it.
+func (f *trialFixture) roundTrips(t *testing.T) {
+	t.Helper()
 	for _, x := range []struct {
 		name string
 		c    C.ProxyAdapter
 		r    *chainRecorder
-	}{{"ssa", ss1, ssRec}, {"ssb", ss2, ssRec}, {"vm", vmc, vmRec}, {"tr", trc, trRec}, {"rl", rlc, rlRec}} {
+	}{{"ssa", f.ss1, f.ssRec}, {"ssb", f.ss2, f.ssRec}, {"vm", f.vmc, f.vmRec}, {"tr", f.trc, f.trRec}, {"rl", f.rlc, f.rlRec}} {
 		before := len(x.r.snapshot())
-		multiportTrialRoundTrip(t, x.c, backendIP, backendPort, "trial-"+x.name)
-		waitServerConnections(t, inst)
+		multiportTrialRoundTrip(t, x.c, f.backendIP, f.backendPort, "trial-"+x.name)
+		waitServerConnections(t, f.inst)
 		if len(x.r.snapshot()) <= before {
 			t.Fatalf("route recorder not used: %s", x.name)
 		}
 	}
-	meta := &C.Metadata{NetWork: C.TCP, DstIP: backendIP, DstPort: backendPort}
-	beforeCapture := len(ssRec.snapshot())
-	flight := multiportTrialCaptureFirstFlight(t, ss1, port, meta)
-	waitServerConnections(t, inst)
-	if len(ssRec.snapshot()) <= beforeCapture {
+}
+
+// replayRefused captures Alice's first flight and replays it raw: the replay
+// counter must move, and the route must not see the replay. done is the
+// cancellation of the test context.
+func (f *trialFixture) replayRefused(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	meta := &C.Metadata{NetWork: C.TCP, DstIP: f.backendIP, DstPort: f.backendPort}
+	beforeCapture := len(f.ssRec.snapshot())
+	flight := multiportTrialCaptureFirstFlight(t, f.ss1, f.port, meta)
+	waitServerConnections(t, f.inst)
+	if len(f.ssRec.snapshot()) <= beforeCapture {
 		t.Fatal("captured first flight did not route")
 	}
-	before := len(ssRec.snapshot())
+	before := len(f.ssRec.snapshot())
 	replay := uint64(0)
-	for _, i := range inst.Servers() {
+	for _, i := range f.inst.Servers() {
 		if i.Name == "trial-ss-alice" {
 			replay = i.Replayed
 		}
 	}
-	multiportTrialRawReplay(t, port, flight)
+	multiportTrialRawReplay(t, f.port, flight)
+	f.waitReplayCounted(t, done, replay)
+	if len(f.ssRec.snapshot()) != before {
+		t.Fatal("refused replay reached route")
+	}
+}
+
+// waitReplayCounted waits until Alice's replay counter passes replay.
+func (f *trialFixture) waitReplayCounted(t *testing.T, done <-chan struct{}, replay uint64) {
+	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		found := false
-		for _, i := range inst.Servers() {
+		for _, i := range f.inst.Servers() {
 			if i.Name == "trial-ss-alice" && i.Replayed > replay {
 				found = true
 			}
@@ -351,20 +397,22 @@ func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
 			t.Fatal("replay counter unchanged")
 		}
 		select {
-		case <-ctx.Done():
+		case <-done:
 			t.Fatal("waiting replay")
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	if len(ssRec.snapshot()) != before {
-		t.Fatal("refused replay reached route")
-	}
-	if e := inst.Reconfigure(options(specs(false, false))); e != nil {
+}
+
+// removeBob takes Bob's member out: his secret must not route any more.
+func (f *trialFixture) removeBob(t *testing.T) {
+	t.Helper()
+	if e := f.inst.Reconfigure(f.options(f.specs(false, false))); e != nil {
 		t.Fatal(e)
 	}
-	beforeRemoved := len(ssRec.snapshot())
+	beforeRemoved := len(f.ssRec.snapshot())
 	removedCtx, removedCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	removedConn, removedErr := ss2.DialContext(removedCtx, &C.Metadata{NetWork: C.TCP, DstIP: backendIP, DstPort: backendPort})
+	removedConn, removedErr := f.ss2.DialContext(removedCtx, &C.Metadata{NetWork: C.TCP, DstIP: f.backendIP, DstPort: f.backendPort})
 	if removedErr == nil {
 		_ = removedConn.SetDeadline(time.Now().Add(500 * time.Millisecond))
 		payload := []byte("removed-bob-must-not-route")
@@ -379,26 +427,37 @@ func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
 		_ = removedConn.Close()
 	}
 	removedCancel()
-	waitServerConnections(t, inst)
-	if len(ssRec.snapshot()) != beforeRemoved {
+	waitServerConnections(t, f.inst)
+	if len(f.ssRec.snapshot()) != beforeRemoved {
 		t.Fatal("removed Bob member reached the route recorder")
 	}
-	if e := inst.Reconfigure(options(specs(true, false))); e != nil {
+}
+
+// readdBob puts Bob back: his route must serve again while Alice keeps serving.
+func (f *trialFixture) readdBob(t *testing.T) {
+	t.Helper()
+	if e := f.inst.Reconfigure(f.options(f.specs(true, false))); e != nil {
 		t.Fatalf("re-add Bob member: %v", e)
 	}
-	beforeReadded := len(ssRec.snapshot())
-	multiportTrialRoundTrip(t, ss2, backendIP, backendPort, "re-added-member")
-	waitServerConnections(t, inst)
-	if len(ssRec.snapshot()) <= beforeReadded {
+	beforeReadded := len(f.ssRec.snapshot())
+	multiportTrialRoundTrip(t, f.ss2, f.backendIP, f.backendPort, "re-added-member")
+	waitServerConnections(t, f.inst)
+	if len(f.ssRec.snapshot()) <= beforeReadded {
 		t.Fatal("re-added Bob member did not route")
 	}
-	multiportTrialRoundTrip(t, ss1, backendIP, backendPort, "still-serving")
-	if e := inst.Reconfigure(options(specs(true, true))); e == nil {
+	multiportTrialRoundTrip(t, f.ss1, f.backendIP, f.backendPort, "still-serving")
+}
+
+// rollbackRefused checks that a duplicate key is refused, that the refused
+// change leaves every server in place, and that every other route still works.
+func (f *trialFixture) rollbackRefused(t *testing.T) {
+	t.Helper()
+	if e := f.inst.Reconfigure(f.options(f.specs(true, true))); e == nil {
 		t.Fatal("duplicate key accepted")
 	}
 	for _, name := range []string{"trial-ss-alice", "trial-vmess", "trial-trojan", "trial-reality"} {
 		ok := false
-		for _, i := range inst.Servers() {
+		for _, i := range f.inst.Servers() {
 			if i.Name == name {
 				ok = true
 			}
@@ -407,7 +466,20 @@ func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
 			t.Fatalf("rollback lost %s", name)
 		}
 	}
-	for _, c := range []C.ProxyAdapter{vmc, trc, rlc} {
-		multiportTrialRoundTrip(t, c, backendIP, backendPort, "after-rollback")
+	for _, c := range []C.ProxyAdapter{f.vmc, f.trc, f.rlc} {
+		multiportTrialRoundTrip(t, c, f.backendIP, f.backendPort, "after-rollback")
 	}
+}
+
+func TestMultiportTrialSharedSS2022VMessTLSAndRollback(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	t.Cleanup(cancel)
+	f := newTrialFixture(t)
+	f.start(ctx, t)
+	f.dialClients(t)
+	f.roundTrips(t)
+	f.replayRefused(t, ctx.Done())
+	f.removeBob(t)
+	f.readdBob(t)
+	f.rollbackRefused(t)
 }

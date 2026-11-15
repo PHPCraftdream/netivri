@@ -3,11 +3,13 @@
 package main
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,7 +30,7 @@ type bindingsUpstream struct {
 
 func newBindingsUpstream(t *testing.T) *bindingsUpstream {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +55,7 @@ func (u *bindingsUpstream) serve() {
 }
 
 func (u *bindingsUpstream) handle(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	var greeting [2]byte
 	if _, err := io.ReadFull(c, greeting[:]); err != nil {
@@ -74,13 +76,13 @@ func (u *bindingsUpstream) handle(c net.Conn) {
 	if _, err := io.ReadFull(c, addr[:]); err != nil {
 		return
 	}
-	target := net.JoinHostPort(net.IP(addr[:4]).String(), fmt.Sprint(binary.BigEndian.Uint16(addr[4:])))
-	out, err := net.DialTimeout("tcp", target, 5*time.Second)
+	target := net.JoinHostPort(net.IP(addr[:4]).String(), strconv.FormatUint(uint64(binary.BigEndian.Uint16(addr[4:])), 10))
+	out, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", target)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_ = out.SetDeadline(time.Now().Add(20 * time.Second))
 	u.mu.Lock()
 	u.relays[target]++
@@ -113,7 +115,7 @@ func bindingsSocksNode(id, country, server string, port int) subscription.Node {
 // 127.0.0.1 and 127.0.0.2 are two distinct destinations for the same port.
 func bindingsEchoAll(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "0.0.0.0:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "0.0.0.0:0") //nolint:gosec // G102: the echo backend must accept the 127.0.0.2 loopback alias, so it binds all interfaces
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +127,7 @@ func bindingsEchoAll(t *testing.T) string {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 				_, _ = io.Copy(c, c)
 			}(c)
@@ -162,7 +164,7 @@ type bindingsStatus struct {
 
 func bindingsStatusOf(t *testing.T, home string) bindingsStatus {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "status", "--full")
+	code, out, stderr := accountsRun(t.Context(), t, home, "status", "--full")
 	if code != 0 {
 		t.Fatalf("status exit %d: %s%s", code, out, stderr)
 	}
@@ -189,7 +191,7 @@ func bindingsStatusOf(t *testing.T, home string) bindingsStatus {
 func TestE2EBindingsSurviveRestart(t *testing.T) {
 	h := newAngelHome(t)
 	home := h.dir
-	pass := "bindings-e2e-password"
+	pass := "bindings-e2e-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal(err)

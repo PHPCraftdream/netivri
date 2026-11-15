@@ -75,15 +75,12 @@ func serverNotFound() error {
 }
 func serverConflict(msg string) error     { return serverError("SERVER_EXISTS", msg, cli.ExitConflict) }
 func serverPortConflict(msg string) error { return serverError("PORT_IN_USE", msg, cli.ExitConflict) }
-func serverPortAmbiguous(msg string) error {
-	return serverError("SERVER_PORT_AMBIGUOUS", msg, cli.ExitConflict)
-}
 func serverNameValid(s string) bool {
 	if len(s) < 1 || len(s) > 32 {
 		return false
 	}
 	for _, r := range s {
-		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._-", r) {
 			return false
 		}
 	}
@@ -145,25 +142,16 @@ func runServer(args []string, stdout io.Writer) error {
 		return e
 	}
 	if sub == "protocols" {
-		if len(rest) != 0 {
-			return cli.Usage("server protocols: unexpected argument")
-		}
-		items := []map[string]any{}
-		for _, p := range ServerProtocols() {
-			items = append(items, map[string]any{"name": p.Name, "single_user": p.SingleUser, "params": []string{}})
-		}
-		cli.Success(stdout, map[string]any{"protocols": items})
-		return nil
+		return runServerProtocols(rest, stdout)
 	}
 	cfg, e := loadConfig(home)
 	if e != nil {
 		return e
 	}
-	usage := func() error { return cli.Usage("server %s: invalid arguments", sub) }
 	switch sub {
 	case "list":
 		if len(rest) != 0 {
-			return usage()
+			return serverUsageError(sub)
 		}
 		v, e := serverListConfig(home, cfg)
 		if e != nil {
@@ -172,124 +160,167 @@ func runServer(args []string, stdout io.Writer) error {
 		cli.Success(stdout, map[string]any{"servers": v})
 		return nil
 	case "add":
-		fs := flag.NewFlagSet("server add", flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		protocol := fs.String("protocol", "", "protocol")
-		name := fs.String("name", "", "name")
-		account := fs.String("account", "", "account")
-		port := fs.Int("port", 0, "port")
-		bind := fs.String("bind", "0.0.0.0", "bind")
-		public := fs.String("public-host", "", "host")
-		def := fs.Bool("default", false, "default TLS server")
-		var params serverParamFlags
-		fs.Var(&params, "param", "key=value")
-		pos, e := parseFlags(fs, rest)
-		if e != nil || len(pos) != 0 || *protocol == "" || *account == "" || *port < 1 || *port > 65535 {
-			return usage()
-		}
-		if _, ok := servers.Lookup(*protocol); !ok {
-			return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].protocol is not registered", Exit: cli.ExitUsage})
-		}
-		if *account != "*" {
-			for _, a := range strings.Split(*account, ",") {
-				if !config.ValidAccountLogin(a) {
-					return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].accounts contains an invalid account login", Exit: cli.ExitUsage})
-				}
-			}
-		}
-		pm := map[string]string{}
-		for _, raw := range params {
-			k, v, ok := strings.Cut(raw, "=")
-			if !ok || k == "" {
-				return cli.Usage("server add --param requires key=value")
-			}
-			if _, ok = pm[k]; ok {
-				return cli.Usage("server add: duplicate --param key")
-			}
-			pm[k] = v
-		}
-		n := *name
-		if n == "" {
-			n = *protocol + "-" + strconv.Itoa(*port)
-			if *protocol == "shadowsocks" {
-				n = "ss-" + strconv.Itoa(*port)
-			}
-		}
-		if *name != "" && !serverNameValid(*name) {
-			return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].name must be 1 to 32 letters, digits, dots, underscores or hyphens", Exit: cli.ExitUsage})
-		}
-		result, e := serverAddConfig(home, cfg, ServerAddOptions{Name: n, Protocol: *protocol, Bind: *bind, Port: *port, Accounts: *account, Params: pm, PublicHost: *public, Default: *def})
-		if e != nil {
-			return e
-		}
-		cli.Success(stdout, map[string]any{"server": result.serverView})
-		return nil
+		return runServerAdd(home, cfg, rest, stdout)
 	case "update":
 		return serverUpdateCommand(home, cfg, rest, stdout)
 	case "show", "remove", "rotate", "link":
-		fs := flag.NewFlagSet("server "+sub, flag.ContinueOnError)
-		fs.SetOutput(io.Discard)
-		var acct, host, format *string
-		var qr *bool
-		if sub == "rotate" || sub == "link" {
-			acct = fs.String("account", "", "account")
-		}
-		if sub == "link" {
-			host = fs.String("host", "", "host")
-			format = fs.String("format", "uri", "format")
-			qr = fs.Bool("qr", false, "QR")
-		}
-		if sub != "link" {
-			host = nil
-			format = nil
-			qr = nil
-		}
-		pos, e := parseFlags(fs, rest)
-		if e != nil || len(pos) != 1 {
-			return usage()
-		}
-		n := pos[0]
-		if _, i := cfg.GetServer(n); i < 0 {
-			return serverNotFound()
-		}
-		switch sub {
-		case "show":
-			v, e := serverShowConfig(home, cfg, n)
-			if e != nil {
-				return e
+		return runServerItem(home, cfg, sub, rest, stdout)
+	}
+	return cli.Usage("unknown server command %q", sub)
+}
+
+func serverUsageError(sub string) error {
+	return cli.Usage("server %s: invalid arguments", sub)
+}
+
+func runServerProtocols(rest []string, stdout io.Writer) error {
+	if len(rest) != 0 {
+		return cli.Usage("server protocols: unexpected argument")
+	}
+	items := []map[string]any{}
+	for _, p := range ServerProtocols() {
+		items = append(items, map[string]any{"name": p.Name, "single_user": p.SingleUser, "params": []string{}})
+	}
+	cli.Success(stdout, map[string]any{"protocols": items})
+	return nil
+}
+
+func runServerAdd(home string, cfg *config.Config, rest []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("server add", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	protocol := fs.String("protocol", "", "protocol")
+	name := fs.String("name", "", "name")
+	account := fs.String("account", "", "account")
+	port := fs.Int("port", 0, "port")
+	bind := fs.String("bind", "0.0.0.0", "bind")
+	public := fs.String("public-host", "", "host")
+	def := fs.Bool("default", false, "default TLS server")
+	var params serverParamFlags
+	fs.Var(&params, "param", "key=value")
+	pos, e := parseFlags(fs, rest)
+	if e != nil || len(pos) != 0 || *protocol == "" || *account == "" || *port < 1 || *port > 65535 {
+		return serverUsageError("add")
+	}
+	if err := validateServerAddTarget(*protocol, *account); err != nil {
+		return err
+	}
+	pm, err := serverAddParams(params)
+	if err != nil {
+		return err
+	}
+	if *name != "" && !serverNameValid(*name) {
+		return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].name must be 1 to 32 letters, digits, dots, underscores or hyphens", Exit: cli.ExitUsage})
+	}
+	result, e := serverAddConfig(home, cfg, ServerAddOptions{Name: serverAddName(*name, *protocol, *port), Protocol: *protocol, Bind: *bind, Port: *port, Accounts: *account, Params: pm, PublicHost: *public, Default: *def})
+	if e != nil {
+		return e
+	}
+	cli.Success(stdout, map[string]any{"server": result.serverView})
+	return nil
+}
+
+// validateServerAddTarget checks that the protocol is registered and the
+// accounts list holds valid logins (or "*").
+func validateServerAddTarget(protocol, account string) error {
+	if _, ok := servers.Lookup(protocol); !ok {
+		return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].protocol is not registered", Exit: cli.ExitUsage})
+	}
+	if account != "*" {
+		for _, a := range strings.Split(account, ",") {
+			if !config.ValidAccountLogin(a) {
+				return serverValidationError(&cli.Error{Code: "CONFIG_INVALID", Message: "servers[0].accounts contains an invalid account login", Exit: cli.ExitUsage})
 			}
-			cli.Success(stdout, map[string]any{"server": v})
-			return nil
-		case "remove":
-			removed, removeErr := removeConfig(home, cfg, n)
-			if removeErr != nil {
-				return removeErr
-			}
-			_ = removed
-			cli.Success(stdout, map[string]any{"removed": n})
-			return nil
-		case "rotate":
-			rotated, rotateErr := rotateConfig(home, cfg, n, *acct)
-			if rotateErr != nil {
-				return rotateErr
-			}
-			_ = rotated
-			cli.Success(stdout, map[string]any{"rotated": n, "account": *acct})
-			return nil
-		case "link":
-			if *qr {
-				return cli.Usage("server link --qr is unavailable: no QR encoder is included")
-			}
-			if *format != "uri" && *format != "mihomo" {
-				return usage()
-			}
-			link, login, e := linkConfig(home, cfg, n, ServerLinkOptions{Account: *acct, Format: *format, Host: *host})
-			if e != nil {
-				return e
-			}
-			cli.Success(stdout, map[string]any{"name": n, "account": login, "format": *format, "link": link})
-			return nil
 		}
+	}
+	return nil
+}
+
+// serverAddParams turns the repeated --param flags into a map.
+func serverAddParams(params serverParamFlags) (map[string]string, error) {
+	pm := map[string]string{}
+	for _, raw := range params {
+		k, v, ok := strings.Cut(raw, "=")
+		if !ok || k == "" {
+			return nil, cli.Usage("server add --param requires key=value")
+		}
+		if _, ok = pm[k]; ok {
+			return nil, cli.Usage("server add: duplicate --param key")
+		}
+		pm[k] = v
+	}
+	return pm, nil
+}
+
+// serverAddName is the --name flag, else a default from the protocol and port.
+func serverAddName(name, protocol string, port int) string {
+	if name != "" {
+		return name
+	}
+	if protocol == "shadowsocks" {
+		return "ss-" + strconv.Itoa(port)
+	}
+	return protocol + "-" + strconv.Itoa(port)
+}
+
+// runServerItem runs the subcommands that act on one named server.
+func runServerItem(home string, cfg *config.Config, sub string, rest []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("server "+sub, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var acct, host, format *string
+	var qr *bool
+	if sub == "rotate" || sub == "link" {
+		acct = fs.String("account", "", "account")
+	}
+	if sub == "link" {
+		host = fs.String("host", "", "host")
+		format = fs.String("format", "uri", "format")
+		qr = fs.Bool("qr", false, "QR")
+	}
+	pos, e := parseFlags(fs, rest)
+	if e != nil || len(pos) != 1 {
+		return serverUsageError(sub)
+	}
+	n := pos[0]
+	if _, i := cfg.GetServer(n); i < 0 {
+		return serverNotFound()
+	}
+	switch sub {
+	case "show":
+		v, e := serverShowConfig(home, cfg, n)
+		if e != nil {
+			return e
+		}
+		cli.Success(stdout, map[string]any{"server": v})
+		return nil
+	case "remove":
+		removed, removeErr := removeConfig(home, cfg, n)
+		if removeErr != nil {
+			return removeErr
+		}
+		_ = removed
+		cli.Success(stdout, map[string]any{"removed": n})
+		return nil
+	case "rotate":
+		rotated, rotateErr := rotateConfig(home, cfg, n, *acct)
+		if rotateErr != nil {
+			return rotateErr
+		}
+		_ = rotated
+		cli.Success(stdout, map[string]any{"rotated": n, "account": *acct})
+		return nil
+	case "link":
+		if *qr {
+			return cli.Usage("server link --qr is unavailable: no QR encoder is included")
+		}
+		if *format != "uri" && *format != "mihomo" {
+			return serverUsageError(sub)
+		}
+		link, login, e := linkConfig(home, cfg, n, ServerLinkOptions{Account: *acct, Format: *format, Host: *host})
+		if e != nil {
+			return e
+		}
+		cli.Success(stdout, map[string]any{"name": n, "account": login, "format": *format, "link": link})
+		return nil
 	}
 	return cli.Usage("unknown server command %q", sub)
 }

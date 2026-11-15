@@ -6,7 +6,7 @@ import "testing"
 // the fixed fallback range so a runner with large UDP excluded ranges still
 // finds a port that works for both transports.
 func TestFreePortCandidate(t *testing.T) {
-	for attempt := 0; attempt < freePortOSAttempts; attempt++ {
+	for attempt := range freePortOSAttempts {
 		if got := freePortCandidate(attempt); got != 0 {
 			t.Fatalf("attempt %d: candidate %d, want 0 (let the OS pick)", attempt, got)
 		}

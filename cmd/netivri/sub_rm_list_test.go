@@ -46,12 +46,12 @@ func TestSubListRedactsURLs(t *testing.T) {
 	if len(subs) != 2 {
 		t.Fatalf("subscriptions = %v", data["subscriptions"])
 	}
-	a := subs[0].(map[string]any)
+	a := mustAs[map[string]any](t, subs[0])
 	if a["name"] != "a" || a["host"] != "a.example" || a["via_set"] != true ||
 		a["nodes"] != float64(3) || a["fetched_at"] != "2026-10-20T12:00:00Z" {
 		t.Errorf("entry a = %v", a)
 	}
-	b := subs[1].(map[string]any)
+	b := mustAs[map[string]any](t, subs[1])
 	if b["via_set"] != false || b["nodes"] != nil || b["fetched_at"] != nil {
 		t.Errorf("entry b = %v, want via_set false and null nodes/fetched_at", b)
 	}
@@ -91,11 +91,11 @@ func TestSubListQuota(t *testing.T) {
 	if len(subs) != 2 {
 		t.Fatalf("subscriptions = %v", data["subscriptions"])
 	}
-	a := subs[0].(map[string]any)
+	a := mustAs[map[string]any](t, subs[0])
 	if a["quota"] != nil {
 		t.Errorf("entry a quota = %v, want nil (no header stored)", a["quota"])
 	}
-	b := subs[1].(map[string]any)
+	b := mustAs[map[string]any](t, subs[1])
 	q, ok := b["quota"].(map[string]any)
 	if !ok {
 		t.Fatalf("entry b quota = %v, want an object", b["quota"])

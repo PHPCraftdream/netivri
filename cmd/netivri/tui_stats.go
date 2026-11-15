@@ -160,7 +160,8 @@ func (s *statsScreen) toggleBy() tea.Cmd {
 // statsErrorText shows errors by message and hint only; a foreign error is
 // never echoed (it can name addresses or nodes).
 func statsErrorText(err error) string {
-	if ce, ok := err.(*cli.Error); ok {
+	var ce *cli.Error
+	if errors.As(err, &ce) {
 		if ce.Hint != "" {
 			return ce.Message + " (" + ce.Hint + ")"
 		}
@@ -178,7 +179,8 @@ func (s *statsScreen) applyRead(x statsReadMsg) (tui.Screen, tea.Cmd) {
 	s.errText = ""
 	s.items = nil
 	if x.err != nil {
-		if ce, ok := x.err.(*cli.Error); !ok || ce.Code != "STATS_UNAVAILABLE" {
+		var ce *cli.Error
+		if !errors.As(x.err, &ce) || ce.Code != "STATS_UNAVAILABLE" {
 			// Without a database the empty state explains everything;
 			// anything else is shown by message and hint only.
 			s.errText = statsErrorText(x.err)
@@ -512,8 +514,7 @@ func (s *statsScreen) View(w, h int) string {
 // statsColumns is the layout of a grouping, with the columns the command
 // prints.
 func statsColumns(by string) []tui.ListColumn {
-	switch by {
-	case "account":
+	if by == "account" {
 		return []tui.ListColumn{
 			{Title: "Login", Width: 12, Flex: 1},
 			{Title: "Dials", Width: 6},

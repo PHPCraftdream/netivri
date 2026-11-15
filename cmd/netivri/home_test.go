@@ -91,7 +91,7 @@ func TestResolveHomeLocalFlagCreatesAPrivateDirectoryThatGitIgnores(t *testing.T
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o700 {
 		t.Errorf("mode = %v, want 0700", info.Mode().Perm())
 	}
-	ignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	ignore, err := os.ReadFile(filepath.Clean(filepath.Join(dir, ".gitignore")))
 	if err != nil || string(ignore) != "*\n" {
 		t.Errorf(".gitignore = %q, %v; want everything ignored", ignore, err)
 	}
@@ -106,7 +106,7 @@ func TestResolveHomeLocalFlagCreatesAPrivateDirectoryThatGitIgnores(t *testing.T
 	if _, _, err := resolveHome("", true, envOf(""), fakeConfigDir(t)); err != nil {
 		t.Fatal(err)
 	}
-	if ignore, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(ignore) != "custom\n" {
+	if ignore, _ := os.ReadFile(filepath.Clean(filepath.Join(dir, ".gitignore"))); string(ignore) != "custom\n" {
 		t.Errorf(".gitignore of an existing directory was rewritten: %q", ignore)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.ktav")); err != nil {
@@ -273,7 +273,7 @@ func TestFilterUpArgsDropsLocalAndPassesTheResolvedHome(t *testing.T) {
 // status and doctor say which state directory they looked at and why.
 func TestStatusAndDoctorSayWhereTheStateDirectoryIs(t *testing.T) {
 	st := angelTestState()
-	_ = stubAngels(t, probeRunning(st), nil)
+	stubAngels(t, probeRunning(st), nil)
 	cwd := inTempDir(t)
 	t.Setenv("NETIVRI_HOME", filepath.Join(t.TempDir(), "env"))
 	cli.UseJSON()

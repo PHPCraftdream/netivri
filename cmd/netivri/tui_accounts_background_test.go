@@ -17,7 +17,7 @@ func TestAccountsBackgroundPollBehindModal(t *testing.T) {
 	frame := tui.NewFrame(tui.Options{
 		Now: func() time.Time { return now },
 		Tabs: []tui.Tab{{Title: "Accounts", New: func(env tui.Env) tui.Screen {
-			screen = newAccountsScreen(env.Home, env).(*accountsScreen)
+			screen = mustAs[*accountsScreen](t, newAccountsScreen(env.Home, env))
 			screen.status = func(string) (angel.Status, error) {
 				calls++
 				return angel.Status{}, nil

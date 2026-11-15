@@ -139,7 +139,7 @@ func parseIPv4Mask(item string) (netip.Prefix, error) {
 			return netip.Prefix{}, fmt.Errorf("invalid rule %q", item)
 		}
 		v := 0
-		for j := 0; j < len(part); j++ {
+		for j := range len(part) {
 			if part[j] < '0' || part[j] > '9' {
 				return netip.Prefix{}, fmt.Errorf("invalid rule %q", item)
 			}
@@ -156,7 +156,7 @@ func parseIPv4Mask(item string) (netip.Prefix, error) {
 			continue
 		}
 		v := 0
-		for j := 0; j < len(part); j++ {
+		for j := range len(part) {
 			v = v*10 + int(part[j]-'0')
 		}
 		b[i] = byte(v)

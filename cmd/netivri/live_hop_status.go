@@ -65,17 +65,34 @@ func addLiveHopPoolStatus(st *angel.Status, routes routePool, inst coreInstance)
 // liveHopPoolInfos groups the snapshots of the wanted routes into pool views,
 // pre pools before post pools, keeping only pools of several hops.
 func liveHopPoolInfos(source liveHopPoolSource, now time.Time, wanted func(route string) bool) map[string][]angel.HopPoolInfo {
+	pools := collectLiveHopPools(source, wanted)
+	applyLiveHopExports(pools, source)
+	groupsByRoute := make(map[string][]liveHopPoolKey)
+	for group, entries := range pools {
+		if len(entries) > 1 {
+			groupsByRoute[group.route] = append(groupsByRoute[group.route], group)
+		}
+	}
+	out := make(map[string][]angel.HopPoolInfo, len(groupsByRoute))
+	for route, groups := range groupsByRoute {
+		sortHopPoolGroups(groups)
+		for _, group := range groups {
+			out[route] = append(out[route], hopPoolInfoOf(group, pools[group], now))
+		}
+	}
+	return out
+}
+
+// collectLiveHopPools groups the snapshot hops of the wanted routes by pool;
+// each pool maps hop keys to their state.
+func collectLiveHopPools(source liveHopPoolSource, wanted func(route string) bool) map[liveHopPoolKey]map[string]liveHopStatusEntry {
 	pools := make(map[liveHopPoolKey]map[string]liveHopStatusEntry)
 	for _, snapshot := range source.SnapshotHopPools() {
 		if !validHopHealthRole(snapshot.Role) || !validHopHealthKey(snapshot.PoolIdentity) || snapshot.RouteKey == "" || !wanted(snapshot.RouteKey) {
 			continue
 		}
-		state := snapshot.State
-		switch state {
-		case "healthy":
-			state = "active"
-		case "quarantined", "probing":
-		default:
+		state, shown := liveHopSnapshotState(snapshot.State)
+		if !shown {
 			continue
 		}
 		group := liveHopPoolKey{role: snapshot.Role, route: snapshot.RouteKey, identity: snapshot.PoolIdentity}
@@ -86,7 +103,24 @@ func liveHopPoolInfos(source liveHopPoolSource, now time.Time, wanted func(route
 			pools[group][snapshot.Key] = liveHopStatusEntry{state: state, trips: snapshot.Trips}
 		}
 	}
+	return pools
+}
 
+// liveHopSnapshotState is the status state of a snapshot state; shown is false
+// for the states that are not listed.
+func liveHopSnapshotState(state string) (status string, shown bool) {
+	switch state {
+	case "healthy":
+		return "active", true
+	case "quarantined", "probing":
+		return state, true
+	}
+	return "", false
+}
+
+// applyLiveHopExports adds the next probe time of the quarantined and probing
+// hops of the existing pools from the exported pool state.
+func applyLiveHopExports(pools map[liveHopPoolKey]map[string]liveHopStatusEntry, source liveHopPoolSource) {
 	for _, exported := range source.ExportHopPools() {
 		if !validHopHealthRole(exported.Role) || !validHopHealthKey(exported.PoolIdentity) {
 			continue
@@ -108,55 +142,55 @@ func liveHopPoolInfos(source liveHopPoolSource, now time.Time, wanted func(route
 			entries[entry.Key] = observed
 		}
 	}
+}
 
-	groupsByRoute := make(map[string][]liveHopPoolKey)
-	for group, entries := range pools {
-		if len(entries) > 1 {
-			groupsByRoute[group.route] = append(groupsByRoute[group.route], group)
+// sortHopPoolGroups orders pools by role, pre before post, then by pool identity.
+func sortHopPoolGroups(groups []liveHopPoolKey) {
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].role != groups[j].role {
+			return groups[i].role == "pre"
 		}
+		return groups[i].identity < groups[j].identity
+	})
+}
+
+// hopPoolInfoOf describes one pool: its hops in key order and the count per state.
+func hopPoolInfoOf(group liveHopPoolKey, entries map[string]liveHopStatusEntry, now time.Time) angel.HopPoolInfo {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
 	}
-	out := make(map[string][]angel.HopPoolInfo, len(groupsByRoute))
-	for route, groups := range groupsByRoute {
-		sort.Slice(groups, func(i, j int) bool {
-			if groups[i].role != groups[j].role {
-				return groups[i].role == "pre"
-			}
-			return groups[i].identity < groups[j].identity
-		})
-		for _, group := range groups {
-			entries := pools[group]
-			keys := make([]string, 0, len(entries))
-			for key := range entries {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			info := angel.HopPoolInfo{Role: group.role, HopCount: len(keys), Hops: make([]angel.HopInfo, 0, len(keys))}
-			for _, key := range keys {
-				entry := entries[key]
-				hop := angel.HopInfo{State: entry.state, Trips: entry.trips}
-				if validHopHealthKey(key) {
-					hop.ID = key[:8]
-				} else {
-					info.UnpersistableCount++
-				}
-				switch entry.state {
-				case "active":
-					info.ActiveCount++
-				case "quarantined":
-					info.QuarantinedCount++
-					if entry.hasExport {
-						seconds := revivalSeconds(entry.nextProbe, now)
-						hop.NextRevivalSeconds = &seconds
-					}
-				case "probing":
-					info.QuarantinedCount++
-				}
-				info.Hops = append(info.Hops, hop)
-			}
-			out[route] = append(out[route], info)
+	sort.Strings(keys)
+	info := angel.HopPoolInfo{Role: group.role, HopCount: len(keys), Hops: make([]angel.HopInfo, 0, len(keys))}
+	for _, key := range keys {
+		entry := entries[key]
+		hop := angel.HopInfo{State: entry.state, Trips: entry.trips}
+		if validHopHealthKey(key) {
+			hop.ID = key[:8]
+		} else {
+			info.UnpersistableCount++
 		}
+		countHopState(&info, &hop, entry, now)
+		info.Hops = append(info.Hops, hop)
 	}
-	return out
+	return info
+}
+
+// countHopState counts a hop in its pool by state and sets the revival
+// countdown of a quarantined hop whose next probe was exported.
+func countHopState(info *angel.HopPoolInfo, hop *angel.HopInfo, entry liveHopStatusEntry, now time.Time) {
+	switch entry.state {
+	case "active":
+		info.ActiveCount++
+	case "quarantined":
+		info.QuarantinedCount++
+		if entry.hasExport {
+			seconds := revivalSeconds(entry.nextProbe, now)
+			hop.NextRevivalSeconds = &seconds
+		}
+	case "probing":
+		info.QuarantinedCount++
+	}
 }
 
 // revivalSeconds rounds the wait for the next probe up to whole seconds.

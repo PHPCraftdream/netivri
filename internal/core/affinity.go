@@ -30,13 +30,13 @@ const (
 // over the concatenation.
 func affinityHash(login, site string) uint64 {
 	h := fnvOffset64
-	for i := 0; i < len(login); i++ {
+	for i := range len(login) {
 		h ^= uint64(login[i])
 		h *= fnvPrime64
 	}
 	h ^= uint64('|')
 	h *= fnvPrime64
-	for i := 0; i < len(site); i++ {
+	for i := range len(site) {
 		h ^= uint64(site[i])
 		h *= fnvPrime64
 	}

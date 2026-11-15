@@ -73,7 +73,7 @@ func statsItemsOf(t *testing.T, data map[string]any) []map[string]any {
 	}
 	items := make([]map[string]any, 0, len(raw))
 	for _, r := range raw {
-		items = append(items, r.(map[string]any))
+		items = append(items, mustAs[map[string]any](t, r))
 	}
 	return items
 }
@@ -114,14 +114,14 @@ func TestStatsPerNodeValues(t *testing.T) {
 	if _, has := items[0]["name"]; has {
 		t.Fatalf("alt/b must not carry a name: %v", items[0])
 	}
-	delay := a["delay_ms"].(map[string]any)
+	delay := mustAs[map[string]any](t, a["delay_ms"])
 	if delay["avg"] != float64(200) || delay["p50"] != float64(200) || delay["p95"] != float64(300) {
 		t.Fatalf("delay_ms = %v", delay)
 	}
 	if a["dials"] != float64(3) || a["dial_ok_pct"] != 66.7 || a["dial_ms_avg"] != float64(100) {
 		t.Fatalf("dials = %v %v %v", a["dials"], a["dial_ok_pct"], a["dial_ms_avg"])
 	}
-	tp := a["throughput_kbps"].(map[string]any)
+	tp := mustAs[map[string]any](t, a["throughput_kbps"])
 	if tp["p50"] != float64(1024) || tp["max"] != float64(1024) || a["bytes"] != float64(1<<20) {
 		t.Fatalf("throughput = %v bytes %v", tp, a["bytes"])
 	}
@@ -175,7 +175,7 @@ func TestStatsGroupedByCountryAndProvider(t *testing.T) {
 	if items[0]["nodes"] != float64(1) || items[0]["uptime_pct"] != 75.0 {
 		t.Fatalf("DE = %v", items[0])
 	}
-	if _, has := items[0]["delay_ms"].(map[string]any)["p50"]; has {
+	if _, has := mustAs[map[string]any](t, items[0]["delay_ms"])["p50"]; has {
 		t.Fatal("grouped rows must not carry percentiles")
 	}
 	data, err = statsRun(t, home, "--by", "provider")

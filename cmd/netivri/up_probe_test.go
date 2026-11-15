@@ -60,7 +60,7 @@ func TestServeControlFailureDoesNotStartCore(t *testing.T) {
 func TestRunUpAngelControlFailureDoesNotSpawn(t *testing.T) {
 	probeErr := errors.New("decode status answer: malformed response")
 	spawns := 0
-	_ = stubAngels(t, func(context.Context, string) (angel.State, error) {
+	stubAngels(t, func(context.Context, string) (angel.State, error) {
 		return angel.State{}, probeErr
 	}, func(context.Context, angel.SpawnOptions) (angel.State, error) {
 		spawns++

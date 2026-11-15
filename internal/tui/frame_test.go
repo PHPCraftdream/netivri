@@ -115,7 +115,10 @@ func countFrameMessages(messages []tea.Msg) int {
 func TestBackgroundCommandsTrackSeparateIDsAndRouteToCreator(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(e Env) Screen { return &frameScreen{name: "a", env: e} }}, {Title: "b", New: func(e Env) Screen { return &frameScreen{name: "b", env: e} }}}})
 	f.Init()
-	a := f.screens[0].(*frameScreen)
+	a, ok := f.screens[0].(*frameScreen)
+	if !ok {
+		t.Fatalf("screen 0 is %T, want *frameScreen", f.screens[0])
+	}
 	first := a.env.Background("job", func() tea.Msg { return ToastMsg("1") })()
 	second := a.env.Background("job", func() tea.Msg { return ToastMsg("2") })()
 	_, c1 := f.Update(first)
@@ -124,7 +127,11 @@ func TestBackgroundCommandsTrackSeparateIDsAndRouteToCreator(t *testing.T) {
 		t.Fatal("same labels collapsed")
 	}
 	run := func(cmd tea.Cmd) tea.Msg {
-		batch := cmd().(tea.BatchMsg)
+		msg := cmd()
+		batch, ok := msg.(tea.BatchMsg)
+		if !ok {
+			t.Fatalf("command returned %T, want tea.BatchMsg", msg)
+		}
 		for _, c := range batch {
 			if c != nil {
 				if m := c(); m != nil {
@@ -140,7 +147,11 @@ func TestBackgroundCommandsTrackSeparateIDsAndRouteToCreator(t *testing.T) {
 	f.Update(frameKey("right"))
 	f.Update(r1)
 	f.Update(r2)
-	if len(f.background) != 0 || countFrameMessages(a.messages) != 2 || countFrameMessages(f.screens[1].(*frameScreen).messages) != 0 {
+	other, ok := f.screens[1].(*frameScreen)
+	if !ok {
+		t.Fatalf("screen 1 is %T, want *frameScreen", f.screens[1])
+	}
+	if len(f.background) != 0 || countFrameMessages(a.messages) != 2 || countFrameMessages(other.messages) != 0 {
 		t.Fatal("background routing")
 	}
 }
@@ -154,7 +165,10 @@ func (testModal) CapturingInput() bool            { return true }
 func TestModalResultClosesAndRoutesToOrigin(t *testing.T) {
 	f := NewFrame(Options{Tabs: []Tab{{Title: "a", New: func(e Env) Screen { return &frameScreen{name: "a", env: e} }}, {Title: "b", New: func(e Env) Screen { return &frameScreen{name: "b", env: e} }}}})
 
-	a := f.screens[0].(*frameScreen)
+	a, ok := f.screens[0].(*frameScreen)
+	if !ok {
+		t.Fatalf("screen 0 is %T, want *frameScreen", f.screens[0])
+	}
 	initialMessages := len(a.messages)
 	f.Update(a.env.OpenModal(testModal{})())
 	f.Update(frameKey("tab"))

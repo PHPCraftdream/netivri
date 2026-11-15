@@ -6,6 +6,7 @@
 package testutil
 
 import (
+	"context"
 	"io"
 	"net"
 	"sync"
@@ -76,7 +77,7 @@ func (p *CloseAfterProxy) close() {
 // accept. Everything is closed via t.Cleanup.
 func StartCloseAfterProxy(t testing.TB, target string, after time.Duration) *CloseAfterProxy {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen close-after proxy: %v", err)
 	}
@@ -110,9 +111,9 @@ func (p *CloseAfterProxy) handle(client net.Conn, target string, after time.Dura
 		return
 	}
 	defer p.untrack(client)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
-	dst, err := net.DialTimeout("tcp", target, 5*time.Second)
+	dst, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", target)
 	if err != nil {
 		return
 	}
@@ -121,7 +122,7 @@ func (p *CloseAfterProxy) handle(client net.Conn, target string, after time.Dura
 		return
 	}
 	defer p.untrack(dst)
-	defer dst.Close()
+	defer func() { _ = dst.Close() }()
 
 	stop := time.AfterFunc(after-time.Since(accepted), func() {
 		_ = client.Close()

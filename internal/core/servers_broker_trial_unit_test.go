@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/servers"
 	"github.com/metacubex/sing-shadowsocks/shadowaead_2022"
+
+	"github.com/PHPCraftdream/netivri/internal/servers"
 )
 
 type brokerTestTrial struct {
@@ -99,7 +100,7 @@ func (c *brokerDeadlineCountConn) Read(p []byte) (int, error) {
 }
 
 func (c *brokerDeadlineCountConn) Close() error {
-	c.brokerTestConn.closed = true
+	c.closed = true
 	select {
 	case <-c.closedSignal:
 	default:
@@ -322,8 +323,12 @@ func TestBrokerSyntheticSS2022TLSMarkerCollision(t *testing.T) {
 	}
 	fixed := make([]byte, 11)
 	fixed[0] = shadowaead_2022.HeaderTypeClient
-	now := time.Now()
-	binary.BigEndian.PutUint64(fixed[1:9], uint64(now.Unix()))
+	sec := time.Now().Unix()
+	if sec < 0 {
+		t.Fatal("clock is before the Unix epoch")
+		return
+	}
+	binary.BigEndian.PutUint64(fixed[1:9], uint64(sec))
 	flight := append(append([]byte(nil), salt...), aead.Seal(nil, make([]byte, aead.NonceSize()), fixed, nil)...)
 	if len(flight) < trial.MinBytes() {
 		t.Fatalf("flight length %d < min %d", len(flight), trial.MinBytes())
@@ -482,7 +487,7 @@ func TestBrokerReplayCountsDuplicateAcceptedTrial(t *testing.T) {
 	tr := &brokerTestTrial{min: 3, verdict: servers.Accept, key: key}
 	l := &socketLease{name: "vm", trial: tr, spec: &servers.Spec{Protocol: "vmess"}}
 	ep := seedClassifyEndpoint(b, l)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		tr.calls = 0
 		c := &brokerTestConn{input: []byte("abc")}
 		src := netip.MustParseAddr("127.0.0.1")

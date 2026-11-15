@@ -111,7 +111,7 @@ func TestWorkspaceCoverWideMouseEdgesAndWheelTranslation(t *testing.T) {
 	// layout.go 156-187: divider and out-of-bounds clicks ignored; wheel translated to the right pane.
 	list := NewList(nil, []Row{{Cells: []string{"one"}}, {Cells: []string{"two"}}})
 	card := NewCard("T", nil)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		card.Lines = append(card.Lines, CardLine{Label: "L", Kind: CardField})
 	}
 	w := NewWorkspace(list, card)

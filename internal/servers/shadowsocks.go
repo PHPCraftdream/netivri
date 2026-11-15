@@ -39,7 +39,7 @@ func secretSize(cipher string) (int, error) {
 	case "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305", "aes-256-gcm", "chacha20-ietf-poly1305":
 		return 32, nil
 	default:
-		return 0, fmt.Errorf("unsupported cipher")
+		return 0, errors.New("unsupported cipher")
 	}
 }
 func (shadowsocks) Validate(params map[string]string) error {
@@ -49,13 +49,13 @@ func (shadowsocks) Validate(params map[string]string) error {
 		}
 	}
 	if _, err := secretSize(cipherName(params)); err != nil {
-		return fmt.Errorf("invalid cipher")
+		return errors.New("invalid cipher")
 	}
 	if v := params["udp"]; v != "" && v != "false" {
 		if v == "true" {
-			return fmt.Errorf("udp: UDP through account routes is not supported yet")
+			return errors.New("udp: UDP through account routes is not supported yet")
 		}
-		return fmt.Errorf("invalid udp parameter")
+		return errors.New("invalid udp parameter")
 	}
 	return nil
 }
@@ -71,7 +71,7 @@ func (shadowsocks) NewSecret(_ string, params map[string]string) (map[string]str
 	size, _ := secretSize(cipherName(params))
 	raw := make([]byte, size)
 	if _, err := rand.Read(raw); err != nil {
-		return nil, fmt.Errorf("generate shadowsocks secret failed")
+		return nil, errors.New("generate shadowsocks secret failed")
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(raw)
 	if strings.HasPrefix(cipherName(params), "2022-") {
@@ -84,21 +84,21 @@ func (shadowsocks) Start(spec Spec, env Env) (io.Closer, error) {
 		return nil, err
 	}
 	if spec.Protocol != "shadowsocks" {
-		return nil, fmt.Errorf("shadowsocks protocol mismatch")
+		return nil, errors.New("shadowsocks protocol mismatch")
 	}
 	if env.Tunnel == nil || env.ListenConfig == nil {
-		return nil, fmt.Errorf("shadowsocks start requires tunnel and listen config")
+		return nil, errors.New("shadowsocks start requires tunnel and listen config")
 	}
 	login := spec.Accounts[0]
 	password := spec.Users[login]["password"]
 	if password == "" {
-		return nil, fmt.Errorf("shadowsocks secret missing")
+		return nil, errors.New("shadowsocks secret missing")
 	}
 	cipher := cipherName(spec.Params)
 	if strings.HasPrefix(cipher, "2022-") {
 		key, err := base64.StdEncoding.DecodeString(password)
 		if err != nil || len(key) != mustSecretSize(cipher) {
-			return nil, fmt.Errorf("invalid shadowsocks secret")
+			return nil, errors.New("invalid shadowsocks secret")
 		}
 	}
 	address := spec.ListenAddress()
@@ -128,14 +128,14 @@ func (shadowsocks) Link(spec Spec, login, host string) (string, error) {
 		return "", err
 	}
 	if spec.Protocol != "shadowsocks" {
-		return "", fmt.Errorf("shadowsocks protocol mismatch")
+		return "", errors.New("shadowsocks protocol mismatch")
 	}
 	if len(spec.Accounts) != 1 || spec.Accounts[0] != login {
-		return "", fmt.Errorf("shadowsocks requires its configured account")
+		return "", errors.New("shadowsocks requires its configured account")
 	}
 	password := spec.Users[login]["password"]
 	if password == "" || host == "" {
-		return "", fmt.Errorf("host and secret are required")
+		return "", errors.New("host and secret are required")
 	}
 	userinfo := cipherName(spec.Params) + ":" + url.QueryEscape(password)
 	if strings.HasPrefix(cipherName(spec.Params), "2022-") {
@@ -149,14 +149,14 @@ func (shadowsocks) Mihomo(spec Spec, login, host string) (string, error) {
 		return "", err
 	}
 	if spec.Protocol != "shadowsocks" {
-		return "", fmt.Errorf("shadowsocks protocol mismatch")
+		return "", errors.New("shadowsocks protocol mismatch")
 	}
 	if len(spec.Accounts) != 1 || spec.Accounts[0] != login {
-		return "", fmt.Errorf("shadowsocks requires its configured account")
+		return "", errors.New("shadowsocks requires its configured account")
 	}
 	password := spec.Users[login]["password"]
 	if password == "" || host == "" {
-		return "", fmt.Errorf("host and secret are required")
+		return "", errors.New("host and secret are required")
 	}
 	return fmt.Sprintf("proxies:\n  - name: %q\n    type: ss\n    server: %q\n    port: %d\n    cipher: %q\n    password: %q\n    udp: false\n", spec.Name, host, spec.Port, cipherName(spec.Params), password), nil
 }

@@ -108,7 +108,7 @@ func logTime(e angel.LogEntry) string {
 // logLineWriter prints an entry as the line it has in the log file.
 func logLineWriter(w io.Writer) func(angel.LogEntry) {
 	return func(e angel.LogEntry) {
-		_, _ = fmt.Fprintln(w, angel.FormatLogLine(e.Time, e.Level, e.Message))
+		_, _ = fmt.Fprintln(w, angel.FormatLogLine(e.Time, e.Level, e.Message)) //nolint:gosec // G705: plain-text log line on the CLI writer, not an HTML sink
 	}
 }
 

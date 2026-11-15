@@ -15,7 +15,9 @@ Allowed locally (linters and syntax only):
 
 - `gofmt -l` / `gofmt -w` on our own files (never on `third_party/`)
 - `go vet ./...`
-- `golangci-lint run` (if installed)
+- `golangci-lint run ./cmd/... ./internal/... ./pkg/hopkit/...` (if installed;
+  the settings are in `.golangci.yml`; the `lint` CI job runs the same and any
+  finding fails it; never `--fix`, its edits have broken code here)
 - syntax checks of scripts and configs (`shellcheck`, PowerShell parser,
   YAML/JSON linters)
 

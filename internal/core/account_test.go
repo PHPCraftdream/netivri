@@ -196,7 +196,7 @@ func TestPrepareRoutesOrdersKeysAndUsers(t *testing.T) {
 	if !reflect.DeepEqual(rules, wantRules) {
 		t.Fatalf("rules = %v, want %v", rules, wantRules)
 	}
-	var gotNames []string
+	gotNames := make([]string, 0, len(proxies))
 	for _, proxy := range proxies {
 		name, _ := proxy["name"].(string)
 		gotNames = append(gotNames, name)

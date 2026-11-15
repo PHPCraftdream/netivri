@@ -10,21 +10,6 @@ import (
 	"github.com/PHPCraftdream/netivri/internal/config"
 )
 
-// clientsHome is a home with the two providers of switchHome and no accounts.
-func clientsHome(t *testing.T) string {
-	t.Helper()
-	home := switchHome(t)
-	cfg, err := config.Load(config.ConfigPath(home))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.Accounts = nil
-	if err := config.Save(config.ConfigPath(home), cfg); err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func listAccountsJSON(t *testing.T, home string) []map[string]any {
 	t.Helper()
 	var doc struct {

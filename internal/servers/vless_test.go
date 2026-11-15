@@ -157,67 +157,85 @@ func TestVLESSRealityLinkRoundTripAndMihomoYAML(t *testing.T) {
 	s := validVLESSSpec(t)
 	s.Params = map[string]string{"dest": "[2001:db8::1]:443", "sni": "reality.example.org", "fingerprint": "firefox"}
 	for _, host := range []string{"edge.example.org", "2001:db8::7"} {
-		link, err := (vlessReality{}).Link(s, "alice", host)
-		if err != nil {
-			t.Fatal("link generation failed")
+		link := vlessCheckRealityURI(t, s, host)
+		vlessCheckRealityImport(t, s, host, link)
+		vlessCheckRealityMihomo(t, s, host)
+	}
+}
+
+func vlessCheckRealityURI(t *testing.T, s Spec, host string) string {
+	t.Helper()
+	link, err := (vlessReality{}).Link(s, "alice", host)
+	if err != nil {
+		t.Fatal("link generation failed")
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal("invalid URI")
+	}
+	if u.Scheme != "vless" || u.User.Username() != s.Users["alice"]["uuid"] || u.Host != netJoin(host, "443") || u.Fragment != s.Name {
+		t.Fatal("URI fields mismatch")
+	}
+	ids := strings.Split(s.Material["short_ids"], ",")
+	for k, want := range map[string]string{
+		"encryption": "none", "flow": defaultRealityFlow, "security": "reality",
+		"sni": "reality.example.org", "fp": "firefox", "pbk": s.Material["public_key"], "sid": ids[0], "type": "tcp",
+	} {
+		if u.Query().Get(k) != want {
+			t.Errorf("URI parameter %q mismatch", k)
 		}
-		u, err := url.Parse(link)
-		if err != nil {
-			t.Fatal("invalid URI")
+	}
+	return link
+}
+
+func vlessCheckRealityImport(t *testing.T, s Spec, host, link string) {
+	t.Helper()
+	ids := strings.Split(s.Material["short_ids"], ",")
+	imported, err := convert.ConvertsV2Ray([]byte(link))
+	if err != nil || len(imported) != 1 {
+		t.Fatal("VLESS URI import failed")
+	}
+	importedProxy := imported[0]
+	port, ok := importedProxy["port"].(string)
+	if !ok || port != "443" {
+		t.Fatalf("imported port has type %T, want string", importedProxy["port"])
+	}
+	for key, want := range map[string]any{
+		"name": s.Name, "type": "vless", "server": host, "port": "443",
+		"uuid": s.Users["alice"]["uuid"], "udp": true, "tls": true,
+		"servername": "reality.example.org", "client-fingerprint": "firefox",
+		"flow": defaultRealityFlow, "encryption": "none", "network": "tcp",
+	} {
+		if got, ok := importedProxy[key]; !ok || got != want {
+			t.Errorf("imported field %q mismatch", key)
 		}
-		if u.Scheme != "vless" || u.User.Username() != s.Users["alice"]["uuid"] || u.Host != netJoin(host, "443") || u.Fragment != s.Name {
-			t.Fatal("URI fields mismatch")
-		}
-		ids := strings.Split(s.Material["short_ids"], ",")
-		for k, want := range map[string]string{
-			"encryption": "none", "flow": defaultRealityFlow, "security": "reality",
-			"sni": "reality.example.org", "fp": "firefox", "pbk": s.Material["public_key"], "sid": ids[0], "type": "tcp",
-		} {
-			if u.Query().Get(k) != want {
-				t.Errorf("URI parameter %q mismatch", k)
-			}
-		}
-		imported, err := convert.ConvertsV2Ray([]byte(link))
-		if err != nil || len(imported) != 1 {
-			t.Fatal("VLESS URI import failed")
-		}
-		importedProxy := imported[0]
-		port, ok := importedProxy["port"].(string)
-		if !ok || port != "443" {
-			t.Fatalf("imported port has type %T, want string", importedProxy["port"])
-		}
-		for key, want := range map[string]any{
-			"name": s.Name, "type": "vless", "server": host, "port": "443",
-			"uuid": s.Users["alice"]["uuid"], "udp": true, "tls": true,
-			"servername": "reality.example.org", "client-fingerprint": "firefox",
-			"flow": defaultRealityFlow, "encryption": "none", "network": "tcp",
-		} {
-			if got, ok := importedProxy[key]; !ok || got != want {
-				t.Errorf("imported field %q mismatch", key)
-			}
-		}
-		importedReality, ok := importedProxy["reality-opts"].(map[string]any)
-		if !ok || importedReality["public-key"] != s.Material["public_key"] || importedReality["short-id"] != ids[0] {
-			t.Fatal("imported Reality fields mismatch")
-		}
-		text, err := (vlessReality{}).Mihomo(s, "alice", host)
-		if err != nil {
-			t.Fatal("Mihomo config generation failed")
-		}
-		var root struct {
-			Proxies []map[string]any `yaml:"proxies"`
-		}
-		if err := yaml.Unmarshal([]byte(text), &root); err != nil || len(root.Proxies) != 1 {
-			t.Fatal("invalid Mihomo YAML")
-		}
-		proxy := root.Proxies[0]
-		if proxy["type"] != "vless" || proxy["name"] != s.Name || proxy["server"] != host || proxy["port"] != 443 || proxy["uuid"] != s.Users["alice"]["uuid"] || proxy["flow"] != defaultRealityFlow || proxy["tls"] != true || proxy["udp"] != false || proxy["servername"] != "reality.example.org" || proxy["client-fingerprint"] != "firefox" || proxy["network"] != "tcp" || proxy["encryption"] != "none" {
-			t.Fatal("Mihomo fields mismatch")
-		}
-		reality, ok := proxy["reality-opts"].(map[string]any)
-		if !ok || reality["public-key"] != s.Material["public_key"] || reality["short-id"] != ids[0] {
-			t.Fatal("Mihomo Reality fields mismatch")
-		}
+	}
+	importedReality, ok := importedProxy["reality-opts"].(map[string]any)
+	if !ok || importedReality["public-key"] != s.Material["public_key"] || importedReality["short-id"] != ids[0] {
+		t.Fatal("imported Reality fields mismatch")
+	}
+}
+
+func vlessCheckRealityMihomo(t *testing.T, s Spec, host string) {
+	t.Helper()
+	ids := strings.Split(s.Material["short_ids"], ",")
+	text, err := (vlessReality{}).Mihomo(s, "alice", host)
+	if err != nil {
+		t.Fatal("Mihomo config generation failed")
+	}
+	var root struct {
+		Proxies []map[string]any `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal([]byte(text), &root); err != nil || len(root.Proxies) != 1 {
+		t.Fatal("invalid Mihomo YAML")
+	}
+	proxy := root.Proxies[0]
+	if proxy["type"] != "vless" || proxy["name"] != s.Name || proxy["server"] != host || proxy["port"] != 443 || proxy["uuid"] != s.Users["alice"]["uuid"] || proxy["flow"] != defaultRealityFlow || proxy["tls"] != true || proxy["udp"] != false || proxy["servername"] != "reality.example.org" || proxy["client-fingerprint"] != "firefox" || proxy["network"] != "tcp" || proxy["encryption"] != "none" {
+		t.Fatal("Mihomo fields mismatch")
+	}
+	reality, ok := proxy["reality-opts"].(map[string]any)
+	if !ok || reality["public-key"] != s.Material["public_key"] || reality["short-id"] != ids[0] {
+		t.Fatal("Mihomo Reality fields mismatch")
 	}
 }
 

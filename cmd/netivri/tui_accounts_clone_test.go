@@ -40,7 +40,7 @@ func cloneScreenHome(t *testing.T, extraLogins ...string) (*accountsScreen, stri
 	if e = config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	rows, e := AccountList(h)
 	if e != nil {
@@ -161,7 +161,7 @@ func TestAccountsClonePromptFrameContract(t *testing.T) {
 func TestAccountsHopCardFrameContract(t *testing.T) {
 	s, _ := cloneScreenHome(t)
 	s.workspace.SetFocus(tui.PaneCard)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	for _, d := range [][2]int{{60, 16}, {80, 24}, {100, 30}, {120, 40}} {
 		checkAccountsFrame(t, s.View(d[0], d[1]), d[0], d[1])
 	}

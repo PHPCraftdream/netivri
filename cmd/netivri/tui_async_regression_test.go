@@ -64,7 +64,7 @@ func asyncRegressionBatch(t *testing.T, cmd tea.Cmd, want int) tea.BatchMsg {
 func TestLogsFrameCapturesFilterKeysBeforeGlobalKeys(t *testing.T) {
 	var screen *logsScreen
 	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{{Title: "Logs", New: func(env tui.Env) tui.Screen {
-		screen = newLogsScreen(env.Home, env).(*logsScreen)
+		screen = mustAs[*logsScreen](t, newLogsScreen(env.Home, env))
 		return screen
 	}}}})
 
@@ -97,7 +97,7 @@ func TestServiceFrameTimerPollsBehindTabAndContinues(t *testing.T) {
 	var screen *serviceScreen
 	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{
 		{Title: "Service", New: func(env tui.Env) tui.Screen {
-			screen = newServiceScreen(env.Home, env).(*serviceScreen)
+			screen = mustAs[*serviceScreen](t, newServiceScreen(env.Home, env))
 			screen.probe = func(string) (angel.Status, error) {
 				probes++
 				return angel.Status{Angel: "running", Listen: "127.0.0.1:7890"}, nil
@@ -147,7 +147,7 @@ func TestLogsFrameTimerPollsBehindTabAndContinues(t *testing.T) {
 	var screen *logsScreen
 	frame := tui.NewFrame(tui.Options{Tabs: []tui.Tab{
 		{Title: "Logs", New: func(env tui.Env) tui.Screen {
-			screen = newLogsScreen(env.Home, env).(*logsScreen)
+			screen = mustAs[*logsScreen](t, newLogsScreen(env.Home, env))
 			screen.read = func(string, angel.LogQuery) ([]angel.LogEntry, int64, error) {
 				return nil, 0, nil
 			}

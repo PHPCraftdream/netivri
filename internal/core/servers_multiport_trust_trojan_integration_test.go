@@ -61,12 +61,12 @@ func TestMultiportTrustTunnelAndTrojanClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer trojanClient.Close()
+	defer func() { _ = trojanClient.Close() }()
 	t.Run("trojan", func(t *testing.T) { multiportRoundTrip(t, trojanClient, backendIP, backendPort) })
 	trustClient, err := outbound.NewTrustTunnel(outbound.TrustTunnelOption{Name: "multiport-trust-client", Server: "127.0.0.1", Port: port, UserName: "bob", Password: trustSecret["password"], SNI: trustParams["sni"], Fingerprint: trustMaterial["fingerprint"], ALPN: []string{"h2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer trustClient.Close()
+	defer func() { _ = trustClient.Close() }()
 	t.Run("trusttunnel", func(t *testing.T) { multiportRoundTrip(t, trustClient, backendIP, backendPort) })
 }

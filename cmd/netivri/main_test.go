@@ -3,11 +3,22 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
 )
+
+// mustAs returns v as T; another dynamic type fails the test.
+func mustAs[T any](tb testing.TB, v any) T {
+	tb.Helper()
+	got, ok := v.(T)
+	if !ok {
+		tb.Fatalf("got %T, want %T", v, got)
+	}
+	return got
+}
 
 func TestDispatchVersion(t *testing.T) {
 	var out bytes.Buffer
@@ -42,8 +53,8 @@ func TestDispatchNoCommand(t *testing.T) {
 func TestDispatchUnknownCommand(t *testing.T) {
 	var out bytes.Buffer
 	err := dispatch([]string{"frobnicate"}, &out)
-	ce, ok := err.(*cli.Error)
-	if !ok {
+	var ce *cli.Error
+	if !errors.As(err, &ce) {
 		t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 	}
 	if ce.Code != "USAGE" || ce.Exit != cli.ExitUsage {

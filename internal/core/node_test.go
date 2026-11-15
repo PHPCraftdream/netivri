@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
@@ -23,20 +24,9 @@ func TestPrepareNodeNil(t *testing.T) {
 	}
 }
 
-// asNodeInvalid is errors.As without importing errors just for one check.
+// asNodeInvalid reports whether err holds a *cli.Error in its chain.
 func asNodeInvalid(err error, target **cli.Error) bool {
-	for err != nil {
-		if e, ok := err.(*cli.Error); ok {
-			*target = e
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
+	return errors.As(err, target)
 }
 
 func TestPrepareNodeInvalid(t *testing.T) {

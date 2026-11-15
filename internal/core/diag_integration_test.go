@@ -104,11 +104,15 @@ func TestDiagDialUnreachableNode(t *testing.T) {
 	srv := testutil.StartVlessServer(t, "")
 
 	// Grab a port and close it again: nothing listens there.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	closedPort := ln.Addr().(*net.TCPAddr).Port
+	lnAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", ln.Addr())
+	}
+	closedPort := lnAddr.Port
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +164,7 @@ func TestDiagDialTLSFailureKeepsTCP(t *testing.T) {
 	ts := diagStartProbeServer(t)
 	srv := testutil.StartVlessServer(t, "")
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}

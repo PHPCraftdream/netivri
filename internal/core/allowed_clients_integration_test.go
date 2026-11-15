@@ -89,7 +89,7 @@ func socks5Greeting(t *testing.T, c net.Conn, method byte) byte {
 func TestAllowedClientsDefaultAllowsAll(t *testing.T) {
 	inst := startInstanceAllowed(t, nil, nil)
 	c := dialProxy(t, inst.Addr())
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if m := socks5Greeting(t, c, 0); m != 0 {
 		t.Fatalf("method = %#x, want 0x00 (allow all)", m)
 	}
@@ -102,7 +102,7 @@ func TestAllowedClientsLoopbackAccepted(t *testing.T) {
 	}
 	inst := startInstanceAllowed(t, clients, nil)
 	c := dialProxy(t, inst.Addr())
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if m := socks5Greeting(t, c, 0); m != 0 {
 		t.Fatalf("method = %#x, want 0x00 (loopback accepted)", m)
 	}
@@ -112,7 +112,7 @@ func TestAllowedClientsForeignNetRefused(t *testing.T) {
 	clients := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
 	inst := startInstanceAllowed(t, clients, nil)
 	c := dialProxy(t, inst.Addr())
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestAllowedClientsVerifyFromOnLivePath(t *testing.T) {
 
 	t.Run("refused-from-loopback-via-verifyfrom", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greeting(t, c, 2); m != 2 {
 			t.Fatalf("method = %#x, want 0x02", m)
 		}
@@ -153,7 +153,7 @@ func TestAllowedClientsVerifyFromOnLivePath(t *testing.T) {
 
 	t.Run("accepted-via-verifyfrom", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if m := socks5Greeting(t, c, 2); m != 2 {
 			t.Fatalf("method = %#x, want 0x02", m)
 		}
@@ -297,8 +297,8 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 	// A plain HTTP backend so a routed request gets a real 200 response.
 	backend := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("backend-ok"))
-	})}
-	bln, err := net.Listen("tcp", "127.0.0.1:0")
+	}), ReadHeaderTimeout: testTimeout}
+	bln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("backend listen: %v", err)
 	}
@@ -307,7 +307,7 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 	backendAddr := bln.Addr().String()
 
 	store := authStore.NewAuthStore(a)
-	pln, err := net.Listen("tcp", "127.0.0.1:0")
+	pln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("proxy listen: %v", err)
 	}
@@ -329,11 +329,11 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 		}
 	}()
 
-	conn, err := net.Dial("tcp", pln.Addr().String())
+	conn, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", pln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial proxy: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 	if _, err := io.Copy(io.Discard, resp1.Body); err != nil {
 		t.Fatalf("first body: %v", err)
 	}
-	if resp1.StatusCode != 200 {
+	if resp1.StatusCode != http.StatusOK {
 		t.Fatalf("first response status = %d, want 200", resp1.StatusCode)
 	}
 
@@ -378,7 +378,7 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 	if _, err := io.Copy(io.Discard, resp2.Body); err != nil {
 		t.Fatalf("second body: %v", err)
 	}
-	if resp2.StatusCode != 403 {
+	if resp2.StatusCode != http.StatusForbidden {
 		t.Fatalf("second response status = %d, want 403 (trust revoked)", resp2.StatusCode)
 	}
 
@@ -403,7 +403,7 @@ func TestHTTPKeepAliveRevokesTrust(t *testing.T) {
 	if _, err := io.Copy(io.Discard, resp3.Body); err != nil {
 		t.Fatalf("third body: %v", err)
 	}
-	if resp3.StatusCode != 403 {
+	if resp3.StatusCode != http.StatusForbidden {
 		t.Fatalf("third response status = %d, want 403 (indistinguishable from wrong password)", resp3.StatusCode)
 	}
 	// The two refusals must carry identical headers, so a client cannot

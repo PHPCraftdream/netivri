@@ -95,8 +95,12 @@ func dualSettingsSeed(t *testing.T) string {
 	return home
 }
 
-func dualProvidersScreen(d *dualShell) *providersScreen { return d.screen.(*providersScreen) }
-func dualSettingsScreen(d *dualShell) *settingsScreen   { return d.screen.(*settingsScreen) }
+func dualProvidersScreen(t *testing.T, d *dualShell) *providersScreen {
+	return mustAs[*providersScreen](t, d.screen)
+}
+func dualSettingsScreen(t *testing.T, d *dualShell) *settingsScreen {
+	return mustAs[*settingsScreen](t, d.screen)
+}
 
 // dualSelectCardLine walks the card with real key presses until the line with
 // the id is selected. Card movement skips disabled and read-only rows, so it
@@ -152,7 +156,7 @@ func dualSelectCardLine(t *testing.T, d *dualShell, card *tui.Card, id string) {
 // dualChooseProviderHopOperation chooses from the real operation picker.
 func dualChooseProviderHopOperation(t *testing.T, d *dualShell, value string) {
 	t.Helper()
-	s := dualProvidersScreen(d)
+	s := dualProvidersScreen(t, d)
 	if s.prompt == nil || s.prompt.Kind != tui.ChoicePrompt {
 		t.Fatal("provider hop operation picker is not open")
 	}
@@ -166,7 +170,7 @@ func dualChooseProviderHopOperation(t *testing.T, d *dualShell, value string) {
 	if choice < 0 {
 		t.Fatalf("provider hop picker has no operation %q", value)
 	}
-	for i := 0; i < len(s.prompt.Options); i++ {
+	for range len(s.prompt.Options) {
 		selected, err := s.prompt.GetAnswer()
 		if err != nil {
 			t.Fatalf("read provider hop picker choice: %v", err)
@@ -287,7 +291,7 @@ func dualProviderHopsScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "sub", "add", "--name", "main", "--pre-socks5", pre, url)
 
 	d := newDualShell(t, shellHome, "Providers")
-	s := dualProvidersScreen(d)
+	s := dualProvidersScreen(t, d)
 	d.Keys("end", "enter") // + Add provider opens the wizard
 	d.Type("main")
 	d.Keys("enter")
@@ -356,7 +360,7 @@ func dualProviderRenameScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "sub", "rename", "old", "renamed")
 
 	d := newDualShell(t, shellHome, "Providers")
-	s := dualProvidersScreen(d)
+	s := dualProvidersScreen(t, d)
 	d.Keys("enter") // drill into the first provider ("old")
 	dualSelectCardLine(t, d, s.card, "edit-name")
 	d.Keys("enter")
@@ -378,7 +382,7 @@ func dualProviderURLScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "sub", "set", "p", "--url", "https://new.invalid/sub")
 
 	d := newDualShell(t, shellHome, "Providers")
-	s := dualProvidersScreen(d)
+	s := dualProvidersScreen(t, d)
 	d.Keys("enter") // drill; the Subscription line is the first editable one
 	dualSelectCardLine(t, d, s.card, "subscription")
 	d.Keys("enter")
@@ -406,7 +410,7 @@ func dualProviderViaScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "sub", "set", "p", "--via", "socks5://new-proxy.invalid:1080")
 
 	d := newDualShell(t, shellHome, "Providers")
-	s := dualProvidersScreen(d)
+	s := dualProvidersScreen(t, d)
 	d.Keys("enter") // drill
 	dualSelectCardLine(t, d, s.card, "via")
 	d.Keys("enter")
@@ -443,7 +447,7 @@ func dualSettingsGlobalScenario(t *testing.T) {
 	dualRunCLI(t, cliHome, "config", "get")
 
 	d := newDualShell(t, shellHome, "Settings")
-	f := dualSettingsScreen(d)
+	f := dualSettingsScreen(t, d)
 
 	d.Keys("enter") // drill into Listen
 	dualSelectCardLine(t, d, f.workspace.Card, "listen.port")

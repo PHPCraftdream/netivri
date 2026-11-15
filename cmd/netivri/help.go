@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -174,7 +175,7 @@ func runHelp(req helpRequest, stdout io.Writer) error {
 	case topic == nil:
 		_, _ = io.WriteString(stdout, renderOverview())
 	default:
-		_, _ = io.WriteString(stdout, renderTopic(topic))
+		_, _ = io.WriteString(stdout, renderTopic(topic)) //nolint:gosec // G705: plain-text help on stdout, not an HTML sink; the text comes from static help tables
 	}
 	return nil
 }
@@ -273,11 +274,11 @@ func renderOverview() string {
 		b.WriteString(l + "\n")
 	}
 	section(&b, "EXIT CODES")
-	rows = rows[:0]
+	codeRows := make([][2]string, 0, len(helpExitCodes))
 	for _, e := range helpExitCodes {
-		rows = append(rows, [2]string{fmt.Sprint(e.Code), e.Meaning})
+		codeRows = append(codeRows, [2]string{strconv.Itoa(e.Code), e.Meaning})
 	}
-	writeRows(&b, rows, 2, helpWidth)
+	writeRows(&b, codeRows, 2, helpWidth)
 	section(&b, "NOT IMPLEMENTED YET")
 	for _, l := range wrap("Described in the CLI contract, but not available yet: "+strings.Join(helpPlanned, ", ")+".", 2, helpWidth) {
 		b.WriteString(l + "\n")

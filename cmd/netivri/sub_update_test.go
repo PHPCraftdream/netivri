@@ -44,7 +44,7 @@ func TestSubUpdateOne(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("results = %v", data["results"])
 	}
-	r := results[0].(map[string]any)
+	r := mustAs[map[string]any](t, results[0])
 	if r["name"] != "a" || r["ok"] != true || r["nodes"] != float64(1) || r["error"] != nil {
 		t.Errorf("result = %v", r)
 	}
@@ -72,7 +72,7 @@ func TestSubUpdateQuota(t *testing.T) {
 		t.Fatalf("update: %v", err)
 	}
 	data := decodeData(t, out)
-	r := data["results"].([]any)[0].(map[string]any)
+	r := mustAs[map[string]any](t, mustAs[[]any](t, data["results"])[0])
 	q, ok := r["quota"].(map[string]any)
 	if !ok {
 		t.Fatalf("quota = %v, want an object", r["quota"])
@@ -97,7 +97,7 @@ func TestSubUpdateQuota(t *testing.T) {
 		t.Fatalf("update without header: %v", err)
 	}
 	data = decodeData(t, out)
-	r = data["results"].([]any)[0].(map[string]any)
+	r = mustAs[map[string]any](t, mustAs[[]any](t, data["results"])[0])
 	if r["quota"] != nil {
 		t.Errorf("quota without header = %v, want nil", r["quota"])
 	}
@@ -120,7 +120,7 @@ func TestSubUpdateAll(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("results = %v, want 2 in config order", data["results"])
 	}
-	if results[0].(map[string]any)["name"] != "a" || results[1].(map[string]any)["name"] != "b" {
+	if mustAs[map[string]any](t, results[0])["name"] != "a" || mustAs[map[string]any](t, results[1])["name"] != "b" {
 		t.Errorf("results out of config order: %v", results)
 	}
 }
@@ -168,11 +168,11 @@ func TestSubUpdatePartialFailure(t *testing.T) {
 	if len(results) != 2 {
 		t.Fatalf("results = %v", data["results"])
 	}
-	first := results[0].(map[string]any)
+	first := mustAs[map[string]any](t, results[0])
 	if first["ok"] != true {
 		t.Errorf("first result = %v, want ok", first)
 	}
-	second := results[1].(map[string]any)
+	second := mustAs[map[string]any](t, results[1])
 	if second["ok"] != false || second["nodes"] != nil {
 		t.Errorf("second result = %v", second)
 	}

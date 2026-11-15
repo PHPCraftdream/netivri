@@ -189,7 +189,7 @@ func TestShadowsocksCipherWhitelistAndGeneratedKeys(t *testing.T) {
 func TestShadowsocksLinkRoundTrip(t *testing.T) {
 	for cipher := range map[string]int{"2022-blake3-aes-128-gcm": 16, "2022-blake3-aes-256-gcm": 32, "2022-blake3-chacha20-poly1305": 32, "aes-128-gcm": 16, "aes-256-gcm": 32, "chacha20-ietf-poly1305": 32} {
 		t.Run(cipher, func(t *testing.T) {
-			password := "YctPZ6U7xPPcU+gp3u+0tx/tRizJN9K8y+uKlW2qjlI="
+			password := "YctPZ6U7xPPcU+gp3u+0tx/tRizJN9K8y+uKlW2qjlI=" //nolint:gosec // G101: fixed test-vector key, not a credential
 			for _, host := range []string{"example.org", "2001:db8::7"} {
 				spec := Spec{Name: "ss.edge_1", Protocol: "shadowsocks", Port: 8388, Accounts: []string{"alice"}, Params: map[string]string{"cipher": cipher}, Users: UserSecrets{"alice": {"password": password}}}
 				link, err := (shadowsocks{}).Link(spec, "alice", host)

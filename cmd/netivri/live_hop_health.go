@@ -24,16 +24,16 @@ func (l *liveAngel) hopServices() (*hoppool.Binder, *hopHealth) {
 
 func (l *liveAngel) ensureHopHealth() *hopHealth {
 	l.hopHealthOnce.Do(func() {
-		info := logFunc(func(format string, args ...any) {
+		info := func(format string, args ...any) {
 			if l.logf != nil {
 				l.logf(format, args...)
 			}
-		})
-		warn := logFunc(func(format string, args ...any) {
+		}
+		warn := func(format string, args ...any) {
 			if l.warnf != nil {
 				l.warnf(format, args...)
 			}
-		})
+		}
 		health := newHopHealth(l.opts.Home, info, warn, nil, nil)
 		l.hopMu.Lock()
 		l.hopHealth = health

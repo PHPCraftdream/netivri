@@ -59,11 +59,11 @@ func walkSecret(t *testing.T, v reflect.Value) {
 			t.Fatal("secret in output")
 		}
 	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ {
+		for i := range v.NumField() {
 			walkSecret(t, v.Field(i))
 		}
 	case reflect.Slice, reflect.Array:
-		for i := 0; i < v.Len(); i++ {
+		for i := range v.Len() {
 			walkSecret(t, v.Index(i))
 		}
 	case reflect.Map:
@@ -72,6 +72,8 @@ func walkSecret(t *testing.T, v reflect.Value) {
 			walkSecret(t, it.Key())
 			walkSecret(t, it.Value())
 		}
+	default:
+		// scalars other than string hold no text to match
 	}
 }
 func TestProviderHopUpdateCandidateRollback(t *testing.T) {
@@ -170,12 +172,12 @@ func TestProviderAddExistingURLIgnoresHopFlagsAndRefreshesSnapshot(t *testing.T)
 func TestProviderAddSaveFailureRemovesNewSnapshot(t *testing.T) {
 	home := providerSeed(t)
 	configPath := config.ConfigPath(home)
-	before, err := os.ReadFile(configPath)
+	before, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
 	saveCalls := 0
-	_, err = providerAddWith(home, ProviderAddOptions{URL: "https://provider.invalid", Name: "provider"}, providerFetcher([]byte(testBody)), func() time.Time { return testNow }, func(_ string, _ *config.Config) error {
+	_, err = providerAddWith(context.Background(), home, ProviderAddOptions{URL: "https://provider.invalid", Name: "provider"}, providerFetcher([]byte(testBody)), func() time.Time { return testNow }, func(_ string, _ *config.Config) error {
 		saveCalls++
 		return errors.New("injected save failure")
 	})
@@ -197,7 +199,7 @@ func TestProviderAddSaveFailureRemovesNewSnapshot(t *testing.T) {
 			t.Fatalf("provider snapshot %s remains after rollback: stat error = %v", path, err)
 		}
 	}
-	after, err := os.ReadFile(configPath)
+	after, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +495,7 @@ func TestProviderCountriesURL(t *testing.T) {
 }
 func TestProviderReturnedTypesHaveNoCredentialFields(t *testing.T) {
 	for _, typ := range []reflect.Type{reflect.TypeOf(ProviderInfo{}), reflect.TypeOf(ProviderAddResult{}), reflect.TypeOf(ProviderRefreshResult{}), reflect.TypeOf(ProviderCountriesResult{})} {
-		for i := 0; i < typ.NumField(); i++ {
+		for i := range typ.NumField() {
 			n := strings.ToLower(typ.Field(i).Name)
 			if strings.Contains(n, "url") || strings.Contains(n, "via") && n != "viaset" {
 				t.Fatalf("credential field %s.%s", typ.Name(), n)

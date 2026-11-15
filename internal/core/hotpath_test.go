@@ -126,11 +126,11 @@ func TestAffinityTableAcquireHitAllocatesNothing(t *testing.T) {
 func TestNodeHealthConcurrentRecordsDeterministicOutcome(t *testing.T) {
 	var h nodeHealth
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				h.recordDial(false, 0)
 				h.recordProbe(false, 0)
 			}
@@ -140,7 +140,7 @@ func TestNodeHealthConcurrentRecordsDeterministicOutcome(t *testing.T) {
 	if !h.Down() {
 		t.Fatal("node with only failures is not down")
 	}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -169,7 +169,7 @@ func TestStickyGroupConcurrentChooseWithRecording(t *testing.T) {
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		for j := 0; j < 100; j++ {
+		for range 100 {
 			if m, rebound := g.choose("u", "example.com"); m != 1 || rebound {
 				mismatch.Store(true)
 				return
@@ -178,13 +178,13 @@ func TestStickyGroupConcurrentChooseWithRecording(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for j := 0; j < 100; j++ {
+		for range 100 {
 			health.recordDial("a", true, time.Millisecond)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for j := 0; j < 100; j++ {
+		for range 100 {
 			health.recordDial("b", true, time.Millisecond)
 		}
 	}()
@@ -208,11 +208,11 @@ func TestStickyGroupConcurrentFreshKeysCount(t *testing.T) {
 	health.recordProbe("a", true, 100*time.Millisecond)
 	health.recordProbe("b", true, 50*time.Millisecond)
 	var wg sync.WaitGroup
-	for id := 0; id < 4; id++ {
+	for id := range 4 {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 25; j++ {
+			for j := range 25 {
 				g.choose(fmt.Sprintf("u%d-%d", id, j), "example.com")
 			}
 		}(id)
@@ -272,11 +272,11 @@ func TestNodeHealthSuccessClearsCounters(t *testing.T) {
 func TestNodeHealthConcurrentMixedThenRecover(t *testing.T) {
 	var h nodeHealth
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for j := range 50 {
 				if (i+j)%3 == 0 {
 					h.recordProbe(true, time.Millisecond)
 				} else {
@@ -342,10 +342,10 @@ func TestAffinityConcurrentHitsWithRebindNoDeadlock(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(5)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < 50; j++ {
+			for range 50 {
 				table.acquire(key, isDown, pick)
 			}
 		}()

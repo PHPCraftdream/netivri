@@ -58,7 +58,7 @@ func (f *fakeUpstream) record(target string) {
 func startFakeUpstream(t *testing.T) (*fakeUpstream, string) {
 	t.Helper()
 	f := &fakeUpstream{mapping: map[string]string{}}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("fake upstream listen: %v", err)
 	}
@@ -85,7 +85,7 @@ func readN(c net.Conn, n int) ([]byte, bool) {
 }
 
 func (f *fakeUpstream) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(testTimeout))
 
 	head, ok := readN(c, 2)
@@ -154,12 +154,12 @@ func (f *fakeUpstream) serve(c net.Conn) {
 		}
 		dialAddr = mapped
 	}
-	up, err := net.DialTimeout("tcp", dialAddr, testTimeout)
+	up, err := (&net.Dialer{Timeout: testTimeout}).DialContext(context.Background(), "tcp", dialAddr)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(testTimeout))
 	if _, err := c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
@@ -208,7 +208,7 @@ func nodeMap(addr string) map[string]any {
 // countEchoServer is an echo server that counts accepted connections.
 func countEchoServer(t *testing.T) (string, *atomic.Int32) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("echo listen: %v", err)
 	}
@@ -222,7 +222,7 @@ func countEchoServer(t *testing.T) (string, *atomic.Int32) {
 			}
 			count.Add(1)
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(testTimeout))
 				_, _ = io.Copy(c, c)
 			}(c)
@@ -243,9 +243,10 @@ func socks5ConnectDomain(t *testing.T, proxyAddr, domain string, port int) net.C
 	if greeting[0] != 5 || greeting[1] != 0 {
 		t.Fatalf("greeting reply = %v, want {5, 0}", greeting)
 	}
-	req := []byte{5, 1, 0, 3, byte(len(domain))}
+	req := make([]byte, 0, 5+len(domain)+2)
+	req = append(req, 5, 1, 0, 3, toByte(t, len(domain)))
 	req = append(req, domain...)
-	req = append(req, byte(port>>8), byte(port))
+	req = append(req, toByte(t, port>>8), toByte(t, port))
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("socks5 request write: %v", err)
 	}
@@ -282,7 +283,7 @@ func TestNodeSocks5RoundTrip(t *testing.T) {
 	backend := echoServer(t)
 
 	c := socks5ConnectNoAuth(t, inst.Addr(), backend)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, c)
 	assertUpstreamSaw(t, f, []string{backend})
 }
@@ -294,7 +295,7 @@ func TestNodeHTTPConnectRoundTrip(t *testing.T) {
 	backend := echoServer(t)
 
 	c, br := httpConnect(t, inst.Addr(), backend, "")
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, br)
 	assertUpstreamSaw(t, f, []string{backend})
 }
@@ -310,11 +311,11 @@ func TestNodePlainHTTPGet(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	client := proxyHTTPClient(t, "http://"+inst.Addr())
-	resp, err := client.Get(ts.URL + "/via")
+	resp, err := getWithContext(t, client, ts.URL+"/via")
 	if err != nil {
 		t.Fatalf("GET via node: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read body: %v", err)
@@ -343,7 +344,7 @@ func TestNodeRemoteResolution(t *testing.T) {
 	f.mapDomain("target.invalid", backend)
 
 	c := socks5ConnectDomain(t, inst.Addr(), "target.invalid", port)
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	echoRoundTrip(t, c, c)
 	assertUpstreamSaw(t, f, []string{"target.invalid:" + portStr})
 }
@@ -352,7 +353,7 @@ func TestNodeRemoteResolution(t *testing.T) {
 // client request fails, neither the fake upstream nor the target server saw
 // a connection, and the instance keeps serving.
 func TestNodeNoDirectFallback(t *testing.T) {
-	dead, err := net.Listen("tcp", "127.0.0.1:0")
+	dead, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("hold port: %v", err)
 	}
@@ -365,7 +366,7 @@ func TestNodeNoDirectFallback(t *testing.T) {
 	backend, conns := countEchoServer(t)
 
 	c := dialProxy(t, inst.Addr())
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if _, err := c.Write([]byte{5, 1, 0}); err != nil {
 		t.Fatalf("greeting write: %v", err)
 	}
@@ -383,7 +384,7 @@ func TestNodeNoDirectFallback(t *testing.T) {
 	}
 	// The target is the real echo server, so a direct fallback would be
 	// observable as an accepted connection there.
-	req := []byte{5, 1, 0, 1, 127, 0, 0, 1, byte(port >> 8), byte(port)}
+	req := []byte{5, 1, 0, 1, 127, 0, 0, 1, mustByte(port >> 8), mustByte(port)}
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("request write: %v", err)
 	}
@@ -415,7 +416,7 @@ func TestNodeNoDirectFallback(t *testing.T) {
 
 	// The instance keeps serving: a fresh client gets a normal greeting.
 	c2 := dialProxy(t, inst.Addr())
-	defer c2.Close()
+	defer func() { _ = c2.Close() }()
 	if _, err := c2.Write([]byte{5, 1, 0}); err != nil {
 		t.Fatalf("greeting write after failure: %v", err)
 	}
@@ -440,7 +441,7 @@ func TestNodeWithAuthentication(t *testing.T) {
 
 	t.Run("socks5-auth-ok-roundtrip", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if _, err := c.Write([]byte{5, 1, 2}); err != nil {
 			t.Fatalf("greeting write: %v", err)
 		}
@@ -459,7 +460,7 @@ func TestNodeWithAuthentication(t *testing.T) {
 
 	t.Run("socks5-wrong-password", func(t *testing.T) {
 		c := dialProxy(t, addr)
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if _, err := c.Write([]byte{5, 1, 2}); err != nil {
 			t.Fatalf("greeting write: %v", err)
 		}
@@ -479,11 +480,11 @@ func TestNodeWithAuthentication(t *testing.T) {
 		}))
 		t.Cleanup(ts.Close)
 		client := proxyHTTPClient(t, "http://"+user+":"+pass+"@"+addr)
-		resp, err := client.Get(ts.URL + "/ok")
+		resp, err := getWithContext(t, client, ts.URL+"/ok")
 		if err != nil {
 			t.Fatalf("GET with credentials: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil || string(body) != "authed-via-node" {
 			t.Fatalf("body = %q, err = %v", body, err)
@@ -492,11 +493,11 @@ func TestNodeWithAuthentication(t *testing.T) {
 
 	t.Run("http-no-credentials-407", func(t *testing.T) {
 		client := proxyHTTPClient(t, "http://"+addr)
-		resp, err := client.Get("http://target.invalid/x")
+		resp, err := getWithContext(t, client, "http://target.invalid/x")
 		if err != nil {
 			t.Fatalf("GET without credentials: %v", err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		if resp.StatusCode != http.StatusProxyAuthRequired {
 			t.Fatalf("status = %d, want 407", resp.StatusCode)

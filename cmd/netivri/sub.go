@@ -120,10 +120,11 @@ scan:
 			rest = append(rest, args[i:]...)
 			break scan
 		case a == "--home" || a == "-home":
-			if i+1 >= len(args) {
+			value := args[i+1:] // i < len(args): the slice is valid and empty when no value follows
+			if len(value) == 0 {
 				return "", "", nil, cli.Usage("%s: flag needs an argument: --home", name)
 			}
-			flagHome = args[i+1]
+			flagHome = value[0]
 			i++
 		case strings.HasPrefix(a, "--home="):
 			flagHome = strings.TrimPrefix(a, "--home=")

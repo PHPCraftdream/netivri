@@ -20,63 +20,106 @@ import (
 // node, the angel reports the binding, and after `down` (which flushes the
 // store) `stats` shows the dials of exactly that node.
 func TestE2EStatsAndAffinity(t *testing.T) {
-	h := newAngelHome(t)
-	pass := "stats-e2e-password"
+	st := &e2eStatsState{h: newAngelHome(t)}
+	setupStatsHome(t, st)
+	startStatsAngel(t, st)
+	payloadConn := connectStatsSite(t, st)
+	waitAccountBytes(t, st)
+	_ = payloadConn.Close()
+	checkStatsAffinity(t, st)
+	checkStatsAfterDown(t, st)
+	checkStatsAccount(t, st)
+}
+
+// e2eStatsState is the angel and the fixture of TestE2EStatsAndAffinity.
+type e2eStatsState struct {
+	h          *angelHome
+	pass       string
+	hash       string
+	backend    string
+	first      *accountsUpstream
+	second     *accountsUpstream
+	listen     string
+	totalConns int
+	bound      string
+}
+
+// setupStatsHome writes the config and the two-node snapshot of alice's provider.
+func setupStatsHome(t *testing.T, st *e2eStatsState) {
+	t.Helper()
+	pass := "stats-e2e-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := accountsEcho(t)
-	first := accountsServer(t)
-	second := accountsServer(t)
-	writeConfig(t, h.dir, func(cfg *config.Config) {
+	st.pass, st.hash = pass, hash
+	st.backend = accountsEcho(t)
+	st.first = accountsServer(t)
+	st.second = accountsServer(t)
+	writeConfig(t, st.h.dir, func(cfg *config.Config) {
 		cfg.Accounts = []config.Account{{Login: "alice", Password: hash, Provider: "p1", ExitCountry: "DE"}}
 		cfg.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://p1.invalid/sub"}}
 	})
-	n1 := accountsSocksNode("n1", "DE", first)
+	n1 := accountsSocksNode("n1", "DE", st.first)
 	n1.Name = "First Node"
-	n2 := accountsSocksNode("n2", "DE", second)
+	n2 := accountsSocksNode("n2", "DE", st.second)
 	n2.Name = "Second Node"
-	accountsSaveSnapshot(t, h.dir, "p1", []subscription.Node{n1, n2})
+	accountsSaveSnapshot(t, st.h.dir, "p1", []subscription.Node{n1, n2})
+}
 
-	code, stdout, stderr := angelRun(t, h.dir, "up", "--port", "0")
+// startStatsAngel runs `up` and records the listen address.
+func startStatsAngel(t *testing.T, st *e2eStatsState) {
+	t.Helper()
+	code, stdout, stderr := angelRun(t, st.h.dir, "up", "--port", "0")
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 	up := angelData(t, stdout)
-	h.pid = angelInt(t, up, "pid")
+	st.h.pid = angelPID(t, up)
 	listen, _ := up["listen"].(string)
 	if listen == "" {
 		t.Fatalf("up data = %v", up)
 	}
+	st.listen = listen
+}
 
+// connectStatsSite opens the connections of alice and checks that they all left
+// through one node, which it records as bound. The returned payload connection
+// stays open for the caller.
+func connectStatsSite(t *testing.T, st *e2eStatsState) net.Conn {
+	t.Helper()
 	const connections = 3
-	for i := 0; i < connections; i++ {
-		accountsClient(t, listen, "alice", pass, backend)
+	for range connections {
+		accountsClient(t, st.listen, "alice", st.pass, st.backend)
 	}
 	// Push at least 64 KiB through one more connection in both directions so
 	// the per-account bytes counters clear the 16 KiB window gate. That payload
 	// connection also counts as one connection everywhere below.
-	payloadConn := accountsClientPayload(t, listen, "alice", pass, backend, 64<<10)
+	payloadConn := accountsClientPayload(t, st.listen, "alice", st.pass, st.backend, 64<<10)
 	// The payload connection also counts: one extra dial on top of the loop.
-	totalConns := connections + 1
+	st.totalConns = connections + 1
 	// The same site (the loopback address) used one node for all of them.
-	a, b := first.count.Load(), second.count.Load()
-	if a+b != int64(totalConns) || (a != int64(totalConns) && b != int64(totalConns)) {
-		t.Fatalf("connections were split across nodes: n1=%d n2=%d, want all %d on one", a, b, totalConns)
+	a, b := st.first.count.Load(), st.second.count.Load()
+	if a+b != int64(st.totalConns) || (a != int64(st.totalConns) && b != int64(st.totalConns)) {
+		t.Fatalf("connections were split across nodes: n1=%d n2=%d, want all %d on one", a, b, st.totalConns)
 	}
-	bound := "p1/n1"
-	if b == int64(totalConns) {
-		bound = "p1/n2"
+	st.bound = "p1/n1"
+	if b == int64(st.totalConns) {
+		st.bound = "p1/n2"
 	}
+	return payloadConn
+}
 
+// waitAccountBytes polls the account stats until alice's bytes are recorded in both directions.
+func waitAccountBytes(t *testing.T, st *e2eStatsState) {
+	t.Helper()
 	// The throughput poller only records account bytes while the connection's
 	// tracker is open, so keep the payload connection alive until the stats
 	// store reports non-zero bytes in both directions.
 	deadline := time.Now().Add(30 * time.Second)
 	var bytesUp, bytesDown float64
 	for {
-		statsCode, statsOut, _ := angelRun(t, h.dir, "stats", "--by", "account", "--account", "alice", "--since", "1h")
+		statsCode, statsOut, _ := angelRun(t, st.h.dir, "stats", "--by", "account", "--account", "alice", "--since", "1h")
 		if statsCode == 0 {
 			items, _ := angelData(t, statsOut)["items"].([]any)
 			if len(items) == 1 {
@@ -93,9 +136,12 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	_ = payloadConn.Close()
+}
 
-	code, stdout, stderr = angelRun(t, h.dir, "status", "--full")
+// checkStatsAffinity checks the live status: one binding and the stats store path.
+func checkStatsAffinity(t *testing.T, st *e2eStatsState) {
+	t.Helper()
+	code, stdout, stderr := angelRun(t, st.h.dir, "status", "--full")
 	if code != 0 {
 		t.Fatalf("status exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -107,15 +153,20 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	if info, _ := status["stats"].(map[string]any); info == nil || info["path"] == "" {
 		t.Fatalf("status stats = %v", status["stats"])
 	}
-	assertNoSecrets(t, stdout, stderr, pass, hash)
+	assertNoSecrets(t, stdout, stderr, st.pass, st.hash)
+}
 
+// checkStatsAfterDown runs `down` and checks the per-node stats: the bound node
+// has every dial, the other node none.
+func checkStatsAfterDown(t *testing.T, st *e2eStatsState) {
+	t.Helper()
 	// down closes the core first and flushes the store before exiting.
-	code, stdout, stderr = angelRun(t, h.dir, "down")
+	code, stdout, stderr := angelRun(t, st.h.dir, "down")
 	if code != 0 {
 		t.Fatalf("down exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
 
-	code, stdout, stderr = angelRun(t, h.dir, "stats", "--since", "1h")
+	code, stdout, stderr = angelRun(t, st.h.dir, "stats", "--since", "1h")
 	if code != 0 {
 		t.Fatalf("stats exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
@@ -123,15 +174,24 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	if len(items) != 2 {
 		t.Fatalf("stats items = %v, want both nodes", items)
 	}
+	checkStatsNodeItems(t, st, items)
+	assertNoSecrets(t, stdout, stderr, st.pass, st.hash)
+}
+
+// checkStatsNodeItems checks the names, the dial success of the bound node and
+// that the other node recorded no dials.
+func checkStatsNodeItems(t *testing.T, st *e2eStatsState, items []any) {
+	t.Helper()
 	wantNames := map[string]string{"p1/n1": "First Node", "p1/n2": "Second Node"}
 	var dialsOfBound float64
 	for _, raw := range items {
 		item, _ := raw.(map[string]any)
-		if item["name"] != wantNames[item["label"].(string)] {
-			t.Errorf("name of %v = %v, want %v", item["label"], item["name"], wantNames[item["label"].(string)])
+		label, _ := item["label"].(string)
+		if item["name"] != wantNames[label] {
+			t.Errorf("name of %v = %v, want %v", item["label"], item["name"], wantNames[label])
 		}
 		dials, _ := item["dials"].(float64)
-		if item["label"] == bound {
+		if item["label"] == st.bound {
 			dialsOfBound = dials
 			if item["dial_ok_pct"] != 100.0 {
 				t.Errorf("dial_ok_pct of %v = %v, want 100", item["label"], item["dial_ok_pct"])
@@ -142,16 +202,19 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 			t.Errorf("%v recorded %v dials, want none: the site was bound elsewhere", item["label"], dials)
 		}
 	}
-	if dialsOfBound != float64(totalConns) {
-		t.Errorf("%s recorded %v dials, want %d", bound, dialsOfBound, totalConns)
+	if dialsOfBound != float64(st.totalConns) {
+		t.Errorf("%s recorded %v dials, want %d", st.bound, dialsOfBound, st.totalConns)
 	}
-	assertNoSecrets(t, stdout, stderr, pass, hash)
+}
 
-	code, stdout, stderr = angelRun(t, h.dir, "stats", "--by", "account", "--since", "1h")
+// checkStatsAccount checks the per-account stats: only alice, with every dial.
+func checkStatsAccount(t *testing.T, st *e2eStatsState) {
+	t.Helper()
+	code, stdout, stderr := angelRun(t, st.h.dir, "stats", "--by", "account", "--since", "1h")
 	if code != 0 {
 		t.Fatalf("stats --by account exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	items, _ = angelData(t, stdout)["items"].([]any)
+	items, _ := angelData(t, stdout)["items"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("account items = %v, want only alice", items)
 	}
@@ -161,8 +224,8 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	}
 	// Each connection is one logical dial, so the bound node must have seen
 	// exactly totalConns dials (loop + payload connection).
-	if dials, _ := acc["dials"].(float64); dials != float64(totalConns) {
-		t.Errorf("alice dials = %v, want %d", acc["dials"], totalConns)
+	if dials, _ := acc["dials"].(float64); dials != float64(st.totalConns) {
+		t.Errorf("alice dials = %v, want %d", acc["dials"], st.totalConns)
 	}
 	if acc["dial_ok_pct"] != 100.0 {
 		t.Errorf("alice dial_ok_pct = %v, want 100", acc["dial_ok_pct"])
@@ -170,7 +233,7 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 	if nodes, _ := acc["nodes"].(float64); nodes < 1 {
 		t.Errorf("alice nodes = %v, want at least 1", acc["nodes"])
 	}
-	assertNoSecrets(t, stdout, stderr, pass, hash)
+	assertNoSecrets(t, stdout, stderr, st.pass, st.hash)
 }
 
 // accountsClientPayload connects through the SOCKS proxy like accountsClient
@@ -180,7 +243,7 @@ func TestE2EStatsAndAffinity(t *testing.T) {
 // closing is the caller's responsibility.
 func accountsClientPayload(t *testing.T, proxy, user, pass, target string, size int) net.Conn {
 	t.Helper()
-	c, err := net.DialTimeout("tcp", proxy, 5*time.Second)
+	c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(t.Context(), "tcp", proxy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +255,7 @@ func accountsClientPayload(t *testing.T, proxy, user, pass, target string, size 
 	if _, err = io.ReadFull(c, method[:]); err != nil || method != [2]byte{5, 2} {
 		t.Fatalf("SOCKS method %v: %v", method, err)
 	}
-	if _, err = c.Write(append([]byte{1, byte(len(user))}, append(append([]byte(user), byte(len(pass))), []byte(pass)...)...)); err != nil {
+	if _, err = c.Write(append([]byte{1, e2eByte(t, len(user))}, append(append([]byte(user), e2eByte(t, len(pass))), []byte(pass)...)...)); err != nil {
 		t.Fatal(err)
 	}
 	var authReply [2]byte

@@ -12,7 +12,7 @@ import (
 func TestConnLogNamesTheStageOfFailedDials(t *testing.T) {
 	f := newConnLogFixture()
 	dial := func(hop, why string, n int) {
-		for i := 0; i < n; i++ {
+		for range n {
 			f.log.event(core.ConnEvent{Kind: core.ConnDialFailed, Login: "alice", Label: "main/us", Why: why, Hop: hop})
 		}
 	}

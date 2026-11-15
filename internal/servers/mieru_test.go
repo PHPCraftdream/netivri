@@ -87,6 +87,13 @@ func TestMieruSecretsMaterialAndRedaction(t *testing.T) {
 func TestMieruMihomoSnippetAndImporter(t *testing.T) {
 	p, _ := Lookup("mieru")
 	spec := Spec{Name: "edge", Protocol: "mieru", Port: 1234, Accounts: []string{"alice", "bob"}, Params: map[string]string{"transport": "tcp", "multiplexing": "MULTIPLEXING_LOW"}, Users: UserSecrets{"alice": {"password": "pw"}, "bob": {"password": "pw2"}}}
+	link := mieruCheckURIShape(t, p, spec)
+	mieruCheckConvertedProxy(t, link)
+	mieruCheckMihomoSnippet(t, p, spec)
+}
+
+func mieruCheckURIShape(t *testing.T, p Protocol, spec Spec) string {
+	t.Helper()
 	link, err := p.Link(spec, "alice", "example.org")
 	if err != nil {
 		t.Fatal("Mieru URI generation failed")
@@ -99,6 +106,11 @@ func TestMieruMihomoSnippetAndImporter(t *testing.T) {
 	if !ok || password != "pw" || u.Query().Get("port") != "1234" || u.Query().Get("protocol") != "TCP" || u.Query().Get("multiplexing") != "MULTIPLEXING_LOW" || u.Fragment != "edge" || strings.Count(u.RawQuery, "port=") != 1 || strings.Count(u.RawQuery, "protocol=") != 1 {
 		t.Fatal("Mieru URI fields mismatch")
 	}
+	return link
+}
+
+func mieruCheckConvertedProxy(t *testing.T, link string) {
+	t.Helper()
 	converted, err := convert.ConvertsV2Ray([]byte(link))
 	if err != nil || len(converted) != 1 {
 		t.Fatal("Mieru URI conversion failed")
@@ -107,7 +119,11 @@ func TestMieruMihomoSnippetAndImporter(t *testing.T) {
 	if proxy["type"] != "mieru" || proxy["server"] != "example.org" || proxy["port"] != 1234 || proxy["transport"] != "TCP" || proxy["username"] != "alice" || proxy["password"] != "pw" || proxy["multiplexing"] != "MULTIPLEXING_LOW" || proxy["udp"] != true {
 		t.Fatal("Mieru URI conversion fields mismatch")
 	}
-	snippet, err := p.(MihomoLinker).Mihomo(spec, "alice", "example.org")
+}
+
+func mieruCheckMihomoSnippet(t *testing.T, p Protocol, spec Spec) {
+	t.Helper()
+	snippet, err := mihomoLinker(t, p).Mihomo(spec, "alice", "example.org")
 	if err != nil {
 		t.Fatal("Mihomo snippet generation failed")
 	}
@@ -148,7 +164,7 @@ func TestMieruLinkEncodesCredentialsAndRejectsInvalidInput(t *testing.T) {
 	if err != nil {
 		t.Fatal("Mieru link parse failed")
 	}
-	gotLogin, gotPassword := u.User.Username(), ""
+	gotLogin := u.User.Username()
 	gotPassword, ok := u.User.Password()
 	if gotLogin != login || !ok || gotPassword != secret {
 		t.Fatal("credentials did not round-trip")
@@ -171,7 +187,7 @@ func TestMieruLinkEncodesCredentialsAndRejectsInvalidInput(t *testing.T) {
 		if _, err := p.Link(tc.spec, tc.login, tc.host); err == nil {
 			t.Fatal("invalid Mieru link input accepted")
 		}
-		if _, err := p.(MihomoLinker).Mihomo(tc.spec, tc.login, tc.host); err == nil {
+		if _, err := mihomoLinker(t, p).Mihomo(tc.spec, tc.login, tc.host); err == nil {
 			t.Fatal("invalid Mieru Mihomo input accepted")
 		}
 	}
@@ -194,12 +210,22 @@ func TestMieruLinkIPv6Host(t *testing.T) {
 	}
 }
 
+// mihomoLinker returns p as a MihomoLinker, failing the test when it is not one.
+func mihomoLinker(t testing.TB, p any) MihomoLinker {
+	t.Helper()
+	linker, ok := p.(MihomoLinker)
+	if !ok {
+		t.Fatalf("%T does not implement MihomoLinker", p)
+	}
+	return linker
+}
+
 func TestMieruSnippetAccountsAndHostEncoding(t *testing.T) {
 	p, _ := Lookup("mieru")
-	password := "quotes:\" slash:/ newline:\n"
+	password := "quotes:\" slash:/ newline:\n" //nolint:gosec // G101: fixture password exercising Mihomo YAML quoting, not a credential
 	for _, host := range []string{"example.org", "2001:db8::7"} {
 		spec := Spec{Name: "edge", Protocol: "mieru", Port: 4321, Accounts: []string{"alice", "bob"}, Users: UserSecrets{"alice": {"password": password}, "bob": {"password": "other"}}}
-		snippet, err := p.(MihomoLinker).Mihomo(spec, "alice", host)
+		snippet, err := mihomoLinker(t, p).Mihomo(spec, "alice", host)
 		if err != nil {
 			t.Fatal("Mihomo snippet generation failed")
 		}
@@ -227,7 +253,7 @@ func TestMieruMultiplexingCanonicalLinks(t *testing.T) {
 		if err != nil || u.Query().Get("multiplexing") != level {
 			t.Fatalf("URI multiplexing mismatch for %s", level)
 		}
-		snippet, err := p.(MihomoLinker).Mihomo(spec, "alice", "example.org")
+		snippet, err := mihomoLinker(t, p).Mihomo(spec, "alice", "example.org")
 		if err != nil {
 			t.Fatalf("Mihomo level rejected: %s", level)
 		}

@@ -36,10 +36,19 @@ type hopPoolSpec struct {
 
 // poolIdentity scopes the ordered health keys to their pre/post pool role.
 func poolIdentity(role hopPoolRole, keys []string) string {
-	data, _ := json.Marshal(struct {
+	return jsonSHA256Hex(struct {
 		Role hopPoolRole
 		Keys []string
 	}{role, keys})
+}
+
+// jsonSHA256Hex is the hex SHA-256 of the JSON encoding of v.
+func jsonSHA256Hex(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		// Unencodable values hash as empty data, as they always did.
+		data = nil
+	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
@@ -68,7 +77,6 @@ func fallbackHopPoolKey(raw string) string {
 func newHopPoolSpec(role hopPoolRole, uris []string, gen int) *hopPoolSpec {
 	keys, unique := make([]string, 0, len(uris)), make([]string, 0, len(uris))
 	mappings := make([]map[string]any, 0, len(uris))
-	entryConfigs := make([]string, 0, len(uris))
 	seen := make(map[string]struct{}, len(uris))
 	for _, uri := range uris {
 		if uri == "" || isNoChain(uri) {
@@ -93,7 +101,6 @@ func newHopPoolSpec(role hopPoolRole, uris []string, gen int) *hopPoolSpec {
 		}
 		keys, unique = append(keys, key), append(unique, uri)
 		mappings = append(mappings, mapping)
-		entryConfigs = append(entryConfigs, configHash(mapping))
 	}
 	if len(keys) == 0 {
 		return nil
@@ -115,9 +122,7 @@ func newHopPoolSpec(role hopPoolRole, uris []string, gen int) *hopPoolSpec {
 }
 
 func configHash(value any) string {
-	data, _ := json.Marshal(value)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return jsonSHA256Hex(value)
 }
 
 func invalidHopPoolKey(raw string) string {
@@ -257,12 +262,11 @@ func checkedPoolNodeHops(o Options, key string, n int) error {
 	return nil
 }
 
-func addPoolPlaceholder(spec *hopPoolSpec, _ *[]map[string]any, groups *[]map[string]any, _ map[string]struct{}) error {
+func addPoolPlaceholder(spec *hopPoolSpec, _ *[]map[string]any, groups *[]map[string]any, _ map[string]struct{}) {
 	if spec == nil || len(spec.keys) < 2 {
-		return nil
+		return
 	}
 	*groups = append(*groups, map[string]any{"name": spec.name, "type": "select", "proxies": []string{"DIRECT"}})
-	return nil
 }
 
 func healthPoolMemberKey(label string, pre, post []string) string {
@@ -275,11 +279,9 @@ func healthPoolMemberKey(label string, pre, post []string) string {
 		}
 		return out
 	}
-	data, _ := json.Marshal(struct {
+	return jsonSHA256Hex(struct {
 		Label string
 		Pre   []string
 		Post  []string
 	}{label, keys(pre), keys(post)})
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }

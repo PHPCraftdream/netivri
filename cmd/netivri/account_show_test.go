@@ -116,22 +116,22 @@ func TestAccountShowErrors(t *testing.T) {
 	if err := config.Save(config.ConfigPath(home), config.Default()); err != nil {
 		t.Fatal(err)
 	}
-	run := func(args ...string) (*cli.Error, *bytes.Buffer) {
+	run := func(args ...string) *cli.Error {
 		var out bytes.Buffer
 		err := runAccount(append(args, "--home", home), &out)
 		var ce *cli.Error
 		if !errors.As(err, &ce) {
 			t.Fatalf("account %v: expected *cli.Error, got %v (%s)", args, err, out.String())
 		}
-		return ce, &out
+		return ce
 	}
-	if ce, _ := run("show", "ghost"); ce.Code != "ACCOUNT_NOT_FOUND" || ce.Exit != cli.ExitNotFound {
+	if ce := run("show", "ghost"); ce.Code != "ACCOUNT_NOT_FOUND" || ce.Exit != cli.ExitNotFound {
 		t.Errorf("ghost = %+v", ce)
 	}
-	if ce, _ := run("show", "bad!login"); ce.Code != "ACCOUNT_INVALID" || ce.Exit != cli.ExitUsage {
+	if ce := run("show", "bad!login"); ce.Code != "ACCOUNT_INVALID" || ce.Exit != cli.ExitUsage {
 		t.Errorf("bad login = %+v", ce)
 	}
-	if ce, _ := run("show"); ce.Code != "USAGE" {
+	if ce := run("show"); ce.Code != "USAGE" {
 		t.Errorf("usage = %+v", ce)
 	}
 }

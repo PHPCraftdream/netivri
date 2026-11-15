@@ -22,7 +22,7 @@ import (
 
 // nodesHome seeds two providers ("p" with three stored nodes, "q" without a
 // snapshot, "r" with an empty snapshot) and a loaded screen.
-func nodesHome(t *testing.T) (string, *providersScreen) {
+func nodesHome(t *testing.T) *providersScreen {
 	t.Helper()
 	h := providerSeed(t,
 		config.Subscription{Name: "p", URL: "https://p.invalid"},
@@ -40,9 +40,9 @@ func nodesHome(t *testing.T) (string, *providersScreen) {
 	if err := subscription.NewStore(h+"/subscriptions").Save("r", subscription.Snapshot{FetchedAt: testNow}); err != nil {
 		t.Fatal(err)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
-	return h, s
+	return s
 }
 
 func selectProvider(s *providersScreen, name string) {
@@ -85,7 +85,7 @@ func startDiagnoseRun(t *testing.T, s *providersScreen) tea.Cmd {
 }
 
 func TestProvidersNodesActionOpensDialog(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	d := openNodesDialog(t, s)
 	if s.dialog != tui.Modal(d) {
@@ -120,7 +120,7 @@ func TestProvidersNodesActionOpensDialog(t *testing.T) {
 }
 
 func TestProvidersNodesDialogFilterAndCountryCycle(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	d := openNodesDialog(t, s)
 	s.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
@@ -168,7 +168,7 @@ func TestProvidersNodesDialogFilterAndCountryCycle(t *testing.T) {
 }
 
 func TestProvidersNodeDialogsFrameContract(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	openNodesDialog(t, s)
 	for _, drilled := range []bool{false, true} {
@@ -237,23 +237,39 @@ func TestProvidersNodeDialogsFrameContract(t *testing.T) {
 	}
 }
 
-func TestProvidersDiagnoseFlowRunsSharedOperation(t *testing.T) {
-	_, s := nodesHome(t)
-	selectProvider(s, "p")
-	var gotLabel string
-	var gotSamples int
-	var dials int
-	s.dialNode = func(ctx context.Context, home, label string, samples int) (core.NodeDiag, error) {
-		dials++
+// diagnoseDialRecord captures what the diagnose flow passed to the node dialer.
+type diagnoseDialRecord struct {
+	label   string
+	samples int
+	dials   int
+}
+
+func recordingDiagnoseDialer(t *testing.T, s *providersScreen, rec *diagnoseDialRecord) func(context.Context, string, string, int) (core.NodeDiag, error) {
+	return func(ctx context.Context, home, label string, samples int) (core.NodeDiag, error) {
+		rec.dials++
 		if ctx == nil {
 			t.Error("the context is nil")
 		}
 		if home != s.home {
 			t.Errorf("home = %q, want %q", home, s.home)
 		}
-		gotLabel, gotSamples = label, samples
+		rec.label, rec.samples = label, samples
 		return core.NodeDiag{Label: label, Samples: samples, TCP: core.PhaseStats{N: samples, P50: time.Millisecond, P90: 2 * time.Millisecond, Max: 3 * time.Millisecond}}, nil
 	}
+}
+
+func TestProvidersDiagnoseFlowRunsSharedOperation(t *testing.T) {
+	s := nodesHome(t)
+	selectProvider(s, "p")
+	rec := &diagnoseDialRecord{}
+	s.dialNode = recordingDiagnoseDialer(t, s, rec)
+	checkDiagnoseNodeAndSamplesPrompts(t, s)
+	checkDiagnoseRunAndResult(t, s, rec)
+	checkDiagnoseEscCancels(t, s)
+}
+
+func checkDiagnoseNodeAndSamplesPrompts(t *testing.T, s *providersScreen) {
+	t.Helper()
 	_, c := s.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
 	drainProvider(s, c)
 	if s.mode != "diag-prompt-node" || s.prompt == nil || s.prompt.Kind != tui.ChoicePrompt {
@@ -270,13 +286,17 @@ func TestProvidersDiagnoseFlowRunsSharedOperation(t *testing.T) {
 	if s.prompt.Value != "5" {
 		t.Fatalf("samples preset = %q, want 5", s.prompt.Value)
 	}
+}
+
+func checkDiagnoseRunAndResult(t *testing.T, s *providersScreen, rec *diagnoseDialRecord) {
+	t.Helper()
 	run := startDiagnoseRunTail(t, s)
 	if got := strings.Join(s.card.Info, " | "); !strings.Contains(got, "Diagnosing p/aa11bb22cc33") {
 		t.Fatalf("busy not visible in the card: %q", got)
 	}
 	drainProvider(s, run)
-	if dials != 1 || gotLabel != "p/aa11bb22cc33" || gotSamples != 5 {
-		t.Fatalf("dial args = %q/%d dials=%d", gotLabel, gotSamples, dials)
+	if rec.dials != 1 || rec.label != "p/aa11bb22cc33" || rec.samples != 5 {
+		t.Fatalf("dial args = %q/%d dials=%d", rec.label, rec.samples, rec.dials)
 	}
 	if s.mode != "diag-result" || s.diagDlg == nil || s.dialog == nil {
 		t.Fatalf("result state: mode=%q dlg=%v", s.mode, s.diagDlg)
@@ -293,15 +313,18 @@ func TestProvidersDiagnoseFlowRunsSharedOperation(t *testing.T) {
 	if s.dialog != nil || s.mode != "" {
 		t.Fatal("esc did not close the result")
 	}
-	// Esc at the node prompt cancels the flow.
-	_, c = s.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
+}
+
+// Esc at the node prompt and at the samples prompt each cancel the flow.
+func checkDiagnoseEscCancels(t *testing.T, s *providersScreen) {
+	t.Helper()
+	_, c := s.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
 	drainProvider(s, c)
-	_, esc = s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	_, esc := s.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
 	drainProvider(s, esc)
 	if s.mode != "" || s.prompt != nil || s.dialog != nil {
 		t.Fatal("esc at the node prompt did not cancel")
 	}
-	// Esc at the samples prompt cancels too.
 	_, c = s.Update(tea.KeyPressMsg{Code: 'g', Text: "g"})
 	drainProvider(s, c)
 	_, c = s.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -314,7 +337,7 @@ func TestProvidersDiagnoseFlowRunsSharedOperation(t *testing.T) {
 }
 
 func TestProvidersDiagnoseSamplesValidation(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	var dials int
 	var gotSamples int
@@ -377,7 +400,7 @@ func startDiagnoseRunTail(t *testing.T, s *providersScreen) tea.Cmd {
 }
 
 func TestProvidersDiagnoseCancelShowsMessageOnly(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	// The blocked dial returns only when the context is canceled.
 	s.dialNode = func(ctx context.Context, _ string, _ string, _ int) (core.NodeDiag, error) {
@@ -416,7 +439,7 @@ func TestProvidersDiagnoseCancelShowsMessageOnly(t *testing.T) {
 }
 
 func TestProvidersDiagAndNodesErrorsShownByMessageOnly(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	s.dialNode = func(context.Context, string, string, int) (core.NodeDiag, error) {
 		return core.NodeDiag{}, &cli.Error{Code: "DIAG_FAILED", Message: "the run could not proceed", Exit: cli.ExitNetwork}
@@ -451,7 +474,7 @@ func TestProvidersDiagAndNodesErrorsShownByMessageOnly(t *testing.T) {
 }
 
 func TestProvidersNodeActionsNeedASnapshot(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "q")
 	actionDisabled := func(id string) bool {
 		for _, l := range s.card.Lines {
@@ -483,7 +506,7 @@ func TestProvidersNodeActionsNeedASnapshot(t *testing.T) {
 }
 
 func TestProvidersNodesDialogEmptyAndDiagnoseWithoutNodes(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "r")
 	_, c := s.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
 	drainProvider(s, c)
@@ -511,7 +534,7 @@ func TestProvidersNodesDialogEmptyAndDiagnoseWithoutNodes(t *testing.T) {
 }
 
 func TestProvidersNodeActionsFromCardLines(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	idx := func(id string) int {
 		for i, l := range s.card.Lines {
@@ -548,7 +571,7 @@ func TestProvidersNodeActionsFromCardLines(t *testing.T) {
 }
 
 func TestProvidersParityRefsIncludeNodesAndDiagnose(t *testing.T) {
-	_, s := nodesHome(t)
+	s := nodesHome(t)
 	selectProvider(s, "p")
 	got := map[string]bool{}
 	for _, r := range s.ParityRefs() {

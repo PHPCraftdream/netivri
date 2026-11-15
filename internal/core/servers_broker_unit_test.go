@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -60,7 +61,10 @@ func TestSocketBrokerLeasesAndTrackedConnections(t *testing.T) {
 	if err := s.commit(); err != nil {
 		t.Fatal("commit:", err)
 	}
-	lease := networkListener.(*socketLease)
+	lease, ok := networkListener.(*socketLease)
+	if !ok {
+		t.Fatalf("network listener is %T, want *socketLease", networkListener)
+	}
 	server, client := net.Pipe()
 	deadline := time.Now().Add(5 * time.Second)
 	if err := server.SetDeadline(deadline); err != nil {
@@ -94,7 +98,7 @@ func TestSocketBrokerLeasesAndTrackedConnections(t *testing.T) {
 	if err := lease.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lease.Accept(); err != net.ErrClosed {
+	if _, err := lease.Accept(); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("closed lease Accept error = %v", err)
 	}
 	listener.mu.Lock()
@@ -143,7 +147,10 @@ func TestSocketStageCommitClosedBrokerAndQueuedDrain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := ln.(*socketLease)
+	lease, ok := ln.(*socketLease)
+	if !ok {
+		t.Fatalf("listener is %T, want *socketLease", ln)
+	}
 	brokerSide, peer := net.Pipe()
 	deadline := time.Now().Add(5 * time.Second)
 	if err := brokerSide.SetDeadline(deadline); err != nil {
@@ -159,10 +166,10 @@ func TestSocketStageCommitClosedBrokerAndQueuedDrain(t *testing.T) {
 	b.mu.Unlock()
 	lease.tcp <- queued
 	b.close()
-	if err := s.commit(); err != net.ErrClosed {
+	if err := s.commit(); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("commit on closed broker error = %v", err)
 	}
-	if _, err := peer.Write([]byte("x")); err != io.ErrClosedPipe {
+	if _, err := peer.Write([]byte("x")); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("peer write after queued drain error = %v, want %v", err, io.ErrClosedPipe)
 	}
 	b.mu.Lock()

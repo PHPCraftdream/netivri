@@ -5,8 +5,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -16,17 +18,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/subscription"
-	"github.com/metacubex/mihomo/adapter/outbound"
-	C "github.com/metacubex/mihomo/constant"
 )
 
 func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	const pass = "server-e2e-account-password"
+	const pass = "server-e2e-account-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 
 	upstream := accountsServer(t)
 	backend := accountsEcho(t)
@@ -74,7 +77,7 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/subscription", func(w http.ResponseWriter, _ *http.Request) { mu.RLock(); defer mu.RUnlock(); _, _ = w.Write(body) })
 	subServer := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
-	subListener, err := net.Listen("tcp", "127.0.0.1:0")
+	subListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("listen for local subscription")
 	}
@@ -90,11 +93,11 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	go func() { defer close(serveDone); _ = subServer.Serve(subListener) }()
 
 	homeB := t.TempDir()
-	code, out, stderr = accountsRun(t, homeB, "sub", "add", "http://"+subListener.Addr().String()+"/subscription", "--name", "edge")
+	code, out, stderr = accountsRun(t.Context(), t, homeB, "sub", "add", "http://"+subListener.Addr().String()+"/subscription", "--name", "edge")
 	if code != 0 {
 		t.Fatalf("local subscription add failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
-	code, out, stderr = accountsRun(t, homeB, "account", "add", "alice", "--provider", "edge")
+	code, out, stderr = accountsRun(t.Context(), t, homeB, "account", "add", "alice", "--provider", "edge")
 	if code != 0 {
 		t.Fatalf("client account add failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
@@ -129,7 +132,7 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 	mu.Lock()
 	body = []byte(link() + "\n")
 	mu.Unlock()
-	code, out, stderr = accountsRun(t, homeB, "sub", "update", "edge")
+	code, out, stderr = accountsRun(t.Context(), t, homeB, "sub", "update", "edge")
 	if code != 0 {
 		t.Fatalf("subscription update failed (exit %d): %s", code, serverErrorSummary(out, stderr))
 	}
@@ -150,7 +153,7 @@ func TestE2EServerShadowsocksLifecycle(t *testing.T) {
 
 func serverRun(t *testing.T, home string, args ...string) (int, string, string) {
 	t.Helper()
-	return accountsRun(t, home, append([]string{"server"}, args...)...)
+	return accountsRun(t.Context(), t, home, append([]string{"server"}, args...)...)
 }
 
 func waitServerStatus(t *testing.T, ctx context.Context, home string, wantPresent bool) {
@@ -162,14 +165,14 @@ func waitNamedServerStatus(t *testing.T, ctx context.Context, home, name, protoc
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		code, out, stderr := accountsRun(t, home, "status")
+		code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		if code != 0 {
-			serverE2EFailureDiagnostics(t, home, "Shadowsocks status command failed")
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "Shadowsocks status command failed")
 			t.Fatalf("status failed (exit %d): %s", code, e2eRedactDiagnostic(serverErrorSummary(out, stderr)))
 		}
 		matches, err := serverStatusMatches(out, name, protocol, wantPresent)
 		if err != nil {
-			serverE2EFailureDiagnostics(t, home, "server status decode failed")
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "server status decode failed")
 			t.Fatalf("decode status: %v", err)
 		}
 		assertNoSecrets(t, out, stderr, "server-e2e-account-password")
@@ -178,7 +181,7 @@ func waitNamedServerStatus(t *testing.T, ctx context.Context, home, name, protoc
 		}
 		select {
 		case <-ctx.Done():
-			serverE2EFailureDiagnostics(t, home, "server status wait expired")
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, "server status wait expired")
 			t.Fatalf("edge server status did not become present=%t", wantPresent)
 		case <-ticker.C:
 		}
@@ -199,19 +202,19 @@ type serverE2EStatus struct {
 	} `json:"data"`
 }
 
-func serverE2EFailureDiagnostics(t *testing.T, home, reason string) {
+func serverE2EFailureDiagnostics(ctx context.Context, t *testing.T, home, reason string) {
 	t.Helper()
-	code, out, _ := accountsRun(t, home, "status")
+	code, out, _ := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 	var st serverE2EStatus
 	if code != 0 || json.Unmarshal([]byte(out), &st) != nil {
-		t.Logf("server e2e diagnostics (%s): status unavailable; %s\n%s", e2eRedactDiagnostic(reason), upProcReport(home), serverE2ELogTail(t, home))
+		t.Logf("server e2e diagnostics (%s): status unavailable; %s\n%s", e2eRedactDiagnostic(reason), upProcReport(home), serverE2ELogTail(ctx, t, home))
 		return
 	}
 	servers := make([]string, 0, len(st.Data.Servers))
 	for _, server := range st.Data.Servers {
 		servers = append(servers, fmt.Sprintf("%s present connections=%d", e2eRedactDiagnostic(server.Name), server.Connections))
 	}
-	t.Logf("server e2e diagnostics (%s): reload count=%d last_error=%q last_at=%q servers=%v\n%s\n%s", e2eRedactDiagnostic(reason), st.Data.Reload.Count, e2eRedactDiagnostic(st.Data.Reload.LastError), e2eRedactDiagnostic(st.Data.Reload.LastAt), servers, upProcReport(home), serverE2ELogTail(t, home))
+	t.Logf("server e2e diagnostics (%s): reload count=%d last_error=%q last_at=%q servers=%v\n%s\n%s", e2eRedactDiagnostic(reason), st.Data.Reload.Count, e2eRedactDiagnostic(st.Data.Reload.LastError), e2eRedactDiagnostic(st.Data.Reload.LastAt), servers, upProcReport(home), serverE2ELogTail(ctx, t, home))
 }
 
 func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint64) {
@@ -221,9 +224,9 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 	defer ticker.Stop()
 	// While the core is replaced the angel's status may be briefly
 	// unreachable (ANGEL_NOT_RUNNING on Windows): keep polling until ctx ends.
-	lastProblem := "no status yet"
+	var lastProblem string
 	for {
-		code, out, _ := accountsRun(t, home, "status")
+		code, out, _ := accountsRun(context.WithoutCancel(ctx), t, home, "status")
 		var st liveStatus
 		if code != 0 {
 			lastProblem = fmt.Sprintf("status exit %d", code)
@@ -235,13 +238,13 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 				return
 			}
 			if st.Data.Reload.Count < count && st.Data.Reload.LastError != "" {
-				serverE2EFailureDiagnostics(t, home, fmt.Sprintf("reload stalled at %d below %d", st.Data.Reload.Count, count))
+				serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, fmt.Sprintf("reload stalled at %d below %d", st.Data.Reload.Count, count))
 				t.Fatalf("angel reload failed before count %d: %s", count, e2eRedactDiagnostic(st.Data.Reload.LastError))
 			}
 		}
 		select {
 		case <-ctx.Done():
-			serverE2EFailureDiagnostics(t, home, fmt.Sprintf("reload count did not reach %d after %s (%v)", count, time.Since(started).Round(time.Millisecond), ctx.Err()))
+			serverE2EFailureDiagnostics(context.WithoutCancel(ctx), t, home, fmt.Sprintf("reload count did not reach %d after %s (%v)", count, time.Since(started).Round(time.Millisecond), ctx.Err()))
 			t.Fatalf("angel reload count did not reach %d (last: %s)", count, lastProblem)
 		case <-ticker.C:
 		}
@@ -249,9 +252,9 @@ func waitStatusReload(t *testing.T, ctx context.Context, home string, count uint
 }
 
 // serverE2ELogTail returns a redacted tail of the angel log.
-func serverE2ELogTail(t *testing.T, home string) string {
+func serverE2ELogTail(ctx context.Context, t *testing.T, home string) string {
 	t.Helper()
-	code, out, stderr := accountsRun(t, home, "logs", "--tail", "40")
+	code, out, stderr := accountsRun(context.WithoutCancel(ctx), t, home, "logs", "--tail", "40")
 	if code != 0 {
 		return fmt.Sprintf("angel log unavailable (exit %d): %s", code, e2eRedactDiagnostic(serverErrorSummary(out, stderr)))
 	}
@@ -289,7 +292,7 @@ func waitServerPort(ctx context.Context, port int, wantOpen bool) error {
 func probeServerURI(ctx context.Context, uri, target, payload string, wrongSecret bool) error {
 	nodes, err := subscription.Parse([]byte(uri))
 	if err != nil || len(nodes) != 1 {
-		return fmt.Errorf("URI parsing failed")
+		return errors.New("URI parsing failed")
 	}
 	m := nodes[0].Raw
 	server := nodes[0].Server
@@ -297,7 +300,7 @@ func probeServerURI(ctx context.Context, uri, target, payload string, wrongSecre
 	password, _ := m["password"].(string)
 	port := nodes[0].Port
 	if server == "" || cipher == "" || password == "" || port < 1 {
-		return fmt.Errorf("URI did not parse as Shadowsocks")
+		return errors.New("URI did not parse as Shadowsocks")
 	}
 	if wrongSecret {
 		password = "known-incorrect-server-password"
@@ -306,7 +309,7 @@ func probeServerURI(ctx context.Context, uri, target, payload string, wrongSecre
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	host, portText, err := net.SplitHostPort(target)
 	if err != nil {
 		return err
@@ -315,11 +318,17 @@ func probeServerURI(ctx context.Context, uri, target, payload string, wrongSecre
 	if err != nil {
 		return err
 	}
+	if dstPort < 0 {
+		return errors.New("target port out of range")
+	}
+	if dstPort > math.MaxUint16 {
+		return errors.New("target port out of range")
+	}
 	conn, err := client.DialContext(ctx, &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(dstPort)})
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(4 * time.Second))
 	if _, err := io.WriteString(conn, payload); err != nil {
 		return err
@@ -329,7 +338,7 @@ func probeServerURI(ctx context.Context, uri, target, payload string, wrongSecre
 		return err
 	}
 	if string(got) != payload {
-		return fmt.Errorf("unexpected echo")
+		return errors.New("unexpected echo")
 	}
 	return nil
 }

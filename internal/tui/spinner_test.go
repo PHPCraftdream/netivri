@@ -10,9 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-type spinTestScreen struct {
-	env Env
-}
+type spinTestScreen struct{}
 
 func (spinTestScreen) Title() string                    { return "spin" }
 func (spinTestScreen) Init() tea.Cmd                    { return nil }

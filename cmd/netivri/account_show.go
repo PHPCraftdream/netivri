@@ -56,8 +56,8 @@ func showChainInfoForAccount(info accountChainInfo) accountShowChainInfo {
 	value := append([]string{}, info.Value...)
 	var own *[]string
 	if info.Own != nil {
-		copy := append([]string{}, (*info.Own)...)
-		own = &copy
+		owned := append([]string{}, (*info.Own)...)
+		own = &owned
 	}
 	return accountShowChainInfo{Value: value, Source: info.Source, Auth: info.Auth, Own: own}
 }

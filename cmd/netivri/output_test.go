@@ -69,23 +69,23 @@ func TestKtavOutputRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the output is not Ktav: %v\n%s", err, out.String())
 	}
-	doc := got.(map[string]any)
+	doc := mustAs[map[string]any](t, got)
 	if doc["ok"] != true || doc["schema_version"] != int64(cli.SchemaVersion) {
 		t.Fatalf("envelope header = %v / %v\n%s", doc["ok"], doc["schema_version"], out.String())
 	}
-	data := doc["data"].(map[string]any)
+	data := mustAs[map[string]any](t, doc["data"])
 	if data["version"] != "0.1.0" || data["count"] != int64(3) || data["running"] != true || data["none"] != nil {
 		t.Errorf("scalars = %v", data)
 	}
-	accounts := data["accounts"].([]any)
-	first := accounts[0].(map[string]any)
+	accounts := mustAs[[]any](t, data["accounts"])
+	first := mustAs[map[string]any](t, accounts[0])
 	if len(accounts) != 2 || first["login"] != "123456" || first["password_set"] != true || first["exit_country"] != "DE" {
 		t.Errorf("accounts = %v (a numeric-looking login must stay a string)", accounts)
 	}
 	if list, ok := data["empty"].([]any); !ok || len(list) != 0 {
 		t.Errorf("empty list = %v", data["empty"])
 	}
-	if nested := data["nested"].(map[string]any); nested["delay_ms"] != int64(177) {
+	if nested := mustAs[map[string]any](t, data["nested"]); nested["delay_ms"] != int64(177) {
 		t.Errorf("nested = %v", nested)
 	}
 }
@@ -101,8 +101,8 @@ func TestKtavErrorOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the error is not Ktav: %v\n%s", err, out.String())
 	}
-	doc := got.(map[string]any)
-	e := doc["error"].(map[string]any)
+	doc := mustAs[map[string]any](t, got)
+	e := mustAs[map[string]any](t, doc["error"])
 	if doc["ok"] != false || e["code"] != "SUB_NOT_FOUND" || e["hint"] != "run: netivri sub list" {
 		t.Errorf("error document = %v", doc)
 	}
@@ -114,14 +114,12 @@ func TestKtavErrorOutput(t *testing.T) {
 func TestKtavOutputOfACommand(t *testing.T) {
 	useKtavOutput(t)
 	var out bytes.Buffer
-	if err := runVersion(nil, &out); err != nil {
-		t.Fatal(err)
-	}
+	runVersion(nil, &out)
 	got, err := pure.Loads(out.String())
 	if err != nil {
 		t.Fatalf("version output is not Ktav: %v\n%s", err, out.String())
 	}
-	if data := got.(map[string]any)["data"].(map[string]any); data["version"] != version {
+	if data := mustAs[map[string]any](t, mustAs[map[string]any](t, got)["data"]); data["version"] != version {
 		t.Errorf("data = %v, want version %q", data, version)
 	}
 }

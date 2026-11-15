@@ -22,7 +22,7 @@ func TestE2EStatusWatchNDJSON(t *testing.T) {
 	up := startUp(t, home.dir, "--port", "0")
 	assertStatusSuccess(t, up.Status())
 
-	cmd := exec.Command(netivriBin, "status", "--watch", "--interval", "1s", "--json")
+	cmd := exec.CommandContext(t.Context(), netivriBin, "status", "--watch", "--interval", "1s", "--json")
 	cmd.Env = append(os.Environ(), "NETIVRI_HOME="+home.dir)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

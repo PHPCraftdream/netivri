@@ -291,13 +291,6 @@ func (l *liveAngel) coreOptionsWithLoggerChecked(d desiredState, a mihauth.Authe
 	return o, nodesLog, nil
 }
 
-// routeOptions is coreOptions without the stored bindings, which only a
-// starting core reads.
-func (l *liveAngel) routeOptions(d desiredState, a mihauth.Authenticator, store *stats.Store) core.Options {
-	o, _, _ := l.routeOptionsWithLogger(d, a, store)
-	return o
-}
-
 func (l *liveAngel) routeOptionsWithLogger(d desiredState, a mihauth.Authenticator, store *stats.Store) (core.Options, *nodeLog, error) {
 	return l.routeOptionsWithLoggerChecked(d, a, store)
 }
@@ -385,7 +378,7 @@ func (l *liveAngel) flushNodeLogger() {
 
 // start opens the first core instance.
 func (l *liveAngel) start(ctx context.Context, d desiredState, a mihauth.Authenticator, store *stats.Store) error {
-	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store)
+	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store) //nolint:contextcheck // the statistics store reads its saved bindings once at start; the read takes no context and runs to completion
 	if err != nil {
 		return err
 	}
@@ -487,9 +480,18 @@ func routesFingerprint(d desiredState) string {
 		Routes: d.pool.accountRoutes, Pre: d.pool.routePre, Post: d.pool.routePost, NodePre: d.pool.nodePre, NodePost: d.pool.nodePost,
 		Exit: normalizedExitFingerprint(d.cfg.Accounts), GlobalPost: d.cfg.Chain.PostSOCKS5,
 	}
-	data, _ := json.Marshal(v)
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(jsonText(v))
 	return hex.EncodeToString(sum[:])
+}
+
+// jsonText is the JSON form of v that the fingerprints hash. A value that
+// cannot be encoded falls back to its Go syntax, which still follows its contents.
+func jsonText(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Appendf(nil, "%#v", v)
+	}
+	return data
 }
 
 func normalizedExitFingerprint(accounts []config.Account) []struct{ Login, Exit string } {
@@ -509,7 +511,7 @@ func normalizedExitFingerprint(accounts []config.Account) []struct{ Login, Exit 
 // listenerFingerprint covers the listener: address, allowed clients and the
 // credentials. A change here needs a new core.
 func listenerFingerprint(d desiredState) string {
-	type acct struct{ Login, Password string }
+	type acct struct{ Login, Password string } //nolint:gosec // G117: the password only feeds the in-memory hash below; it is never encoded out or logged
 	v := struct {
 		Bind, AuthLogin, AuthPassword string
 		Port                          int
@@ -524,8 +526,7 @@ func listenerFingerprint(d desiredState) string {
 	}
 	persistMu.Unlock()
 	sort.Slice(v.Accounts, func(i, j int) bool { return v.Accounts[i].Login < v.Accounts[j].Login })
-	data, _ := json.Marshal(v)
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(jsonText(v))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -536,8 +537,7 @@ func accountClientsFingerprint(cfg *config.Config) string {
 		entries = append(entries, entry{a.Login, config.NormalizeAllowedClients(a.AllowedClients)})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Login < entries[j].Login })
-	data, _ := json.Marshal(entries)
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(jsonText(entries))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -730,24 +730,19 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	}
 	l.mu.Lock()
 	oldServers := cloneServerSpecs(l.applied.servers)
-	serverChanged := serverFingerprint(oldServers) != serverFingerprint(d.servers)
-	serverOnly := serverChanged && routesFingerprint(l.applied) == routesFingerprint(d)
-	policyOnly := accountClientsFingerprint(l.applied.cfg) != accountClientsFingerprint(d.cfg) && routesFingerprint(l.applied) == routesFingerprint(d) && !serverChanged
-	// A core without node-backed routes (direct routes, direct-post pools, the
-	// global post pool) reconfigures in place without a node table or poller.
-	directCore := len(l.applied.pool.nodes) == 0 && len(d.pool.nodes) == 0 && coreRuleMode(l.applied) && coreRuleMode(d)
-	if len(d.pool.accountRoutes) == 0 && !serverOnly && !policyOnly && !directCore {
+	change := classifyReconfigure(l.applied, d, serverFingerprint(oldServers) != serverFingerprint(d.servers))
+	if len(d.pool.accountRoutes) == 0 && !change.nodeIndependent() {
 		l.mu.Unlock()
 		return false
 	}
 	// Otherwise route reconfiguration requires a live node table/poller, not
 	// merely account route entries. Keep policy/server-only cases independent.
-	if (len(d.pool.nodes) == 0 || len(l.applied.pool.nodes) == 0) && !serverOnly && !policyOnly && !directCore {
+	if (len(d.pool.nodes) == 0 || len(l.applied.pool.nodes) == 0) && !change.nodeIndependent() {
 		l.mu.Unlock()
 		return false
 	}
 	l.mu.Unlock()
-	if len(d.pool.accountRoutes) == 0 && policyOnly && len(d.servers) == 0 && len(oldServers) == 0 {
+	if len(d.pool.accountRoutes) == 0 && change.policyOnly && len(d.servers) == 0 && len(oldServers) == 0 {
 		// Direct mode has no core route/server policy to reconfigure; the
 		// stable authenticator is the policy enforcement point.
 		l.mu.Lock()
@@ -776,36 +771,14 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 		return false
 	}
 	activeNodeLog := l.activeNodeLogger()
-	var queuedEvents *queuedNodeEvents
-	if activeNodeLog != nil && len(d.pool.infos) > 0 {
-		if serverOnly {
-			o.OnNodeHealth = activeNodeLog.event
-		} else {
-			queuedEvents = &queuedNodeEvents{target: activeNodeLog.event}
-			o.OnNodeHealth = queuedEvents.event
-		}
-	}
+	queuedEvents := wireNodeHealth(&o, d, activeNodeLog, change.serverOnly)
 	if err := inst.Reconfigure(o); err != nil {
-		l.rejectHopHealth()
-		if queuedEvents != nil {
-			queuedEvents.discard()
-		}
-		if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
-			l.noteReloadError("server configuration not applied", err)
-			return true
-		}
-		if !errors.Is(err, core.ErrReconfigureUnsupported) {
-			l.warnf("routes not updated in place, restarting the listener: %s", errText(err))
-		}
-		return false
+		return l.reconfigureRejected(err, queuedEvents, change.serverOnly)
 	}
 	l.mu.Lock()
 	if l.closed || l.inst != inst {
 		l.mu.Unlock()
-		l.rejectHopHealth()
-		if queuedEvents != nil {
-			queuedEvents.discard()
-		}
+		l.dropStagedReconfigure(queuedEvents)
 		return true
 	}
 	o.Port, d.port = l.actualPort, l.actualPort
@@ -816,6 +789,78 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	l.lastReload = time.Now()
 	l.reloadErr = ""
 	l.mu.Unlock()
+	l.applyNodeLogs(d, activeNodeLog, nodesLog, queuedEvents)
+	l.logServerDelta(oldServers, d.servers)
+	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
+	return true
+}
+
+// classifyReconfigure tells which kind of change takes the applied state to d.
+// A core without node-backed routes (direct routes, direct-post pools, the
+// global post pool) reconfigures in place without a node table or poller.
+func classifyReconfigure(applied, d desiredState, serverChanged bool) reconfigureChange {
+	return reconfigureChange{
+		serverOnly: serverChanged && routesFingerprint(applied) == routesFingerprint(d),
+		policyOnly: accountClientsFingerprint(applied.cfg) != accountClientsFingerprint(d.cfg) && routesFingerprint(applied) == routesFingerprint(d) && !serverChanged,
+		directCore: len(applied.pool.nodes) == 0 && len(d.pool.nodes) == 0 && coreRuleMode(applied) && coreRuleMode(d),
+	}
+}
+
+// reconfigureChange is the kind of change classifyReconfigure found.
+type reconfigureChange struct {
+	serverOnly bool
+	policyOnly bool
+	directCore bool
+}
+
+// nodeIndependent reports whether the change applies without a node table or poller.
+func (c reconfigureChange) nodeIndependent() bool {
+	return c.serverOnly || c.policyOnly || c.directCore
+}
+
+// wireNodeHealth points the core's node health hook at activeNodeLog: directly
+// for a server-only change, else through a queue that activates once the new
+// routes are applied. It returns the queue, nil when there is none.
+func wireNodeHealth(o *core.Options, d desiredState, activeNodeLog *nodeLog, serverOnly bool) *queuedNodeEvents {
+	if activeNodeLog == nil || len(d.pool.infos) == 0 {
+		return nil
+	}
+	if serverOnly {
+		o.OnNodeHealth = activeNodeLog.event
+		return nil
+	}
+	queuedEvents := &queuedNodeEvents{target: activeNodeLog.event}
+	o.OnNodeHealth = queuedEvents.event
+	return queuedEvents
+}
+
+// reconfigureRejected handles a core that refused the routes in place. It
+// returns true when no restart is needed (a server-only change; its error is
+// recorded in reloadErr) and false when the listener must be restarted.
+func (l *liveAngel) reconfigureRejected(err error, queuedEvents *queuedNodeEvents, serverOnly bool) bool {
+	l.dropStagedReconfigure(queuedEvents)
+	if serverOnly && !errors.Is(err, core.ErrReconfigureUnsupported) {
+		l.noteReloadError("server configuration not applied", err)
+		return true
+	}
+	if !errors.Is(err, core.ErrReconfigureUnsupported) {
+		l.warnf("routes not updated in place, restarting the listener: %s", errText(err))
+	}
+	return false
+}
+
+// dropStagedReconfigure discards the hop health and queued node events staged
+// for a reconfigure that did not apply.
+func (l *liveAngel) dropStagedReconfigure(queuedEvents *queuedNodeEvents) {
+	l.rejectHopHealth()
+	if queuedEvents != nil {
+		queuedEvents.discard()
+	}
+}
+
+// applyNodeLogs switches hop health and node logging over to the applied
+// routes, outside l.mu.
+func (l *liveAngel) applyNodeLogs(d desiredState, activeNodeLog, nodesLog *nodeLog, queuedEvents *queuedNodeEvents) {
 	l.activateHopHealth()
 	if activeNodeLog != nil {
 		activeNodeLog.refresh(d.pool.infos, d.pool.firstTierLabels())
@@ -828,9 +873,6 @@ func (l *liveAngel) reconfigureSince(d desiredState, claimGeneration uint64) boo
 	if queuedEvents != nil {
 		queuedEvents.activate()
 	}
-	l.logServerDelta(oldServers, d.servers)
-	l.logf("configuration applied, connections kept: routes=%d accounts=%d", len(d.pool.accountRoutes), len(d.cfg.Accounts))
-	return true
 }
 
 func (l *liveAngel) noteReloadError(what string, err error) {
@@ -895,12 +937,12 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 	}
 	if len(d.pool.infos) > 0 {
 		if store == nil {
-			store = openStats(l.opts.Home, d.pool.infos, l.warnf)
+			store = openStats(l.opts.Home, d.pool.infos, l.warnf) //nolint:contextcheck // opening the statistics store (a schema check) takes no context and runs to completion
 		} else if err := store.SetNodes(d.pool.infos); err != nil {
 			l.warnf("statistics: node details not stored: %v", err)
 		}
 	}
-	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store)
+	o, nodesLog, err := l.coreOptionsWithLogger(d, a, store) //nolint:contextcheck // the statistics store reads its saved bindings once at start; the read takes no context and runs to completion
 	if err != nil {
 		l.noteReloadError("configuration not applied", err)
 		return reloadHandled
@@ -920,7 +962,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 			l.reloadErr = text
 			l.mu.Unlock()
 			l.warnf("configuration restart failed; retrying: %s", text)
-			l.startRetry()
+			l.startRetry(ctx)
 			return reloadHandled
 		}
 		l.mu.Lock()
@@ -928,7 +970,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 		l.mu.Unlock()
 		l.warnf("new configuration not applied, restoring the previous one: %s", text)
 		back := prev
-		back.InitialBindings = initialBindings(store, l.warnf)
+		back.InitialBindings = initialBindings(store, l.warnf) //nolint:contextcheck // the statistics store reads its saved bindings once at start; the read takes no context and runs to completion
 		l.prepareHopStart(&back, true)
 		backInst, err2 := startCore(ctx, back)
 		if err2 != nil {
@@ -939,7 +981,7 @@ func (l *liveAngel) restart(ctx context.Context, d desiredState) reloadOutcome {
 			l.reloadErr = text + "; previous configuration could not be restored: " + errText(err2)
 			l.mu.Unlock()
 			l.warnf("previous configuration could not be restarted; retrying: %s", errText(err2))
-			l.startRetry()
+			l.startRetry(ctx)
 			return reloadHandled
 		}
 		l.mu.Lock()
@@ -1092,13 +1134,13 @@ func (l *liveAngel) retryLoop(ctx context.Context) {
 	}
 }
 
-func (l *liveAngel) startRetry() {
+func (l *liveAngel) startRetry(parent context.Context) {
 	l.mu.Lock()
 	if l.closed || l.retryCancel != nil || l.retryTarget == nil {
 		l.mu.Unlock()
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	l.retryCancel = cancel
 	l.retryRunning.Add(1)
 	go l.retryLoop(ctx)

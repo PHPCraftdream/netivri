@@ -47,10 +47,7 @@ func TestPrepareRoutesDirectPostPoolKeepsScalarPathAndBuildsDirectCarrier(t *tes
 		}
 	}
 
-	uses, err := directPostPoolUses(options, 4, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	uses := directPostPoolUses(options, 4, nil)
 	if len(uses) != 1 {
 		t.Fatalf("direct post pool uses = %d, want 1", len(uses))
 	}
@@ -79,10 +76,7 @@ func TestDirectPostPoolUsesFollowSortedDistinctRoutesAndNeedNoNode(t *testing.T)
 	}
 	// Route indexes are a-route=0, empty-route=1, node-route=2, z-route=3.
 	// The direct-use helper omits routes without a multi-hop direct-post pool.
-	uses, err := directPostPoolUses(options, 7, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	uses := directPostPoolUses(options, 7, nil)
 	if len(uses) != 2 {
 		t.Fatalf("direct post use count mismatch: got=%d want=2", len(uses))
 	}

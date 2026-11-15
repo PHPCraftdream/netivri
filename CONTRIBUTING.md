@@ -25,8 +25,15 @@ The checks are:
 ```sh
 gofmt -l $(git ls-files '*.go' ':(exclude)third_party')
 go vet ./...
-golangci-lint run        # if installed
+golangci-lint run ./cmd/... ./internal/... ./pkg/hopkit/...   # if installed
 ```
+
+`golangci-lint` is also a step of the `lint` CI job, with the settings of
+`.golangci.yml` and a pinned version; the tree is kept at zero findings, so any
+finding fails the job. Fix the code. A `//nolint:<linter> // <reason>` is for a
+real false positive only (for example a fixture that holds a fake password) and
+must name the linter and give a concrete reason. Do not use `--fix`: its edits
+have broken code in this repository.
 
 ## What a change contains
 

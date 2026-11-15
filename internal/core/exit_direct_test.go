@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -96,7 +97,8 @@ func TestDirectRouteDoesNotRelaxMissingNodeFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("route with missing nodes unexpectedly succeeded")
 	}
-	if cliErr, ok := err.(*cli.Error); !ok || cliErr.Code != "NO_NODES_FOR_COUNTRY" {
+	var cliErr *cli.Error
+	if !errors.As(err, &cliErr) || cliErr.Code != "NO_NODES_FOR_COUNTRY" {
 		t.Fatalf("error = %v, want NO_NODES_FOR_COUNTRY", err)
 	}
 }

@@ -65,146 +65,160 @@ func (w *Wizard) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		w.width, w.height = s.Width, s.Height
 		return w, nil
 	}
-	if w.Busy {
-		if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
-			return w, func() tea.Msg { return WizardResultMsg{Canceled: true} }
-		}
-		return w, nil
-	}
-	if w.Saving {
-		if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
-			return w, func() tea.Msg { return WizardResultMsg{Canceled: true} }
-		}
-		return w, nil
+	if w.Busy || w.Saving {
+		return w, cancelOnEsc(msg)
 	}
 	if wheel, ok := msg.(tea.MouseWheelMsg); ok && w.Review {
-		if wheel.Button == tea.MouseWheelUp {
-			w.scroll(-1)
-		} else if wheel.Button == tea.MouseWheelDown {
-			w.scroll(1)
-		}
+		w.scrollWheel(wheel)
 		return w, nil
 	}
 	if m, ok := msg.(tea.MouseClickMsg); ok {
-		if m.Button != tea.MouseLeft {
-			return w, nil
-		}
-		if m.Y == w.height-1 && !w.Review && !w.discard {
-			if i, hit := w.Buttons.Update(msg, m.Y); hit && i >= 0 {
-				return w, w.activate(i)
-			}
-		}
-		if m.Y == w.height-1 && w.Review && !w.discard {
-			if i, hit := w.Buttons.Update(msg, m.Y); hit && i >= 0 {
-				return w, w.activate(i)
-			}
-		}
-		if w.Index < 0 || w.Index >= len(w.Steps) || w.Steps[w.Index].Prompt == nil {
-			return w, nil
-		}
-		prompt := w.Steps[w.Index].Prompt
-		_, c := prompt.Update(msg)
-		w.Error = prompt.Error
-		return w, c
+		return w, w.handleMouseClick(m, msg)
 	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return w, nil
 	}
-	key := k.String()
-	if w.discard {
-		switch key {
-		case "esc":
-			w.discard = false
-			return w, nil
-		case "tab", "shift+tab", "left", "right":
-			if key == "shift+tab" || key == "left" {
-				w.discardFocus = 0
-			} else {
-				w.discardFocus = 1
-			}
-			return w, nil
-		case "enter":
-			if w.discardFocus == 0 {
-				w.discard = false
-				return w, nil
-			}
-			return w, func() tea.Msg { return WizardResultMsg{Canceled: true} }
+	return w, w.handleKey(k.String(), msg)
+}
+func wizardCancel() tea.Cmd {
+	return func() tea.Msg { return WizardResultMsg{Canceled: true} }
+}
+
+// cancelOnEsc is the only input accepted while the wizard is busy or saving.
+func cancelOnEsc(msg tea.Msg) tea.Cmd {
+	if k, ok := msg.(tea.KeyPressMsg); ok && k.String() == "esc" {
+		return wizardCancel()
+	}
+	return nil
+}
+func (w *Wizard) scrollWheel(wheel tea.MouseWheelMsg) {
+	switch wheel.Button {
+	case tea.MouseWheelUp:
+		w.scroll(-1)
+	case tea.MouseWheelDown:
+		w.scroll(1)
+	}
+}
+func (w *Wizard) handleMouseClick(m tea.MouseClickMsg, msg tea.Msg) tea.Cmd {
+	if m.Button != tea.MouseLeft {
+		return nil
+	}
+	if m.Y == w.height-1 && !w.discard {
+		if i, hit := w.Buttons.Update(msg, m.Y); hit && i >= 0 {
+			return w.activate(i)
 		}
-		return w, nil
+	}
+	return w.updateStepPrompt(msg)
+}
+func (w *Wizard) handleKey(key string, msg tea.Msg) tea.Cmd {
+	if w.discard {
+		return w.handleDiscardKey(key)
 	}
 	if key == "esc" {
 		if w.hasTyped() {
 			w.discard = true
 			w.discardFocus = 0
-			return w, nil
+			return nil
 		}
-		return w, func() tea.Msg { return WizardResultMsg{Canceled: true} }
+		return wizardCancel()
 	}
 	if w.Review {
-		switch key {
-		case "tab", "right":
-			w.Buttons.Move(1)
-			return w, nil
-		case "shift+tab", "left":
-			w.Buttons.Move(-1)
-			return w, nil
-		case "enter":
-			return w, w.activate(w.Buttons.Focus)
-		case "up":
-			w.scroll(-1)
-		case "down":
-			w.scroll(1)
-		case "pgup":
-			w.scroll(-5)
-		case "pgdown":
-			w.scroll(5)
-		case "home":
-			w.reviewOffset = 0
-		case "end":
-			w.reviewOffset = max(0, len(w.Steps)-max(1, w.height-7))
-		}
-		return w, nil
+		return w.handleReviewKey(key)
 	}
 	if key == "tab" || key == "shift+tab" {
-		if !w.buttonsFocused {
-			w.buttonsFocused = true
-			if key == "tab" {
-				w.Buttons.Focus = 0
-			} else {
-				w.Buttons.Focus = 1
-			}
-		} else if key == "tab" && w.Buttons.Focus == 0 {
-			w.Buttons.Focus = 1
-		} else {
-			w.buttonsFocused = false
-			w.Buttons.Focus = 1
-		}
-		return w, nil
+		w.cycleTabs(key)
+		return nil
 	}
 	if w.buttonsFocused {
-		if key == "left" || key == "right" {
-			d := 1
-			if key == "left" {
-				d = -1
-			}
-			w.Buttons.Move(d)
-			return w, nil
-		}
-		if key == "enter" {
-			return w, w.activate(w.Buttons.Focus)
-		}
-		return w, nil
+		return w.handleButtonsKey(key)
 	}
 	if key == "enter" {
-		return w, w.activate(1)
+		return w.activate(1)
 	}
+	return w.updateStepPrompt(msg)
+}
+func (w *Wizard) handleDiscardKey(key string) tea.Cmd {
+	switch key {
+	case "esc":
+		w.discard = false
+		return nil
+	case "tab", "shift+tab", "left", "right":
+		if key == "shift+tab" || key == "left" {
+			w.discardFocus = 0
+		} else {
+			w.discardFocus = 1
+		}
+		return nil
+	case "enter":
+		if w.discardFocus == 0 {
+			w.discard = false
+			return nil
+		}
+		return wizardCancel()
+	}
+	return nil
+}
+func (w *Wizard) handleReviewKey(key string) tea.Cmd {
+	switch key {
+	case "tab", "right":
+		w.Buttons.Move(1)
+	case "shift+tab", "left":
+		w.Buttons.Move(-1)
+	case "enter":
+		return w.activate(w.Buttons.Focus)
+	case "up":
+		w.scroll(-1)
+	case "down":
+		w.scroll(1)
+	case "pgup":
+		w.scroll(-5)
+	case "pgdown":
+		w.scroll(5)
+	case "home":
+		w.reviewOffset = 0
+	case "end":
+		w.reviewOffset = max(0, len(w.Steps)-max(1, w.height-7))
+	}
+	return nil
+}
+func (w *Wizard) cycleTabs(key string) {
+	switch {
+	case !w.buttonsFocused:
+		w.buttonsFocused = true
+		if key == "tab" {
+			w.Buttons.Focus = 0
+		} else {
+			w.Buttons.Focus = 1
+		}
+	case key == "tab" && w.Buttons.Focus == 0:
+		w.Buttons.Focus = 1
+	default:
+		w.buttonsFocused = false
+		w.Buttons.Focus = 1
+	}
+}
+func (w *Wizard) handleButtonsKey(key string) tea.Cmd {
+	if key == "left" || key == "right" {
+		d := 1
+		if key == "left" {
+			d = -1
+		}
+		w.Buttons.Move(d)
+		return nil
+	}
+	if key == "enter" {
+		return w.activate(w.Buttons.Focus)
+	}
+	return nil
+}
+func (w *Wizard) updateStepPrompt(msg tea.Msg) tea.Cmd {
 	if w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Prompt != nil {
 		_, c := w.Steps[w.Index].Prompt.Update(msg)
 		w.Error = w.Steps[w.Index].Prompt.Error
-		return w, c
+		return c
 	}
-	return w, nil
+	return nil
 }
 func (w *Wizard) scroll(d int) {
 	slots := max(1, w.height-7)
@@ -355,10 +369,11 @@ func (w *Wizard) View(width, height int) string {
 	}
 	put(0, fmt.Sprintf("%s - step %d of %d", w.TitleText, step, len(w.Steps)))
 	put(1, "Tab: Back/Next · Esc: cancel")
-	if w.discard {
+	switch {
+	case w.discard:
 		put(2, "Discard all entered values?")
 		put(height-1, fmt.Sprintf("%s   %s", focusLabel("Cancel", w.discardFocus == 0), focusLabel("Discard", w.discardFocus == 1)))
-	} else if w.Review {
+	case w.Review:
 		put(2, "Review")
 		slots := max(0, height-7)
 		w.reviewOffset = max(0, min(w.reviewOffset, max(0, len(w.Steps)-slots)))
@@ -380,7 +395,7 @@ func (w *Wizard) View(width, height int) string {
 		if w.Error != nil {
 			put(height-3, "Error: "+w.sanitizeError(w.Error.Error()))
 		}
-	} else if w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Prompt != nil {
+	case w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Prompt != nil:
 		p := w.Steps[w.Index].Prompt
 		p.SetTheme(w.theme())
 		body := strings.Split(p.View(width, height), "\n")
@@ -392,7 +407,7 @@ func (w *Wizard) View(width, height int) string {
 		if p.Error != nil {
 			put(height-3, "Error: "+w.sanitizeError(p.Error.Error()))
 		}
-	} else if w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Body != nil {
+	case w.Index >= 0 && w.Index < len(w.Steps) && w.Steps[w.Index].Body != nil:
 		for i, line := range w.Steps[w.Index].Body(width, height) {
 			put(2+i, line)
 		}

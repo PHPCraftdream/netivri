@@ -94,7 +94,7 @@ func ofKind(sink *eventSink, kind string) []ConnEvent {
 
 func TestSilentSiteLeavesTheNodeAfterThreeSilentConnections(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
-	for i := 0; i < silentNeeded-1; i++ {
+	for i := range silentNeeded - 1 {
 		endConn(t, g, health, clock, blackholed, silent)
 		if n := g.blocks.blockedCount(); n != 0 {
 			t.Fatalf("%d blocks after %d silent connections, want none yet", n, i+1)
@@ -127,14 +127,14 @@ func TestSilentSiteLeavesTheNodeAfterThreeSilentConnections(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = conn.Close()
-	if n := g.members[1].(*fakeMember).dials.Load(); n != 1 {
+	if n := fakeMemberAt(t, g, 1).dials.Load(); n != 1 {
 		t.Errorf("n1 carried %d connections of the blocked site, want 1", n)
 	}
 }
 
 func TestSilentBlockIsPerAccountAndSite(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if got, _ := g.choose("bob", blackholed); got != 0 {
@@ -148,7 +148,7 @@ func TestSilentBlockIsPerAccountAndSite(t *testing.T) {
 func TestSiteThatWasAnsweredIsNotBlockedByStrayDeadConnections(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
 	endConn(t, g, health, clock, blackholed, connEnd{answer: true, wait: time.Second})
-	for i := 0; i < silentNeeded+2; i++ {
+	for range silentNeeded + 2 {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if n := g.blocks.blockedCount(); n != 0 || len(ofKind(sink, ConnSiteBlocked)) != 0 {
@@ -161,7 +161,7 @@ func TestSiteThatWasAnsweredIsNotBlockedByStrayDeadConnections(t *testing.T) {
 
 func TestSilentConnectionsOfAClientThatLeftDoNotCount(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < 2*silentRatioMin; i++ {
+	for range 2 * silentRatioMin {
 		endConn(t, g, health, clock, blackholed, connEnd{wait: silentRatioMinLife - time.Millisecond})
 	}
 	if n := g.blocks.blockedCount(); n != 0 || g.blocks.any() {
@@ -171,13 +171,13 @@ func TestSilentConnectionsOfAClientThatLeftDoNotCount(t *testing.T) {
 
 func TestNoBlockWhenTheNodeIsDownOrTheNetworkIsOut(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < 2*silentNeeded; i++ {
+	for range 2 * silentNeeded {
 		endConn(t, g, health, clock, blackholed, connEnd{wait: 37 * time.Second, noPing: true})
 	}
 	if n := g.blocks.blockedCount(); n != 0 {
 		t.Fatalf("%d blocks while no node answered anything (the network is out)", n)
 	}
-	for i := 0; i < 2*silentNeeded; i++ {
+	for range 2 * silentNeeded {
 		endConn(t, g, health, clock, blackholed, connEnd{wait: 37 * time.Second, down: true})
 		nodeUp(health, "n0")
 	}
@@ -191,7 +191,7 @@ func TestBlockGrowsOnEveryRepeatAndStartsOverAfterAnAnswer(t *testing.T) {
 	block := func(want time.Duration) {
 		t.Helper()
 		before := len(ofKind(sink, ConnSiteBlocked))
-		for i := 0; i < silentNeeded; i++ {
+		for range silentNeeded {
 			endConn(t, g, health, clock, blackholed, silent)
 		}
 		got := ofKind(sink, ConnSiteBlocked)
@@ -230,7 +230,7 @@ func TestAnAnswerThroughTheBlockedNodeEndsTheBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if g.blocks.blockedCount() != 1 {
@@ -250,8 +250,8 @@ func TestAnAnswerThroughTheBlockedNodeEndsTheBlock(t *testing.T) {
 // inside the block add nothing.
 func TestSilentBurstWaitsForTheNodeToAnswerAfterItsFirstEnd(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
-	var inFlight []C.Conn
-	for i := 0; i < 2*silentNeeded; i++ {
+	inFlight := make([]C.Conn, 0, 2*silentNeeded)
+	for range 2 * silentNeeded {
 		c, err := g.DialContext(context.Background(), dialMetadata("alice", blackholed))
 		if err != nil {
 			t.Fatal(err)
@@ -279,7 +279,7 @@ func TestSilentBurstWaitsForTheNodeToAnswerAfterItsFirstEnd(t *testing.T) {
 func TestSiteBlocksSilentEndInsideABlockAddsNothing(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second))
 	}
 	if b.blockedCount() != 1 {
@@ -294,7 +294,7 @@ func TestSiteBlocksNeedANodeAnswerAfterTheFirstSilentEnd(t *testing.T) {
 	_, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	before := now() // the node last answered at this very moment
-	for i := 0; i < silentNeeded+2; i++ {
+	for range silentNeeded + 2 {
 		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, before); blocked {
 			t.Fatal("blocked with no answer of the node after the first silent end")
 		}
@@ -308,7 +308,7 @@ func TestSiteBlocksNeedANodeAnswerAfterTheFirstSilentEnd(t *testing.T) {
 // did not wait for an answer.
 func TestIdleTimeBeforeTheFirstBytesIsNotWaitingForAnAnswer(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < 2*silentNeeded; i++ {
+	for range 2 * silentNeeded {
 		conn, err := g.DialContext(context.Background(), dialMetadata("alice", blackholed))
 		if err != nil {
 			t.Fatal(err)
@@ -335,11 +335,11 @@ func TestALongAnsweredConnectionKeepsTheSiteFromBeingBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = long.Write([]byte("hello"))
-	for i := 0; i < 20; i++ { // 20 minutes of data coming back
+	for range 20 { // 20 minutes of data coming back
 		_, _ = long.Read(make([]byte, 8))
 		clock.advance(time.Minute)
 	}
-	for i := 0; i < 2*silentNeeded; i++ {
+	for range 2 * silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if n := g.blocks.blockedCount(); n != 0 {
@@ -353,7 +353,7 @@ func TestALongAnsweredConnectionKeepsTheSiteFromBeingBlocked(t *testing.T) {
 // answering, is not blocked by the dead connections that come after.
 func TestBlockedSiteStaysOnTheSecondNodeAndKeepsWhatItRemembers(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if got := chosen(t, g, blackholed); got != 1 {
@@ -361,7 +361,7 @@ func TestBlockedSiteStaysOnTheSecondNodeAndKeepsWhatItRemembers(t *testing.T) {
 	}
 	clock.advance(10 * time.Minute) // the first node has been up for long, the block lasts 30
 	endConn(t, g, health, clock, blackholed, connEnd{answer: true, wait: time.Second})
-	for i := 0; i < 2*silentNeeded; i++ {
+	for range 2 * silentNeeded {
 		endConn(t, g, health, clock, blackholed, connEnd{wait: 37 * time.Second})
 		if got := chosen(t, g, blackholed); got != 1 {
 			t.Fatalf("site chose %d, want it to stay on 1", got)
@@ -380,13 +380,13 @@ func TestBlockedSiteStaysOnTheSecondNodeAndKeepsWhatItRemembers(t *testing.T) {
 
 func TestBlockedOnEveryNodeStillPicksANode(t *testing.T) {
 	g, health, clock, _ := blockGroup(t, []int{0, 1})
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if got := chosen(t, g, blackholed); got != 1 {
 		t.Fatalf("site chose %d, want 1", got)
 	}
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		endConn(t, g, health, clock, blackholed, silent)
 	}
 	if n := g.blocks.blockedCount(); n != 2 {
@@ -403,7 +403,7 @@ func TestBlockedOnEveryNodeStillPicksANode(t *testing.T) {
 func TestSiteBlocksRunOfSilenceStartsOverAfterTheWindow(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < silentNeeded-1; i++ {
+	for range silentNeeded - 1 {
 		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 			t.Fatal("blocked too early")
 		}
@@ -412,7 +412,7 @@ func TestSiteBlocksRunOfSilenceStartsOverAfterTheWindow(t *testing.T) {
 	if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 		t.Fatal("silent connections from two different windows blocked a node")
 	}
-	for i := 0; i < silentNeeded-2; i++ {
+	for range silentNeeded - 2 {
 		if _, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 			t.Fatal("blocked too early in the new run")
 		}
@@ -426,9 +426,9 @@ func TestSiteBlocksBlockNeverExceedsTheMaximum(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
 	var last time.Duration
-	for strike := 0; strike < 10; strike++ {
+	for strike := range 10 {
 		var ttl time.Duration
-		for i := 0; i < silentNeeded; i++ {
+		for range silentNeeded {
 			if got, blocked := b.silentEnd("a", "s", 0, 37*time.Second, false, now().Add(time.Second)); blocked {
 				ttl = got
 			}
@@ -447,7 +447,7 @@ func TestSiteBlocksBlockNeverExceedsTheMaximum(t *testing.T) {
 func TestSiteBlocksCapDropsNewEvidenceAndPrunesIdleRecords(t *testing.T) {
 	clock, now := fakeClock(time.Unix(1_000_000, 0))
 	b := newSiteBlocks(now)
-	for i := 0; i < siteBlockCap; i++ {
+	for i := range siteBlockCap {
 		b.silentEnd("a", fmt.Sprint("site", i), 0, 37*time.Second, false, now().Add(time.Second))
 	}
 	b.silentEnd("a", "one-more", 0, 37*time.Second, false, now().Add(time.Second))
@@ -544,10 +544,10 @@ func TestDialTimeoutBlocksOnceWithTargetDetails(t *testing.T) {
 	g.blocks.minLife = 0
 	md := dialMetadata("alice", "timeout.example")
 	md.DstPort = 8443
-	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
+	f := &timeoutMember{fakeMember: fakeMemberAt(t, g, 0), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
 	f.err = &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 	g.members[0] = f
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		c, e := g.DialContext(context.Background(), md)
 		if c != nil || !errors.Is(e, os.ErrDeadlineExceeded) {
 			t.Fatalf("dial=%v %v", c, e)
@@ -578,7 +578,7 @@ func TestRecordDialTimeoutUsesIPTargetFallback(t *testing.T) {
 	g, _, clock, sink := blockGroup(t, []int{0})
 	g.blocks.minLife = 0
 	md := &C.Metadata{DstIP: netip.MustParseAddr("2001:db8::7"), DstPort: 443}
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		start := clock.now
 		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
 		g.recordDialTimeout("alice", "v6", 0, "n0", md, start, time.Second)
@@ -594,7 +594,7 @@ func TestDialTimeoutDoesNotCountBelowMinimumLife(t *testing.T) {
 	g, _, clock, sink := blockGroup(t, []int{0})
 	g.blocks.minLife = time.Hour
 	md := dialMetadata("alice", "short.example")
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		start := clock.now
 		setNodeLastOK(g.healths[0], start.Add(time.Nanosecond))
 		g.recordDialTimeout("alice", "short", 0, "n0", md, start, time.Second)
@@ -620,7 +620,7 @@ func TestDialTimeoutDoesNotCountWithoutLaterNodeAnswer(t *testing.T) {
 	md := dialMetadata("alice", "outage.example")
 	start := clock.now
 	setNodeLastOK(g.healths[0], start)
-	for i := 0; i < silentNeeded+1; i++ {
+	for range silentNeeded + 1 {
 		g.recordDialTimeout("alice", "outage", 0, "n0", md, start, time.Second)
 		clock.advance(time.Second)
 	}
@@ -635,7 +635,7 @@ func TestDialTimeoutEvidenceRequiresAnswerAfterStart(t *testing.T) {
 	start := clock.now
 	setNodeLastOK(g.healths[0], start)
 	md := dialMetadata("alice", "no-later-answer.example")
-	for i := 0; i < silentNeeded+1; i++ {
+	for range silentNeeded + 1 {
 		g.recordDialTimeout("alice", "same", 0, "n0", md, start, time.Second)
 		clock.advance(time.Second)
 	}
@@ -648,7 +648,7 @@ func TestDialTimeoutAnswerResetsRun(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
 	g.blocks.minLife = 0
 	md := dialMetadata("alice", "reset.example")
-	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+	f := &timeoutMember{fakeMember: fakeMemberAt(t, g, 0), during: func() {
 		clock.advance(time.Nanosecond)
 		nodeUp(health, "n0")
 	}}
@@ -660,7 +660,7 @@ func TestDialTimeoutAnswerResetsRun(t *testing.T) {
 	g.members[0] = &fakeMember{name: "n0", conn: func() C.Conn { return &scriptConn{} }}
 	endConn(t, g, health, clock, "reset.example", connEnd{answer: true, wait: time.Second})
 	g.members[0] = f
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		dialTimeout()
 	}
 	if g.blocks.blockedCount() != 0 || len(ofKind(sink, ConnSiteBlocked)) != 0 {
@@ -672,10 +672,10 @@ func TestDialTimeoutEvidenceIsPerAccountAndSite(t *testing.T) {
 	g, health, clock, sink := blockGroup(t, []int{0, 1})
 	g.blocks.minLife = 0
 	md := dialMetadata("alice", "isolated.example")
-	f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
+	f := &timeoutMember{fakeMember: fakeMemberAt(t, g, 0), during: func() { clock.advance(time.Nanosecond); nodeUp(health, "n0") }}
 	f.err = &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
 	g.members[0] = f
-	for i := 0; i < silentNeeded; i++ {
+	for range silentNeeded {
 		_, _ = g.DialContext(context.Background(), md)
 		clock.advance(time.Second)
 	}
@@ -695,14 +695,14 @@ func TestDialTimeoutRetryRecordsEvidenceOnlyForRetryNode(t *testing.T) {
 	g.blocks.minLife = 0
 	md := dialMetadata("alice", "retry.example")
 	timeoutErr := &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}
-	f0 := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+	f0 := &timeoutMember{fakeMember: fakeMemberAt(t, g, 0), during: func() {
 		clock.advance(time.Nanosecond)
 		nodeUp(health, "n0")
 		health.recordDialAt("n0", "seed-one", errors.New("failure"), time.Second)
 		health.recordDialAt("n0", "seed-two", errors.New("failure"), time.Second)
 	}}
 	f0.err = timeoutErr
-	f1 := &timeoutMember{fakeMember: g.members[1].(*fakeMember), during: func() {
+	f1 := &timeoutMember{fakeMember: fakeMemberAt(t, g, 1), during: func() {
 		clock.advance(time.Nanosecond)
 		nodeUp(health, "n1")
 	}}
@@ -748,13 +748,13 @@ func TestDialTimeoutFailureKindsDoNotCreateEvidence(t *testing.T) {
 	} {
 		g, health, clock, sink := blockGroup(t, []int{0})
 		g.blocks.minLife = 0
-		f := &timeoutMember{fakeMember: g.members[0].(*fakeMember), during: func() {
+		f := &timeoutMember{fakeMember: fakeMemberAt(t, g, 0), during: func() {
 			clock.advance(time.Nanosecond)
 			nodeUp(health, "n0")
 		}}
 		f.err = err
 		g.members[0] = f
-		for i := 0; i < silentNeeded+1; i++ {
+		for range silentNeeded + 1 {
 			_, _ = g.DialContext(context.Background(), dialMetadata("alice", "x.example"))
 			clock.advance(time.Second)
 		}
@@ -762,4 +762,14 @@ func TestDialTimeoutFailureKindsDoNotCreateEvidence(t *testing.T) {
 			t.Fatalf("%v created evidence", err)
 		}
 	}
+}
+
+// fakeMemberAt returns member i of g as the test fake.
+func fakeMemberAt(t *testing.T, g *stickyGroup, i int) *fakeMember {
+	t.Helper()
+	m, ok := g.members[i].(*fakeMember)
+	if !ok {
+		t.Fatalf("member %d is %T, want *fakeMember", i, g.members[i])
+	}
+	return m
 }

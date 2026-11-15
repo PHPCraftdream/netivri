@@ -46,7 +46,7 @@ type Config struct {
 // exit country.
 type Account struct {
 	Login       string `json:"login"`
-	Password    string `json:"password"`
+	Password    string `json:"password"` //nolint:gosec // G117: the account credential is part of the config file format
 	Provider    string `json:"provider,omitempty"`
 	ExitCountry string `json:"exit_country,omitempty"`
 	// AllowedClients optionally narrows the client addresses this account
@@ -73,7 +73,7 @@ func ValidAccountLogin(login string) bool {
 		return false
 	}
 	for _, r := range login {
-		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._@-", r)) {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._@-", r) {
 			return false
 		}
 	}
@@ -87,7 +87,7 @@ func ValidProviderName(name string) bool {
 		return false
 	}
 	for _, r := range name {
-		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._-", r) {
 			return false
 		}
 	}
@@ -130,7 +130,7 @@ type Listen struct {
 // Empty fields carry omitempty so a rendered file stays tidy.
 type Auth struct {
 	Login           string `json:"login,omitempty"`
-	Password        string `json:"password,omitempty"`
+	Password        string `json:"password,omitempty"` //nolint:gosec // G117: the auth credential is part of the config file format
 	AllowInitRemote bool   `json:"allow_init_remote,omitempty"`
 }
 
@@ -241,6 +241,33 @@ func Default() *Config {
 // code CONFIG_INVALID and never contain subscription URLs, proxy
 // credentials or passwords.
 func (c *Config) Validate() error {
+	if err := c.validateListen(); err != nil {
+		return err
+	}
+	if err := c.validateFetch(); err != nil {
+		return err
+	}
+	if err := c.validateChain(); err != nil {
+		return err
+	}
+	if err := c.validateSubscriptions(); err != nil {
+		return err
+	}
+	if err := c.validateSelection(); err != nil {
+		return err
+	}
+	if err := c.validateAuth(); err != nil {
+		return err
+	}
+	if err := c.validateAccounts(); err != nil {
+		return err
+	}
+	if err := validateServers(c); err != nil {
+		return err
+	}
+	return c.validateInitAuthScope()
+}
+func (c *Config) validateListen() error {
 	if err := validateBind(c.Listen.Bind); err != nil {
 		return err
 	}
@@ -252,6 +279,9 @@ func (c *Config) Validate() error {
 	} else if _, err := ParseAllowedClients(v); err != nil {
 		return invalid("listen.allowed_clients: %v", err)
 	}
+	return nil
+}
+func (c *Config) validateFetch() error {
 	if err := checkScalar("fetch.proxy", c.Fetch.Proxy); err != nil {
 		return err
 	}
@@ -267,53 +297,64 @@ func (c *Config) Validate() error {
 	if err := checkScalar("fetch.update_interval", c.Fetch.UpdateInterval); err != nil {
 		return err
 	}
-	if err := validateUpdateInterval(c.Fetch.UpdateInterval); err != nil {
-		return err
-	}
+	return validateUpdateInterval(c.Fetch.UpdateInterval)
+}
+func (c *Config) validateChain() error {
 	if err := ValidateHopList("chain.pre_socks5", c.Chain.PreSOCKS5); err != nil {
 		return err
 	}
-	if err := ValidateHopList("chain.post_socks5", c.Chain.PostSOCKS5); err != nil {
+	return ValidateHopList("chain.post_socks5", c.Chain.PostSOCKS5)
+}
+func (c *Config) validateSubscriptions() error {
+	first := make(map[string]int, len(c.Subscriptions))
+	for i := range c.Subscriptions {
+		if err := validateSubscription(i, &c.Subscriptions[i], first); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateSubscription checks subscription i; first maps the names seen so far to their index.
+func validateSubscription(i int, s *Subscription, first map[string]int) error {
+	if err := checkScalar(fmt.Sprintf("subscriptions[%d].name", i), s.Name); err != nil {
 		return err
 	}
-	first := make(map[string]int, len(c.Subscriptions))
-	for i, s := range c.Subscriptions {
-		if err := checkScalar(fmt.Sprintf("subscriptions[%d].name", i), s.Name); err != nil {
+	if strings.TrimSpace(s.Name) == "" {
+		return invalid("subscriptions[%d].name must not be empty", i)
+	}
+	// Positions only: a user-supplied name is never echoed (it
+	// could be a URL or a credential).
+	if j, seen := first[s.Name]; seen {
+		return invalid("subscriptions[%d] duplicates subscriptions[%d]", i, j)
+	}
+	first[s.Name] = i
+	if err := checkScalar(fmt.Sprintf("subscriptions[%d].url", i), s.URL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(s.URL) == "" {
+		return invalid("subscriptions[%d].url must not be empty", i)
+	}
+	if err := checkScalar(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
+		return err
+	}
+	for _, hop := range []struct {
+		field string
+		list  HopList
+	}{{"pre_socks5", s.PreSOCKS5}, {"post_socks5", s.PostSOCKS5}} {
+		name := fmt.Sprintf("subscriptions[%d].%s", i, hop.field)
+		if err := ValidateHopList(name, hop.list); err != nil {
 			return err
-		}
-		if strings.TrimSpace(s.Name) == "" {
-			return invalid("subscriptions[%d].name must not be empty", i)
-		}
-		// Positions only: a user-supplied name is never echoed (it
-		// could be a URL or a credential).
-		if j, seen := first[s.Name]; seen {
-			return invalid("subscriptions[%d] duplicates subscriptions[%d]", i, j)
-		}
-		first[s.Name] = i
-		if err := checkScalar(fmt.Sprintf("subscriptions[%d].url", i), s.URL); err != nil {
-			return err
-		}
-		if strings.TrimSpace(s.URL) == "" {
-			return invalid("subscriptions[%d].url must not be empty", i)
-		}
-		if err := checkScalar(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
-			return err
-		}
-		for _, hop := range []struct {
-			field string
-			list  HopList
-		}{{"pre_socks5", s.PreSOCKS5}, {"post_socks5", s.PostSOCKS5}} {
-			name := fmt.Sprintf("subscriptions[%d].%s", i, hop.field)
-			if err := ValidateHopList(name, hop.list); err != nil {
-				return err
-			}
-		}
-		if s.Via != "" {
-			if err := validateProxy(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
-				return err
-			}
 		}
 	}
+	if s.Via != "" {
+		if err := validateProxy(fmt.Sprintf("subscriptions[%d].via", i), s.Via); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func (c *Config) validateSelection() error {
 	if err := checkScalar("selection.country", c.Selection.Country); err != nil {
 		return err
 	}
@@ -322,9 +363,12 @@ func (c *Config) Validate() error {
 	}
 	switch c.Selection.Mode {
 	case ModeManual, ModeFastest, ModeAuto:
+		return nil
 	default:
 		return invalid(`selection.mode must be one of "manual", "fastest", "auto"`)
 	}
+}
+func (c *Config) validateAuth() error {
 	if c.Auth.Password != "" {
 		if c.Auth.Password != InitPlaceholder && !strings.HasPrefix(c.Auth.Password, argon2Prefix) {
 			return invalid(`auth.password must be empty, "init" or an argon2id PHC hash`)
@@ -339,59 +383,74 @@ func (c *Config) Validate() error {
 	if err := checkScalar("auth.login", c.Auth.Login); err != nil {
 		return err
 	}
-	if err := checkScalar("auth.password", c.Auth.Password); err != nil {
-		return err
-	}
+	return checkScalar("auth.password", c.Auth.Password)
+}
+func (c *Config) validateAccounts() error {
 	firstLogin := make(map[string]int, len(c.Accounts))
 	for i := range c.Accounts {
 		a := &c.Accounts[i]
-		if !ValidAccountLogin(a.Login) {
-			return invalid("accounts[%d].login must be a valid account login", i)
-		}
-		if j, ok := firstLogin[a.Login]; ok {
-			return invalid("accounts[%d] duplicates accounts[%d]", i, j)
-		}
-		firstLogin[a.Login] = i
-		if a.Login == InitPlaceholder {
-			return invalid("accounts[%d].login must not be the reserved init login", i)
-		}
-		if c.Auth.Login != "" && c.Auth.Login != InitPlaceholder && c.Auth.Login == a.Login {
-			return invalid("accounts[%d].login duplicates auth.login", i)
-		}
-		if a.Password != InitPlaceholder && !strings.HasPrefix(a.Password, argon2Prefix) {
-			return invalid("accounts[%d].password must be init or an argon2id PHC hash", i)
-		}
-		if err := checkScalar(fmt.Sprintf("accounts[%d].password", i), a.Password); err != nil {
+		if err := c.validateAccountLogin(i, a, firstLogin); err != nil {
 			return err
 		}
-		if _, ok := ParseCountryList(a.ExitCountry); !ok {
-			return invalid("accounts[%d].exit_country must be empty or a comma-separated list of two-letter country codes", i)
-		}
-		if err := checkScalar(fmt.Sprintf("accounts[%d].exit_country", i), a.ExitCountry); err != nil {
-			return err
-		}
-		if _, ok := ParseProviderList(a.Provider); !ok {
-			return invalid("accounts[%d].provider must be empty or a valid provider name, or a comma-separated list of them", i)
-		}
-		if err := checkScalar(fmt.Sprintf("accounts[%d].provider", i), a.Provider); err != nil {
-			return err
-		}
-		if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
-			return invalid("accounts[%d].allowed_clients: %v", i, err)
-		}
-		if err := ValidateHopList(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
-			return err
-		}
-		if err := ValidateHopList(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
-			return err
-		}
-		if err := ValidateAccountExit(*a, i); err != nil {
+		if err := validateAccountFields(i, a); err != nil {
 			return err
 		}
 	}
-	if err := validateServers(c); err != nil {
+	return nil
+}
+
+// validateAccountLogin checks account i's login: valid, unique and not clashing with auth.login.
+func (c *Config) validateAccountLogin(i int, a *Account, firstLogin map[string]int) error {
+	if !ValidAccountLogin(a.Login) {
+		return invalid("accounts[%d].login must be a valid account login", i)
+	}
+	if j, ok := firstLogin[a.Login]; ok {
+		return invalid("accounts[%d] duplicates accounts[%d]", i, j)
+	}
+	firstLogin[a.Login] = i
+	if a.Login == InitPlaceholder {
+		return invalid("accounts[%d].login must not be the reserved init login", i)
+	}
+	if c.Auth.Login != "" && c.Auth.Login != InitPlaceholder && c.Auth.Login == a.Login {
+		return invalid("accounts[%d].login duplicates auth.login", i)
+	}
+	return nil
+}
+
+// validateAccountFields checks account i's secret, exit, provider, client and hop fields.
+func validateAccountFields(i int, a *Account) error {
+	if a.Password != InitPlaceholder && !strings.HasPrefix(a.Password, argon2Prefix) {
+		return invalid("accounts[%d].password must be init or an argon2id PHC hash", i)
+	}
+	if err := checkScalar(fmt.Sprintf("accounts[%d].password", i), a.Password); err != nil {
 		return err
 	}
+	if _, ok := ParseCountryList(a.ExitCountry); !ok {
+		return invalid("accounts[%d].exit_country must be empty or a comma-separated list of two-letter country codes", i)
+	}
+	if err := checkScalar(fmt.Sprintf("accounts[%d].exit_country", i), a.ExitCountry); err != nil {
+		return err
+	}
+	if _, ok := ParseProviderList(a.Provider); !ok {
+		return invalid("accounts[%d].provider must be empty or a valid provider name, or a comma-separated list of them", i)
+	}
+	if err := checkScalar(fmt.Sprintf("accounts[%d].provider", i), a.Provider); err != nil {
+		return err
+	}
+	if _, err := ParseAllowedClients(a.AllowedClients); err != nil {
+		return invalid("accounts[%d].allowed_clients: %v", i, err)
+	}
+	if err := ValidateHopList(fmt.Sprintf("accounts[%d].pre_socks5", i), a.PreSOCKS5); err != nil {
+		return err
+	}
+	if err := ValidateHopList(fmt.Sprintf("accounts[%d].post_socks5", i), a.PostSOCKS5); err != nil {
+		return err
+	}
+	return ValidateAccountExit(*a, i)
+}
+
+// validateInitAuthScope rejects auth "init" on a non-loopback bind unless auth.allow_init_remote is set.
+func (c *Config) validateInitAuthScope() error {
 	if c.usesInitAuth() && !isLoopback(c.Listen.Bind) && !c.Auth.AllowInitRemote {
 		return invalid(`auth "init" is only accepted on a loopback bind; set auth.allow_init_remote: true to allow it elsewhere`)
 	}
@@ -504,7 +563,7 @@ func validateChainURL(field, raw string) error {
 // asciiHost reports whether a hop host has only ASCII bytes: the proxy clients
 // cannot resolve or present a raw international name.
 func asciiHost(host string) bool {
-	for i := 0; i < len(host); i++ {
+	for i := range len(host) {
 		if host[i] >= 0x80 {
 			return false
 		}

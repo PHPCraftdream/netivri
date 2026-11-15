@@ -15,7 +15,7 @@ import (
 // processes afterwards; bind immediately after calling.
 func FreeLoopbackAddr(t testing.TB) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("reserve loopback address: %v", err)
 	}

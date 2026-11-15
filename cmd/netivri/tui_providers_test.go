@@ -48,8 +48,8 @@ func providerType(s *providersScreen, text string) {
 }
 
 func TestProvidersWorkspaceLayoutsAndSelection(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:secret@provider.invalid/path?token=abc"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:secret@provider.invalid/path?token=abc"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"}) //nolint:gosec // G101: fake credential, test fixture only
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	if s.list.AddLabel != "+ Add provider" || !strings.Contains(ansi.Strip(s.View(80, 20)), "Providers") {
 		t.Fatal("list/add row missing")
@@ -99,7 +99,7 @@ func TestProviderAddRetainsFailureRedactsAndSelects(t *testing.T) {
 	s.wizard.Index = 2
 	s.wizard.SetSaving(true)
 	s.mode = "add-wizard"
-	_, c := s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}})
+	_, c := s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}}) //nolint:gosec // G101: fake credential, test fixture only
 	drainProvider(s, c)
 	v := ansi.Strip(s.View(100, 24))
 	if strings.Contains(v, "private-token") || strings.Contains(v, "proxysecret") || !strings.Contains(v, "[redacted]") {
@@ -109,7 +109,7 @@ func TestProviderAddRetainsFailureRedactsAndSelects(t *testing.T) {
 		t.Fatal("wizard not retained")
 	}
 	s.wizard.SetSaving(false)
-	_, c = s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}})
+	_, c = s.Update(tui.WizardResultMsg{Values: map[string]string{"name": "custom", "url": "https://user:private-token@provider.invalid/path?key=private-token", "via": "http://u:proxysecret@proxy.invalid"}}) //nolint:gosec // G101: fake credential, test fixture only
 	drainProvider(s, c)
 	r, e := ProviderList(h)
 	if e != nil || len(r.Providers) != 1 || r.Providers[0].Name != "custom" || s.selected != "custom" {
@@ -175,7 +175,7 @@ func TestProviderCountriesDialogOpensPreselected(t *testing.T) {
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	s.selected = "p"
 	s.updateCard()
@@ -201,7 +201,7 @@ func TestProviderCountriesDialogOpensPreselected(t *testing.T) {
 }
 func TestProviderErrorsAreGenericWithoutTypedError(t *testing.T) {
 	h := providerSeed(t)
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.setError(errors.New("private data"))
 	if s.message != "Provider operation failed" {
 		t.Fatalf("unsafe error %q", s.message)
@@ -209,7 +209,7 @@ func TestProviderErrorsAreGenericWithoutTypedError(t *testing.T) {
 }
 func TestProviderEditPromptsPersistURLAndVia(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://old.invalid", Via: "http://old-proxy.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.load())
 	s.startEditPrompt("url")
 	providerType(s, "https://new.invalid/path")
@@ -288,7 +288,7 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	// wizard is retained with the entered values and no credential on screen.
 	_, c = s.Update(key(tea.KeyEnter, ""))
 	drainProvider(s, c)
-	if s.wizard == nil || s.wizard.Saving || s.mode != "add-wizard" || s.wizard.Values["name"] != "wizard" || s.wizard.Values["url"] != "https://user:wizard-secret@provider.invalid/?token=wizard-secret" || s.wizard.Values["via"] != "" {
+	if s.wizard == nil || s.wizard.Saving || s.mode != "add-wizard" || s.wizard.Values["name"] != "wizard" || s.wizard.Values["url"] != "https://user:wizard-secret@provider.invalid/?token=wizard-secret" || s.wizard.Values["via"] != "" { //nolint:gosec // G101: fake credential, test fixture only
 		t.Fatal("wizard did not retain actual entered values after failed submission")
 	}
 	visible := ansi.Strip(s.View(100, 24))
@@ -304,7 +304,7 @@ func TestProviderAddWizardUsesKeysAndRetries(t *testing.T) {
 	}
 }
 func TestProviderRefreshAllRetainsRedactedResults(t *testing.T) {
-	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:refresh-secret@alpha.invalid/?token=refresh-secret"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"})
+	h := providerSeed(t, config.Subscription{Name: "alpha", URL: "https://user:refresh-secret@alpha.invalid/?token=refresh-secret"}, config.Subscription{Name: "beta", URL: "https://beta.invalid"}) //nolint:gosec // G101: fake credential, test fixture only
 	get := func(_ context.Context, raw string, _ fetch.Options) (*fetch.Result, error) {
 		if strings.Contains(raw, "alpha") {
 			return nil, &cli.Error{Code: "FETCH_FAILED", Message: "failed refresh-secret", Hint: "retry refresh-secret"}
@@ -334,7 +334,7 @@ func TestProviderCountriesDialogKeysAndFrame(t *testing.T) {
 	if err := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); err != nil {
 		t.Fatal("save country snapshot failed")
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.selected = "p"
 	drainProvider(s, s.countriesCmd())
 	if s.mode != "countries-prompt" || s.dialog == nil {
@@ -397,7 +397,7 @@ func TestProviderResultReturnsToastCommand(t *testing.T) {
 }
 
 func TestProviderRenameActionEnabledAndEditsKept(t *testing.T) {
-	s := newProvidersScreen(t.TempDir(), tui.Env{}).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(t.TempDir(), tui.Env{}))
 	s.selected = "p"
 	s.updateCard()
 	byID := map[string]tui.CardLine{}
@@ -418,7 +418,7 @@ func TestProviderCountriesDialogIsStableAndExactHeight(t *testing.T) {
 	if e := subscription.NewStore(h+"/subscriptions").Save("p", subscription.Snapshot{Nodes: nodes, FetchedAt: testNow}); e != nil {
 		t.Fatal(e)
 	}
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	s.selected = "p"
 	drainProvider(s, s.countriesCmd())
 	s.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
@@ -440,7 +440,7 @@ func TestProviderCountriesDialogIsStableAndExactHeight(t *testing.T) {
 // needing the separate edit action line.
 func TestProviderFieldLineEnterOpensEditPrompt(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "p", URL: "https://p.invalid"})
-	s := newProvidersScreen(h, providerEnv(h)).(*providersScreen)
+	s := mustAs[*providersScreen](t, newProvidersScreen(h, providerEnv(h)))
 	drainProvider(s, s.Init())
 	s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	// Real keys: Tab moves focus to the card pane.

@@ -14,12 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/adapter/outbound"
+	C "github.com/metacubex/mihomo/constant"
+
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/core"
 	"github.com/PHPCraftdream/netivri/internal/servers"
+	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 	"github.com/PHPCraftdream/netivri/internal/testutil"
-	"github.com/metacubex/mihomo/adapter/outbound"
-	C "github.com/metacubex/mihomo/constant"
 )
 
 type vmessRecorder struct {
@@ -35,7 +37,7 @@ func (r *vmessRecorder) snapshot() []string {
 }
 func startVMessRecorder(t *testing.T) (*vmessRecorder, string) {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal("recorder listen failed")
 	}
@@ -68,7 +70,7 @@ func readVMessN(c net.Conn, n int) ([]byte, bool) {
 	return b, err == nil
 }
 func serveVMessRecorder(r *vmessRecorder, c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 	h, ok := readVMessN(c, 2)
 	if !ok || h[0] != 5 {
@@ -119,12 +121,12 @@ func serveVMessRecorder(r *vmessRecorder, c net.Conn) {
 	r.mu.Lock()
 	r.targets = append(r.targets, dest)
 	r.mu.Unlock()
-	up, err := net.DialTimeout("tcp", dest, 5*time.Second)
+	up, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", dest)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	_ = up.SetDeadline(time.Now().Add(5 * time.Second))
 	if _, err = c.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0}); err != nil {
 		return
@@ -174,11 +176,11 @@ func vmessPort(addr string) int {
 }
 func vmessTestPort(t *testing.T) int {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	return vmessPort(l.Addr().String())
 }
 func waitVMessConnections(t *testing.T, inst *core.Instance) {
@@ -202,7 +204,40 @@ func waitVMessConnections(t *testing.T, inst *core.Instance) {
 		}
 	}
 }
+
+// vmessRouteRun holds the state shared by the phases of TestVMessServerMultiuserRouteRotateAndFilters.
+type vmessRouteRun struct {
+	t            *testing.T
+	protocol     servers.Protocol
+	aliceNode    *vmessRecorder
+	bobNode      *vmessRecorder
+	aliceAddress string
+	bobAddress   string
+	host         string
+	backendPort  int
+	wantBackend  string
+	home         string
+	port         int
+	aliceID      string
+	bobID        string
+	rotatedID    string
+	current      servers.Spec
+	inst         *core.Instance
+	closed       bool
+}
+
 func TestVMessServerMultiuserRouteRotateAndFilters(t *testing.T) {
+	r := newVMessRouteRun(t)
+	r.start()
+	r.checkBaseRoutes()
+	r.checkRotation()
+	r.checkGlobalFilter()
+	r.checkAccountFilter()
+	r.checkCloseReleasesPort()
+}
+
+func newVMessRouteRun(t *testing.T) *vmessRouteRun {
+	t.Helper()
 	protocol, ok := servers.Lookup("vmess")
 	if !ok {
 		t.Fatal("vmess protocol is not registered")
@@ -218,198 +253,226 @@ func TestVMessServerMultiuserRouteRotateAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal("echo port invalid")
 	}
-	wantBackend := net.JoinHostPort(host, backendText)
-	newUUID := func() string {
-		values, err := protocol.NewSecret("alice", nil)
-		if err != nil {
-			t.Fatal("secret generation failed")
-		}
-		return values["uuid"]
+	r := &vmessRouteRun{
+		t: t, protocol: protocol,
+		aliceNode: aliceNode, bobNode: bobNode,
+		aliceAddress: aliceAddress, bobAddress: bobAddress,
+		host: host, backendPort: backendPort, wantBackend: net.JoinHostPort(host, backendText),
 	}
-	port := vmessTestPort(t)
-	aliceID, bobID := newUUID(), newUUID()
-	makeSpec := func(idA, idB string) servers.Spec {
-		return servers.Spec{
-			Name:     "entry",
-			Protocol: "vmess",
-			Bind:     "127.0.0.1",
-			Port:     port,
-			Accounts: []string{"alice", "bob"},
-			Params:   map[string]string{},
-			Users: servers.UserSecrets{
-				"alice": {"uuid": idA},
-				"bob":   {"uuid": idB},
-			},
-		}
+	r.port = vmessTestPort(t)
+	r.aliceID, r.bobID = r.newUUID(), r.newUUID()
+	r.home = testutil.TempHome(t)
+	r.current = r.makeSpec(r.aliceID, r.bobID)
+	return r
+}
+
+func (r *vmessRouteRun) newUUID() string {
+	values, err := r.protocol.NewSecret("alice", nil)
+	if err != nil {
+		r.t.Fatal("secret generation failed")
 	}
-	home := testutil.TempHome(t)
-	options := func(spec servers.Spec, global, account []netip.Prefix) core.Options {
-		return core.Options{
-			HomeDir: home,
-			RouteNodes: map[string][]map[string]any{
-				"alice": {vmessNode(aliceAddress)},
-				"bob":   {vmessNode(bobAddress)},
-			},
-			AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
-			Servers:               []servers.Spec{spec},
-			AllowedClients:        global,
-			AccountAllowedClients: map[string][]netip.Prefix{"alice": account},
-		}
+	return values["uuid"]
+}
+
+func (r *vmessRouteRun) makeSpec(idA, idB string) servers.Spec {
+	return servers.Spec{
+		Name:     "entry",
+		Protocol: "vmess",
+		Bind:     "127.0.0.1",
+		Port:     r.port,
+		Accounts: []string{"alice", "bob"},
+		Params:   map[string]string{},
+		Users: servers.UserSecrets{
+			"alice": {"uuid": idA},
+			"bob":   {"uuid": idB},
+		},
 	}
-	current := makeSpec(aliceID, bobID)
-	var inst *core.Instance
-	for attempt := 0; attempt < 3; attempt++ {
-		inst, err = core.Start(context.Background(), options(current, nil, nil))
+}
+
+func (r *vmessRouteRun) options(spec servers.Spec, global, account []netip.Prefix) core.Options {
+	return core.Options{
+		HomeDir: r.home,
+		RouteNodes: map[string][]map[string]any{
+			"alice": {vmessNode(r.aliceAddress)},
+			"bob":   {vmessNode(r.bobAddress)},
+		},
+		AccountRoute:          map[string]string{"alice": "alice", "bob": "bob"},
+		Servers:               []servers.Spec{spec},
+		AllowedClients:        global,
+		AccountAllowedClients: map[string][]netip.Prefix{"alice": account},
+	}
+}
+
+func (r *vmessRouteRun) start() {
+	var err error
+	for range 3 {
+		r.inst, err = core.Start(context.Background(), r.options(r.current, nil, nil))
 		if err == nil {
 			break
 		}
 		var ce *cli.Error
 		if !errors.As(err, &ce) || ce.Code != "PORT_IN_USE" {
-			t.Fatalf("core start failed: %v", err)
+			r.t.Fatalf("core start failed: %v", err)
 		}
-		port = vmessTestPort(t)
-		current.Port = port
+		r.port = vmessTestPort(r.t)
+		r.current.Port = r.port
 	}
 	if err != nil {
-		t.Fatalf("core start retries failed: %v", err)
+		r.t.Fatalf("core start retries failed: %v", err)
 	}
-	closed := false
-	t.Cleanup(func() {
-		if !closed {
-			_ = inst.Close()
+	r.t.Cleanup(func() {
+		if !r.closed {
+			_ = r.inst.Close()
 		}
 	})
-	connect := func(id string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		clientOptions := outbound.VmessOption{
-			Name:    "client",
-			Server:  "127.0.0.1",
-			Port:    port,
-			UUID:    id,
-			AlterID: 0,
-			Cipher:  "auto",
-			Network: "tcp",
-		}
-		client, err := outbound.NewVmess(clientOptions)
-		if err != nil {
-			return err
-		}
-		defer client.Close()
-		clientConn, err := client.DialContext(ctx, &C.Metadata{
-			NetWork: C.TCP,
-			DstIP:   netip.MustParseAddr(host),
-			DstPort: uint16(backendPort),
-		})
-		if err != nil {
-			return err
-		}
-		defer clientConn.Close()
-		if err = clientConn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
-			return err
-		}
-		payload := []byte("vmess-check")
-		if _, err = clientConn.Write(payload); err != nil {
-			return err
-		}
-		got := make([]byte, len(payload))
-		if _, err = io.ReadFull(clientConn, got); err != nil {
-			return err
-		}
-		if string(got) != string(payload) {
-			return io.ErrUnexpectedEOF
-		}
-		return nil
+}
+
+func (r *vmessRouteRun) connect(id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	clientOptions := outbound.VmessOption{
+		Name:    "client",
+		Server:  "127.0.0.1",
+		Port:    r.port,
+		UUID:    id,
+		AlterID: 0,
+		Cipher:  "auto",
+		Network: "tcp",
 	}
-	checkRoute := func(wantAlice, wantBob int) {
-		t.Helper()
-		waitVMessConnections(t, inst)
-		aliceTargets := aliceNode.snapshot()
-		bobTargets := bobNode.snapshot()
-		if len(aliceTargets) != wantAlice || len(bobTargets) != wantBob {
-			t.Fatalf("route counts = %d/%d, want %d/%d", len(aliceTargets), len(bobTargets), wantAlice, wantBob)
-		}
-		for _, target := range append(aliceTargets, bobTargets...) {
-			if target != wantBackend {
-				t.Fatal("recorder observed an unexpected destination")
-			}
-		}
-	}
-	if err = connect(aliceID); err != nil {
-		t.Fatalf("alice connection failed: %v", err)
-	}
-	checkRoute(1, 0)
-	if err = connect(bobID); err != nil {
-		t.Fatalf("bob connection failed: %v", err)
-	}
-	checkRoute(1, 1)
-	if err = connect(newUUID()); err == nil {
-		t.Fatal("wrong UUID accepted")
-	}
-	waitVMessConnections(t, inst)
-	checkRoute(1, 1)
-	rotatedID := newUUID()
-	rotated := current.Clone()
-	rotated.Users["alice"]["uuid"] = rotatedID
-	waitVMessConnections(t, inst)
-	if err = inst.Reconfigure(options(rotated, nil, nil)); err != nil {
-		t.Fatal("rotation failed")
-	}
-	current = rotated
-	if err = connect(aliceID); err == nil {
-		t.Fatal("old Alice UUID remained accepted")
-	}
-	checkRoute(1, 1)
-	if err = connect(rotatedID); err != nil {
-		t.Fatalf("rotated Alice UUID failed: %v", err)
-	}
-	checkRoute(2, 1)
-	if err = connect(bobID); err != nil {
-		t.Fatalf("Bob UUID changed during rotation: %v", err)
-	}
-	checkRoute(2, 2)
-	globalDenied := options(current, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
-	waitVMessConnections(t, inst)
-	if err = inst.Reconfigure(globalDenied); err != nil {
-		t.Fatal("global filter reconfigure failed")
-	}
-	globalDropBaseline := droppedVMess(inst)
-	if err = connect(rotatedID); err == nil {
-		t.Fatal("global filter allowed loopback")
-	}
-	waitVMessConnections(t, inst)
-	checkRoute(2, 2)
-	globalDrops := droppedVMess(inst)
-	if globalDrops <= globalDropBaseline {
-		t.Fatal("global filter denial was not counted")
-	}
-	accountDenied := options(current, nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
-	waitVMessConnections(t, inst)
-	if err = inst.Reconfigure(accountDenied); err != nil {
-		t.Fatal("account filter reconfigure failed")
-	}
-	accountDropBaseline := droppedVMess(inst)
-	if err = connect(rotatedID); err == nil {
-		t.Fatal("Alice account filter allowed loopback")
-	}
-	waitVMessConnections(t, inst)
-	checkRoute(2, 2)
-	accountDrops := droppedVMess(inst)
-	if accountDrops <= accountDropBaseline {
-		t.Fatal("account filter denial was not counted")
-	}
-	if err = connect(bobID); err != nil {
-		t.Fatalf("Alice filter denied Bob: %v", err)
-	}
-	checkRoute(2, 3)
-	waitVMessConnections(t, inst)
-	if err = inst.Close(); err != nil {
-		t.Fatal("core close failed")
-	}
-	closed = true
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	client, err := outbound.NewVmess(clientOptions)
 	if err != nil {
-		t.Fatal("listener port remained bound after Close")
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	clientConn, err := client.DialContext(ctx, &C.Metadata{
+		NetWork: C.TCP,
+		DstIP:   netip.MustParseAddr(r.host),
+		DstPort: servertest.MustUint16(r.t, r.backendPort),
+	})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = clientConn.Close() }()
+	if err = clientConn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		return err
+	}
+	payload := []byte("vmess-check")
+	if _, err = clientConn.Write(payload); err != nil {
+		return err
+	}
+	got := make([]byte, len(payload))
+	if _, err = io.ReadFull(clientConn, got); err != nil {
+		return err
+	}
+	if string(got) != string(payload) {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+
+func (r *vmessRouteRun) checkRoute(wantAlice, wantBob int) {
+	r.t.Helper()
+	waitVMessConnections(r.t, r.inst)
+	aliceTargets := r.aliceNode.snapshot()
+	bobTargets := r.bobNode.snapshot()
+	if len(aliceTargets) != wantAlice || len(bobTargets) != wantBob {
+		r.t.Fatalf("route counts = %d/%d, want %d/%d", len(aliceTargets), len(bobTargets), wantAlice, wantBob)
+	}
+	for _, target := range append(aliceTargets, bobTargets...) {
+		if target != r.wantBackend {
+			r.t.Fatal("recorder observed an unexpected destination")
+		}
+	}
+}
+
+func (r *vmessRouteRun) checkBaseRoutes() {
+	if err := r.connect(r.aliceID); err != nil {
+		r.t.Fatalf("alice connection failed: %v", err)
+	}
+	r.checkRoute(1, 0)
+	if err := r.connect(r.bobID); err != nil {
+		r.t.Fatalf("bob connection failed: %v", err)
+	}
+	r.checkRoute(1, 1)
+	if err := r.connect(r.newUUID()); err == nil {
+		r.t.Fatal("wrong UUID accepted")
+	}
+	waitVMessConnections(r.t, r.inst)
+	r.checkRoute(1, 1)
+}
+
+func (r *vmessRouteRun) checkRotation() {
+	r.rotatedID = r.newUUID()
+	rotated := r.current.Clone()
+	rotated.Users["alice"]["uuid"] = r.rotatedID
+	waitVMessConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(r.options(rotated, nil, nil)); err != nil {
+		r.t.Fatal("rotation failed")
+	}
+	r.current = rotated
+	if err := r.connect(r.aliceID); err == nil {
+		r.t.Fatal("old Alice UUID remained accepted")
+	}
+	r.checkRoute(1, 1)
+	if err := r.connect(r.rotatedID); err != nil {
+		r.t.Fatalf("rotated Alice UUID failed: %v", err)
+	}
+	r.checkRoute(2, 1)
+	if err := r.connect(r.bobID); err != nil {
+		r.t.Fatalf("Bob UUID changed during rotation: %v", err)
+	}
+	r.checkRoute(2, 2)
+}
+
+func (r *vmessRouteRun) checkGlobalFilter() {
+	globalDenied := r.options(r.current, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
+	waitVMessConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(globalDenied); err != nil {
+		r.t.Fatal("global filter reconfigure failed")
+	}
+	globalDropBaseline := droppedVMess(r.inst)
+	if err := r.connect(r.rotatedID); err == nil {
+		r.t.Fatal("global filter allowed loopback")
+	}
+	waitVMessConnections(r.t, r.inst)
+	r.checkRoute(2, 2)
+	globalDrops := droppedVMess(r.inst)
+	if globalDrops <= globalDropBaseline {
+		r.t.Fatal("global filter denial was not counted")
+	}
+}
+
+func (r *vmessRouteRun) checkAccountFilter() {
+	accountDenied := r.options(r.current, nil, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")})
+	waitVMessConnections(r.t, r.inst)
+	if err := r.inst.Reconfigure(accountDenied); err != nil {
+		r.t.Fatal("account filter reconfigure failed")
+	}
+	accountDropBaseline := droppedVMess(r.inst)
+	if err := r.connect(r.rotatedID); err == nil {
+		r.t.Fatal("Alice account filter allowed loopback")
+	}
+	waitVMessConnections(r.t, r.inst)
+	r.checkRoute(2, 2)
+	accountDrops := droppedVMess(r.inst)
+	if accountDrops <= accountDropBaseline {
+		r.t.Fatal("account filter denial was not counted")
+	}
+	if err := r.connect(r.bobID); err != nil {
+		r.t.Fatalf("Alice filter denied Bob: %v", err)
+	}
+	r.checkRoute(2, 3)
+}
+
+func (r *vmessRouteRun) checkCloseReleasesPort() {
+	waitVMessConnections(r.t, r.inst)
+	if err := r.inst.Close(); err != nil {
+		r.t.Fatal("core close failed")
+	}
+	r.closed = true
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
+	if err != nil {
+		r.t.Fatal("listener port remained bound after Close")
 	}
 	_ = listener.Close()
 }
@@ -423,7 +486,7 @@ func droppedVMess(inst *core.Instance) uint64 {
 }
 func startVMessEcho(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +502,7 @@ func startVMessEcho(t *testing.T) string {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
 				_, _ = io.Copy(c, c)
 			}()

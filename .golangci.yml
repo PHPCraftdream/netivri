@@ -1,0 +1,57 @@
+# golangci-lint v2. Run: golangci-lint run ./cmd/... ./internal/... ./pkg/hopkit/...
+version: "2"
+
+run:
+  timeout: 20m
+  # The tagged test files (integration, e2e, bench) are linted too.
+  build-tags:
+    - integration
+    - e2e
+    - bench
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - contextcheck
+    - copyloopvar
+    - dupl
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - forcetypeassert
+    - gocritic
+    - gocyclo
+    - gosec
+    - intrange
+    - makezero
+    - mirror
+    - musttag
+    - nakedret
+    - nilerr
+    - nilnesserr
+    - noctx
+    - perfsprint
+    - prealloc
+    - predeclared
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+  settings:
+    exhaustive:
+      # A switch with a default case handles every value.
+      default-signifies-exhaustive: true
+  exclusions:
+    paths:
+      - third_party
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+

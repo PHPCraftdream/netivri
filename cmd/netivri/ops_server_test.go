@@ -113,7 +113,7 @@ func TestServerOperationsAddUpdateViewsHideGeneratedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var specs []servers.Spec
+	specs := make([]servers.Spec, 0, len(resolved))
 	for _, r := range resolved {
 		sp, e := servers.NewStore(home).Apply(r)
 		if e != nil {
@@ -125,12 +125,11 @@ func TestServerOperationsAddUpdateViewsHideGeneratedSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	views := []serverView{view}
 	listed, err := ServerList(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	views = append(views, listed...)
+	views := append([]serverView{view}, listed...)
 	shown, err := ServerShow(home, "edge")
 	if err != nil {
 		t.Fatal(err)
@@ -226,11 +225,11 @@ func TestServerOperationFailuresPreserveFilesAndReportCodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	configPath, secretPath := config.ConfigPath(home), servers.NewStore(home).Path()
-	configBefore, err := os.ReadFile(configPath)
+	configBefore, err := os.ReadFile(filepath.Clean(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	secretBefore, err := os.ReadFile(secretPath)
+	secretBefore, err := os.ReadFile(filepath.Clean(secretPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,11 +267,11 @@ func TestServerOperationFailuresPreserveFilesAndReportCodes(t *testing.T) {
 			if !errors.As(err, &ce) || ce.Code != tc.code {
 				t.Fatalf("error=%v want %s", err, tc.code)
 			}
-			c, e := os.ReadFile(configPath)
+			c, e := os.ReadFile(filepath.Clean(configPath))
 			if e != nil || !bytes.Equal(c, configBefore) {
 				t.Fatal("failed operation changed config bytes")
 			}
-			s, e := os.ReadFile(secretPath)
+			s, e := os.ReadFile(filepath.Clean(secretPath))
 			if e != nil || !bytes.Equal(s, secretBefore) {
 				t.Fatal("failed operation changed secret bytes")
 			}
@@ -440,11 +439,17 @@ func TestServerUpdatePublicHostAndTypedResults(t *testing.T) {
 	}
 }
 func TestServerAddCleanupFailureIncludesHint(t *testing.T) {
+	runServerAddCleanupFailureHint(t, 39631)
+}
+
+// runServerAddCleanupFailureHint makes the secrets path a directory during save so cleanup fails and the error hint is checked.
+func runServerAddCleanupFailureHint(t *testing.T, port int) {
+	t.Helper()
 	home := t.TempDir()
 	cfg := config.Default()
 	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
 	store := servers.NewStore(home)
-	_, err := serverAddConfigWithSave(home, cfg, ServerAddOptions{Name: "edge", Protocol: "vmess", Bind: "127.0.0.1", Port: 39631, Accounts: "alice"}, func(string, *config.Config) error {
+	_, err := serverAddConfigWithSave(home, cfg, ServerAddOptions{Name: "edge", Protocol: "vmess", Bind: "127.0.0.1", Port: port, Accounts: "alice"}, func(string, *config.Config) error {
 		if e := os.RemoveAll(store.Path()); e != nil {
 			t.Fatal(e)
 		}
@@ -487,23 +492,7 @@ func TestServerAddFailedSaveNoopDoesNotChangeSecrets(t *testing.T) {
 }
 
 func TestServerAddSaveFailureCleanupFailureHint(t *testing.T) {
-	home := t.TempDir()
-	cfg := config.Default()
-	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
-	store := servers.NewStore(home)
-	_, err := serverAddConfigWithSave(home, cfg, ServerAddOptions{Name: "edge", Protocol: "vmess", Bind: "127.0.0.1", Port: 39651, Accounts: "alice"}, func(string, *config.Config) error {
-		if e := os.RemoveAll(store.Path()); e != nil {
-			t.Fatal(e)
-		}
-		if e := os.Mkdir(store.Path(), 0700); e != nil {
-			t.Fatal(e)
-		}
-		return errors.New("save failed")
-	})
-	var ce *cli.Error
-	if !errors.As(err, &ce) || ce.Code != "INTERNAL" || !strings.Contains(ce.Hint, "server-secrets.ktav") || !strings.Contains(ce.Hint, "edge") {
-		t.Fatalf("error=%v", err)
-	}
+	runServerAddCleanupFailureHint(t, 39651)
 }
 
 func TestServerAddUpdatePublicHostPreservesOtherFields(t *testing.T) {

@@ -85,7 +85,7 @@ func (s *providersScreen) startPreviewFetch() tea.Cmd {
 	s.wizard.Error = nil
 	s.busy = "Fetching subscription"
 	return s.bg(s.busy, func() tea.Msg {
-		n, c, u, e := ProviderCountriesURL(s.home, rawURL, via, func(_ context.Context, raw string, o fetch.Options) (*fetch.Result, error) {
+		n, c, u, e := providerCountriesURLCtx(ctx, s.home, rawURL, via, func(_ context.Context, raw string, o fetch.Options) (*fetch.Result, error) {
 			return s.fetchSafe(ctx, raw, o)
 		})
 		return providerResultMsg{kind: "preview", value: previewData{nodes: n, counts: c, unknown: u}, err: e}

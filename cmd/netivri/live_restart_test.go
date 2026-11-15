@@ -12,10 +12,11 @@ import (
 	"testing"
 	"time"
 
+	mihauth "github.com/metacubex/mihomo/component/auth"
+
 	"github.com/PHPCraftdream/netivri/internal/auth"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/servers"
-	mihauth "github.com/metacubex/mihomo/component/auth"
 )
 
 func TestRetryRestoresAppliedButKeepsNewestValidConfig(t *testing.T) {
@@ -493,12 +494,12 @@ func TestAccountPolicyConcurrentVerificationAndReplacement(t *testing.T) {
 	start := make(chan struct{})
 	errs := make(chan error, readers)
 	var wg sync.WaitGroup
-	for i := 0; i < readers; i++ {
+	for range readers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			<-start
-			for j := 0; j < 100; j++ {
+			for range 100 {
 				mihauth.VerifyWithRemote(a, "alice", "fixture-password", remote)
 				if mihauth.VerifyWithRemote(a, "alice", "wrong-password", remote) {
 					select {
@@ -511,7 +512,7 @@ func TestAccountPolicyConcurrentVerificationAndReplacement(t *testing.T) {
 		}()
 	}
 	close(start)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		updated := *cfg
 		updated.Accounts = append([]config.Account(nil), cfg.Accounts...)
 		if i%2 == 0 {

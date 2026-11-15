@@ -23,7 +23,7 @@ import (
 // answers: a destination that is black-holed.
 func silentServer(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("silent listen: %v", err)
 	}
@@ -35,7 +35,7 @@ func silentServer(t *testing.T) string {
 				return
 			}
 			go func(c net.Conn) {
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(testTimeout))
 				_, _ = io.Copy(io.Discard, c)
 			}(c)
@@ -79,8 +79,8 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 
 	// Several connections wait for an answer together and give up together.
 	// That alone is no block: the node must be seen answering afterwards.
-	var waiting []net.Conn
-	for i := 0; i < silentNeeded; i++ {
+	waiting := make([]net.Conn, 0, silentNeeded)
+	for i := range silentNeeded {
 		c, err := openAccountSOCKS5(t, instance.Addr(), blackhole, backend, "alice", alicePassword)
 		if err != nil {
 			t.Fatalf("silent connection %d: %v", i, err)
@@ -142,13 +142,11 @@ func TestSilentSiteMovesToTheNextNodeOverARealRelay(t *testing.T) {
 // TestDialTimeoutBlocksOnlyTheSilentSite verifies that real member SOCKS5
 // dial timeouts count as unanswered site dials while healthy probes keep the
 // node available for other destinations.
-func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
-	blackholeListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("blackhole listen: %v", err)
-	}
-	defer blackholeListener.Close()
-	health := newHealthTable()
+// serveBlackhole answers the SOCKS5 greeting and request on ln's connections,
+// then withholds the CONNECT reply until the dial gives up, and records a probe
+// of the "first" node meanwhile. It stops at test cleanup.
+func serveBlackhole(t *testing.T, ln net.Listener, health *healthTable) {
+	t.Helper()
 	probeDuringDial := func() { health.recordProbe("first", true, time.Millisecond) }
 	blackholeDone := make(chan struct{})
 	var connsMu sync.Mutex
@@ -157,7 +155,7 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 	go func() {
 		defer close(blackholeDone)
 		for {
-			c, acceptErr := blackholeListener.Accept()
+			c, acceptErr := ln.Accept()
 			if acceptErr != nil {
 				return
 			}
@@ -167,7 +165,7 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 			handlers.Add(1)
 			go func(c net.Conn) {
 				defer handlers.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				_ = c.SetDeadline(time.Now().Add(testTimeout))
 				greeting := make([]byte, 3)
 				if _, e := io.ReadFull(c, greeting); e != nil {
@@ -178,7 +176,8 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 				if _, e := io.ReadFull(c, request[:4]); e != nil {
 					return
 				}
-				if request[3] == 3 {
+				switch request[3] {
+				case 3:
 					if _, e := io.ReadFull(c, request[4:5]); e != nil {
 						return
 					}
@@ -186,11 +185,11 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 					if _, e := io.ReadFull(c, domain); e != nil {
 						return
 					}
-				} else if request[3] == 1 {
+				case 1:
 					if _, e := io.CopyN(io.Discard, c, 6); e != nil {
 						return
 					}
-				} else if request[3] == 4 {
+				case 4:
 					if _, e := io.CopyN(io.Discard, c, 18); e != nil {
 						return
 					}
@@ -205,7 +204,7 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 		}
 	}()
 	t.Cleanup(func() {
-		_ = blackholeListener.Close()
+		_ = ln.Close()
 		<-blackholeDone
 		connsMu.Lock()
 		for _, c := range capturedConns {
@@ -214,6 +213,16 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 		connsMu.Unlock()
 		handlers.Wait()
 	})
+}
+
+func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
+	blackholeListener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("blackhole listen: %v", err)
+	}
+	defer func() { _ = blackholeListener.Close() }()
+	health := newHealthTable()
+	serveBlackhole(t, blackholeListener, health)
 
 	second, secondAddress := startFakeUpstream(t)
 	backend, _ := countEchoServer(t)
@@ -237,7 +246,7 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 	sink := &eventSink{}
 	g.events = sink.add
 
-	for i := 0; i < silentNeeded; i++ {
+	for i := range silentNeeded {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		conn, dialErr := g.DialContext(ctx, dialMetadata("alice", blackhole))
 		cancel()
@@ -265,7 +274,7 @@ func TestDialTimeoutBlocksOnlyTheSilentSite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fourth dial: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(testTimeout))
 	payload := []byte("timeout-failover")
 	if _, err := conn.Write(payload); err != nil {

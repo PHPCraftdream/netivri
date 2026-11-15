@@ -62,7 +62,11 @@ func TestPrepareRoutesPostPreservesDirectAccountRoute(t *testing.T) {
 	if proxies[0]["name"] != "netivri-r0-0-post" || proxies[1]["name"] != "netivri-r0-0" || proxies[0]["dialer-proxy"] != "netivri-r0-0" {
 		t.Fatalf("proxies=%v", proxies)
 	}
-	if groups[0]["proxies"].([]string)[0] != "netivri-r0-0-post" || rules[len(rules)-1] != "MATCH,DIRECT" {
+	groupProxies, ok := groups[0]["proxies"].([]string)
+	if !ok {
+		t.Fatalf("group proxies are %T, want []string", groups[0]["proxies"])
+	}
+	if groupProxies[0] != "netivri-r0-0-post" || rules[len(rules)-1] != "MATCH,DIRECT" {
 		t.Fatalf("groups/rules=%v/%v", groups, rules)
 	}
 }
@@ -101,7 +105,11 @@ func TestPrepareRoutesPreUsesIndependentHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	pre, member := proxies[0], proxies[1]
-	if _, ok := pre["dialer-proxy"]; ok || member["dialer-proxy"] != pre["name"] || groups[0]["proxies"].([]string)[0] != member["name"] {
+	groupProxies, isList := groups[0]["proxies"].([]string)
+	if !isList {
+		t.Fatalf("group proxies are %T, want []string", groups[0]["proxies"])
+	}
+	if _, ok := pre["dialer-proxy"]; ok || member["dialer-proxy"] != pre["name"] || groupProxies[0] != member["name"] {
 		t.Fatalf("proxies/groups=%v/%v", proxies, groups)
 	}
 }

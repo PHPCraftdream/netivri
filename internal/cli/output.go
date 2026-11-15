@@ -138,5 +138,8 @@ func Fail(err error) {
 func writeJSON(w io.Writer, v any) {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	_ = enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		// Nothing else can report a failed write to the CLI writer.
+		return
+	}
 }

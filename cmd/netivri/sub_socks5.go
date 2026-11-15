@@ -46,8 +46,8 @@ func (a *subApp) setSOCKS5(args []string) error {
 		if ed.Replace != nil {
 			*h.out = replaceHopList(*ed.Replace)
 		} else {
-			copy := ed
-			*h.edit = &copy
+			edited := ed
+			*h.edit = &edited
 		}
 	}
 	if o.Pre == nil && o.Post == nil && o.PreEdit == nil && o.PostEdit == nil {

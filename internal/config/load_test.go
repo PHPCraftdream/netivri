@@ -136,7 +136,8 @@ func TestLoadErrorHidesDocumentText(t *testing.T) {
 		if err == nil {
 			t.Fatalf("fixture %d: expected an error", i)
 		}
-		cliErr, ok := err.(*cli.Error)
+		var cliErr *cli.Error
+		ok := errors.As(err, &cliErr)
 		if !ok {
 			t.Fatalf("fixture %d: error type = %T, want *cli.Error", i, err)
 		}
@@ -185,7 +186,8 @@ func assertConfigInvalid(t *testing.T, err error) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	cliErr, ok := err.(*cli.Error)
+	var cliErr *cli.Error
+	ok := errors.As(err, &cliErr)
 	if !ok {
 		t.Fatalf("error type = %T, want *cli.Error", err)
 	}

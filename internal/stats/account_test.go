@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// acct builds an account sample.
-func acct(at time.Time, login, label string, kind Kind, ok bool, ms int) AccountSample {
-	return AccountSample{At: at, Login: login, Label: label, Kind: kind, OK: ok,
+// acct builds a dial account sample.
+func acct(at time.Time, login, label string, ok bool, ms int) AccountSample {
+	return AccountSample{At: at, Login: login, Label: label, Kind: KindDial, OK: ok,
 		Delay: time.Duration(ms) * time.Millisecond}
 }
 
@@ -24,16 +24,16 @@ func makeV1DB(t *testing.T, path string) {
 	t.Helper()
 	db := openRaw(t, path)
 	for _, stmt := range []string{schemaV1, "PRAGMA user_version = 1"} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO node (id, label, provider, country, first_seen, last_seen) VALUES (1, 'p1/a', 'prov1', 'DE', 100, 100)"); err != nil {
 		t.Fatalf("insert node: %v", err)
 	}
-	for i := 0; i < 3; i++ {
-		if _, err := db.Exec(
+	for i := range 3 {
+		if _, err := db.ExecContext(t.Context(),
 			"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)", t0.UnixMilli()+int64(i)); err != nil {
 			t.Fatalf("insert sample: %v", err)
 		}
@@ -47,25 +47,25 @@ func makeV2DB(t *testing.T, path string) {
 	t.Helper()
 	db := openRaw(t, path)
 	for _, stmt := range []string{schemaV1, schemaV2, "PRAGMA user_version = 2"} {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := db.ExecContext(t.Context(), stmt); err != nil {
 			t.Fatalf("exec %q: %v", stmt, err)
 		}
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO node (id, label, provider, country, first_seen, last_seen) VALUES (1, 'p1/a', 'prov1', 'DE', 100, 100)"); err != nil {
 		t.Fatalf("insert node: %v", err)
 	}
-	for i := 0; i < 2; i++ {
-		if _, err := db.Exec(
+	for i := range 2 {
+		if _, err := db.ExecContext(t.Context(),
 			"INSERT INTO sample (ts, node, kind, ok, ms, bytes) VALUES (?, 1, 1, 1, 100, 0)", t0.UnixMilli()+int64(i)); err != nil {
 			t.Fatalf("insert sample: %v", err)
 		}
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO account (id, login, first_seen, last_seen) VALUES (1, 'alice', 100, 100)"); err != nil {
 		t.Fatalf("insert account: %v", err)
 	}
-	if _, err := db.Exec(
+	if _, err := db.ExecContext(t.Context(),
 		"INSERT INTO account_sample (ts, account, node, kind, ok, ms, bytes, up, down) VALUES (?, 1, 1, 2, 1, 100, 0, 0, 0)",
 		t0.UnixMilli()); err != nil {
 		t.Fatalf("insert account_sample: %v", err)
@@ -80,13 +80,13 @@ func TestMigrateV2ToV3KeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if s.version != 4 {
 		t.Fatalf("version = %d, want 4", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 4 {
@@ -118,7 +118,7 @@ func TestReadOnlyV2NoNameColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	defer ro.Close()
+	defer func() { _ = ro.Close() }()
 	if ro.version != 2 {
 		t.Fatalf("version = %d, want 2", ro.version)
 	}
@@ -146,13 +146,13 @@ func TestMigrateV1KeepsData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 	if s.version != 4 {
 		t.Fatalf("version = %d, want 4", s.version)
 	}
 	raw := openRaw(t, path)
 	var version int
-	if err := raw.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := raw.QueryRowContext(t.Context(), "PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
 	if version != 4 {
@@ -187,7 +187,7 @@ func TestReadOnlyV1AccountsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
-	defer ro.Close()
+	defer func() { _ = ro.Close() }()
 	if ro.version != 1 {
 		t.Fatalf("version = %d, want 1", ro.version)
 	}
@@ -218,9 +218,9 @@ func TestAccountsRawAggregates(t *testing.T) {
 	// alice: dials 2 ok (100, 300 ms) + 1 failed, throughput 100 up/200 down
 	// on p1/a; her failed dial sits on p2/b, so she spans two nodes.
 	for _, sm := range []AccountSample{
-		acct(t0, "alice", "p1/a", KindDial, true, 100),
-		acct(t0.Add(time.Second), "alice", "p1/a", KindDial, true, 300),
-		acct(t0.Add(2*time.Second), "alice", "p2/b", KindDial, false, 10),
+		acct(t0, "alice", "p1/a", true, 100),
+		acct(t0.Add(time.Second), "alice", "p1/a", true, 300),
+		acct(t0.Add(2*time.Second), "alice", "p2/b", false, 10),
 		acctSampleBytes(t0.Add(3*time.Second), "alice", "p1/a", 100, 200),
 		acctSampleBytes(t0.Add(4*time.Second), "bob", "p2/b", 500, 0),
 	} {
@@ -283,8 +283,8 @@ func TestAccountsHourlyPath(t *testing.T) {
 	}
 	at := base.Add(-2 * time.Hour).Truncate(time.Hour)
 	for _, sm := range []AccountSample{
-		acct(at, "carol", "p1/a", KindDial, true, 100),
-		acct(at.Add(time.Second), "carol", "p1/a", KindDial, false, 500),
+		acct(at, "carol", "p1/a", true, 100),
+		acct(at.Add(time.Second), "carol", "p1/a", false, 500),
 		acctSampleBytes(at.Add(2*time.Second), "carol", "p1/a", 1000, 2000),
 		acctSampleBytes(at.Add(3*time.Second), "carol", "p2/b", 3000, 0),
 	} {
@@ -324,17 +324,17 @@ func TestPruneFoldsAccountSamples(t *testing.T) {
 	// The fold groups by kind, so the dials and the throughput sample land
 	// in separate account_hourly rows.
 	for _, sm := range []AccountSample{
-		acct(old, "dave", "p1/a", KindDial, true, 100),
-		acct(old.Add(time.Second), "dave", "p1/a", KindDial, true, 300),
-		acct(old.Add(2*time.Second), "dave", "p1/a", KindDial, false, 10),
+		acct(old, "dave", "p1/a", true, 100),
+		acct(old.Add(time.Second), "dave", "p1/a", true, 300),
+		acct(old.Add(2*time.Second), "dave", "p1/a", false, 10),
 		acctSampleBytes(old.Add(3*time.Second), "dave", "p1/a", 10, 20),
-		acct(t0, "dave", "p1/a", KindDial, true, 200), // inside retention
+		acct(t0, "dave", "p1/a", true, 200), // inside retention
 	} {
 		s.RecordAccount(sm)
 	}
 	mustFlush(t, s)
 	// An account_hourly row already past the 90 day horizon.
-	if _, err := s.db.Exec(
+	if _, err := s.db.ExecContext(t.Context(),
 		"INSERT INTO account_hourly (hour, account, node, kind, n, ok, ms_sum, ms_max, bytes) VALUES (?, 1, 1, 1, 1, 1, 0, 0, 0)",
 		oldHour-90*24); err != nil {
 		t.Fatalf("insert stale hourly: %v", err)
@@ -348,7 +348,7 @@ func TestPruneFoldsAccountSamples(t *testing.T) {
 		t.Fatalf("account_sample rows after prune = %d, want 1", n)
 	}
 	var n, ok, msSum, msMax, bytes, up, down int64
-	if err := raw.QueryRow(
+	if err := raw.QueryRowContext(t.Context(),
 		"SELECT n, ok, ms_sum, ms_max, bytes, up, down FROM account_hourly WHERE hour = ? AND kind = 2", oldHour,
 	).Scan(&n, &ok, &msSum, &msMax, &bytes, &up, &down); err != nil {
 		t.Fatalf("folded account_hourly dial row: %v", err)
@@ -357,7 +357,7 @@ func TestPruneFoldsAccountSamples(t *testing.T) {
 		t.Fatalf("folded dial row = %d/%d/%d/%d/%d/%d/%d, want 3/2/400/300/0/0/0",
 			n, ok, msSum, msMax, bytes, up, down)
 	}
-	if err := raw.QueryRow(
+	if err := raw.QueryRowContext(t.Context(),
 		"SELECT n, ok, ms_sum, ms_max, bytes, up, down FROM account_hourly WHERE hour = ? AND kind = 3", oldHour,
 	).Scan(&n, &ok, &msSum, &msMax, &bytes, &up, &down); err != nil {
 		t.Fatalf("folded account_hourly throughput row: %v", err)
@@ -367,7 +367,7 @@ func TestPruneFoldsAccountSamples(t *testing.T) {
 			n, ok, msSum, msMax, bytes, up, down)
 	}
 	var stale int64
-	if err := raw.QueryRow("SELECT COUNT(*) FROM account_hourly WHERE hour < ?",
+	if err := raw.QueryRowContext(t.Context(), "SELECT COUNT(*) FROM account_hourly WHERE hour < ?",
 		base.Unix()/3600-90*24).Scan(&stale); err != nil {
 		t.Fatalf("count stale account_hourly: %v", err)
 	}
@@ -379,11 +379,12 @@ func TestPruneFoldsAccountSamples(t *testing.T) {
 // trimPendingAcct must bound the retry buffer to the newest
 // maxPendingSamples samples and count the dropped ones.
 func TestTrimPendingAcct(t *testing.T) {
+	const extra = 10
 	s := newTestStore(t, nil)
-	var batch []AccountSample
-	for i := 0; i < maxPendingSamples+10; i++ {
+	batch := make([]AccountSample, 0, maxPendingSamples+extra)
+	for i := range maxPendingSamples + extra {
 		batch = append(batch, acct(base.Add(time.Duration(i)*time.Millisecond),
-			"erin", "p1/a", KindDial, true, i))
+			"erin", "p1/a", true, i))
 	}
 	got := s.trimPendingAcct(batch)
 	if len(got) != maxPendingSamples {
@@ -392,7 +393,7 @@ func TestTrimPendingAcct(t *testing.T) {
 	if last := got[len(got)-1]; last != batch[len(batch)-1] {
 		t.Fatalf("kept the wrong end: last = %+v, want %+v", last, batch[len(batch)-1])
 	}
-	if want := uint64(len(batch) - maxPendingSamples); s.Dropped() != want {
+	if want := uint64(extra); s.Dropped() != want {
 		t.Fatalf("Dropped = %d, want %d", s.Dropped(), want)
 	}
 }
@@ -410,7 +411,7 @@ func TestAccountsMixedWindow(t *testing.T) {
 	// a clock past the retention.
 	old := base.Add(-10 * 24 * time.Hour).Truncate(time.Hour)
 	for _, sm := range []AccountSample{
-		acct(old, "fen", "p1/a", KindDial, true, 50),
+		acct(old, "fen", "p1/a", true, 50),
 		acctSampleBytes(old.Add(time.Second), "fen", "p1/a", 30, 70),
 	} {
 		s.RecordAccount(sm)
@@ -421,8 +422,8 @@ func TestAccountsMixedWindow(t *testing.T) {
 	}
 	// Recent set: written after the prune so it stays in account_sample.
 	for _, sm := range []AccountSample{
-		acct(base.Add(-time.Hour), "fen", "p1/a", KindDial, true, 100),
-		acct(base.Add(-time.Hour).Add(time.Second), "fen", "p1/a", KindDial, true, 300),
+		acct(base.Add(-time.Hour), "fen", "p1/a", true, 100),
+		acct(base.Add(-time.Hour).Add(time.Second), "fen", "p1/a", true, 300),
 		acctSampleBytes(base.Add(-time.Hour).Add(2*time.Second), "fen", "p1/a", 100, 200),
 	} {
 		s.RecordAccount(sm)
@@ -459,9 +460,9 @@ func TestAccountNodes(t *testing.T) {
 	// p1/a: 2 ok dials (100, 300 ms) and 100 up/200 down; p2/b: 1 failed
 	// dial and 500 up only.
 	for _, sm := range []AccountSample{
-		acct(t0, "alice", "p1/a", KindDial, true, 100),
-		acct(t0.Add(time.Second), "alice", "p1/a", KindDial, true, 300),
-		acct(t0.Add(2*time.Second), "bob", "p2/b", KindDial, false, 10),
+		acct(t0, "alice", "p1/a", true, 100),
+		acct(t0.Add(time.Second), "alice", "p1/a", true, 300),
+		acct(t0.Add(2*time.Second), "bob", "p2/b", false, 10),
 		acctSampleBytes(t0.Add(3*time.Second), "alice", "p1/a", 100, 200),
 		acctSampleBytes(t0.Add(4*time.Second), "bob", "p2/b", 500, 0),
 	} {
@@ -528,8 +529,8 @@ func TestAccountNodesHourlyPath(t *testing.T) {
 	}
 	at := base.Add(-2 * time.Hour).Truncate(time.Hour)
 	for _, sm := range []AccountSample{
-		acct(at, "carol", "p1/a", KindDial, true, 100),
-		acct(at.Add(time.Second), "carol", "p1/a", KindDial, false, 500),
+		acct(at, "carol", "p1/a", true, 100),
+		acct(at.Add(time.Second), "carol", "p1/a", false, 500),
 		acctSampleBytes(at.Add(2*time.Second), "carol", "p1/a", 1000, 2000),
 	} {
 		s.RecordAccount(sm)
@@ -567,8 +568,8 @@ func TestAccountQueriesOnWritableStoreNoDeadlock(t *testing.T) {
 		t.Fatalf("SetNodes: %v", err)
 	}
 	for _, sm := range []AccountSample{
-		acct(t0, "alice", "p1/a", KindDial, true, 100),
-		acct(t0.Add(time.Second), "bob", "p2/b", KindDial, true, 200),
+		acct(t0, "alice", "p1/a", true, 100),
+		acct(t0.Add(time.Second), "bob", "p2/b", true, 200),
 	} {
 		s.RecordAccount(sm)
 	}

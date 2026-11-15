@@ -27,7 +27,7 @@ func validTestDocument(entries []diskEntry) ([]byte, error) {
 
 func TestStoreRoundTripUTCAndSecretFree(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "state.ktav"))
-	raw := "https://synthetic-user:synthetic-password@Proxy.Example/path?token=synthetic-query#fragment"
+	raw := "https://synthetic-user:synthetic-password@Proxy.Example/path?token=synthetic-query#fragment" //nolint:gosec // G101: synthetic fixture URL, asserted never echoed
 	key, ok := HopKey(raw)
 	if !ok {
 		t.Fatal("synthetic proxy URL was rejected")

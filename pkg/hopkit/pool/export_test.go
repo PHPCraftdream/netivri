@@ -9,7 +9,7 @@ func TestExportPersistsOnlyQuarantinedMembersIncludingActiveLease(t *testing.T) 
 	clock := newTestClock()
 	p := newTestPool(clock, "healthy", "active", "waiting")
 	p.RecordSoft("healthy")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("active")
 		p.RecordHard("waiting")
 	}
@@ -45,7 +45,7 @@ func TestExportPersistsOnlyQuarantinedMembersIncludingActiveLease(t *testing.T) 
 func TestRestoreRoundTripReplacementAndImmediateEligibility(t *testing.T) {
 	clock := newTestClock()
 	source := newTestPool(clock, "healthy", "quarantined")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		source.RecordHard("quarantined")
 	}
 	clock.Set(testEpoch.Add(30 * time.Second))
@@ -98,7 +98,7 @@ func TestRestoreRoundTripReplacementAndImmediateEligibility(t *testing.T) {
 func TestRestoreIgnoresRemovedKeysAndUnknownEntries(t *testing.T) {
 	clock := newTestClock()
 	p := newTestPool(clock, "kept", "removed")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("removed")
 	}
 	p.Reconcile([]string{"kept"})
@@ -117,14 +117,14 @@ func TestReconcilePreservesSurvivingHealthAndLeaseAndDropsRemoved(t *testing.T) 
 	p.RecordSoft("active")
 	p.RecordSoft("active")
 	p.RecordSoft("healthy")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("active")
 	}
 	p.RecordHard("removed")
 	clock.Set(testEpoch.Add(30 * time.Second))
 	claims := p.DueProbes(clock.Now())
 	claim := requireSingleClaim(t, claims, "active")
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		p.RecordHard("waiting")
 	}
 

@@ -177,6 +177,30 @@ func TestGlobalPostPoolPrefersPoolOverScalar(t *testing.T) {
 
 func globalPoolOptions(hops ...string) Options { return Options{GlobalPostPool: hops} }
 
+// checkGlobalPool checks the first global post generation: the pool use of the
+// logical key, the two snapshot entries and the native direct probe targets.
+func checkGlobalPool(t *testing.T, m *hopPoolLifecycle, logical hopPoolLogicalKey, adapterName string) {
+	t.Helper()
+	use := m.uses[logical]
+	if use == nil || !use.direct || use.carrierMember != nil || use.adapterName != adapterName || use.pool == nil {
+		t.Fatalf("global pool use = %+v", use)
+	}
+	snapshot := m.snapshot()
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot has %d entries, want 2", len(snapshot))
+	}
+	for _, entry := range snapshot {
+		if entry.RouteKey != GlobalPoolRoute || entry.Role != "post" {
+			t.Fatalf("snapshot entry %+v is not the global post pool", entry)
+		}
+	}
+	for _, targets := range m.targets[use.pool] {
+		if len(targets) != 1 || !targets[0].direct || targets[0].uri == "" {
+			t.Fatal("global pool probe target is not native and direct")
+		}
+	}
+}
+
 func TestGlobalPostPoolLifecycleInstallsAdapterAndKeepsHealthAcrossGenerations(t *testing.T) {
 	a, b, c := "http://a.invalid:8080", "http://b.invalid:8080", "http://c.invalid:8080"
 	keyA, keyB, keyC := hopPoolKey(a), hopPoolKey(b), hopPoolKey(c)
@@ -206,24 +230,8 @@ func TestGlobalPostPoolLifecycleInstallsAdapterAndKeepsHealthAcrossGenerations(t
 		t.Fatalf("installed names = %v", names)
 	}
 	logical := hopPoolLogicalKey{role: postHopPool, route: GlobalPoolRoute, node: -1}
+	checkGlobalPool(t, m, logical, adapterName)
 	use := m.uses[logical]
-	if use == nil || !use.direct || use.carrierMember != nil || use.adapterName != adapterName || use.pool == nil {
-		t.Fatalf("global pool use = %+v", use)
-	}
-	snapshot := m.snapshot()
-	if len(snapshot) != 2 {
-		t.Fatalf("snapshot has %d entries, want 2", len(snapshot))
-	}
-	for _, entry := range snapshot {
-		if entry.RouteKey != GlobalPoolRoute || entry.Role != "post" {
-			t.Fatalf("snapshot entry %+v is not the global post pool", entry)
-		}
-	}
-	for _, targets := range m.targets[use.pool] {
-		if len(targets) != 1 || !targets[0].direct || targets[0].uri == "" {
-			t.Fatal("global pool probe target is not native and direct")
-		}
-	}
 
 	// Quarantine B, then reorder and add C: B stays quarantined, bindings stay.
 	for range 3 {

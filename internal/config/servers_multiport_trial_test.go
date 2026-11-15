@@ -93,7 +93,7 @@ func TestValidateTrialWildcardCountsWholeEndpoint(t *testing.T) {
 		cfg.Accounts[i] = Account{Login: "user" + string(rune('a'+i)), Password: InitPlaceholder}
 	}
 	cfg.Servers = []Server{{Name: "one", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 39011, Accounts: "usera", Params: map[string]string{"cipher": "2022-blake3-aes-128-gcm"}}}
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		cfg.Servers = append(cfg.Servers, Server{Name: "member" + string(rune('a'+i)), Protocol: "vmess", Bind: "127.0.0.1", Port: 39011, Accounts: "usera"})
 	}
 	if err := cfg.Validate(); err != nil {

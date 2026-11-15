@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/base64"
 	"io"
 	"net"
@@ -27,7 +28,7 @@ type httpHopUpstream struct {
 
 func httpHopServer(t *testing.T) *httpHopUpstream {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,19 +57,19 @@ func (s *httpHopUpstream) credentials() string {
 
 func (s *httpHopUpstream) serve(c net.Conn) {
 	defer s.wg.Done()
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(20 * time.Second))
 	br := bufio.NewReader(c)
 	req, err := http.ReadRequest(br)
 	if err != nil || req.Method != http.MethodConnect {
 		return
 	}
-	out, err := net.DialTimeout("tcp", req.Host, 5*time.Second)
+	out, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(context.Background(), "tcp", req.Host) //nolint:gosec // G704: the CONNECT target is the test's own fixture host
 	if err != nil {
 		_, _ = io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\n\r\n")
 		return
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 	_ = out.SetDeadline(time.Now().Add(20 * time.Second))
 	s.mu.Lock()
 	if s.auth == "" {

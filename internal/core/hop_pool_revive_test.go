@@ -55,7 +55,10 @@ func TestHopLifecycleReviverRoundUsesNativePoolProberForRecoveryAndRetrip(t *tes
 	}
 	proxies := make(map[string]C.Proxy, len(mappings))
 	for _, mapping := range mappings {
-		name := mapping["name"].(string)
+		name, ok := mapping["name"].(string)
+		if !ok {
+			t.Fatalf("proxy name is %T, want string", mapping["name"])
+		}
 		proxies[name] = testWarmProxy{name: name, typ: C.Socks5}
 	}
 	health := newHealthTable()
@@ -117,7 +120,10 @@ func TestWarmerCloseWaitsForLifecycleRevivalRound(t *testing.T) {
 	proxies := make(map[string]C.Proxy, len(mappings))
 	var blockingProxy *reviveTestProxy
 	for _, mapping := range mappings {
-		name := mapping["name"].(string)
+		name, ok := mapping["name"].(string)
+		if !ok {
+			t.Fatalf("proxy name is %T, want string", mapping["name"])
+		}
 		proxy := &reviveTestProxy{testWarmProxy: testWarmProxy{name: name, typ: C.Socks5}}
 		proxy.dial = func(context.Context, *C.Metadata) (C.Conn, error) { return &fakeConn{}, nil }
 		proxies[name] = proxy

@@ -15,14 +15,14 @@ import (
 )
 
 func TestServersCoverKeyHints(t *testing.T) {
-	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	s := mustAs[*serversScreen](t, newServersScreen(t.TempDir(), tui.Env{}))
 	if got := s.KeyHints(); !strings.Contains(got, "a Add") || !strings.Contains(got, "r Reload") {
 		t.Fatalf("key hints: %q", got)
 	}
 }
 
 func TestServersCoverDeliverWithoutBackground(t *testing.T) {
-	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	s := mustAs[*serversScreen](t, newServersScreen(t.TempDir(), tui.Env{}))
 	c := s.deliver("lbl", func() tea.Msg { return "work" })
 	if c == nil {
 		t.Fatal("deliver returned nil cmd")
@@ -90,7 +90,7 @@ func TestServersCoverSafeDetailValue(t *testing.T) {
 }
 
 func TestServersCoverWindowSizeAndTheme(t *testing.T) {
-	s := newServersScreen(t.TempDir(), tui.Env{}).(*serversScreen)
+	s := mustAs[*serversScreen](t, newServersScreen(t.TempDir(), tui.Env{}))
 	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	if s.workspace.Width != 120 || s.workspace.Height != 40 {
 		t.Fatal("window size not applied to servers workspace")
@@ -176,7 +176,7 @@ func TestInteractiveUsageHint(t *testing.T) {
 		t.Fatalf("usage hint not attached: %#v", err)
 	}
 	plain := errors.New("plain")
-	if interactiveUsageHint(plain) != plain {
+	if interactiveUsageHint(plain) != plain { //nolint:errorlint // identity check: pass-through must return the same error value, not a wrap
 		t.Fatal("non-usage errors should pass through")
 	}
 }

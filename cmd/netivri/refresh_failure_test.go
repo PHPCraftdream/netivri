@@ -208,7 +208,7 @@ func TestRefreshFailuresInALongRunWarnOncePerHour(t *testing.T) {
 	var debugs []string
 	r.l.debugf = func(format string, args ...any) { debugs = append(debugs, fmt.Sprintf(format, args...)) }
 
-	for i := 0; i < 7; i++ { // t = 0, 10, ... 60 minutes
+	for i := range 7 { // t = 0, 10, ... 60 minutes
 		r.refresh(t)
 		if want := map[int]int{0: 1, 5: 1, 6: 2}[i]; want != 0 && len(r.warns) != want {
 			t.Fatalf("after failure %d: %d warns, want %d: %q", i+1, len(r.warns), want, r.warns)

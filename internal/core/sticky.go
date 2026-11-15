@@ -183,7 +183,7 @@ func (g *stickyGroup) betterStable(member int, now time.Time, login, site string
 	tier := g.tiers[member]
 	nowNs := now.UnixNano()
 	for i := 0; i < len(g.tiers) && g.tiers[i] < tier; i++ {
-		if g.healths[i].stableFor(nowNs, after) && !(skipBlocked && g.blocks.blocked(login, site, i, now)) {
+		if g.healths[i].stableFor(nowNs, after) && (!skipBlocked || !g.blocks.blocked(login, site, i, now)) {
 			return true
 		}
 	}
@@ -257,7 +257,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	label := g.labels[index]
 	started := g.clock()
 
-	conn, err, took, recorded := g.dialMember(ctx, index, metadata)
+	conn, took, recorded, err := g.dialMember(ctx, index, metadata)
 	if recorded && !isHopPoolDialError(err) {
 		g.health.recordDialAtKey(g.healthKeys[index], site, err, took)
 		if err != nil {
@@ -290,7 +290,7 @@ func (g *stickyGroup) DialContext(ctx context.Context, metadata *C.Metadata) (C.
 	}
 	retryLabel := g.labels[retry]
 	retryStarted := g.clock()
-	retryConn, retryErr, retryTook, retryRecorded := g.dialMember(ctx, retry, metadata)
+	retryConn, retryTook, retryRecorded, retryErr := g.dialMember(ctx, retry, metadata)
 	if retryRecorded && !isHopPoolDialError(retryErr) {
 		g.health.recordDialAtKey(g.healthKeys[retry], site, retryErr, retryTook)
 		if retryErr != nil {
@@ -427,120 +427,174 @@ func buildRoutePlansGen(o Options, gen int) ([]routePlan, error) {
 		if !ok {
 			continue
 		}
-		if len(labels) != len(nodes) {
-			return nil, nodeInvalid("node label count does not match the route")
-		}
-		for _, label := range labels {
-			if !validNodeLabel(label) {
-				return nil, nodeInvalid("invalid node label")
-			}
+		if err := checkNodeLabels(labels, len(nodes)); err != nil {
+			return nil, err
 		}
 	}
 	if len(o.AccountRoute) == 0 {
 		return nil, nil
 	}
-	routeKeys := make(map[string]struct{}, len(o.AccountRoute))
-	for _, key := range o.AccountRoute {
-		routeKeys[key] = struct{}{}
-	}
-	keys := make([]string, 0, len(routeKeys))
-	for key := range routeKeys {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
+	keys := distinctRouteKeys(o.AccountRoute)
 	plans := make([]routePlan, 0, len(keys))
 	for index, key := range keys {
-		nodes := o.RouteNodes[key]
-		preRoute, postRoute := o.routePrePool(key), o.routePostPool(key)
-		directPost := len(nodes) == 0 && len(postRoute) > 0 && len(preRoute) == 0
-		directRoute := len(nodes) == 0 && len(preRoute) == 0 && len(postRoute) == 0 && (explicitNoChain(o.RoutePre, key) || explicitEmptyPool(o.RoutePrePool, key)) && (explicitNoChain(o.RoutePost, key) || explicitEmptyPool(o.RoutePostPool, key))
-		if len(nodes) == 0 && !directPost && !directRoute {
-			return nil, &cli.Error{
-				Code:    "NO_NODES_FOR_COUNTRY",
-				Message: "no nodes are available for an account route",
-				Exit:    cli.ExitNotFound,
-			}
-		}
-		if directPost || directRoute {
-			continue
-		}
-		plan := routePlan{index: index, gen: gen, key: key, group: groupProxyName(gen, index)}
-		if err := checkedNodeHops(o, key, len(nodes)); err != nil {
-			return nil, err
-		}
-		if err := checkedPoolNodeHops(o, key, len(nodes)); err != nil {
-			return nil, err
-		}
-		plan.hops = make([]hopSet, len(nodes))
-		for node, mapping := range nodes {
-			plan.hops[node].node = nodeHop(mapping)
-			pre, post := o.nodePrePool(key, node), o.nodePostPool(key, node)
-			if len(pre) == 1 {
-				plan.hops[node].pre = chainHop(pre[0])
-			}
-			if len(post) == 1 {
-				plan.hops[node].post = chainHop(post[0])
-			}
-		}
-		for node := range nodes {
-			preValues, postValues := o.nodePrePool(key, node), o.nodePostPool(key, node)
-			prePool := newHopPoolSpec(preHopPool, preValues, gen)
-			postPool := newHopPoolSpec(postHopPool, postValues, gen)
-			plan.prePools = append(plan.prePools, prePool)
-			plan.postPools = append(plan.postPools, postPool)
-			name := memberProxyName(gen, index, node)
-			if len(postValues) > 0 {
-				name = helperProxyNameFromMember(name, "post")
-			}
-			plan.names = append(plan.names, name)
-			plan.labels = append(plan.labels, fmt.Sprintf("r%d-%d", index, node))
-		}
-		if labels, ok := o.NodeLabels[key]; ok {
-			if len(labels) != len(nodes) {
-				return nil, nodeInvalid("node label count does not match the route")
-			}
-			for _, label := range labels {
-				if !validNodeLabel(label) {
-					return nil, nodeInvalid("invalid node label")
-				}
-			}
-			plan.labels = append([]string(nil), labels...)
-		}
-		plan.healthKeys = make([]string, len(plan.labels))
-		for i, label := range plan.labels {
-			pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
-			if len(pre) <= 1 && len(post) <= 1 {
-				preURL, postURL := "", ""
-				if len(pre) == 1 {
-					preURL = pre[0]
-				}
-				if len(post) == 1 {
-					postURL = post[0]
-				}
-				plan.healthKeys[i] = healthMemberKey(label, preURL, postURL)
-			} else {
-				plan.healthKeys[i] = healthPoolMemberKey(label, pre, post)
-			}
-		}
-		plan.carrierHealthKeys = append([]string(nil), plan.healthKeys...)
-		for i := range plan.labels {
-			pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
-			prePooled := i < len(plan.prePools) && plan.prePools[i] != nil && len(plan.prePools[i].keys) >= 2
-			postPooled := i < len(plan.postPools) && plan.postPools[i] != nil && len(plan.postPools[i].keys) >= 2
-			if len(post) > 0 && (prePooled || postPooled) {
-				// Carrier probes maintain independent evidence and must not clear full-route failure streaks.
-				plan.carrierHealthKeys[i] = healthPoolMemberKey(plan.labels[i], pre, nil)
-			}
-		}
-		tiers, err := checkedTiers(o.NodeTiers[key], len(nodes))
+		plan, ok, err := buildRoutePlan(o, gen, index, key)
 		if err != nil {
 			return nil, err
 		}
-		plan.tiers = tiers
-		plans = append(plans, plan)
+		if ok {
+			plans = append(plans, plan)
+		}
 	}
 	return plans, nil
+}
+
+// checkNodeLabels checks the statistics labels of a route of n nodes: one per
+// node, each a valid label.
+func checkNodeLabels(labels []string, n int) error {
+	if len(labels) != n {
+		return nodeInvalid("node label count does not match the route")
+	}
+	for _, label := range labels {
+		if !validNodeLabel(label) {
+			return nodeInvalid("invalid node label")
+		}
+	}
+	return nil
+}
+
+// distinctRouteKeys lists the distinct route keys of routes, sorted.
+func distinctRouteKeys(routes map[string]string) []string {
+	set := make(map[string]struct{}, len(routes))
+	for _, key := range routes {
+		set[key] = struct{}{}
+	}
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// buildRoutePlan plans route key, the index-th route of generation gen. ok is
+// false for a direct route, which has no sticky group.
+func buildRoutePlan(o Options, gen, index int, key string) (routePlan, bool, error) {
+	nodes := o.RouteNodes[key]
+	directPost, directRoute := o.routeKinds(key, len(nodes))
+	if len(nodes) == 0 && !directPost && !directRoute {
+		return routePlan{}, false, &cli.Error{
+			Code:    "NO_NODES_FOR_COUNTRY",
+			Message: "no nodes are available for an account route",
+			Exit:    cli.ExitNotFound,
+		}
+	}
+	if directPost || directRoute {
+		return routePlan{}, false, nil
+	}
+	plan := routePlan{index: index, gen: gen, key: key, group: groupProxyName(gen, index)}
+	if err := checkedNodeHops(o, key, len(nodes)); err != nil {
+		return routePlan{}, false, err
+	}
+	if err := checkedPoolNodeHops(o, key, len(nodes)); err != nil {
+		return routePlan{}, false, err
+	}
+	plan.hops = planHops(o, key, nodes)
+	plan.addMembers(o, key, nodes)
+	if err := plan.applyNodeLabels(o, key, len(nodes)); err != nil {
+		return routePlan{}, false, err
+	}
+	plan.setHealthKeys(o, key)
+	plan.setCarrierHealthKeys(o, key)
+	tiers, err := checkedTiers(o.NodeTiers[key], len(nodes))
+	if err != nil {
+		return routePlan{}, false, err
+	}
+	plan.tiers = tiers
+	return plan, true, nil
+}
+
+// planHops records the chain of every node of route key: the node and its
+// single pre and post hops.
+func planHops(o Options, key string, nodes []map[string]any) []hopSet {
+	hops := make([]hopSet, len(nodes))
+	for node, mapping := range nodes {
+		hops[node].node = nodeHop(mapping)
+		pre, post := o.nodePrePool(key, node), o.nodePostPool(key, node)
+		if len(pre) == 1 {
+			hops[node].pre = chainHop(pre[0])
+		}
+		if len(post) == 1 {
+			hops[node].post = chainHop(post[0])
+		}
+	}
+	return hops
+}
+
+// addMembers adds the hop pools, the member names and the default labels of
+// the nodes of route key.
+func (plan *routePlan) addMembers(o Options, key string, nodes []map[string]any) {
+	for node := range nodes {
+		preValues, postValues := o.nodePrePool(key, node), o.nodePostPool(key, node)
+		prePool := newHopPoolSpec(preHopPool, preValues, plan.gen)
+		postPool := newHopPoolSpec(postHopPool, postValues, plan.gen)
+		plan.prePools = append(plan.prePools, prePool)
+		plan.postPools = append(plan.postPools, postPool)
+		name := memberProxyName(plan.gen, plan.index, node)
+		if len(postValues) > 0 {
+			name = helperProxyNameFromMember(name, "post")
+		}
+		plan.names = append(plan.names, name)
+		plan.labels = append(plan.labels, fmt.Sprintf("r%d-%d", plan.index, node))
+	}
+}
+
+// applyNodeLabels replaces the default labels of route key of n nodes with the
+// configured ones, when it has any.
+func (plan *routePlan) applyNodeLabels(o Options, key string, n int) error {
+	labels, ok := o.NodeLabels[key]
+	if !ok {
+		return nil
+	}
+	if err := checkNodeLabels(labels, n); err != nil {
+		return err
+	}
+	plan.labels = append([]string(nil), labels...)
+	return nil
+}
+
+// setHealthKeys sets the health key of every member of route key: its label
+// with the hop URLs, or with the hop pools when a hop has more than one.
+func (plan *routePlan) setHealthKeys(o Options, key string) {
+	plan.healthKeys = make([]string, len(plan.labels))
+	for i, label := range plan.labels {
+		pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
+		if len(pre) <= 1 && len(post) <= 1 {
+			preURL, postURL := "", ""
+			if len(pre) == 1 {
+				preURL = pre[0]
+			}
+			if len(post) == 1 {
+				postURL = post[0]
+			}
+			plan.healthKeys[i] = healthMemberKey(label, preURL, postURL)
+		} else {
+			plan.healthKeys[i] = healthPoolMemberKey(label, pre, post)
+		}
+	}
+}
+
+// setCarrierHealthKeys sets the health keys of the carrier probes of route key.
+func (plan *routePlan) setCarrierHealthKeys(o Options, key string) {
+	plan.carrierHealthKeys = append([]string(nil), plan.healthKeys...)
+	for i := range plan.labels {
+		pre, post := o.nodePrePool(key, i), o.nodePostPool(key, i)
+		prePooled := i < len(plan.prePools) && plan.prePools[i] != nil && len(plan.prePools[i].keys) >= 2
+		postPooled := i < len(plan.postPools) && plan.postPools[i] != nil && len(plan.postPools[i].keys) >= 2
+		if len(post) > 0 && (prePooled || postPooled) {
+			// Carrier probes maintain independent evidence and must not clear full-route failure streaks.
+			plan.carrierHealthKeys[i] = healthPoolMemberKey(plan.labels[i], pre, nil)
+		}
+	}
 }
 
 // installStickyGroups replaces every route select group in Mihomo's proxy
@@ -887,7 +941,7 @@ func (p *throughputPoller) run() {
 			now := p.clock.Now()
 			prev := p.lastTick
 			p.lastTick = now
-			p.collectAt(prev, now, now.Sub(prev))
+			p.collectAt(prev, now.Sub(prev))
 		}
 	}
 }
@@ -898,7 +952,7 @@ func (p *throughputPoller) run() {
 // whole current totals (its first window was otherwise missed); a tracker
 // that already existed before the previous tick is only baselined. Trackers
 // that disappeared are pruned.
-func (p *throughputPoller) collectAt(prevTick, now time.Time, window time.Duration) {
+func (p *throughputPoller) collectAt(prevTick time.Time, window time.Duration) {
 	p.targetsMu.Lock()
 	health, labels, healthKeys := p.health, p.labels, p.healthKeys
 	p.targetsMu.Unlock()
@@ -1057,12 +1111,4 @@ func chainHealthKey(chain C.Chain, keys map[string]string) string {
 		}
 	}
 	return ""
-}
-
-func mapValues(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for _, v := range m {
-		out = append(out, v)
-	}
-	return out
 }

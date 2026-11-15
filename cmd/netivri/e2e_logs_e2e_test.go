@@ -44,7 +44,7 @@ func TestE2ELogsOfTheAngel(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("up exit = %d (stdout %q, stderr %q)", code, stdout, stderr)
 	}
-	h.pid = angelInt(t, angelData(t, stdout), "pid")
+	h.pid = angelPID(t, angelData(t, stdout))
 
 	code, stdout, stderr = angelRun(t, h.dir, "logs")
 	if code != 0 {

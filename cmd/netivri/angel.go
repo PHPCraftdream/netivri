@@ -53,7 +53,7 @@ var (
 func angelLogf(level string) func(format string, args ...any) {
 	return func(format string, args ...any) {
 		line := angel.FormatLogLine(time.Now(), level, fmt.Sprintf(format, args...))
-		_, _ = io.WriteString(os.Stderr, line+"\n")
+		_, _ = io.WriteString(os.Stderr, line+"\n") //nolint:gosec // G705: plain-text angel log line on stderr, not an HTML sink
 	}
 }
 
@@ -140,7 +140,7 @@ func conflictsWithRunning(opts upOptions, listen string) bool {
 			return true
 		}
 	}
-	if opts.BindSet && opts.Bind != host && !(opts.Bind == "localhost" && isLoopbackHost(host)) {
+	if opts.BindSet && opts.Bind != host && (opts.Bind != "localhost" || !isLoopbackHost(host)) {
 		return true
 	}
 	return false

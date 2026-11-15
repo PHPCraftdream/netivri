@@ -217,24 +217,24 @@ func TestDiagJSONShape(t *testing.T) {
 	if !ok || len(nodes) != 1 {
 		t.Fatalf("nodes = %#v", data["nodes"])
 	}
-	n := nodes[0].(map[string]any)
+	n := mustAs[map[string]any](t, nodes[0])
 	if n["label"] != "main/a1" || n["transport_phases"] != true || n["samples"] != float64(5) {
 		t.Fatalf("node header = %v", n)
 	}
-	phases := n["phases_ms"].(map[string]any)
+	phases := mustAs[map[string]any](t, n["phases_ms"])
 	// DNS has N=0 in the fixture and must be omitted.
 	if _, there := phases["dns"]; there {
 		t.Fatalf("dns phase present despite N=0: %v", phases)
 	}
-	tcp := phases["tcp"].(map[string]any)
+	tcp := mustAs[map[string]any](t, phases["tcp"])
 	if tcp["n"] != float64(2) || tcp["p50"] != 1.5 || tcp["p90"] != 2.5 || tcp["max"] != float64(3) {
 		t.Fatalf("tcp = %v", tcp)
 	}
-	fb := phases["first_byte"].(map[string]any)
+	fb := mustAs[map[string]any](t, phases["first_byte"])
 	if fb["p50"] != float64(10) || fb["p90"] != float64(20) || fb["max"] != float64(30) {
 		t.Fatalf("first_byte = %v", fb)
 	}
-	failures := n["failures"].(map[string]any)
+	failures := mustAs[map[string]any](t, n["failures"])
 	for _, key := range []string{"dns", "tcp", "tls", "first_byte"} {
 		if _, there := failures[key]; !there {
 			t.Fatalf("failures missing %q: %v", key, failures)
@@ -243,7 +243,7 @@ func TestDiagJSONShape(t *testing.T) {
 	if failures["first_byte"] != float64(1) || failures["dns"] != float64(0) {
 		t.Fatalf("failures = %v", failures)
 	}
-	idle := n["idle_survival"].([]any)[0].(map[string]any)
+	idle := mustAs[map[string]any](t, mustAs[[]any](t, n["idle_survival"])[0])
 	if idle["idle_ms"] != float64(500) || idle["ok"] != float64(1) || idle["fail"] != float64(0) {
 		t.Fatalf("idle_survival = %v", idle)
 	}
@@ -270,11 +270,11 @@ func TestDiagSuggestedTTLAndNonHTTPNode(t *testing.T) {
 	})
 	home := diagHome(t)
 	data, _ := runDiagOK(t, home, "--node", "main/b2")
-	n := data["nodes"].([]any)[0].(map[string]any)
+	n := mustAs[map[string]any](t, mustAs[[]any](t, data["nodes"])[0])
 	if n["suggested_pool_ttl_ms"] != float64(1500) {
 		t.Fatalf("suggested_pool_ttl_ms = %v", n["suggested_pool_ttl_ms"])
 	}
-	phases := n["phases_ms"].(map[string]any)
+	phases := mustAs[map[string]any](t, n["phases_ms"])
 	if len(phases) != 0 {
 		t.Fatalf("phases_ms = %v, want empty", phases)
 	}
@@ -364,7 +364,7 @@ func TestDiagAccountWithListsFollowsPriority(t *testing.T) {
 		if err := runDiag([]string{"dial", "--account", login, "--home", home}, &bytes.Buffer{}); err != nil {
 			t.Fatalf("%s: %v", login, err)
 		}
-		var labels []string
+		labels := make([]string, 0, len(capturedDiagOptions.Nodes))
 		for _, n := range capturedDiagOptions.Nodes {
 			labels = append(labels, n.Label)
 		}

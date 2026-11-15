@@ -227,7 +227,7 @@ func TestServersNoSecretLeakSweepAcrossFlows(t *testing.T) {
 		t.Fatalf("client link: %v", err)
 	}
 	s := newServersTestScreen(t, home)
-	var frames []string
+	frames := make([]string, 0, 4)
 	serversRun(t, s, s.Init())
 	frames = append(frames, s.View(180, 30)) // list
 	serversLoadDetail(t, s)

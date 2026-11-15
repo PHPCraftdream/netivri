@@ -5,9 +5,10 @@ package servers_test
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
+	"crypto/md5" //nolint:gosec // G501: AnyTLS padding-md5 is a protocol-defined digest, not a security control
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,14 +19,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PHPCraftdream/netivri/internal/core"
-	"github.com/PHPCraftdream/netivri/internal/servers"
-	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 	"github.com/metacubex/mihomo/adapter/outbound"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/anytls/padding"
 	"github.com/metacubex/mihomo/transport/vmess"
 	M "github.com/metacubex/sing/common/metadata"
+
+	"github.com/PHPCraftdream/netivri/internal/core"
+	"github.com/PHPCraftdream/netivri/internal/servers"
+	"github.com/PHPCraftdream/netivri/internal/servers/servertest"
 )
 
 const anyTLSTestTimeout = 5 * time.Second
@@ -39,7 +41,7 @@ type anyTLSRecorder struct {
 func anyTLSStartRecorder(t *testing.T) (*anyTLSRecorder, string) {
 	t.Helper()
 	r := &anyTLSRecorder{}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func (r *anyTLSRecorder) snapshot() []string {
 	return append([]string(nil), r.targets...)
 }
 func (r *anyTLSRecorder) serve(c net.Conn) {
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	if c.SetDeadline(time.Now().Add(anyTLSTestTimeout)) != nil {
 		return
 	}
@@ -132,12 +134,12 @@ func (r *anyTLSRecorder) serve(c net.Conn) {
 	r.mu.Lock()
 	r.targets = append(r.targets, dest)
 	r.mu.Unlock()
-	up, err := net.DialTimeout("tcp", dest, anyTLSTestTimeout)
+	up, err := (&net.Dialer{Timeout: anyTLSTestTimeout}).DialContext(context.Background(), "tcp", dest)
 	if err != nil {
 		_, _ = c.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
-	defer up.Close()
+	defer func() { _ = up.Close() }()
 	if up.SetDeadline(time.Now().Add(anyTLSTestTimeout)) != nil {
 		return
 	}
@@ -168,7 +170,7 @@ func (r *anyTLSRecorder) serve(c net.Conn) {
 }
 func anyTLSStartEcho(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +186,7 @@ func anyTLSStartEcho(t *testing.T) string {
 			wg.Add(1)
 			go func(c net.Conn) {
 				defer wg.Done()
-				defer c.Close()
+				defer func() { _ = c.Close() }()
 				if c.SetDeadline(time.Now().Add(anyTLSTestTimeout)) == nil {
 					_, _ = io.Copy(c, c)
 				}
@@ -263,7 +265,7 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 	if err != nil {
 		return err
 	}
-	defer raw.Close()
+	defer func() { _ = raw.Close() }()
 	if err = raw.SetDeadline(time.Now().Add(anyTLSTestTimeout)); err != nil {
 		return err
 	}
@@ -271,7 +273,7 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 	if err != nil {
 		return err
 	}
-	defer tlsConn.Close()
+	defer func() { _ = tlsConn.Close() }()
 	digest := sha256.Sum256([]byte(password))
 	prelude := append(append([]byte(nil), digest[:]...), 0, 0)
 	if _, err = tlsConn.Write(prelude); err != nil {
@@ -283,12 +285,13 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 		if err == nil {
 			return io.ErrUnexpectedEOF
 		}
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
 			return err
 		}
 		return nil
 	}
-	settings := []byte(fmt.Sprintf("v=2\nclient=netivri-test\npadding-md5=%x", md5.Sum(padding.DefaultPaddingScheme)))
+	settings := []byte(fmt.Sprintf("v=2\nclient=netivri-test\npadding-md5=%x", md5.Sum(padding.DefaultPaddingScheme))) //nolint:gosec // G401: md5 is the AnyTLS padding-md5 protocol digest
 	if err = anyTLSWriteFrame(tlsConn, 4, 0, settings); err != nil {
 		return err
 	}
@@ -304,7 +307,11 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 	if err != nil {
 		return err
 	}
-	if err = M.SocksaddrSerializer.WriteAddrPort(&destination, M.ParseSocksaddrHostPort(host, uint16(backendPort))); err != nil {
+	backendPort16, ok := servertest.Uint16(backendPort)
+	if !ok {
+		return errors.New("backend port out of range")
+	}
+	if err = M.SocksaddrSerializer.WriteAddrPort(&destination, M.ParseSocksaddrHostPort(host, backendPort16)); err != nil {
 		return err
 	}
 	if err = anyTLSWriteFrame(tlsConn, 2, 1, destination.Bytes()); err != nil {
@@ -332,7 +339,7 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 			seenSynAck = true
 		case 2:
 			if len(payload) != 0 {
-				return fmt.Errorf("unexpected echoed data")
+				return errors.New("unexpected echoed data")
 			}
 		case 3:
 			seenFin = true
@@ -340,15 +347,19 @@ func anyTLSWireProbe(port int, password, fingerprint, backend string, policy boo
 		}
 	}
 	if !seenSynAck {
-		return fmt.Errorf("missing stream SYNACK")
+		return errors.New("missing stream SYNACK")
 	}
 	return nil
 }
 func anyTLSWriteFrame(w io.Writer, cmd byte, sid uint32, payload []byte) error {
-	if len(payload) > 65535 {
-		return fmt.Errorf("AnyTLS payload too large")
+	length, ok := servertest.Uint16(len(payload))
+	if !ok {
+		return errors.New("AnyTLS payload too large")
 	}
-	h := []byte{cmd, byte(sid >> 24), byte(sid >> 16), byte(sid >> 8), byte(sid), byte(len(payload) >> 8), byte(len(payload))}
+	h := make([]byte, 7)
+	h[0] = cmd
+	binary.BigEndian.PutUint32(h[1:5], sid)
+	binary.BigEndian.PutUint16(h[5:7], length)
 	if _, err := w.Write(h); err != nil {
 		return err
 	}
@@ -373,7 +384,7 @@ func anyTLSDial(port int, password, fingerprint string, backend string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), anyTLSTestTimeout)
 	defer cancel()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	host, portText, err := net.SplitHostPort(backend)
 	if err != nil {
 		return err
@@ -382,12 +393,16 @@ func anyTLSDial(port int, password, fingerprint string, backend string) error {
 	if err != nil {
 		return err
 	}
-	meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: uint16(backendPort)}
+	dstPort, ok := servertest.Uint16(backendPort)
+	if !ok {
+		return errors.New("backend port out of range")
+	}
+	meta := &C.Metadata{NetWork: C.TCP, DstIP: netip.MustParseAddr(host), DstPort: dstPort}
 	conn, err := client.DialContext(ctx, meta)
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err = conn.SetDeadline(time.Now().Add(anyTLSTestTimeout)); err != nil {
 		return err
 	}
@@ -416,15 +431,47 @@ func anyTLSCheckTargets(t *testing.T, recorder *anyTLSRecorder, backend string, 
 		}
 	}
 }
-func anyTLSDropped(i *core.Instance, name string) uint64 {
+func anyTLSDropped(i *core.Instance) uint64 {
 	for _, v := range i.Servers() {
-		if v.Name == name {
+		if v.Name == "anytls-entry" {
 			return v.DroppedClients
 		}
 	}
 	return 0
 }
+
+// anyTLSReloadRun holds the state shared by the phases of TestAnyTLSServerRoutesAndReload.
+type anyTLSReloadRun struct {
+	t             *testing.T
+	home          string
+	aliceNode     *anyTLSRecorder
+	bobNode       *anyTLSRecorder
+	aliceAddress  string
+	bobAddress    string
+	backend       string
+	params        map[string]string
+	material      map[string]string
+	protocol      servers.Protocol
+	alicePassword string
+	bobPassword   string
+	port          int
+	inst          *core.Instance
+	closed        bool
+}
+
 func TestAnyTLSServerRoutesAndReload(t *testing.T) {
+	r := newAnyTLSReloadRun(t)
+	r.checkRoutes()
+	rotated := r.rotatePassword()
+	beforeAlice := r.checkPolicies(rotated)
+	r.checkResetAndClose(rotated, beforeAlice)
+	t.Run("CA trust without fingerprint", func(t *testing.T) {
+		r.checkCATrust(t, rotated)
+	})
+}
+
+func newAnyTLSReloadRun(t *testing.T) *anyTLSReloadRun {
+	t.Helper()
 	aliceNode, aliceAddress := anyTLSStartRecorder(t)
 	bobNode, bobAddress := anyTLSStartRecorder(t)
 	backend := anyTLSStartEcho(t)
@@ -437,157 +484,185 @@ func TestAnyTLSServerRoutesAndReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newPassword := func() string {
-		v, e := protocol.NewSecret("alice", params)
-		if e != nil {
-			t.Fatal("could not generate test password")
-		}
-		return v["password"]
+	r := &anyTLSReloadRun{
+		t: t, aliceNode: aliceNode, bobNode: bobNode,
+		aliceAddress: aliceAddress, bobAddress: bobAddress, backend: backend,
+		params: params, material: material, protocol: protocol,
 	}
-	alicePassword, bobPassword := newPassword(), newPassword()
-	makeSpec := func(port int, alice string) servers.Spec {
-		return servers.Spec{
-			Name:     "anytls-entry",
-			Protocol: "anytls",
-			Bind:     "127.0.0.1",
-			Port:     port,
-			Accounts: []string{"alice", "bob"},
-			Params:   params,
-			Material: servers.SecretMap(material),
-			Users:    servers.UserSecrets{"alice": {"password": alice}, "bob": {"password": bobPassword}},
-		}
-	}
-	home := t.TempDir()
-	var inst *core.Instance
-	port := servertest.StartOnFreePort(t, func(p int) error {
+	r.alicePassword, r.bobPassword = r.newPassword(), r.newPassword()
+	r.home = t.TempDir()
+	r.port = servertest.StartOnFreePort(t, func(p int) error {
 		var e error
-		inst, e = core.Start(context.Background(), anyTLSOptions(home, []servers.Spec{makeSpec(p, alicePassword)}, aliceAddress, bobAddress, nil, nil))
+		r.inst, e = core.Start(context.Background(), anyTLSOptions(r.home, []servers.Spec{r.makeSpec(p, r.alicePassword)}, r.aliceAddress, r.bobAddress, nil, nil))
 		return e
 	})
-	closed := false
 	t.Cleanup(func() {
-		if !closed {
+		if !r.closed {
 			defer func() {
-				if err := inst.Close(); err != nil {
+				if err := r.inst.Close(); err != nil {
 					t.Errorf("close instance: %v", err)
 				}
 			}()
-			anyTLSWaitConnections(t, inst)
+			anyTLSWaitConnections(t, r.inst)
 		}
 	})
-	dial := func(password, fingerprint string) error {
-		defer anyTLSWaitConnections(t, inst)
-		return anyTLSDial(port, password, fingerprint, backend)
+	return r
+}
+
+func (r *anyTLSReloadRun) newPassword() string {
+	v, e := r.protocol.NewSecret("alice", r.params)
+	if e != nil {
+		r.t.Fatal("could not generate test password")
 	}
-	probe := func(password, fingerprint string, policy bool) error {
-		defer anyTLSWaitConnections(t, inst)
-		return anyTLSWireProbe(port, password, fingerprint, backend, policy)
+	return v["password"]
+}
+
+func (r *anyTLSReloadRun) makeSpec(port int, alice string) servers.Spec {
+	return servers.Spec{
+		Name:     "anytls-entry",
+		Protocol: "anytls",
+		Bind:     "127.0.0.1",
+		Port:     port,
+		Accounts: []string{"alice", "bob"},
+		Params:   r.params,
+		Material: servers.SecretMap(r.material),
+		Users:    servers.UserSecrets{"alice": {"password": alice}, "bob": {"password": r.bobPassword}},
 	}
-	if err := dial(alicePassword, material["fingerprint"]); err != nil {
+}
+
+func (r *anyTLSReloadRun) dial(password, fingerprint string) error {
+	defer anyTLSWaitConnections(r.t, r.inst)
+	return anyTLSDial(r.port, password, fingerprint, r.backend)
+}
+
+func (r *anyTLSReloadRun) probe(password, fingerprint string, policy bool) error {
+	defer anyTLSWaitConnections(r.t, r.inst)
+	return anyTLSWireProbe(r.port, password, fingerprint, r.backend, policy)
+}
+
+func (r *anyTLSReloadRun) checkRoutes() {
+	t := r.t
+	if err := r.dial(r.alicePassword, r.material["fingerprint"]); err != nil {
 		t.Fatalf("alice route failed: %v", err)
 	}
-	if err := dial(alicePassword, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "certificate fingerprints do not match") {
+	if err := r.dial(r.alicePassword, strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "certificate fingerprints do not match") {
 		t.Fatalf("wrong fingerprint error=%v, want certificate fingerprint mismatch", err)
 	}
-	anyTLSCheckTargets(t, aliceNode, backend, 1)
-	anyTLSCheckTargets(t, bobNode, backend, 0)
-	if err := dial(bobPassword, material["fingerprint"]); err != nil {
+	anyTLSCheckTargets(t, r.aliceNode, r.backend, 1)
+	anyTLSCheckTargets(t, r.bobNode, r.backend, 0)
+	if err := r.dial(r.bobPassword, r.material["fingerprint"]); err != nil {
 		t.Fatalf("bob route failed: %v", err)
 	}
-	anyTLSCheckTargets(t, aliceNode, backend, 1)
-	anyTLSCheckTargets(t, bobNode, backend, 1)
-	if err := probe(newPassword(), material["fingerprint"], false); err != nil {
+	anyTLSCheckTargets(t, r.aliceNode, r.backend, 1)
+	anyTLSCheckTargets(t, r.bobNode, r.backend, 1)
+	if err := r.probe(r.newPassword(), r.material["fingerprint"], false); err != nil {
 		t.Fatalf("wrong-password refusal probe: %v", err)
 	}
-	rotated := newPassword()
-	if err := inst.Reconfigure(anyTLSOptions(home, []servers.Spec{makeSpec(port, rotated)}, aliceAddress, bobAddress, nil, nil)); err != nil {
+}
+
+func (r *anyTLSReloadRun) rotatePassword() string {
+	t := r.t
+	rotated := r.newPassword()
+	if err := r.inst.Reconfigure(anyTLSOptions(r.home, []servers.Spec{r.makeSpec(r.port, rotated)}, r.aliceAddress, r.bobAddress, nil, nil)); err != nil {
 		t.Fatalf("rotate password: %v", err)
 	}
-	if err := dial(rotated, material["fingerprint"]); err != nil {
+	if err := r.dial(rotated, r.material["fingerprint"]); err != nil {
 		t.Fatalf("rotated password failed: %v", err)
 	}
-	if err := probe(alicePassword, material["fingerprint"], false); err != nil {
+	if err := r.probe(r.alicePassword, r.material["fingerprint"], false); err != nil {
 		t.Fatalf("old-password refusal probe: %v", err)
 	}
-	if err := dial(bobPassword, material["fingerprint"]); err != nil {
+	if err := r.dial(r.bobPassword, r.material["fingerprint"]); err != nil {
 		t.Fatalf("bob password after rotation failed: %v", err)
 	}
-	beforeAlice, beforeBob := len(aliceNode.snapshot()), len(bobNode.snapshot())
-	global := anyTLSOptions(home, []servers.Spec{makeSpec(port, rotated)}, aliceAddress, bobAddress, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
-	if err := inst.Reconfigure(global); err != nil {
+	return rotated
+}
+
+// checkPolicies applies global and account denials and returns the alice route count before them.
+func (r *anyTLSReloadRun) checkPolicies(rotated string) int {
+	t := r.t
+	beforeAlice, beforeBob := len(r.aliceNode.snapshot()), len(r.bobNode.snapshot())
+	global := anyTLSOptions(r.home, []servers.Spec{r.makeSpec(r.port, rotated)}, r.aliceAddress, r.bobAddress, []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}, nil)
+	if err := r.inst.Reconfigure(global); err != nil {
 		t.Fatalf("set global policy: %v", err)
 	}
 	// Synchronous raw probes avoid the vendored stream close/write race, including CreateProxy's initial destination write.
-	if err := probe(rotated, material["fingerprint"], true); err != nil {
+	if err := r.probe(rotated, r.material["fingerprint"], true); err != nil {
 		t.Fatalf("global policy refusal probe: %v", err)
 	}
-	if anyTLSDropped(inst, "anytls-entry") != 1 {
-		t.Fatalf("global denial count=%d, want 1", anyTLSDropped(inst, "anytls-entry"))
+	if anyTLSDropped(r.inst) != 1 {
+		t.Fatalf("global denial count=%d, want 1", anyTLSDropped(r.inst))
 	}
-	if len(aliceNode.snapshot()) != beforeAlice || len(bobNode.snapshot()) != beforeBob {
+	if len(r.aliceNode.snapshot()) != beforeAlice || len(r.bobNode.snapshot()) != beforeBob {
 		t.Fatal("global-denied client reached a node route")
 	}
-	account := anyTLSOptions(home, []servers.Spec{makeSpec(port, rotated)}, aliceAddress, bobAddress, nil, map[string][]netip.Prefix{"alice": {netip.MustParsePrefix("192.0.2.0/24")}})
-	if err := inst.Reconfigure(account); err != nil {
+	account := anyTLSOptions(r.home, []servers.Spec{r.makeSpec(r.port, rotated)}, r.aliceAddress, r.bobAddress, nil, map[string][]netip.Prefix{"alice": {netip.MustParsePrefix("192.0.2.0/24")}})
+	if err := r.inst.Reconfigure(account); err != nil {
 		t.Fatalf("set account policy: %v", err)
 	}
-	if err := probe(rotated, material["fingerprint"], true); err != nil {
+	if err := r.probe(rotated, r.material["fingerprint"], true); err != nil {
 		t.Fatalf("account policy refusal probe: %v", err)
 	}
-	if anyTLSDropped(inst, "anytls-entry") != 2 {
-		t.Fatalf("account denial count=%d, want 2", anyTLSDropped(inst, "anytls-entry"))
+	if anyTLSDropped(r.inst) != 2 {
+		t.Fatalf("account denial count=%d, want 2", anyTLSDropped(r.inst))
 	}
-	if len(aliceNode.snapshot()) != beforeAlice || len(bobNode.snapshot()) != beforeBob {
+	if len(r.aliceNode.snapshot()) != beforeAlice || len(r.bobNode.snapshot()) != beforeBob {
 		t.Fatal("account-denied client reached a node route")
 	}
-	if err := inst.Reconfigure(anyTLSOptions(home, []servers.Spec{makeSpec(port, rotated)}, aliceAddress, bobAddress, nil, nil)); err != nil {
+	return beforeAlice
+}
+
+func (r *anyTLSReloadRun) checkResetAndClose(rotated string, beforeAlice int) {
+	t := r.t
+	if err := r.inst.Reconfigure(anyTLSOptions(r.home, []servers.Spec{r.makeSpec(r.port, rotated)}, r.aliceAddress, r.bobAddress, nil, nil)); err != nil {
 		t.Fatalf("reset client policy: %v", err)
 	}
-	if err := dial(rotated, material["fingerprint"]); err != nil {
+	if err := r.dial(rotated, r.material["fingerprint"]); err != nil {
 		t.Fatalf("allowed client after policy reset: %v", err)
 	}
-	anyTLSCheckTargets(t, aliceNode, backend, beforeAlice+1)
-	anyTLSWaitConnections(t, inst)
-	if err := inst.Close(); err != nil {
+	anyTLSCheckTargets(t, r.aliceNode, r.backend, beforeAlice+1)
+	anyTLSWaitConnections(t, r.inst)
+	if err := r.inst.Close(); err != nil {
 		t.Fatal(err)
 	}
-	closed = true
-	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	r.closed = true
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(r.port)))
 	if err != nil {
 		t.Fatalf("port not released after Close: %v", err)
 	}
 	_ = ln.Close()
-	t.Run("CA trust without fingerprint", func(t *testing.T) {
-		var caInstance *core.Instance
-		caPort := servertest.StartOnFreePort(t, func(p int) error {
-			var startErr error
-			caInstance, startErr = core.Start(context.Background(), anyTLSOptions(home, []servers.Spec{makeSpec(p, rotated)}, aliceAddress, bobAddress, nil, nil))
-			return startErr
-		})
-		caClosed := false
-		t.Cleanup(func() {
-			if !caClosed {
-				defer func() {
-					if err := caInstance.Close(); err != nil {
-						t.Errorf("close CA-trust instance: %v", err)
-					}
-				}()
-				anyTLSWaitConnections(t, caInstance)
-			}
-		})
-		servertest.TrustForTest(t, material)
-		if err := anyTLSDial(caPort, rotated, "", backend); err != nil {
-			t.Fatalf("CA-trusted connection without pin: %v", err)
-		}
-		anyTLSWaitConnections(t, caInstance)
-		if err := caInstance.Close(); err != nil {
-			t.Fatal(err)
-		}
-		caClosed = true
-		listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(caPort)))
-		if err != nil {
-			t.Fatalf("CA-trust port not released: %v", err)
-		}
-		_ = listener.Close()
+}
+
+func (r *anyTLSReloadRun) checkCATrust(t *testing.T, rotated string) {
+	var caInstance *core.Instance
+	caPort := servertest.StartOnFreePort(t, func(p int) error {
+		var startErr error
+		caInstance, startErr = core.Start(context.Background(), anyTLSOptions(r.home, []servers.Spec{r.makeSpec(p, rotated)}, r.aliceAddress, r.bobAddress, nil, nil))
+		return startErr
 	})
+	caClosed := false
+	t.Cleanup(func() {
+		if !caClosed {
+			defer func() {
+				if err := caInstance.Close(); err != nil {
+					t.Errorf("close CA-trust instance: %v", err)
+				}
+			}()
+			anyTLSWaitConnections(t, caInstance)
+		}
+	})
+	servertest.TrustForTest(t, r.material)
+	if err := anyTLSDial(caPort, rotated, "", r.backend); err != nil {
+		t.Fatalf("CA-trusted connection without pin: %v", err)
+	}
+	anyTLSWaitConnections(t, caInstance)
+	if err := caInstance.Close(); err != nil {
+		t.Fatal(err)
+	}
+	caClosed = true
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(caPort)))
+	if err != nil {
+		t.Fatalf("CA-trust port not released: %v", err)
+	}
+	_ = listener.Close()
 }

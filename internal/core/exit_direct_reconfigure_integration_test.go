@@ -47,7 +47,7 @@ func TestReconfigureAccountRouteToDirectAndBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open held routed connection: %v", err)
 	}
-	defer held.Close()
+	defer func() { _ = held.Close() }()
 	if err := accountEcho(held); err != nil {
 		t.Fatalf("initial routed echo: %v", err)
 	}

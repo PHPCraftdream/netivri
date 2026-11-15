@@ -10,6 +10,7 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/cli"
 	"github.com/PHPCraftdream/netivri/internal/tui"
@@ -36,7 +37,6 @@ type serversScreen struct {
 	generation       uint64
 	detailGeneration uint64
 	errText          string
-	visible          int
 	theme            tui.Theme
 	workspace        *tui.Workspace
 	cardName         string
@@ -258,12 +258,7 @@ func safeServersError(err error) error {
 }
 func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 	if m, ok := msg.(tea.WindowSizeMsg); ok {
-		if s.dialog != nil {
-			s.dialog.Update(msg)
-		}
-		if s.workspace != nil {
-			s.workspace.SetSize(m.Width, m.Height)
-		}
+		s.updateWindowSize(msg, m)
 		return s, nil
 	}
 	if d, ok := msg.(*serversDialog); ok {
@@ -273,307 +268,390 @@ func (s *serversScreen) Update(msg tea.Msg) (tui.Screen, tea.Cmd) {
 	if s.dialog != nil {
 		switch msg.(type) {
 		case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg:
-			m, cmd := s.dialog.Update(msg)
-			s.dialog = m.(*serversDialog)
-			return s, cmd
+			return s, s.updateDialog(msg)
 		}
 	}
 	if m, ok := msg.(tui.BackgroundMsg); ok {
 		msg = m.Value
 	}
-	switch v := msg.(type) {
-	case tui.ThemeMsg:
-		s.theme = v.Theme
-		if s.workspace != nil {
-			s.workspace.SetTheme(v.Theme)
-		}
-		if s.dialog != nil {
-			s.dialog.SetTheme(v.Theme)
-		}
-		return s, nil
-	case serversLoaded:
-		if v.id != s.generation {
-			return s, nil
-		}
-		if v.err != nil {
-			s.errText = serversErrorText(v.err)
-			if s.workspace != nil {
-				s.workspace.Card.Info = []string{s.errText}
-			}
-			s.rows = nil
-			s.syncWorkspace()
-			return s, nil
-		}
-		s.errText = ""
-		s.rows = v.rows
-		s.angelRunning = v.running
-		s.serverRunning = serverRunningMap(v.status)
-		s.accountLogins = v.accounts
-		s.syncWorkspace()
-		cmd := s.detailCmdForSelected()
-		if s.pendingSelect != "" {
-			for i, r := range s.workspace.List.Rows {
-				if n, ok := r.Data.(string); ok && n == s.pendingSelect {
-					s.workspace.List.Selected = i
-					cmd = s.detailCmd(n)
-					break
-				}
-			}
-			s.pendingSelect = ""
-		}
+	if cmd, ok := s.updateScreenMsg(msg); ok {
 		return s, cmd
-	case serversDetailLoaded:
-		if v.id != s.detailGeneration || v.name != s.pendingDetail {
-			return s, nil
-		}
-		s.pendingDetail = ""
-		if v.err != nil {
-			s.errText = serversErrorText(v.err)
-			if s.workspace != nil {
-				s.workspace.Card.Info = []string{s.errText}
-			}
-			var ce *cli.Error
-			if errors.As(v.err, &ce) && ce.Code == "SERVER_NOT_FOUND" {
-				s.detail = nil
-				return s, s.loadCmd()
-			}
-			return s, nil
-		}
-		s.errText = ""
-		vv := []serverView{v.view}
-		clearServerRuntime(vv)
-		if v.running {
-			applyServersRuntime(vv, v.status)
-		}
-		s.angelRunning = v.running
-		s.serverRunning = serverRunningMap(v.status)
-		s.detailRunning = v.running && s.serverRunning[v.name]
-		s.detail = &vv[0]
-		s.cardName = v.name
-		s.detailParams = v.params
-		s.detailAccounts = v.accounts
-		s.syncWorkspace()
-		if s.pendingLink == v.name {
-			s.pendingLink = ""
-			return s, s.showLinkChoice(v.name)
-		}
-		return s, nil
-	case serversDialogResult:
-		if s.dialog == nil {
-			return s, nil
-		}
-		if v.Canceled {
-			s.dialog = nil
-			return s, nil
-		}
-		d := s.dialog
-		if d.onResult == nil {
-			s.dialog = nil
-			return s, nil
-		}
-		if d.wizard != nil {
-			d.wizard.SetSaving(true)
-		} else if d.prompt != nil {
-			d.prompt.SetSaving(true)
-		}
-		return s, d.onResult(v.Values)
-	case serversModalAction:
-		if s.dialog == nil || s.dialog.modal == nil {
-			return s, nil
-		}
-		m := s.dialog.modal
-		s.dialog = nil
-		if v.Index >= 0 && m.onPick != nil {
-			return s, m.onPick(v.Index)
-		}
-		return s, nil
-	case serversAddDone:
-		if v.err != nil {
-			if s.dialog != nil && s.dialog.wizard != nil {
-				s.dialog.wizard.SetSaving(false)
-				s.dialog.wizard.SetError(errors.New(serversSafePromptError(v.err)))
-				return s, nil
-			}
-			return s, s.notice(serversSafePromptError(v.err))
-		}
-		name := v.result.Name
-		s.pendingSelect = name
-		s.dialog = &serversDialog{modal: newServersMenuModal(s.theme, "Server added", serverAddResultLines(v.result), []string{"Show client link", "Close"}, 1, func(i int) tea.Cmd {
-			if i == 0 {
-				return s.beginShowLink(name)
-			}
-			return nil
-		})}
-		return s, tea.Batch(s.loadCmd(), s.notice("Server added"))
-	case serversUpdateDone:
-		if v.err != nil {
-			if s.dialog != nil && s.dialog.prompt != nil {
-				s.dialog.prompt.SetSaving(false)
-				s.dialog.prompt.SetError(errors.New(serversSafePromptError(v.err, s.dialog.prompt.Value)))
-				return s, nil
-			}
-			return s, s.notice(serversSafePromptError(v.err))
-		}
-		s.dialog = nil
-		var cmds []tea.Cmd
-		if s.detail != nil && s.detail.Name == v.name {
-			cmds = append(cmds, s.detailCmd(v.name))
-		}
-		cmds = append(cmds, s.loadCmd(), s.notice("Server updated"))
-		return s, tea.Batch(cmds...)
-	case serversRotateDone:
-		if v.err != nil {
-			return s, s.notice(serversSafePromptError(v.err))
-		}
-		msg := "Keys rotated for " + v.result.Name
-		if v.result.SharedCredentials {
-			msg += " (shared credentials)"
-		}
-		var cmds []tea.Cmd
-		if s.detail != nil && s.detail.Name == v.result.Name {
-			cmds = append(cmds, s.detailCmd(v.result.Name))
-		}
-		cmds = append(cmds, s.loadCmd(), s.notice(msg))
-		return s, tea.Batch(cmds...)
-	case serversRemoveDone:
-		if v.err != nil {
-			return s, s.notice(serversSafePromptError(v.err))
-		}
-		s.dialog = nil
-		s.detail = nil
-		s.detailParams = nil
-		s.detailAccounts = nil
-		if s.workspace != nil && s.workspace.Drilled {
-			s.workspace.Drilled = false
-			s.workspace.SetFocus(tui.PaneList)
-		}
-		s.syncWorkspace()
-		return s, tea.Batch(s.loadCmd(), s.notice("Server removed"))
-	case serversLinkDone:
-		if v.err != nil {
-			s.dialog = nil
-			return s, s.notice(serversSafePromptError(v.err))
-		}
-		s.dialog = &serversDialog{modal: newServersLinkModal(s.theme, v.name, v.link, v.format)}
-		return s, nil
-	case tui.ConfirmResultMsg:
-		action, name := s.pendingConfirm, s.pendingServer
-		s.pendingConfirm, s.pendingServer = "", ""
-		if !v.Confirmed || action == "" {
-			return s, nil
-		}
-		switch action {
-		case "rotate":
-			return s, s.deliver("rotate server", func() tea.Msg {
-				r, e := ServerRotate(s.home, name, "")
-				return serversRotateDone{result: r, err: e}
-			})
-		case "remove":
-			return s, s.deliver("remove server", func() tea.Msg {
-				r, e := ServerRemove(s.home, name)
-				return serversRemoveDone{result: r, err: e}
-			})
-		}
-		return s, nil
-	case tea.MouseClickMsg, tea.MouseWheelMsg:
-		if s.workspace != nil {
-			old := s.workspace.List.Selected
-			activate := s.workspace.Update(msg)
-			if s.workspace.List.Selected != old {
-				if r, ok := s.workspace.List.SelectedRow(); ok {
-					name, _ := r.Data.(string)
-					return s, s.detailCmd(name)
-				}
-			}
-			if activate {
-				if s.workspace.List.IsAdd() {
-					return s, s.beginAddWizard()
-				}
-				if s.workspace.Focus() == tui.PaneCard || s.workspace.Width < 100 && s.workspace.Drilled {
-					return s, s.activateCard()
-				}
-				if s.workspace.Width >= 100 && s.detail != nil {
-					return s, s.detailCmd(s.detail.Name)
-				}
-			}
-		}
-		return s, nil
 	}
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok || s.workspace == nil {
 		return s, nil
 	}
-	switch k.String() {
-	case "a":
-		if s.dialog == nil && !(s.workspace.Width < 100 && s.workspace.Drilled) {
-			return s, s.beginAddWizard()
+	return s, s.updateKey(k)
+}
+func (s *serversScreen) updateWindowSize(msg tea.Msg, m tea.WindowSizeMsg) {
+	if s.dialog != nil {
+		s.dialog.Update(msg)
+	}
+	if s.workspace != nil {
+		s.workspace.SetSize(m.Width, m.Height)
+	}
+}
+func (s *serversScreen) updateDialog(msg tea.Msg) tea.Cmd {
+	m, cmd := s.dialog.Update(msg)
+	if sd, ok := m.(*serversDialog); ok {
+		s.dialog = sd
+	}
+	return cmd
+}
+
+// updateScreenMsg reports false for messages that are not handled here (keys, unknown types).
+func (s *serversScreen) updateScreenMsg(msg tea.Msg) (tea.Cmd, bool) {
+	switch v := msg.(type) {
+	case tui.ThemeMsg:
+		s.onTheme(v)
+		return nil, true
+	case serversLoaded:
+		return s.onLoaded(v), true
+	case serversDetailLoaded:
+		return s.onDetailLoaded(v), true
+	case serversDialogResult:
+		return s.onDialogResult(v), true
+	case serversModalAction:
+		return s.onModalAction(v), true
+	case serversAddDone:
+		return s.onAddDone(v), true
+	case serversUpdateDone:
+		return s.onUpdateDone(v), true
+	case serversRotateDone:
+		return s.onRotateDone(v), true
+	case serversRemoveDone:
+		return s.onRemoveDone(v), true
+	case serversLinkDone:
+		return s.onLinkDone(v), true
+	case tui.ConfirmResultMsg:
+		return s.onConfirm(v), true
+	case tea.MouseClickMsg, tea.MouseWheelMsg:
+		return s.onMouse(msg), true
+	}
+	return nil, false
+}
+func (s *serversScreen) onTheme(v tui.ThemeMsg) {
+	s.theme = v.Theme
+	if s.workspace != nil {
+		s.workspace.SetTheme(v.Theme)
+	}
+	if s.dialog != nil {
+		s.dialog.SetTheme(v.Theme)
+	}
+}
+func (s *serversScreen) onLoaded(v serversLoaded) tea.Cmd {
+	if v.id != s.generation {
+		return nil
+	}
+	if v.err != nil {
+		s.errText = serversErrorText(v.err)
+		if s.workspace != nil {
+			s.workspace.Card.Info = []string{s.errText}
 		}
-	case "l", "t", "d":
-		if s.dialog == nil && s.detail != nil && (s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard || s.workspace.Width < 100 && s.workspace.Drilled) {
-			id := map[string]string{"l": "link", "t": "rotate", "d": "remove"}[k.String()]
-			return s, s.cardAction(id)
+		s.rows = nil
+		s.syncWorkspace()
+		return nil
+	}
+	s.errText = ""
+	s.rows = v.rows
+	s.angelRunning = v.running
+	s.serverRunning = serverRunningMap(v.status)
+	s.accountLogins = v.accounts
+	s.syncWorkspace()
+	cmd := s.detailCmdForSelected()
+	if s.pendingSelect != "" {
+		for i, r := range s.workspace.List.Rows {
+			if n, ok := r.Data.(string); ok && n == s.pendingSelect {
+				s.workspace.List.Selected = i
+				cmd = s.detailCmd(n)
+				break
+			}
 		}
-	case "tab":
-		if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneList {
-			s.workspace.SetFocus(tui.PaneCard)
-			return s, nil
+		s.pendingSelect = ""
+	}
+	return cmd
+}
+func (s *serversScreen) onDetailLoaded(v serversDetailLoaded) tea.Cmd {
+	if v.id != s.detailGeneration || v.name != s.pendingDetail {
+		return nil
+	}
+	s.pendingDetail = ""
+	if v.err != nil {
+		s.errText = serversErrorText(v.err)
+		if s.workspace != nil {
+			s.workspace.Card.Info = []string{s.errText}
 		}
-		return s, nil
-	case "shift+tab":
-		if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard {
-			s.workspace.SetFocus(tui.PaneList)
-			return s, nil
-		}
-		return s, nil
-	case "r":
-		if s.workspace != nil && (s.workspace.Width < 100 && s.workspace.Drilled || s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard) {
-			return s, s.detailCmdForSelected()
-		}
-		return s, s.loadCmd()
-	case "esc":
-		if s.workspace != nil && s.workspace.Width < 100 && s.workspace.Drilled {
-			s.workspace.Update(k)
-			s.detailGeneration++
-			s.pendingDetail = ""
-			s.errText = ""
+		var ce *cli.Error
+		if errors.As(v.err, &ce) && ce.Code == "SERVER_NOT_FOUND" {
 			s.detail = nil
-			s.syncWorkspace()
-			return s, nil
+			return s.loadCmd()
 		}
+		return nil
+	}
+	s.errText = ""
+	vv := []serverView{v.view}
+	clearServerRuntime(vv)
+	if v.running {
+		applyServersRuntime(vv, v.status)
+	}
+	s.angelRunning = v.running
+	s.serverRunning = serverRunningMap(v.status)
+	s.detailRunning = v.running && s.serverRunning[v.name]
+	s.detail = &vv[0]
+	s.cardName = v.name
+	s.detailParams = v.params
+	s.detailAccounts = v.accounts
+	s.syncWorkspace()
+	if s.pendingLink == v.name {
+		s.pendingLink = ""
+		return s.showLinkChoice(v.name)
+	}
+	return nil
+}
+func (s *serversScreen) onDialogResult(v serversDialogResult) tea.Cmd {
+	if s.dialog == nil {
+		return nil
+	}
+	if v.Canceled {
+		s.dialog = nil
+		return nil
+	}
+	d := s.dialog
+	if d.onResult == nil {
+		s.dialog = nil
+		return nil
+	}
+	if d.wizard != nil {
+		d.wizard.SetSaving(true)
+	} else if d.prompt != nil {
+		d.prompt.SetSaving(true)
+	}
+	return d.onResult(v.Values)
+}
+func (s *serversScreen) onModalAction(v serversModalAction) tea.Cmd {
+	if s.dialog == nil || s.dialog.modal == nil {
+		return nil
+	}
+	m := s.dialog.modal
+	s.dialog = nil
+	if v.Index >= 0 && m.onPick != nil {
+		return m.onPick(v.Index)
+	}
+	return nil
+}
+func (s *serversScreen) onAddDone(v serversAddDone) tea.Cmd {
+	if v.err != nil {
+		if s.dialog != nil && s.dialog.wizard != nil {
+			s.dialog.wizard.SetSaving(false)
+			s.dialog.wizard.SetError(errors.New(serversSafePromptError(v.err)))
+			return nil
+		}
+		return s.notice(serversSafePromptError(v.err))
+	}
+	name := v.result.Name
+	s.pendingSelect = name
+	s.dialog = &serversDialog{modal: newServersMenuModal(s.theme, "Server added", serverAddResultLines(v.result), []string{"Show client link", "Close"}, 1, func(i int) tea.Cmd {
+		if i == 0 {
+			return s.beginShowLink(name)
+		}
+		return nil
+	})}
+	return tea.Batch(s.loadCmd(), s.notice("Server added"))
+}
+func (s *serversScreen) onUpdateDone(v serversUpdateDone) tea.Cmd {
+	if v.err != nil {
+		if s.dialog != nil && s.dialog.prompt != nil {
+			s.dialog.prompt.SetSaving(false)
+			s.dialog.prompt.SetError(errors.New(serversSafePromptError(v.err, s.dialog.prompt.Value)))
+			return nil
+		}
+		return s.notice(serversSafePromptError(v.err))
+	}
+	s.dialog = nil
+	var cmds []tea.Cmd
+	if s.detail != nil && s.detail.Name == v.name {
+		cmds = append(cmds, s.detailCmd(v.name))
+	}
+	cmds = append(cmds, s.loadCmd(), s.notice("Server updated"))
+	return tea.Batch(cmds...)
+}
+func (s *serversScreen) onRotateDone(v serversRotateDone) tea.Cmd {
+	if v.err != nil {
+		return s.notice(serversSafePromptError(v.err))
+	}
+	msg := "Keys rotated for " + v.result.Name
+	if v.result.SharedCredentials {
+		msg += " (shared credentials)"
+	}
+	var cmds []tea.Cmd
+	if s.detail != nil && s.detail.Name == v.result.Name {
+		cmds = append(cmds, s.detailCmd(v.result.Name))
+	}
+	cmds = append(cmds, s.loadCmd(), s.notice(msg))
+	return tea.Batch(cmds...)
+}
+func (s *serversScreen) onRemoveDone(v serversRemoveDone) tea.Cmd {
+	if v.err != nil {
+		return s.notice(serversSafePromptError(v.err))
+	}
+	s.dialog = nil
+	s.detail = nil
+	s.detailParams = nil
+	s.detailAccounts = nil
+	if s.workspace != nil && s.workspace.Drilled {
+		s.workspace.Drilled = false
+		s.workspace.SetFocus(tui.PaneList)
+	}
+	s.syncWorkspace()
+	return tea.Batch(s.loadCmd(), s.notice("Server removed"))
+}
+func (s *serversScreen) onLinkDone(v serversLinkDone) tea.Cmd {
+	if v.err != nil {
+		s.dialog = nil
+		return s.notice(serversSafePromptError(v.err))
+	}
+	s.dialog = &serversDialog{modal: newServersLinkModal(s.theme, v.name, v.link, v.format)}
+	return nil
+}
+func (s *serversScreen) onConfirm(v tui.ConfirmResultMsg) tea.Cmd {
+	action, name := s.pendingConfirm, s.pendingServer
+	s.pendingConfirm, s.pendingServer = "", ""
+	if !v.Confirmed || action == "" {
+		return nil
+	}
+	switch action {
+	case "rotate":
+		return s.deliver("rotate server", func() tea.Msg {
+			r, e := ServerRotate(s.home, name, "")
+			return serversRotateDone{result: r, err: e}
+		})
+	case "remove":
+		return s.deliver("remove server", func() tea.Msg {
+			r, e := ServerRemove(s.home, name)
+			return serversRemoveDone{result: r, err: e}
+		})
+	}
+	return nil
+}
+func (s *serversScreen) onMouse(msg tea.Msg) tea.Cmd {
+	if s.workspace == nil {
+		return nil
+	}
+	old := s.workspace.List.Selected
+	activate := s.workspace.Update(msg)
+	if s.workspace.List.Selected != old {
+		if r, ok := s.workspace.List.SelectedRow(); ok {
+			name, _ := r.Data.(string)
+			return s.detailCmd(name)
+		}
+	}
+	if activate {
+		if s.workspace.List.IsAdd() {
+			return s.beginAddWizard()
+		}
+		if s.workspace.Focus() == tui.PaneCard || s.workspace.Width < 100 && s.workspace.Drilled {
+			return s.activateCard()
+		}
+		if s.workspace.Width >= 100 && s.detail != nil {
+			return s.detailCmd(s.detail.Name)
+		}
+	}
+	return nil
+}
+func (s *serversScreen) updateKey(k tea.KeyPressMsg) tea.Cmd {
+	keyName := k.String()
+	switch keyName {
+	case "a":
+		return s.keyAdd()
+	case "l", "t", "d":
+		return s.keyCardAction(keyName)
+	case "tab":
+		s.keyTab()
+		return nil
+	case "shift+tab":
+		s.keyShiftTab()
+		return nil
+	case "r":
+		return s.keyReload()
+	case "esc":
+		s.keyEsc(k)
+		return nil
+	case "enter":
+		return s.keyEnter(k)
+	case "up", "down", "j", "k", "pgup", "pgdown", "home", "end", "left", "right":
+		return s.moveSelection(k)
+	}
+	return nil
+}
+func (s *serversScreen) keyAdd() tea.Cmd {
+	if s.dialog == nil && (s.workspace.Width >= 100 || !s.workspace.Drilled) {
+		return s.beginAddWizard()
+	}
+	return nil
+}
+func (s *serversScreen) keyCardAction(keyName string) tea.Cmd {
+	if s.dialog == nil && s.detail != nil && (s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard || s.workspace.Width < 100 && s.workspace.Drilled) {
+		id := map[string]string{"l": "link", "t": "rotate", "d": "remove"}[keyName]
+		return s.cardAction(id)
+	}
+	return nil
+}
+func (s *serversScreen) keyTab() {
+	if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneList {
+		s.workspace.SetFocus(tui.PaneCard)
+	}
+}
+func (s *serversScreen) keyShiftTab() {
+	if s.workspace != nil && s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard {
+		s.workspace.SetFocus(tui.PaneList)
+	}
+}
+func (s *serversScreen) keyReload() tea.Cmd {
+	if s.workspace != nil && (s.workspace.Width < 100 && s.workspace.Drilled || s.workspace.Width >= 100 && s.workspace.Focus() == tui.PaneCard) {
+		return s.detailCmdForSelected()
+	}
+	return s.loadCmd()
+}
+func (s *serversScreen) keyEsc(k tea.KeyPressMsg) {
+	if s.workspace != nil && s.workspace.Width < 100 && s.workspace.Drilled {
+		s.workspace.Update(k)
+		s.detailGeneration++
+		s.pendingDetail = ""
 		s.errText = ""
-		if s.workspace != nil && s.workspace.Width >= 100 {
-			s.workspace.SetFocus(tui.PaneList)
-		}
-		if s.detail != nil || s.pendingDetail != "" {
-			s.detailGeneration++
-			s.pendingDetail = ""
-		}
 		s.detail = nil
 		s.syncWorkspace()
-		return s, nil
-	case "enter":
-		if s.workspace.List.IsAdd() {
-			return s, s.beginAddWizard()
-		}
-		if s.workspace.Width < 100 {
-			if !s.workspace.Drilled {
-				s.workspace.Update(k)
-				return s, s.detailCmdForSelected()
-			}
-			if s.workspace.Card.Update(k) {
-				return s, s.activateCard()
-			}
-			return s, nil
-		}
-		if s.workspace.Focus() == tui.PaneCard {
-			s.workspace.Update(k)
-			return s, s.activateCard()
-		}
-		return s, s.detailCmdForSelected()
-	case "up", "down", "j", "k", "pgup", "pgdown", "home", "end", "left", "right":
-		return s, s.moveSelection(k)
+		return
 	}
-	return s, nil
+	s.errText = ""
+	if s.workspace != nil && s.workspace.Width >= 100 {
+		s.workspace.SetFocus(tui.PaneList)
+	}
+	if s.detail != nil || s.pendingDetail != "" {
+		s.detailGeneration++
+		s.pendingDetail = ""
+	}
+	s.detail = nil
+	s.syncWorkspace()
+}
+func (s *serversScreen) keyEnter(k tea.KeyPressMsg) tea.Cmd {
+	if s.workspace.List.IsAdd() {
+		return s.beginAddWizard()
+	}
+	if s.workspace.Width < 100 {
+		if !s.workspace.Drilled {
+			s.workspace.Update(k)
+			return s.detailCmdForSelected()
+		}
+		if s.workspace.Card.Update(k) {
+			return s.activateCard()
+		}
+		return nil
+	}
+	if s.workspace.Focus() == tui.PaneCard {
+		s.workspace.Update(k)
+		return s.activateCard()
+	}
+	return s.detailCmdForSelected()
 }
 func (s *serversScreen) moveSelection(k tea.KeyPressMsg) tea.Cmd {
 	if s.workspace == nil {

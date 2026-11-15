@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -56,8 +55,7 @@ func accountAllowedClients(cfg *config.Config) map[string][]netip.Prefix {
 func serverFingerprint(specs []servers.Spec) string {
 	ordered := cloneServerSpecs(specs)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
-	data, _ := json.Marshal(ordered)
-	sum := sha256.Sum256(data)
+	sum := sha256.Sum256(jsonText(ordered))
 	return hex.EncodeToString(sum[:])
 }
 

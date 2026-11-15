@@ -94,6 +94,16 @@ func TestTrojanHostileALPNIsQuoted(t *testing.T) {
 
 func TestTrojanSecretLinksSnippetAndRedaction(t *testing.T) {
 	p := trojanServer{}
+	trojanCheckSecret(t, p)
+	material, s, specialPassword := trojanSpecFixture(t, p)
+	link := trojanCheckLink(t, p, s, material, specialPassword)
+	trojanCheckConvertedLink(t, link, material, specialPassword)
+	trojanCheckSnippet(t, p, s, material, specialPassword)
+	trojanCheckRedaction(t, s, material, specialPassword)
+}
+
+func trojanCheckSecret(t *testing.T, p trojanServer) {
+	t.Helper()
 	a, err := p.NewSecret("alice", nil)
 	if err != nil {
 		t.Fatal("secret generation failed")
@@ -103,12 +113,21 @@ func TestTrojanSecretLinksSnippetAndRedaction(t *testing.T) {
 	if err != nil || len(decoded) != 32 || a["password"] == b["password"] {
 		t.Fatal("invalid generated secret")
 	}
+}
+
+func trojanSpecFixture(t *testing.T, p trojanServer) (map[string]string, Spec, string) {
+	t.Helper()
 	material, err := p.NewMaterial(map[string]string{"public_host": "example.test"})
 	if err != nil {
 		t.Fatal("material generation failed")
 	}
 	specialPassword := "space +%@:secret"
 	s := Spec{Name: "edge", Protocol: "trojan", Port: 443, Accounts: []string{"alice", "bob"}, Params: map[string]string{"sni": "origin.test", "alpn": "h2,http/1.1"}, Material: SecretMap(material), Users: UserSecrets{"alice": {"password": specialPassword}, "bob": {"password": "bob-password"}}}
+	return material, s, specialPassword
+}
+
+func trojanCheckLink(t *testing.T, p trojanServer, s Spec, material map[string]string, specialPassword string) string {
+	t.Helper()
 	link, err := p.Link(s, "alice", "2001:db8::1")
 	if err != nil {
 		t.Fatal("link generation failed")
@@ -122,6 +141,11 @@ func TestTrojanSecretLinksSnippetAndRedaction(t *testing.T) {
 	if password != specialPassword || u.Host != "[2001:db8::1]:443" || u.Fragment != "edge" || q.Get("security") != "tls" || q.Get("sni") != "origin.test" || q.Get("type") != "tcp" || q.Get("allowInsecure") != "0" || q.Get("pcs") != TLSFingerprint(material) || q.Has("pinSHA256") || q.Get("alpn") != "h2,http/1.1" {
 		t.Fatal("URI round trip mismatch")
 	}
+	return link
+}
+
+func trojanCheckConvertedLink(t *testing.T, link string, material map[string]string, specialPassword string) {
+	t.Helper()
 	converted, err := convert.ConvertsV2Ray([]byte(link))
 	if err != nil || len(converted) != 1 {
 		t.Fatal("Mihomo URI conversion failed")
@@ -133,6 +157,10 @@ func TestTrojanSecretLinksSnippetAndRedaction(t *testing.T) {
 	if alpn, ok := proxyFromURI["alpn"].([]string); !ok || len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
 		t.Fatal("Mihomo URI conversion ALPN mismatch")
 	}
+}
+
+func trojanCheckSnippet(t *testing.T, p trojanServer, s Spec, material map[string]string, specialPassword string) {
+	t.Helper()
 	snippet, err := p.Mihomo(s, "alice", "2001:db8::1")
 	if err != nil {
 		t.Fatal("snippet generation failed")
@@ -150,6 +178,10 @@ func TestTrojanSecretLinksSnippetAndRedaction(t *testing.T) {
 	if alpn, ok := proxy["alpn"].([]any); !ok || len(alpn) != 2 || alpn[0] != "h2" || alpn[1] != "http/1.1" {
 		t.Fatal("Mihomo ALPN values mismatch")
 	}
+}
+
+func trojanCheckRedaction(t *testing.T, s Spec, material map[string]string, specialPassword string) {
+	t.Helper()
 	for _, v := range []string{fmt.Sprint(s), fmt.Sprintf("%+v", s), fmt.Sprintf("%#v", s)} {
 		if strings.Contains(v, specialPassword) || strings.Contains(v, "bob-password") || strings.Contains(v, material["key_pem"]) || strings.Contains(v, material["cert_pem"]) || strings.Contains(v, material["fingerprint"]) || strings.Contains(v, "origin.test") || strings.Contains(v, "h2,http/1.1") {
 			t.Fatal("Spec format leaked secret or parameter values")

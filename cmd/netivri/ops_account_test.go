@@ -63,7 +63,7 @@ func TestAccountAddSaveFailureRestoresOriginalSlice(t *testing.T) {
 	cfg.Accounts = []config.Account{{Login: "alice", Password: config.InitPlaceholder}}
 	before := cfg.Accounts
 	saveErr := errors.New("save failed")
-	err := accountAddWith(t.TempDir(), cfg, AccountAddOptions{Login: "bob"}, func() error { return saveErr }, &AccountAddResult{})
+	err := accountAddWith(cfg, AccountAddOptions{Login: "bob"}, func() error { return saveErr }, &AccountAddResult{})
 	if !errors.Is(err, saveErr) || len(cfg.Accounts) != 1 || &cfg.Accounts[0] != &before[0] {
 		t.Fatal("failed account add changed the original account slice")
 	}
@@ -171,8 +171,8 @@ func TestAccountOpsValidationMatrix(t *testing.T) {
 func TestAccountCloneValidationAndModes(t *testing.T) {
 	home := accountProviderHome(t)
 	c := config.Default()
-	c.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://user:token@host.invalid/secret"}}
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$fake", Provider: "p1", ExitCountry: "DE", AllowedClients: "loopback"}}
+	c.Subscriptions = []config.Subscription{{Name: "p1", URL: "https://user:token@host.invalid/secret"}}                                       //nolint:gosec // G101: fake credential, test fixture only
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$fake", Provider: "p1", ExitCountry: "DE", AllowedClients: "loopback"}} //nolint:gosec // G101: fake credential, test fixture only
 	if e := config.Save(config.ConfigPath(home), c); e != nil {
 		t.Fatal(e)
 	}
@@ -305,8 +305,8 @@ func TestAccountShowRemoveValidationAndSecrets(t *testing.T) {
 	stubAccountProbe(t)
 	h := t.TempDir()
 	c := config.Default()
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", PreSOCKS5: config.HopList{"socks5://fakeuser:FAKEPASS@proxy.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}}
-	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", PreSOCKS5: config.HopList{"socks5://fakeuser:FAKEPASS@proxy.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}} //nolint:gosec // G101: fake credential, test fixture only
+	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}                                                                                                                       //nolint:gosec // G101: fake credential, test fixture only
 	if e := config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)
 	}
@@ -353,13 +353,13 @@ func containsString(v any, needle string) bool {
 		}
 		return containsString(r.Elem().Interface(), needle)
 	case reflect.Struct:
-		for i := 0; i < r.NumField(); i++ {
+		for i := range r.NumField() {
 			if containsString(r.Field(i).Interface(), needle) {
 				return true
 			}
 		}
 	case reflect.Slice, reflect.Array:
-		for i := 0; i < r.Len(); i++ {
+		for i := range r.Len() {
 			if containsString(r.Index(i).Interface(), needle) {
 				return true
 			}
@@ -371,6 +371,8 @@ func containsString(v any, needle string) bool {
 				return true
 			}
 		}
+	default:
+		// scalars other than string hold no text to match
 	}
 	return false
 }
@@ -378,8 +380,8 @@ func TestAccountOperationSecretTypeSafety(t *testing.T) {
 	stubAccountProbe(t)
 	h := t.TempDir()
 	c := config.Default()
-	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}
-	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", Provider: "p", ExitCountry: "DE", AllowedClients: "loopback", PreSOCKS5: config.HopList{"socks5://hopuser:HOPPASS@hop.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}}
+	c.Subscriptions = []config.Subscription{{Name: "p", URL: "https://subuser:SUBTOKEN@sub.invalid/private/token"}}                                                                                                                                                                                 //nolint:gosec // G101: fake credential, test fixture only
+	c.Accounts = []config.Account{{Login: "alice", Password: "$argon2id$FAKEHASH", Provider: "p", ExitCountry: "DE", AllowedClients: "loopback", PreSOCKS5: config.HopList{"socks5://hopuser:HOPPASS@hop.invalid:1080"}, PostSOCKS5: config.HopList{"http://postuser:POSTPASS@post.invalid:8080"}}} //nolint:gosec // G101: fake credential, test fixture only
 	c.Servers = []config.Server{{Name: "s", Protocol: "shadowsocks", Bind: "127.0.0.1", Port: 10000, Accounts: "alice", Params: map[string]string{"cipher": "aes-128-gcm"}}}
 	if e := config.Save(config.ConfigPath(h), c); e != nil {
 		t.Fatal(e)

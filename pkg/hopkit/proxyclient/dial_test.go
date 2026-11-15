@@ -302,114 +302,187 @@ func TestHandshakeCancellationAndDeadlineAbortHTTP(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, server := pipePair(t)
-			tracked := &deadlineConn{Conn: client}
-			ctx, cancel, wantCause := tc.newContext()
-			defer cancel()
-			started := make(chan struct{})
-			release := make(chan struct{}, 1)
-			releasePeer := func() {
-				select {
-				case release <- struct{}{}:
-				default:
-				}
-			}
-			t.Cleanup(releasePeer)
-			peer := peerResult()
-			peerJoined := false
-			go func() {
-				_ = server.SetDeadline(time.Now().Add(3 * time.Second))
-				request := "CONNECT " + testTarget + " HTTP/1.1\r\nHost: " + testTarget + "\r\n\r\n"
-				_, err := readExact(server, len(request))
-				if err == nil {
-					close(started)
-					<-release
-				}
-				peerDone(peer, err)
-			}()
-			result := make(chan error, 1)
-			done := make(chan struct{})
-			go func() {
-				defer close(done)
-				_, err := Handshake(ctx, tracked, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
-				result <- err
-			}()
-			cleanupDone := false
-			t.Cleanup(func() {
-				cancel()
-				releasePeer()
-				_ = client.Close()
-				if !cleanupDone {
-					select {
-					case <-done:
-					case <-time.After(2 * time.Second):
-						t.Errorf("HTTP handshake goroutine did not stop after cleanup")
-					}
-				}
-				if !peerJoined {
-					select {
-					case <-peer:
-					case <-time.After(2 * time.Second):
-						t.Errorf("HTTP cancellation peer did not stop after cleanup")
-					}
-				}
-			})
-			select {
-			case <-started:
-			case <-time.After(3 * time.Second):
-				t.Fatal("HTTP handshake did not start")
-			}
-			var abortStarted time.Time
-			if tc.name == "cancel" {
-				abortStarted = time.Now()
-				cancel()
-			} else {
-				select {
-				case <-ctx.Done():
-					abortStarted = time.Now()
-				case <-time.After(3 * time.Second):
-					t.Fatal("context deadline did not fire")
-				}
-			}
-			var err error
-			select {
-			case err = <-result:
-				cleanupDone = true
-			case <-time.After(2 * time.Second):
-				t.Fatal("HTTP handshake did not abort")
-			}
-			pe := checkProxyError(t, err, StageHandshake, 0)
-			if !errors.Is(pe, wantCause) {
-				t.Fatal("HTTP cancellation cause was not preserved")
-			}
-			if !pe.TargetSent {
-				t.Fatal("HTTP cancellation lost target-sent marker")
-			}
-			if pe.Timeout() != tc.wantTimeout || (tc.name == "deadline" && !errors.Is(err, context.DeadlineExceeded)) {
-				t.Fatal("HTTP cancellation timeout classification mismatch")
-			}
-			if tc.name == "cancel" && errors.Is(err, context.DeadlineExceeded) {
-				t.Fatal("HTTP cancellation was reported as a deadline")
-			}
-			if time.Since(abortStarted) >= 2*time.Second {
-				t.Fatal("HTTP cancellation did not abort promptly")
-			}
-			releasePeer()
-			waitErr(t, peer)
-			peerJoined = true
-			deadlines := tracked.deadlineSnapshot()
-			if len(deadlines) < 2 || !deadlines[len(deadlines)-1].IsZero() {
-				t.Fatal("Handshake did not clear its connection deadline")
-			}
-			deadline, ok := ctx.Deadline()
-			if tc.wantTimeout {
-				if !ok || !deadlines[0].Equal(deadline) {
-					t.Fatal("Handshake did not apply the context deadline")
-				}
-			} else if !deadlines[0].IsZero() {
-				t.Fatal("Handshake installed a deadline without a context deadline")
-			}
+			checkHTTPAbort(t, tc.name, tc.newContext, tc.wantTimeout)
 		})
+	}
+}
+
+// httpAbort is one HTTP CONNECT handshake that is aborted by cancellation or a deadline.
+type httpAbort struct {
+	client      net.Conn
+	tracked     *deadlineConn
+	ctx         context.Context
+	cancel      context.CancelFunc
+	started     chan struct{}
+	release     chan struct{}
+	peer        chan error
+	peerJoined  bool
+	result      chan error
+	done        chan struct{}
+	cleanupDone bool
+}
+
+// checkHTTPAbort aborts an HTTP handshake and checks the error, the deadlines and the peer shutdown.
+func checkHTTPAbort(t *testing.T, name string, newContext func() (context.Context, context.CancelFunc, error), wantTimeout bool) {
+	t.Helper()
+	client, server := pipePair(t)
+	tracked := &deadlineConn{Conn: client}
+	ctx, cancel, wantCause := newContext()
+	defer cancel()
+	h := newHTTPAbort(t, client, tracked, ctx, cancel)
+	go h.servePeer(server)
+	go h.handshake()
+	h.awaitStarted(t)
+	abortStarted := h.abort(t, name)
+	err := h.awaitResult(t)
+	checkHTTPAbortError(t, err, wantCause, name, wantTimeout)
+	if time.Since(abortStarted) >= 2*time.Second {
+		t.Fatal("HTTP cancellation did not abort promptly")
+	}
+	h.releasePeer()
+	waitErr(t, h.peer)
+	h.peerJoined = true
+	checkHTTPAbortDeadlines(t, tracked, ctx, wantTimeout)
+}
+
+// newHTTPAbort prepares the handshake state and registers its cleanup.
+func newHTTPAbort(t *testing.T, client net.Conn, tracked *deadlineConn, ctx context.Context, cancel context.CancelFunc) *httpAbort {
+	h := &httpAbort{
+		client:  client,
+		tracked: tracked,
+		ctx:     ctx,
+		cancel:  cancel,
+		started: make(chan struct{}),
+		release: make(chan struct{}, 1),
+		peer:    peerResult(),
+		result:  make(chan error, 1),
+		done:    make(chan struct{}),
+	}
+	t.Cleanup(h.releasePeer)
+	t.Cleanup(func() { h.cleanup(t) })
+	return h
+}
+
+// servePeer answers the CONNECT request by holding the connection open until released.
+func (h *httpAbort) servePeer(server net.Conn) {
+	_ = server.SetDeadline(time.Now().Add(3 * time.Second))
+	request := "CONNECT " + testTarget + " HTTP/1.1\r\nHost: " + testTarget + "\r\n\r\n"
+	_, err := readExact(server, len(request))
+	if err == nil {
+		close(h.started)
+		<-h.release
+	}
+	peerDone(h.peer, err)
+}
+
+// handshake runs the HTTP handshake under the context and reports its error.
+func (h *httpAbort) handshake() {
+	defer close(h.done)
+	_, err := Handshake(h.ctx, h.tracked, Proxy{Scheme: "http", Host: "proxy", Port: 80}, testTarget)
+	h.result <- err
+}
+
+func (h *httpAbort) releasePeer() {
+	select {
+	case h.release <- struct{}{}:
+	default:
+	}
+}
+
+// cleanup stops the handshake and the peer, reporting any that do not stop.
+func (h *httpAbort) cleanup(t *testing.T) {
+	h.cancel()
+	h.releasePeer()
+	_ = h.client.Close()
+	if !h.cleanupDone {
+		select {
+		case <-h.done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("HTTP handshake goroutine did not stop after cleanup")
+		}
+	}
+	if !h.peerJoined {
+		select {
+		case <-h.peer:
+		case <-time.After(2 * time.Second):
+			t.Errorf("HTTP cancellation peer did not stop after cleanup")
+		}
+	}
+}
+
+// awaitStarted waits until the peer has received the CONNECT request.
+func (h *httpAbort) awaitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-h.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("HTTP handshake did not start")
+	}
+}
+
+// abort cancels the context, or waits for its deadline, and returns when the abort began.
+func (h *httpAbort) abort(t *testing.T, name string) time.Time {
+	t.Helper()
+	var abortStarted time.Time
+	if name == "cancel" {
+		abortStarted = time.Now()
+		h.cancel()
+		return abortStarted
+	}
+	select {
+	case <-h.ctx.Done():
+		abortStarted = time.Now()
+	case <-time.After(3 * time.Second):
+		t.Fatal("context deadline did not fire")
+	}
+	return abortStarted
+}
+
+// awaitResult waits for the handshake to return and returns its error.
+func (h *httpAbort) awaitResult(t *testing.T) error {
+	t.Helper()
+	var err error
+	select {
+	case err = <-h.result:
+		h.cleanupDone = true
+	case <-time.After(2 * time.Second):
+		t.Fatal("HTTP handshake did not abort")
+	}
+	return err
+}
+
+// checkHTTPAbortError checks the proxy error, its cause and its timeout classification.
+func checkHTTPAbortError(t *testing.T, err, wantCause error, name string, wantTimeout bool) {
+	t.Helper()
+	pe := checkProxyError(t, err, StageHandshake, 0)
+	if !errors.Is(pe, wantCause) {
+		t.Fatal("HTTP cancellation cause was not preserved")
+	}
+	if !pe.TargetSent {
+		t.Fatal("HTTP cancellation lost target-sent marker")
+	}
+	if pe.Timeout() != wantTimeout || (name == "deadline" && !errors.Is(err, context.DeadlineExceeded)) {
+		t.Fatal("HTTP cancellation timeout classification mismatch")
+	}
+	if name == "cancel" && errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("HTTP cancellation was reported as a deadline")
+	}
+}
+
+// checkHTTPAbortDeadlines checks that the handshake cleared its deadline and applied only the context deadline.
+func checkHTTPAbortDeadlines(t *testing.T, tracked *deadlineConn, ctx context.Context, wantTimeout bool) {
+	t.Helper()
+	deadlines := tracked.deadlineSnapshot()
+	if len(deadlines) < 2 || !deadlines[len(deadlines)-1].IsZero() {
+		t.Fatal("Handshake did not clear its connection deadline")
+	}
+	deadline, ok := ctx.Deadline()
+	if wantTimeout {
+		if !ok || !deadlines[0].Equal(deadline) {
+			t.Fatal("Handshake did not apply the context deadline")
+		}
+	} else if !deadlines[0].IsZero() {
+		t.Fatal("Handshake installed a deadline without a context deadline")
 	}
 }
 
@@ -764,11 +837,12 @@ func TestDialClosesConnectionOnContextCancellationAfterDial(t *testing.T) {
 		<-started
 		var one [1]byte
 		_, err := server.Read(one[:])
-		if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		switch {
+		case errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed):
 			peerDone(peer, nil)
-		} else if err != nil {
+		case err != nil:
 			peerDone(peer, err)
-		} else {
+		default:
 			peerDone(peer, errors.New("connection remained open after Dial cancellation"))
 		}
 	}()

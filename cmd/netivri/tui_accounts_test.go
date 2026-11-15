@@ -8,10 +8,11 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/PHPCraftdream/netivri/internal/angel"
 	"github.com/PHPCraftdream/netivri/internal/config"
 	"github.com/PHPCraftdream/netivri/internal/tui"
-	"github.com/charmbracelet/x/ansi"
 )
 
 func accountsHome(t *testing.T) string {
@@ -57,7 +58,7 @@ func runAccountCmd(s *accountsScreen, c tea.Cmd) {
 	}
 }
 func TestAccountsPollKeepsLiveCellsCardAndSelection(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", Provider: "main", ExitCountry: "DE"}}
 	s.syncRows("alice")
 	card := s.workspace.Card
@@ -92,7 +93,7 @@ func TestAccountsPollKeepsLiveCellsCardAndSelection(t *testing.T) {
 }
 
 func TestAccountsInitialLoadSchedulesSelectedDetail(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Background: accountsSyncBackground}))
 	s.show = func(_, login string) (AccountShowResult, error) { return AccountShowResult{Login: login}, nil }
 	_, cmd := s.Update(accountsLoaded{Rows: []accountInfo{{Login: "alice"}}, Generation: s.loadGeneration})
 	if cmd == nil {
@@ -106,7 +107,7 @@ func TestAccountsInitialLoadSchedulesSelectedDetail(t *testing.T) {
 
 func TestAccountsLiveCellsVisibleAtWorkspaceWidths(t *testing.T) {
 	for _, width := range []int{100, 120} {
-		s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+		s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 		s.rows = []accountInfo{{Login: "a", Provider: "p", Exit: "d"}}
 		s.syncRows("a")
 		s.live["a"] = angel.AccountActivity{Login: "a", Connections: 7}
@@ -148,11 +149,11 @@ func TestAccountsDuplicateAddRetainsWizardAndRedactsSecret(t *testing.T) {
 	if _, err := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.providers = []string{"main"}
 	s.beginAdd()
 	d := s.dialog
-	secret := "socks5://u:unique-secret@host:1080"
+	secret := "socks5://u:unique-secret@host:1080" //nolint:gosec // G101: fake credential, test fixture only
 	d.wizard.Values = map[string]string{"Login": "alice", "Provider": accountProviderAnySentinel, "Country": "any", "Exit": "direct", "Clients": "everyone", "Pre-hop": "", "Post-hop": secret}
 	d.wizard.Steps[7].Prompt.Value = secret
 	_, cmd := s.Update(accountsDialogResult{Values: d.wizard.Values})
@@ -169,7 +170,7 @@ func TestAccountsDuplicateAddRetainsWizardAndRedactsSecret(t *testing.T) {
 }
 
 func TestAccountsDialogValidationKeepsAnswersAndCancelsSaving(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.providers = []string{"main"}
 	s.beginAdd()
 	d := s.dialog
@@ -182,7 +183,7 @@ func TestAccountsDialogValidationKeepsAnswersAndCancelsSaving(t *testing.T) {
 	}
 }
 func TestAccountsWorkspaceBoundsAndAddLine(t *testing.T) {
-	s := newAccountsScreen(accountsHome(t), tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(accountsHome(t), tui.Env{}))
 	for _, d := range [][2]int{{60, 16}, {80, 24}, {99, 24}, {100, 30}, {120, 40}, {12, 5}} {
 		v := s.View(d[0], d[1])
 		if len(strings.Split(v, "\n")) > d[1] {
@@ -201,7 +202,7 @@ func TestAccountsOperationsReadback(t *testing.T) {
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "alice", Exit: "direct", ExitGiven: true, PostSOCKS5: config.HopList{"socks5://u:fake-token@host:1080"}}); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	s.syncRows("alice")
 	a := s.rows[0]
@@ -233,7 +234,7 @@ func TestAccountsOperationsReadback(t *testing.T) {
 }
 func TestAccountsAddWizardCallbackPersistsEveryoneWildcard(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.providers = []string{"main"}
 	s.beginAdd()
 	_, cmd := s.Update(accountsDialogResult{Values: map[string]string{
@@ -257,13 +258,13 @@ func TestAccountsAddWizardCallbackPersistsEveryoneWildcard(t *testing.T) {
 }
 
 func TestAccountsMouseCardActivationAndDialogCapture(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.width, s.height = 120, 30
 	s.rows = []accountInfo{{Login: "alice"}}
 	s.syncRows("alice")
 	s.workspace.SetSize(s.width, s.height)
 	s.workspace.SetFocus(tui.PaneCard)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	calls := 0
 	s.dialog = &accountsDialog{prompt: prompt(tui.TextPrompt, "Edit", "Value", "", ""), onResult: func(map[string]string) tea.Cmd { calls++; return nil }}
 	// Input belongs to the active dialog; it must not activate the workspace card.
@@ -279,7 +280,7 @@ func TestAccountsUpdatePreservesExternalUneditedField(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.rows, _ = AccountList(h)
 	c, e := config.Load(config.ConfigPath(h))
 	if e != nil {
@@ -296,7 +297,7 @@ func TestAccountsUpdatePreservesExternalUneditedField(t *testing.T) {
 	}
 }
 func TestAccountsSecretDisplayAndErrorRedaction(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.rows = []accountInfo{{Login: "alice", PostSOCKS5: accountChainInfo{Source: "account", Value: []string{"socks5://u:fake-token@host"}}}}
 	s.syncRows("alice")
 	v := s.View(120, 30)
@@ -314,7 +315,7 @@ func TestAccountsSecretDisplayAndErrorRedaction(t *testing.T) {
 func TestAccountsPollingFixedClockSerialAndStale(t *testing.T) {
 	now := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
 	calls := 0
-	s := newAccountsScreen("", tui.Env{Now: func() time.Time { return now }, Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Now: func() time.Time { return now }, Background: accountsSyncBackground}))
 	s.status = func(string) (angel.Status, error) {
 		calls++
 		return angel.Status{Activity: []angel.AccountActivity{{Login: "alice", Connections: 2, UploadBytes: int64(calls * 1024), DownloadBytes: int64(calls * 2048)}}}, nil
@@ -338,7 +339,7 @@ func TestAccountsPollingFixedClockSerialAndStale(t *testing.T) {
 	}
 }
 func TestAccountsWizardBackReviewSecret(t *testing.T) {
-	s := newAccountsScreen(accountsHome(t), tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(accountsHome(t), tui.Env{}))
 	s.providers = []string{"main"}
 	s.providerNodes["main"] = "12"
 	s.beginAdd()
@@ -362,7 +363,7 @@ func TestAccountsWizardBackReviewSecret(t *testing.T) {
 	}
 }
 func TestAccountsShowSeamNoLiveProbe(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Background: accountsSyncBackground}))
 	s.rows = []accountInfo{{Login: "alice"}}
 	s.syncRows("alice")
 	calls := 0
@@ -378,7 +379,7 @@ func TestAccountsShowSeamNoLiveProbe(t *testing.T) {
 }
 func TestAccountsProviderPrerequisiteSwitch(t *testing.T) {
 	called := -1
-	s := newAccountsScreen("", tui.Env{SwitchTab: func(i int) tea.Cmd { called = i; return nil }}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{SwitchTab: func(i int) tea.Cmd { called = i; return nil }}))
 	s.Update(tea.KeyPressMsg{Code: 'a', Text: "a"})
 	if called != 0 {
 		t.Fatal("did not switch to Providers")
@@ -386,7 +387,7 @@ func TestAccountsProviderPrerequisiteSwitch(t *testing.T) {
 }
 
 func TestAccountsListNavigationRefreshesCardAndDetail(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{Background: accountsSyncBackground}))
 	s.show = func(_, login string) (AccountShowResult, error) { return AccountShowResult{Login: login}, nil }
 	s.rows = []accountInfo{{Login: "alice"}, {Login: "bob"}}
 	s.syncRows("alice")
@@ -412,11 +413,11 @@ func TestAccountsListNavigationRefreshesCardAndDetail(t *testing.T) {
 }
 
 func TestAccountsCardThemeFollowsScreenTheme(t *testing.T) {
-	s := newAccountsScreen("", tui.Env{}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen("", tui.Env{}))
 	s.theme = tui.NewThemeFor(false)
 	s.rows = []accountInfo{{Login: "alice"}}
 	s.syncRows("alice")
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	if s.workspace.Card.Theme.Dark {
 		t.Fatal("account card kept a dark theme on a light screen")
 	}
@@ -430,7 +431,7 @@ func TestAccountsCardThemeFollowsScreenTheme(t *testing.T) {
 
 func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
 	h := providerSeed(t, config.Subscription{Name: "main", URL: "https://provider.invalid"})
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	s.providers = []string{"main"}
 	s.beginAdd()
 	d := s.dialog
@@ -452,7 +453,7 @@ func TestAccountsDefaultWizardRealKeysCreatesWildcard(t *testing.T) {
 	}
 	// Seven Enters walk Login -> Provider -> Country -> Exit -> Clients ->
 	// CustomClients -> Pre-hop -> Post-hop -> Review; every step keeps its default.
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		if c := enter(); c != nil {
 			t.Fatalf("step %d advance produced a command", i)
 		}
@@ -509,7 +510,7 @@ func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	if _, e := AccountAdd(h, AccountAddOptions{Login: "bob", Exit: "direct", ExitGiven: true}); e != nil {
 		t.Fatal(e)
 	}
-	s := newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}).(*accountsScreen)
+	s := mustAs[*accountsScreen](t, newAccountsScreen(h, tui.Env{Background: accountsSyncBackground}))
 	_, _ = s.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	s.rows, _ = AccountList(h)
 	s.syncRows("bob")
@@ -523,7 +524,7 @@ func TestAccountsMouseRowCardFieldAndDialogSave(t *testing.T) {
 	// (y=6: border(1) + title(1) + info(1) + 3 fields; screen x=45 -> card-local x=2,
 	// left of the [edit] range, so the first click only selects).
 	s.workspace.SetFocus(tui.PaneCard)
-	s.refreshSelectedCard(true)
+	s.refreshSelectedCard()
 	s.workspace.SetSize(120, 30)
 	_, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if s.workspace.Card.Selected != 1 {

@@ -20,7 +20,7 @@ import (
 // marked down at start, and which tier is "up" would then depend on timing.
 func TestE2EAccountsListsPriority(t *testing.T) {
 	home := t.TempDir()
-	pass := "lists-e2e-password"
+	pass := "lists-e2e-password" //nolint:gosec // G101: fixture password of a test account, not a credential
 	hash, err := auth.Hash(pass)
 	if err != nil {
 		t.Fatal(err)
@@ -111,11 +111,11 @@ func TestE2EAccountsListCommands(t *testing.T) {
 	if code, out, stderr = accountsCommand(t, home, "set-country", "alice", "JP,DE"); code != 0 {
 		t.Fatalf("set-country JP,DE: exit %d, out %s, stderr %s", code, out, stderr)
 	}
-	code, out, stderr = accountsCommand(t, home, "set-country", "alice", "JP,SE")
+	code, _, stderr = accountsCommand(t, home, "set-country", "alice", "JP,SE")
 	if code != 5 || decodeErrEnvelope(t, stderr).Error.Code != "NO_NODES_FOR_COUNTRY" {
 		t.Fatalf("set-country JP,SE: exit %d, stderr %s", code, stderr)
 	}
-	if code, out, stderr = accountsCommand(t, home, "set-provider", "alice", "p1,ghost"); code != 5 ||
+	if code, _, stderr = accountsCommand(t, home, "set-provider", "alice", "p1,ghost"); code != 5 ||
 		decodeErrEnvelope(t, stderr).Error.Code != "SUB_NOT_FOUND" {
 		t.Fatalf("set-provider with an unknown name: exit %d, stderr %s", code, stderr)
 	}
@@ -124,7 +124,7 @@ func TestE2EAccountsListCommands(t *testing.T) {
 		t.Fatalf("list: exit %d, out %s, stderr %s", code, out, stderr)
 	}
 	// A provider in an account's list cannot be removed.
-	code, out, stderr = accountsRun(t, home, "sub", "rm", "p2")
+	code, out, stderr = accountsRun(t.Context(), t, home, "sub", "rm", "p2")
 	if code != 6 || decodeErrEnvelope(t, stderr).Error.Code != "SUB_IN_USE" {
 		t.Fatalf("sub rm: exit %d, out %s, stderr %s", code, out, stderr)
 	}

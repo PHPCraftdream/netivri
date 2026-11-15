@@ -3,6 +3,7 @@
 package servertest_test
 
 import (
+	"context"
 	"net"
 	"strconv"
 	"syscall"
@@ -14,12 +15,12 @@ import (
 func TestFreePortIsFreeForTCPAndUDP(t *testing.T) {
 	port := servertest.FreePort(t)
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-	listener, err := net.Listen("tcp", address)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", address)
 	if err != nil {
 		t.Fatal("port not free for TCP")
 	}
 	_ = listener.Close()
-	packet, err := net.ListenPacket("udp", address)
+	packet, err := (&net.ListenConfig{}).ListenPacket(context.Background(), "udp", address)
 	if err != nil {
 		t.Fatal("port not free for UDP")
 	}

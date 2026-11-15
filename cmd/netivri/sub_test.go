@@ -177,7 +177,7 @@ func TestSubAddRepeatedHopFlagsRejectBeforeFetch(t *testing.T) {
 			name: "over production limit",
 			values: func() []string {
 				values := make([]string, 0, config.MaxHopsPerSide+1)
-				for i := 0; i < config.MaxHopsPerSide+1; i++ {
+				for i := range config.MaxHopsPerSide + 1 {
 					values = append(values, fmt.Sprintf("socks5://hop-%d.example:1080", i))
 				}
 				return values
@@ -218,7 +218,8 @@ func TestSubAddRepeatedHopFlagsRejectBeforeFetch(t *testing.T) {
 func TestSubAddRepeatedHopFlagsAcceptValidList(t *testing.T) {
 	app, _ := testApp(t, fakeBody(testBody))
 	want := config.HopList{"socks5://first.example:1080", "socks5://second.example:1080"}
-	args := []string{"--home", app.home, "https://provider.example/sub"}
+	args := make([]string, 0, 3+2*len(want))
+	args = append(args, "--home", app.home, "https://provider.example/sub")
 	for _, value := range want {
 		args = append(args, "--pre-socks5", value)
 	}
@@ -577,9 +578,9 @@ func TestSubAddStoresQuota(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	data := decodeData(t, out)
-	subs := data["subscriptions"].([]any)
-	entry := subs[0].(map[string]any)
-	quota := entry["quota"].(map[string]any)
+	subs := mustAs[[]any](t, data["subscriptions"])
+	entry := mustAs[map[string]any](t, subs[0])
+	quota := mustAs[map[string]any](t, entry["quota"])
 	if quota["used"] != float64(123) || quota["total"] != float64(1000) || quota["expire"] != "2027-01-15T08:00:00Z" {
 		t.Errorf("list quota = %v", quota)
 	}
@@ -608,9 +609,9 @@ func TestSubAddReAddRefreshesQuota(t *testing.T) {
 		t.Fatalf("list: %v", err)
 	}
 	data := decodeData(t, out)
-	subs := data["subscriptions"].([]any)
-	entry := subs[0].(map[string]any)
-	quota := entry["quota"].(map[string]any)
+	subs := mustAs[[]any](t, data["subscriptions"])
+	entry := mustAs[map[string]any](t, subs[0])
+	quota := mustAs[map[string]any](t, entry["quota"])
 	if quota["used"] != float64(3) {
 		t.Errorf("list quota used = %v, want 3", quota["used"])
 	}

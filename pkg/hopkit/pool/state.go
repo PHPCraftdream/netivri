@@ -64,7 +64,7 @@ func New(keys []string, options Options) *Pool {
 	}
 	var source *rand.PCG
 	if options.RNG == nil {
-		source = rand.NewPCG(rand.Uint64(), rand.Uint64())
+		source = rand.NewPCG(rand.Uint64(), rand.Uint64()) //nolint:gosec // G404: pool selection jitter, not security-sensitive
 	} else {
 		copied := *options.RNG
 		source = &copied
@@ -72,7 +72,7 @@ func New(keys []string, options Options) *Pool {
 	p := &Pool{
 		members: make(map[string]*hop),
 		clock:   clock,
-		rng:     rand.New(source),
+		rng:     rand.New(source), //nolint:gosec // G404: pool selection jitter, not security-sensitive
 	}
 	p.Reconcile(keys)
 	return p
@@ -91,6 +91,8 @@ func (p *Pool) Record(key string, strength Strength) {
 		return
 	}
 	switch strength {
+	case Inconclusive:
+		// No state change; filtered out above.
 	case Soft:
 		p.advanceSand(h, now)
 		h.sand++

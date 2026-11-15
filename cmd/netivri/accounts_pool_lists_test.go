@@ -13,9 +13,9 @@ import (
 
 func routeNames(t *testing.T, pool routePool, key string) []string {
 	t.Helper()
-	var names []string
+	names := make([]string, 0, len(pool.nodes[key]))
 	for _, raw := range pool.nodes[key] {
-		names = append(names, raw["name"].(string))
+		names = append(names, mustAs[string](t, raw["name"]))
 	}
 	return names
 }

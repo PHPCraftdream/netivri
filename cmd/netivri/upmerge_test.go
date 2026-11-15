@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -43,7 +45,7 @@ func TestMergeUpFlagsVsConfig(t *testing.T) {
 func TestMergeUpBindValidation(t *testing.T) {
 	withAuth := config.Default()
 	withAuth.Listen = config.Listen{Bind: "127.0.0.1", Port: 7890}
-	withAuth.Auth = config.Auth{Login: "alice", Password: "$argon2id$hash"}
+	withAuth.Auth = config.Auth{Login: "alice", Password: "$argon2id$hash"} //nolint:gosec // G101: fake credential, test fixture only
 	cases := []struct {
 		name     string
 		opts     upOptions
@@ -79,8 +81,8 @@ func TestMergeUpBindValidation(t *testing.T) {
 				}
 				return
 			}
-			ce, ok := err.(*cli.Error)
-			if !ok {
+			var ce *cli.Error
+			if !errors.As(err, &ce) {
 				t.Fatalf("want *cli.Error, got %T (%v)", err, err)
 			}
 			if ce.Code != tc.wantCode {
@@ -146,7 +148,7 @@ func TestPersistClosure(t *testing.T) {
 		t.Errorf("reloaded password does not look like an argon2id hash: %q", reloaded.Auth.Password[:16])
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("read saved config: %v", err)
 	}

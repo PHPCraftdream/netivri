@@ -31,10 +31,10 @@ func validHashFor(t *testing.T, password string) string {
 
 // hashWithKeyLen builds a real hash with a non-default key length
 // under the currently set cost parameters.
-func hashWithKeyLen(t *testing.T, password string, n int) string {
+func hashWithKeyLen(t *testing.T, password string, n uint32) string {
 	t.Helper()
 	salt := make([]byte, saltLen)
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, uint32(n))
+	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, n)
 	return hashString(argonMemory, argonTime, argonThreads, salt, key)
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/PHPCraftdream/netivri/internal/cli"
@@ -45,7 +46,10 @@ func TestSubCountriesStoredSnapshot(t *testing.T) {
 	if n, ok := data["nodes"].(float64); !ok || n != 4 {
 		t.Fatalf("nodes = %v", data["nodes"])
 	}
-	raw, _ := json.Marshal(data["countries"])
+	raw, err := json.Marshal(data["countries"])
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := `[{"code":"DE","nodes":2},{"code":"NL","nodes":1}]`
 	if string(raw) != want {
 		t.Fatalf("countries = %s, want %s", raw, want)
@@ -72,7 +76,10 @@ func TestSubCountriesMissingSnapshotNulls(t *testing.T) {
 	if err := app.countries([]string{"p1"}); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(decodeData(t, out))
+	raw, err := json.Marshal(decodeData(t, out))
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := `{"countries":null,"nodes":null,"provider":"p1","unknown":null}`
 	if string(raw) != want {
 		t.Fatalf("data = %s, want %s", raw, want)
@@ -98,7 +105,10 @@ func TestSubCountriesAllProvidersAndUnion(t *testing.T) {
 	if err := app.countries(nil); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(decodeData(t, out))
+	raw, err := json.Marshal(decodeData(t, out))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Config order; "c" has no snapshot and keeps nulls; the union sums DE
 	// across b and a and is sorted by code.
 	want := `{"countries":[{"code":"DE","nodes":2},{"code":"NL","nodes":1}],` +
@@ -131,7 +141,10 @@ func TestSubCountriesFromURLDoesNotStore(t *testing.T) {
 	if n, ok := data["nodes"].(float64); !ok || n != 3 {
 		t.Fatalf("nodes = %v", data["nodes"])
 	}
-	raw, _ := json.Marshal(data["countries"])
+	raw, err := json.Marshal(data["countries"])
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := `[{"code":"DE","nodes":1},{"code":"JP","nodes":1},{"code":"NL","nodes":1}]`
 	if string(raw) != want {
 		t.Fatalf("countries = %s, want %s", raw, want)
@@ -207,7 +220,7 @@ func TestSubCountriesURLFetchErrorNoLeak(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != "FETCH_HTTP_STATUS" {
 		t.Fatalf("unexpected error: %#v", err)
 	}
-	if bytes.Contains([]byte(ce.Message), []byte("secret.invalid")) {
+	if strings.Contains(ce.Message, "secret.invalid") {
 		t.Fatal("the subscription URL leaked into the error")
 	}
 }
@@ -260,7 +273,7 @@ func TestSubRmRefusesProviderInUse(t *testing.T) {
 		if !errors.As(err, &ce) || ce.Code != "SUB_IN_USE" || ce.Exit != cli.ExitConflict {
 			t.Fatalf("unexpected error: %#v", err)
 		}
-		if bytes.Contains([]byte(ce.Message), []byte("x.invalid")) {
+		if strings.Contains(ce.Message, "x.invalid") {
 			t.Fatalf("URL leaked in error: %s", ce.Message)
 		}
 	}

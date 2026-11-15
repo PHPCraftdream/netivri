@@ -23,14 +23,14 @@ type bindingSnapshot struct {
 }
 
 // snapshot returns every live, non-provisional binding of the table, at most
-// max of them. It walks the shards under read locks and never creates or
+// limit of them. It walks the shards under read locks and never creates or
 // refreshes a binding.
-func (t *affinityTable) snapshot(now time.Time, max int) []bindingSnapshot {
+func (t *affinityTable) snapshot(now time.Time, limit int) []bindingSnapshot {
 	out := make([]bindingSnapshot, 0, 8)
 	for _, shard := range t.shards {
 		shard.mu.RLock()
 		for key, b := range shard.bindings {
-			if len(out) >= max {
+			if len(out) >= limit {
 				break
 			}
 			if b.provisional || t.expired(b, now) {
