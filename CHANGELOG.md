@@ -8,17 +8,12 @@ versions; every such change is listed here.
 
 ## [Unreleased]
 
-### Fixed
+## [0.1.0] - 2026-11-15
 
-- **Dead hops of a pool are found.** A hop that does not answer used to hold each connection for the whole 5-second dial deadline and was never blamed, so it stayed in rotation; a dead post hop behind a VPN node failed only ambiguously and was never quarantined. One attempt now has 3 seconds to get as far as sending the target (a connect or TLS timeout is a hard failure, a silent SOCKS5 negotiation a soft one) and the connection moves to another hop; five soft failures without a success quarantine a hop like three hard ones; a post hop that refuses the password before the target was sent is retried on another hop, and a refusing hop fails its revival probe. A pre pool stops after two hops report the VPN node unreachable instead of trying every hop.
-- **Hop host names with `_`** work in pools (the native proxy client rejected them, and also sites with `_` in their name), and their quarantine is stored. A hop host with non-ASCII letters is rejected by the config check with a hint to use the punycode (`xn--`) form, instead of breaking the start of a pool.
-- **A dead path for a client that gives up early is left in seconds.** A client such as Telegram drops a connection that got no answer after 2-3 seconds and retries at once; those connections never reached the 5 seconds a silent connection needed, so a node that could not reach the site stayed in use for minutes (257 connections without an answer in 12 minutes in one log). The lossy-path rule (20 or more silent connections, at least 90 percent of the site's connections in 10 minutes) now counts connections that waited from 2 seconds; the rule of 3 silent connections keeps its 5 seconds.
-- **A subscription fetch that timed out while connecting says so on Windows.** The error read `request failed (direct, connecting)` without its kind, because Windows words that timeout without the word "timeout"; it now reads `request failed: timeout (direct, connecting)`.
-- **`down` stops an angel of another version.** After an update, `down` and `up` failed with `decode status answer` against an angel that the previous version had started, so it could not be stopped from the CLI. Both now need only its pid: `down` stops it and `up` reports it as running; `status` answers `ANGEL_OUTDATED` with the angel's pid and version and the restart command, `doctor` fails its `angel` check with the same text, and the shell header shows the running angel.
-- **The pool of the default route is visible.** `status` has a top-level `hop_pools` for a global post list of several hops; `doctor` and the Service tab show it as `default route`.
-- **A flapping node is announced once, not again every time its old downs age out.** A node stopped being flapping as soon as fewer than 3 of its downs were left in the last hour, so one that went down every 35 minutes got a new `is flapping` line (and its INFO lines) every few hours; it now stays flapping until a whole hour has passed without a down. The line also named the wrong level: it said its further reports are `INFO` for a node of a later tier whose repeats are `DEBUG`; it now says `DEBUG` there (and during an outage), `INFO` for a first-tier node.
-- **A burst of nodes that no account uses is not a warning.** `node burst: ...` was a `WARN` even when every node in it belonged to a later tier of the routes, which no account uses while its first tier is up; it is now `INFO` then, and a first-tier node that joins such a burst raises the `WARN` once. A burst with a first-tier node in it, and every burst without tier information, stay a `WARN`.
-- **The hourly summary says what it covers after a sleep.** The summary written at the wake of a computer that had slept for 26 hours read `last hour` but held the time before the sleep; it now reads `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: ...` (or `..., the computer slept in between: ...` when the sleep watch has not noticed the sleep yet). The note about a previous angel that did not stop cleanly names a restart of the computer next to a kill and a power loss, which is what Windows does to a running angel when it restarts.
+First public release, and the first one published to the `@netivri` npm
+organization. Earlier attempts were withdrawn before all their npm packages
+were published and left no tag; everything that was planned for them ships
+here. "Changed" and "Fixed" list what differs from those withdrawn builds.
 
 ### Added
 
@@ -32,9 +27,9 @@ versions; every such change is listed here.
 
 - **The hop pools are visible.** `status` (short, `--full`, Ktav and `--json`) adds `hop_pools` to every account whose route has a role with several hops: per role the hop count, the active and quarantined counts and, per hop, its short opaque id (the eight characters the quarantine log lines print), state (`active`, `quarantined`, `probing`), trips and `next_revival_seconds`; the fields are additive and single-hop routes show nothing new. `doctor` adds `hop state` (the `hops-pre.health` and `hops-post.health` files are readable), `hop pools` (a warning when every hop of a pool is down, in the wording of the log line) and `hop persistence` (an `info` for hops the state files cannot hold), each only when there is something to report. The Service tab shows a line such as `post 3 hops: 2 up, 1 down` under the account. Hops are never shown by URL, host or credentials. The README, `docs/cli.md`, `docs/config.md` and the help topics describe how to read the pool state.
 
-- **Ordered proxy-chain settings.** Global, provider and account `pre_socks5` / `post_socks5` values are ordered arrays; the nearest non-empty level replaces the complete list, and legacy Ktav scalars continue to load as singleton lists and render back as scalars. `none` must stand alone, duplicate entries are invalid. Lists accept up to 16 candidates per side; candidates are alternatives, not serial hops. Setters accept repeated replacement flags plus one-based, original-list `--remove-pre {INDEX}` / `--remove-post {INDEX}` and repeatable `--add-pre {URL}` / `--add-post {URL}` operations; duplicate original removal indexes reject the entire operation. The Accounts and Providers shells both support list replacement, add, remove, inherit and none through their existing pre/post pickers, without reordering. JSON pre/post values (including account `own`) are redacted arrays, an intentional breaking shape change documented under Unreleased without a schema/version bump.
+- **Ordered proxy-chain settings.** Global, provider and account `pre_socks5` / `post_socks5` values are ordered arrays; the nearest non-empty level replaces the complete list, and legacy Ktav scalars continue to load as singleton lists and render back as scalars. `none` must stand alone, duplicate entries are invalid. Lists accept up to 16 candidates per side; candidates are alternatives, not serial hops. Setters accept repeated replacement flags plus one-based, original-list `--remove-pre {INDEX}` / `--remove-post {INDEX}` and repeatable `--add-pre {URL}` / `--add-post {URL}` operations; duplicate original removal indexes reject the entire operation. The Accounts and Providers shells both support list replacement, add, remove, inherit and none through their existing pre/post pickers, without reordering. JSON pre/post values (including account `own`) are redacted arrays (they were single strings in the withdrawn builds; `schema_version` stays 1).
 
-- **Health-aware hop pools.** Weighted health lowers candidate weight after soft failures and quarantines repeated hard failures with doubling 30–600 second backoff; recovery probes revive candidates. Post choices bind per login and public-suffix-aware site for 24 hours by default. Role-separated pre/post health state uses lowercase opaque SHA-256 keys in separate files; logs omit URLs and report quarantine/recovery/all-down events. If every candidate is down, candidates are still tried and a post hop is never bypassed. Account routes can inherit global/provider/account pools, and a global post list of several hops also serves connections without an account (the default route and legacy auth) through the same pool, with one shared site binding for connections without a login. A change of the global post list and an edit of an account pool without node-backed routes apply in place when the running core can take them; otherwise the listener restarts.
+- **Health-aware hop pools.** Weighted health lowers candidate weight after soft failures and quarantines repeated hard failures with doubling 30–600 second backoff; recovery probes revive candidates. Post choices bind per login and public-suffix-aware site for 24 hours by default. Role-separated pre/post health state uses lowercase opaque SHA-256 keys in separate files; logs omit URLs and report quarantine/recovery/all-down events. If every candidate is down, candidates are still tried and a post hop is never bypassed. Account routes can inherit global/provider/account pools, and a global post list of several hops also serves connections without an account (the default route and legacy auth) through the same pool, with one shared site binding for connections without a login. A change of the global post list and an edit of an account pool without node-backed routes apply in place when the running core can take them; otherwise the listener restarts. The pool logic is the standard-library-only Go library [`pkg/hopkit`](pkg/hopkit), licensed `MIT OR Apache-2.0` (the program stays `GPL-3.0-only`).
 
 - **A failed subscription fetch says where it stood.** The `refresh failed` line, `last_error` of
   `status`, and the errors of `sub update` and `sub add` now end with the path and the phase of the
@@ -154,276 +149,13 @@ versions; every such change is listed here.
   mieru, shadowquic, shadowsocks, snell, sudoku, trojan, trusttunnel, tuic,
   vless-reality and vmess listeners with `netivri server` CLI commands. Each
   authenticated connection uses its account's route. Generate client links or
-  Mihomo YAML; server allowlists filter clients. UDP-bound listeners have a
+  Mihomo YAML (`netivri server link`; `--qr` is reserved and refused, there is
+  no QR encoder yet); server allowlists filter clients. UDP-bound listeners have a
   restart lifecycle, and UDP relay payloads are dropped and counted. See
   [`docs/servers/README.md`](docs/servers/README.md).
 - **Shared TCP ports add authenticated trial protocols.** TLS-family listeners, Shadowsocks 2022 (three ciphers) and VMess AEAD (`alterId=0`) may share under one eligibility rule; legacy Shadowsocks AEAD, Snell, Sudoku, Mieru and UDP remain exclusive. Trials are bounded, precomputed per lease and silently drained on rejection. Shared Shadowsocks uses one PSK/listener/account; raw PSKs and VMess UUIDs must be distinct. Status includes nonzero `replayed` and `ambiguous` trial counters, omitting zeros; `PORT_IN_USE` distinguishes non-shareable conflicts from `SERVER_PORT_AMBIGUOUS`. See [`docs/servers/README.md`](docs/servers/README.md).
 
-- **Explicit direct exits per account.** `accounts[].exit` opts an account into direct egress, optionally via the effective post proxy. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Server-only changes that a direct-only core cannot apply in place now restart too. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Direct requires empty provider/country; inherited pre-proxy is ignored but an explicitly configured account pre-proxy is rejected. This is never a fallback and exposes this machine's address to destinations. See [`docs/design/exit-direct.md`](docs/design/exit-direct.md).
-
-### Changed
-
-- **The linter runs in CI and the code has no findings.** The `lint` job runs `golangci-lint` with
-  the settings of `.golangci.yml` (a pinned version, the tagged test files included) and any finding
-  fails it. The tree was brought to zero: errors of `Close`, `Rollback` and writes are handled,
-  contexts are passed down, type assertions are checked, long functions and tests were split into
-  helpers, and the few false positives carry a `//nolint` with the linter and the reason. Visible
-  effects: a few messages start with a lowercase letter (`subscription URL cannot be blank` and
-  `enter a different name` in the provider screen, and the `snell`, `sudoku` and `reality` errors of
-  `server`), an error wrapped by another one is now recognized by `errors.As` where a direct type
-  check missed it, and an out-of-range port or length in the SOCKS5 and hop code is an error instead
-  of a silent wrap.
-- **A configured proxy is the reserve channel of a subscription fetch, and `fetch.mode` chooses.**
-  `fetch.proxy` and the per-provider `--via` used to be strict: every fetch went through the proxy
-  and never directly. The new `fetch.mode` (`config set fetch.mode`, the Settings screen, or the
-  file) says how the proxy is used: `reserve`, the default, goes directly first and takes the proxy
-  automatically when the direct attempt cannot connect, breaks off, or is refused for the address
-  (HTTP 403, 429, 451), while a 404, a bad body or a body over the size limit is not retried;
-  `proxy` is the old strict path, only through the proxy and never directly; `direct` never uses a
-  proxy and keeps the configured ones unused. With no proxy there is no reserve. When both attempts
-  of `reserve` fail, the error keeps the direct code and ends `; then through the reserve proxy: ...`.
-  This applies to `sub add`, `sub update`, `sub countries --url`, the hourly refresh and the
-  Providers preview. In the default mode the provider sees this machine's own address whenever the
-  direct fetch works, so a proxy set only to hide it needs `fetch.mode: proxy`; `README.md` and
-  `SECURITY.md` say so.
-
-- The interactive screens use the new frame and layout of shell v2 (see Added).
-
-- Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.
-
-- **A new access rule for one account no longer drops everyone.** `account set-clients` (an
-  `allowed_clients` change of accounts only) is applied in place to the servers and
-  the mixed port: open connections stay, the new rule holds for new ones. Adding or
-  removing an account, new credentials, bind or port still restart the listener.
-
-- **The angel survives a core that will not start.** When a replacement core and the
-  rollback to the previous one both fail to start (a port that is not free yet), the
-  angel no longer exits: `status` shows `core: "down"`, the previous good
-  configuration is retried after 1 s, 2 s, 4 s ... up to 30 s, a newer valid
-  configuration is tried at once, and `down` still stops it.
-
-- **Fewer, faster node probes.** A round probes up to 24 nodes at once (was 8),
-  so a round over three dozen nodes in a dead network ends inside one probe
-  interval instead of after 75 s. A fallback node that carries no traffic (a
-  worse tier, with a better node up) is probed every 3 minutes while it
-  answers, which also quiets its flapping lines; a failed probe, traffic, or
-  the better tier going down puts it back on 45 s. A server that two providers
-  list with identical settings, or one node of two accounts, is probed once and
-  the result is recorded for each.
-
-- **The log says which stage of a route failed.** For a route with a `pre_socks5`
-  or `post_socks5` hop, the failed dials of a minute are one line per stage
-  (`account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`,
-  with `pre hop`, `node` or `unknown hop`), and the reason a node went down
-  carries it too (`3 dial failures (timeout, post hop)`). The stage is found
-  from the address Mihomo names in the error, or from the one stage that speaks
-  the protocol of an address-less refusal; the address itself is never printed.
-  A route that is only a node reads as before.
-- **A separate state directory for a separate run.** `--local` makes `.netivri`
-  in the current directory the state directory (created, owner-only, with a
-  `.gitignore` that ignores everything in it), and once that directory exists
-  every command run from there uses it with no flag; the current directory
-  only, not its parents. `--home {DIR}` still names any directory, and the two
-  cannot be combined. Order: `--home`, `--local`, an existing `./.netivri`,
-  `$NETIVRI_HOME`, the user config directory. Settings, tokens, subscriptions,
-  statistics and the angel of each directory are independent, so a second
-  angel runs next to the first (give it `--port`, a new directory has the
-  default port 7890). `status` and `doctor` print `home` and `home_source`.
-
-- **The log says how slow the answers are.** The hourly summary of an account
-  ends with how long the node's side took to start answering (median and 95th
-  percentile, from the first bytes the client sent to the first byte back), and
-  a minute in which at least 10 connections got an answer with a median of 2
-  seconds or more gets an `INFO` line `slow answers`. The summary of moved sites
-  names a side that is a single node.
-- **HTTP and HTTPS proxies as hops.** `pre_socks5` and `post_socks5` (global
-  and per account, `account set-socks5`, `--pre-socks5`, `--post-socks5`) take
-  `http://` (an HTTP CONNECT proxy, such as Privoxy or Burp) and `https://` (the
-  same over TLS, certificate checked) as well as `socks5://`; the port stays
-  required and the setting names are unchanged. The listening port already
-  speaks SOCKS5, SOCKS4 and HTTP on one socket. A hop that does not take the
-  credentials or will not connect shows in the log as `proxy auth failed` or
-  `proxy refused`, not as an unknown `error`.
-- **The log tells when the computer slept.** The angel is frozen while the
-  computer sleeps, so hours of sleep looked like hours of silence and the
-  nodes seemed to fail all at once afterwards. The angel now notices the jump
-  of the clock, writes one `INFO` line with the length of the sleep, probes
-  every node at once and treats failures in the next 2 minutes as expected:
-  `INFO` lines, no burst, no flapping, no `WARN` in the per-minute connection
-  lines.
-- **Moved sites are one line a minute.** Sites of one account that moved
-  between several pairs of nodes for one reason (a node went down) are one line
-  with the counts instead of one line per pair; the pairs are `DEBUG`.
-- **A failed subscription refresh is quiet while it does not matter.** A fetch
-  that fails on the way is tried once more after 5 seconds. A failure is an
-  `INFO` line saying what stays and when the next try is while the stored list
-  is recent, and a `WARN` only with the third failure in a row, a list older
-  than twice the interval or no list, so `doctor` no longer warns for a
-  timeout that the next try fixes. A successful refresh says how long it took.
-- **CI tests what the diff touches.** A push or pull request runs the tests of
-  the packages the diff changes and of every package that imports them; a
-  change that is not a file of one package (`go.mod`, workflows, scripts,
-  `third_party`, npm, packaging) runs everything, and documents alone run no
-  test. A line `ci: full` in the head commit message, or a manual run of the
-  `CI` workflow (inputs `packages`, `tags`, `run`, `os`, `race`), runs
-  everything. Coverage floors and the packaging jobs run only on a full run.
-
-### Fixed
-
-- **A subscription fetch that fails in the TLS handshake says so.** The path and phase added to a failed
-  fetch named the phase after the handshake (`sending the request`) when the handshake itself timed out,
-  because the transport reports a failed handshake as finished; it now stays `TLS handshake`.
-
-- **A timeout through a proxy hop is named a timeout.** A probe or dial that ended with `context deadline
-  exceeded` inside the text of a hop error was logged as `error: <addr> connect error context deadline
-  exceeded` and counted as a separate cause in the summaries; it is now `timeout`, as are failed
-  subscription fetches with the same text.
-
-- **A hot reload no longer loses what the angel knew, and a busy port no longer blocks a config change
-  for good.** When the new listener port was busy for a while and the previous core had to be restored,
-  the watcher still marked the new file as applied and never tried again; it now retries a few times
-  without another edit. The first login on an `init` password, claimed between two reloads, was seen as
-  an outside change and restarted the listener (dropping connections); the claim is now kept in the
-  applied configuration. Each routed reload wrapped the login logger once more, so one rejected login
-  could be counted several times. And an in-place route reload started the node log from nothing: an
-  active outage lost its suppression and its closing summary, and events of a node added by the reload
-  were dropped. The node log now carries its state, closes an outage whose nodes were removed, and
-  keeps the events that arrive while the new routes are being installed.
-- **Two accounts that reach the same node through different proxy hops no longer share one health
-  record.** A node used directly by one account and through a dead pre-hop by another had one record
-  keyed by its label, so the first account's successful dials cleared the second one's failures and
-  it never moved to its fallback; one failed probe of a node present in two routes also counted
-  twice and marked it down at once. Health is now kept per node and hop chain, and each physical
-  probe counts once per record.
-- **A site's recent answer is remembered per node.** A late answer on an old connection overwrote the
-  answer of the node the site had moved to, so three silent connections could block a node that was
-  answering. The nodes that answer are now remembered one by one.
-- **A failed reload no longer leaves a probing loop behind, and the evidence of silent sites is pruned
-  at most once a minute.** The replacement warmer was never closed when the listener change failed, and
-  a full table was scanned under the routing lock for every new silent destination. A panic in the
-  plain read or write of a connection is now contained and reported like one in the buffered path.
-- **The statistics database recovers from an interrupted upgrade and no longer grows without bound.**
-  An upgrade that stopped after adding the node-name column but before saving the schema version failed
-  every later start with "duplicate column" and switched statistics off; the schema steps and the version
-  are now one transaction. The nodes and accounts that no longer have any sample or binding are removed
-  with the old samples, and the writer's id caches are cleared with them.
-- **`netivri stats --since 30d` counts the recent samples.** A window longer than the raw retention read
-  only the hourly table, so a fresh database showed no nodes at all and an older one lacked its last
-  seven days; it now combines both. The node figures are read in one transaction, so a probe written
-  in between can no longer give a delay with no probes, and `--node` filters in the query instead of
-  loading every node's samples.
-- **`netivri up --foreground` no longer starts a second angel while the first one is busy.** A control
-  answer later than two seconds counted as "no angel", so a second proxy started in the same home and
-  overwrote the state file, and `down` could no longer reach the first one. Both start paths now stop
-  with "angel not responding" and refuse any probe error that does not prove the angel is gone.
-- **A control response over 64 KiB no longer makes `down` say "stopped" for a running angel.** The
-  response limit was the state-file limit, a large status was cut, and the state file was deleted.
-  Responses now have their own 4 MiB limit, and a malformed or oversize answer keeps the state file.
-- **`netivri doctor` fails when the angel runs with its core down.** After a failed reload and a failed
-  rollback the angel stays up with no listener, and `angel` and `listen` still reported `ok`; both now
-  fail and the angel line carries the (redacted) reload error.
-- **An `allowed_clients` rule written as an IPv4-mapped IPv6 CIDR now matches.** `::ffff:192.168.1.0/120`
-  was accepted but denied every peer; it is now read as `192.168.1.0/24`, and a mapped prefix shorter than
-  `/96` is rejected.
-- **A first login on the legacy single `auth` can no longer overwrite a password set in the meantime.**
-  The claim was refused only when neither field was `init`; it is now refused when either field differs
-  from what the angel loaded.
-- **A subscription URL no longer leaks through the `Referer` header on a redirect.** Go's HTTP client
-  copies the previous URL, path and query included, into `Referer` when a subscription redirects to
-  another host; subscription URLs are credentials, so the header is now dropped on every hop.
-- **Two `netivri` processes can no longer overwrite each other's server credentials.** The server
-  secrets file was guarded by a lock that exists only inside one process, so two rotations running
-  at once could bring back a revoked password and both report success. Every change now holds a file
-  lock across its read and write.
-- **`server update` with new `cert_file` / `key_file` paths now uses them.** The old certificate paths
-  were kept, so the listener and the client links stayed on the old pair; a stored certificate with
-  a missing key is repaired as one pair instead of getting a key that does not match.
-- **A subscription snapshot that cannot replace its old `.ktav` file reports the failure.** The refresh
-  said it succeeded while the old snapshot kept being loaded.
-- **`sub rename` refuses a name that differs only in letter case.** On Windows and macOS both names
-  are one snapshot file, and the rename deleted it.
-- **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
-  Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
-  filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read
-  could overwrite a newer grouping or filter; and "Clear pre-hop" or "Clear post-hop" applied to the
-  provider selected when the save ran instead of the one you chose. Each now keeps its own target.
-- **A provider named `any` is no longer mistaken for "Any provider" in the account wizard.**
-  Choosing it, or typing it in the provider edit, stored an empty provider list, so the account could
-  use the nodes of every provider. The wizard now keeps the literal name, and the country hint follows it.
-- **Long client links in the server wizard can be scrolled to the end.** The scroll limit counted the
-  source lines instead of the wrapped rows, so a long VMess link could not be scrolled with Down, PgDn
-  or the wheel.
-- **The server wizard picks a free port for an IPv6 bind address.** `::1` produced the invalid
-  address `::1:0` and the creation failed.
-- **`netivri doctor` checks the transport the server really binds.** A Hysteria2 or TUIC server on a
-  UDP port taken by another program was reported free because only TCP was tried, and an unrelated
-  TCP listener gave a false warning.
-- **A bare `--` ends flag parsing for good.** `netivri account clone -- alice -bob` rejected `-bob`
-  as an unknown flag after taking `alice`.
-- **A node whose connections mostly got no answer is a `WARN` in the one-minute line too, not only
-  in the hourly summary.** `138 connections ended, 1 broken, 127 without an answer` was an `INFO` line,
-  and a minute with no broken connection at all produced no line for the node. Now at least 20
-  connections that ended with half or more broken or without an answer make a `WARN` line for the
-  node (still `INFO` right after the computer woke up).
-- **The log line of a block by the share rule no longer says "the rest were answered" when none was.**
-  Without any answer in the window it says that connections heard nothing back within 10 minutes
-  though a connection of the site was still being answered.
-
-- **A lossy path no longer keeps a site on a node for hours.** A node was blocked for a site only
-  when none of the site's connections was answered, so a destination that answered a few connections
-  (slowly) and left most silent was never blocked: one hour of the log had 1632 of 1760
-  connections to one Telegram address without an answer. Within 10 minutes, 20 or more silent
-  connections that are at least 90 percent of those that were silent or answered at first bytes now
-  block the node for that site, and an answer does not lift such a block.
-- **The hourly account summary is a `WARN` when most connections failed** (at least 20 ended and half
-  or more broken or without an answer); it was an `INFO` line in the hour above. The log line of a
-  block by the new rule says `got mostly no answer (22 of 24 connections ...)`.
-
-- **A node that came back after the computer slept no longer "was down" for the whole sleep.**
-  `is back after 31h57m37s down` counted 25 hours of sleep, during which the angel is frozen;
-  the line now gives the time awake and names the sleep (`after 6h10m45s down, not counting
-  25h46m52s asleep`), as do the end of a node burst and of a node outage.
-- **A panic on one connection no longer takes the angel down.** The angel crashed once
-  (`buffer overflow: capacity 32768,start 0, need 2` in the VLESS Vision padding): a buffer
-  that came without room for the padding header panicked in the goroutine of a single
-  connection. Vision now copies such a buffer into one that has the room (patch 8 of the
-  vendored Mihomo), and a panic below a connection closes only that connection and writes a
-  `WARN` line with the panic and its two top frames.
-- **Installing the `.rpm` on a current Fedora.** The `.rpm` is unsigned and recent rpm
-  refuses such a package (`does not verify: no signature`), which also failed the Fedora
-  install check of the release workflow. The check and `docs/install.md` now use
-  `rpm -i --nosignature` (verify the file against `SHA256SUMS`).
-
-- **Direct-only server reloads fall back safely.** Adding servers when explicit direct accounts leave no in-place route table now restarts the listener on `ErrReconfigureUnsupported`; server transaction errors still remain visible without a restart.
-
-- Account commands no longer write a configuration that the next load refuses (account add init).
-
-- **A busy angel is no longer taken for a dead one.** `status`, `down` and `up`
-  asked the control channel once and, when the answer took longer than 2 s (an
-  angel busy restarting its core), deleted the state file of the live angel:
-  from then on `status` said "not running", `down` could not find it and `up`
-  started a second angel. A slow answer now ends in `ANGEL_NOT_RESPONDING`
-  (exit 1, retry in a moment) and changes nothing; only a refused connection or
-  another pid answering still clears a stale state file.
-
-- **A TCP and a UDP server may share a port number.** The port conflict check of
-  `server add` and of the configuration is now per transport: Trojan on TCP 443 and
-  Hysteria2 on UDP 443 can coexist, and a UDP server may use the proxy port; two
-  servers of the same transport on overlapping binds are still refused
-  (`PORT_IN_USE`).
-
-## [0.1.0] - 2026-10-28
-
-First release under this number, and the first one published to the `@netivri`
-npm organization. The earlier releases 0.1.0 (22 October) and 0.2.0 were
-withdrawn before all their npm packages were published, a planned 0.3.0 was
-never tagged, and npm never accepts a used version number again; in the new
-organization 0.1.0 is free. Everything that was listed for those releases
-ships here. The sections below describe the
-first public release as a whole; "Changed" lists what differs from the
-withdrawn pre-releases.
-
-### Added
+- **Explicit direct exits per account.** `accounts[].exit` (`netivri account add --exit`, `netivri account set-exit {ACCOUNT}[,{ACCOUNT}...] {route|direct} | --all {route|direct}`) opts an account into direct egress, optionally via the effective post proxy. Toggles apply in place only while at least one account route has stored nodes both before and after; boundary and direct-only changes restart. Server-only changes that a direct-only core cannot apply in place now restart too. Keeping another node-backed account route through a flip preserves connections. Adding an account always restarts. Direct requires empty provider/country; inherited pre-proxy is ignored but an explicitly configured account pre-proxy is rejected. This is never a fallback and exposes this machine's address to destinations. See [`docs/design/exit-direct.md`](docs/design/exit-direct.md).
 
 - **SOCKS5 proxies before and after the VPN.** An optional `pre_socks5` is the
   SOCKS5 proxy netivri connects through to reach the VPN node, and an optional
@@ -561,8 +293,9 @@ withdrawn pre-releases.
 - **Subscriptions.** `sub add`, `sub list`, `sub update`, `sub rm` and
   `sub countries`. Clash/Mihomo YAML and base64 lists of share links are
   accepted; quota and expiry come from the `subscription-userinfo` header.
-  A subscription is always fetched through a strict proxy and never silently
-  directly. Nodes get stable ids. The nodes of a subscription are stored in
+  A configured fetch proxy is used as `fetch.mode` says (see Changed: the
+  default goes directly first and keeps the proxy as the reserve channel).
+  Nodes get stable ids. The nodes of a subscription are stored in
   `subscriptions/{NAME}.ktav`.
 - **Automatic subscription refresh.** A running angel re-fetches every
   subscription once an hour; `fetch.update_interval` changes the period
@@ -604,9 +337,9 @@ withdrawn pre-releases.
   percentiles, failure classes and idle-connection survival for one account or
   node.
 - **Installers.** `install.sh` and `install.ps1` verify checksums, upgrade in
-  place even while the angel runs, install from a local directory and can
-  add the install directory to the user `PATH` without changing its registry
-  type.
+  place even while the angel runs, install from a local directory, take the
+  version with or without its leading `v`, and can add the install directory
+  to the user `PATH` without changing its registry type.
 - **npm packages.** `npm i -g @netivri/proxy` with six platform packages
   (`@netivri/proxy-{linux,darwin,w32}-{x64,arm64}`), no postinstall scripts and
   no downloads at install time.
@@ -625,6 +358,111 @@ withdrawn pre-releases.
   JSON object for scripts and agents.
 
 ### Changed
+
+- **The linter runs in CI and the code has no findings.** The `lint` job runs `golangci-lint` with
+  the settings of `.golangci.yml` (a pinned version, the tagged test files included) and any finding
+  fails it. The tree was brought to zero: errors of `Close`, `Rollback` and writes are handled,
+  contexts are passed down, type assertions are checked, long functions and tests were split into
+  helpers, and the few false positives carry a `//nolint` with the linter and the reason. Visible
+  effects: a few messages start with a lowercase letter (`subscription URL cannot be blank` and
+  `enter a different name` in the provider screen, and the `snell`, `sudoku` and `reality` errors of
+  `server`), an error wrapped by another one is now recognized by `errors.As` where a direct type
+  check missed it, and an out-of-range port or length in the SOCKS5 and hop code is an error instead
+  of a silent wrap.
+- **A configured proxy is the reserve channel of a subscription fetch, and `fetch.mode` chooses.**
+  `fetch.proxy` and the per-provider `--via` used to be strict: every fetch went through the proxy
+  and never directly. The new `fetch.mode` (`config set fetch.mode`, the Settings screen, or the
+  file) says how the proxy is used: `reserve`, the default, goes directly first and takes the proxy
+  automatically when the direct attempt cannot connect, breaks off, or is refused for the address
+  (HTTP 403, 429, 451), while a 404, a bad body or a body over the size limit is not retried;
+  `proxy` is the old strict path, only through the proxy and never directly; `direct` never uses a
+  proxy and keeps the configured ones unused. With no proxy there is no reserve. When both attempts
+  of `reserve` fail, the error keeps the direct code and ends `; then through the reserve proxy: ...`.
+  This applies to `sub add`, `sub update`, `sub countries --url`, the hourly refresh and the
+  Providers preview. In the default mode the provider sees this machine's own address whenever the
+  direct fetch works, so a proxy set only to hide it needs `fetch.mode: proxy`; `README.md` and
+  `SECURITY.md` say so.
+
+- The interactive screens use the new frame and layout of shell v2 (see Added).
+
+- Account writes now validate the entire resulting configuration before saving. Validation failures return `CONFIG_INVALID` and persist no changes; batch account writes are atomic.
+
+- **A new access rule for one account no longer drops everyone.** `account set-clients` (an
+  `allowed_clients` change of accounts only) is applied in place to the servers and
+  the mixed port: open connections stay, the new rule holds for new ones. Adding or
+  removing an account, new credentials, bind or port still restart the listener.
+
+- **The angel survives a core that will not start.** When a replacement core and the
+  rollback to the previous one both fail to start (a port that is not free yet), the
+  angel no longer exits: `status` shows `core: "down"`, the previous good
+  configuration is retried after 1 s, 2 s, 4 s ... up to 30 s, a newer valid
+  configuration is tried at once, and `down` still stops it.
+
+- **Fewer, faster node probes.** A round probes up to 24 nodes at once (was 8),
+  so a round over three dozen nodes in a dead network ends inside one probe
+  interval instead of after 75 s. A fallback node that carries no traffic (a
+  worse tier, with a better node up) is probed every 3 minutes while it
+  answers, which also quiets its flapping lines; a failed probe, traffic, or
+  the better tier going down puts it back on 45 s. A server that two providers
+  list with identical settings, or one node of two accounts, is probed once and
+  the result is recorded for each.
+
+- **The log says which stage of a route failed.** For a route with a `pre_socks5`
+  or `post_socks5` hop, the failed dials of a minute are one line per stage
+  (`account alice via {NODE}, post hop: 3 dials failed (proxy auth failed x3)`,
+  with `pre hop`, `node` or `unknown hop`), and the reason a node went down
+  carries it too (`3 dial failures (timeout, post hop)`). The stage is found
+  from the address Mihomo names in the error, or from the one stage that speaks
+  the protocol of an address-less refusal; the address itself is never printed.
+  A route that is only a node reads as before.
+- **A separate state directory for a separate run.** `--local` makes `.netivri`
+  in the current directory the state directory (created, owner-only, with a
+  `.gitignore` that ignores everything in it), and once that directory exists
+  every command run from there uses it with no flag; the current directory
+  only, not its parents. `--home {DIR}` still names any directory, and the two
+  cannot be combined. Order: `--home`, `--local`, an existing `./.netivri`,
+  `$NETIVRI_HOME`, the user config directory. Settings, tokens, subscriptions,
+  statistics and the angel of each directory are independent, so a second
+  angel runs next to the first (give it `--port`, a new directory has the
+  default port 7890). `status` and `doctor` print `home` and `home_source`.
+
+- **The log says how slow the answers are.** The hourly summary of an account
+  ends with how long the node's side took to start answering (median and 95th
+  percentile, from the first bytes the client sent to the first byte back), and
+  a minute in which at least 10 connections got an answer with a median of 2
+  seconds or more gets an `INFO` line `slow answers`. The summary of moved sites
+  names a side that is a single node.
+- **HTTP and HTTPS proxies as hops.** `pre_socks5` and `post_socks5` (global
+  and per account, `account set-socks5`, `--pre-socks5`, `--post-socks5`) take
+  `http://` (an HTTP CONNECT proxy, such as Privoxy or Burp) and `https://` (the
+  same over TLS, certificate checked) as well as `socks5://`; the port stays
+  required and the setting names are unchanged. The listening port already
+  speaks SOCKS5, SOCKS4 and HTTP on one socket. A hop that does not take the
+  credentials or will not connect shows in the log as `proxy auth failed` or
+  `proxy refused`, not as an unknown `error`.
+- **The log tells when the computer slept.** The angel is frozen while the
+  computer sleeps, so hours of sleep looked like hours of silence and the
+  nodes seemed to fail all at once afterwards. The angel now notices the jump
+  of the clock, writes one `INFO` line with the length of the sleep, probes
+  every node at once and treats failures in the next 2 minutes as expected:
+  `INFO` lines, no burst, no flapping, no `WARN` in the per-minute connection
+  lines.
+- **Moved sites are one line a minute.** Sites of one account that moved
+  between several pairs of nodes for one reason (a node went down) are one line
+  with the counts instead of one line per pair; the pairs are `DEBUG`.
+- **A failed subscription refresh is quiet while it does not matter.** A fetch
+  that fails on the way is tried once more after 5 seconds. A failure is an
+  `INFO` line saying what stays and when the next try is while the stored list
+  is recent, and a `WARN` only with the third failure in a row, a list older
+  than twice the interval or no list, so `doctor` no longer warns for a
+  timeout that the next try fixes. A successful refresh says how long it took.
+- **CI tests what the diff touches.** A push or pull request runs the tests of
+  the packages the diff changes and of every package that imports them; a
+  change that is not a file of one package (`go.mod`, workflows, scripts,
+  `third_party`, npm, packaging) runs everything, and documents alone run no
+  test. A line `ci: full` in the head commit message, or a manual run of the
+  `CI` workflow (inputs `packages`, `tags`, `run`, `os`, `race`), runs
+  everything. Coverage floors and the packaging jobs run only on a full run.
 
 - **Sites go back to the preferred tier.** A binding that sat in a fallback tier
   (an exit country or provider later in the account's list) used to stay there
@@ -801,6 +639,160 @@ withdrawn pre-releases.
   already published, so a re-run of a failed release goes on to the packages
   that are still missing.
 
+### Fixed
+
+- **Dead hops of a pool are found.** A hop that does not answer used to hold each connection for the whole 5-second dial deadline and was never blamed, so it stayed in rotation; a dead post hop behind a VPN node failed only ambiguously and was never quarantined. One attempt now has 3 seconds to get as far as sending the target (a connect or TLS timeout is a hard failure, a silent SOCKS5 negotiation a soft one) and the connection moves to another hop; five soft failures without a success quarantine a hop like three hard ones; a post hop that refuses the password before the target was sent is retried on another hop, and a refusing hop fails its revival probe. A pre pool stops after two hops report the VPN node unreachable instead of trying every hop.
+- **Hop host names with `_`** work in pools (the native proxy client rejected them, and also sites with `_` in their name), and their quarantine is stored. A hop host with non-ASCII letters is rejected by the config check with a hint to use the punycode (`xn--`) form, instead of breaking the start of a pool.
+- **A dead path for a client that gives up early is left in seconds.** A client such as Telegram drops a connection that got no answer after 2-3 seconds and retries at once; those connections never reached the 5 seconds a silent connection needed, so a node that could not reach the site stayed in use for minutes (257 connections without an answer in 12 minutes in one log). The lossy-path rule (20 or more silent connections, at least 90 percent of the site's connections in 10 minutes) now counts connections that waited from 2 seconds; the rule of 3 silent connections keeps its 5 seconds.
+- **A subscription fetch that timed out while connecting says so on Windows.** The error read `request failed (direct, connecting)` without its kind, because Windows words that timeout without the word "timeout"; it now reads `request failed: timeout (direct, connecting)`.
+- **`down` stops an angel of another version.** After an update, `down` and `up` failed with `decode status answer` against an angel that the previous version had started, so it could not be stopped from the CLI. Both now need only its pid: `down` stops it and `up` reports it as running; `status` answers `ANGEL_OUTDATED` with the angel's pid and version and the restart command, `doctor` fails its `angel` check with the same text, and the shell header shows the running angel.
+- **The pool of the default route is visible.** `status` has a top-level `hop_pools` for a global post list of several hops; `doctor` and the Service tab show it as `default route`.
+- **A flapping node is announced once, not again every time its old downs age out.** A node stopped being flapping as soon as fewer than 3 of its downs were left in the last hour, so one that went down every 35 minutes got a new `is flapping` line (and its INFO lines) every few hours; it now stays flapping until a whole hour has passed without a down. The line also named the wrong level: it said its further reports are `INFO` for a node of a later tier whose repeats are `DEBUG`; it now says `DEBUG` there (and during an outage), `INFO` for a first-tier node.
+- **A burst of nodes that no account uses is not a warning.** `node burst: ...` was a `WARN` even when every node in it belonged to a later tier of the routes, which no account uses while its first tier is up; it is now `INFO` then, and a first-tier node that joins such a burst raises the `WARN` once. A burst with a first-tier node in it, and every burst without tier information, stay a `WARN`.
+- **The hourly summary says what it covers after a sleep.** The summary written at the wake of a computer that had slept for 26 hours read `last hour` but held the time before the sleep; it now reads `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: ...` (or `..., the computer slept in between: ...` when the sleep watch has not noticed the sleep yet). The note about a previous angel that did not stop cleanly names a restart of the computer next to a kill and a power loss, which is what Windows does to a running angel when it restarts.
+
+- **A subscription fetch that fails in the TLS handshake says so.** The path and phase added to a failed
+  fetch named the phase after the handshake (`sending the request`) when the handshake itself timed out,
+  because the transport reports a failed handshake as finished; it now stays `TLS handshake`.
+
+- **A timeout through a proxy hop is named a timeout.** A probe or dial that ended with `context deadline
+  exceeded` inside the text of a hop error was logged as `error: <addr> connect error context deadline
+  exceeded` and counted as a separate cause in the summaries; it is now `timeout`, as are failed
+  subscription fetches with the same text.
+
+- **A hot reload no longer loses what the angel knew, and a busy port no longer blocks a config change
+  for good.** When the new listener port was busy for a while and the previous core had to be restored,
+  the watcher still marked the new file as applied and never tried again; it now retries a few times
+  without another edit. The first login on an `init` password, claimed between two reloads, was seen as
+  an outside change and restarted the listener (dropping connections); the claim is now kept in the
+  applied configuration. Each routed reload wrapped the login logger once more, so one rejected login
+  could be counted several times. And an in-place route reload started the node log from nothing: an
+  active outage lost its suppression and its closing summary, and events of a node added by the reload
+  were dropped. The node log now carries its state, closes an outage whose nodes were removed, and
+  keeps the events that arrive while the new routes are being installed.
+- **Two accounts that reach the same node through different proxy hops no longer share one health
+  record.** A node used directly by one account and through a dead pre-hop by another had one record
+  keyed by its label, so the first account's successful dials cleared the second one's failures and
+  it never moved to its fallback; one failed probe of a node present in two routes also counted
+  twice and marked it down at once. Health is now kept per node and hop chain, and each physical
+  probe counts once per record.
+- **A site's recent answer is remembered per node.** A late answer on an old connection overwrote the
+  answer of the node the site had moved to, so three silent connections could block a node that was
+  answering. The nodes that answer are now remembered one by one.
+- **A failed reload no longer leaves a probing loop behind, and the evidence of silent sites is pruned
+  at most once a minute.** The replacement warmer was never closed when the listener change failed, and
+  a full table was scanned under the routing lock for every new silent destination. A panic in the
+  plain read or write of a connection is now contained and reported like one in the buffered path.
+- **The statistics database recovers from an interrupted upgrade and no longer grows without bound.**
+  An upgrade that stopped after adding the node-name column but before saving the schema version failed
+  every later start with "duplicate column" and switched statistics off; the schema steps and the version
+  are now one transaction. The nodes and accounts that no longer have any sample or binding are removed
+  with the old samples, and the writer's id caches are cleared with them.
+- **`netivri stats --since 30d` counts the recent samples.** A window longer than the raw retention read
+  only the hourly table, so a fresh database showed no nodes at all and an older one lacked its last
+  seven days; it now combines both. The node figures are read in one transaction, so a probe written
+  in between can no longer give a delay with no probes, and `--node` filters in the query instead of
+  loading every node's samples.
+- **`netivri up --foreground` no longer starts a second angel while the first one is busy.** A control
+  answer later than two seconds counted as "no angel", so a second proxy started in the same home and
+  overwrote the state file, and `down` could no longer reach the first one. Both start paths now stop
+  with "angel not responding" and refuse any probe error that does not prove the angel is gone.
+- **A control response over 64 KiB no longer makes `down` say "stopped" for a running angel.** The
+  response limit was the state-file limit, a large status was cut, and the state file was deleted.
+  Responses now have their own 4 MiB limit, and a malformed or oversize answer keeps the state file.
+- **`netivri doctor` fails when the angel runs with its core down.** After a failed reload and a failed
+  rollback the angel stays up with no listener, and `angel` and `listen` still reported `ok`; both now
+  fail and the angel line carries the (redacted) reload error.
+- **An `allowed_clients` rule written as an IPv4-mapped IPv6 CIDR now matches.** `::ffff:192.168.1.0/120`
+  was accepted but denied every peer; it is now read as `192.168.1.0/24`, and a mapped prefix shorter than
+  `/96` is rejected.
+- **A first login on the legacy single `auth` can no longer overwrite a password set in the meantime.**
+  The claim was refused only when neither field was `init`; it is now refused when either field differs
+  from what the angel loaded.
+- **A subscription URL no longer leaks through the `Referer` header on a redirect.** Go's HTTP client
+  copies the previous URL, path and query included, into `Referer` when a subscription redirects to
+  another host; subscription URLs are credentials, so the header is now dropped on every hop.
+- **Two `netivri` processes can no longer overwrite each other's server credentials.** The server
+  secrets file was guarded by a lock that exists only inside one process, so two rotations running
+  at once could bring back a revoked password and both report success. Every change now holds a file
+  lock across its read and write.
+- **`server update` with new `cert_file` / `key_file` paths now uses them.** The old certificate paths
+  were kept, so the listener and the client links stayed on the old pair; a stored certificate with
+  a missing key is repaired as one pair instead of getting a key that does not match.
+- **A subscription snapshot that cannot replace its old `.ktav` file reports the failure.** The refresh
+  said it succeeded while the old snapshot kept being loaded.
+- **`sub rename` refuses a name that differs only in letter case.** On Windows and macOS both names
+  are one snapshot file, and the rename deleted it.
+- **Shell screens no longer lose their timers, input or results when you switch tabs or act quickly.**
+  Typing `q` or `?` in the Logs search quit the shell or opened the help instead of going into the
+  filter; the Service and Logs polling stopped for good after you left the tab; a slow Stats read
+  could overwrite a newer grouping or filter; and "Clear pre-hop" or "Clear post-hop" applied to the
+  provider selected when the save ran instead of the one you chose. Each now keeps its own target.
+- **A provider named `any` is no longer mistaken for "Any provider" in the account wizard.**
+  Choosing it, or typing it in the provider edit, stored an empty provider list, so the account could
+  use the nodes of every provider. The wizard now keeps the literal name, and the country hint follows it.
+- **Long client links in the server wizard can be scrolled to the end.** The scroll limit counted the
+  source lines instead of the wrapped rows, so a long VMess link could not be scrolled with Down, PgDn
+  or the wheel.
+- **The server wizard picks a free port for an IPv6 bind address.** `::1` produced the invalid
+  address `::1:0` and the creation failed.
+- **`netivri doctor` checks the transport the server really binds.** A Hysteria2 or TUIC server on a
+  UDP port taken by another program was reported free because only TCP was tried, and an unrelated
+  TCP listener gave a false warning.
+- **A bare `--` ends flag parsing for good.** `netivri account clone -- alice -bob` rejected `-bob`
+  as an unknown flag after taking `alice`.
+- **A node whose connections mostly got no answer is a `WARN` in the one-minute line too, not only
+  in the hourly summary.** `138 connections ended, 1 broken, 127 without an answer` was an `INFO` line,
+  and a minute with no broken connection at all produced no line for the node. Now at least 20
+  connections that ended with half or more broken or without an answer make a `WARN` line for the
+  node (still `INFO` right after the computer woke up).
+- **The log line of a block by the share rule no longer says "the rest were answered" when none was.**
+  Without any answer in the window it says that connections heard nothing back within 10 minutes
+  though a connection of the site was still being answered.
+
+- **A lossy path no longer keeps a site on a node for hours.** A node was blocked for a site only
+  when none of the site's connections was answered, so a destination that answered a few connections
+  (slowly) and left most silent was never blocked: one hour of the log had 1632 of 1760
+  connections to one Telegram address without an answer. Within 10 minutes, 20 or more silent
+  connections that are at least 90 percent of those that were silent or answered at first bytes now
+  block the node for that site, and an answer does not lift such a block.
+- **The hourly account summary is a `WARN` when most connections failed** (at least 20 ended and half
+  or more broken or without an answer); it was an `INFO` line in the hour above. The log line of a
+  block by the new rule says `got mostly no answer (22 of 24 connections ...)`.
+
+- **A node that came back after the computer slept no longer "was down" for the whole sleep.**
+  `is back after 31h57m37s down` counted 25 hours of sleep, during which the angel is frozen;
+  the line now gives the time awake and names the sleep (`after 6h10m45s down, not counting
+  25h46m52s asleep`), as do the end of a node burst and of a node outage.
+- **A panic on one connection no longer takes the angel down.** The angel crashed once
+  (`buffer overflow: capacity 32768,start 0, need 2` in the VLESS Vision padding): a buffer
+  that came without room for the padding header panicked in the goroutine of a single
+  connection. Vision now copies such a buffer into one that has the room (patch 8 of the
+  vendored Mihomo), and a panic below a connection closes only that connection and writes a
+  `WARN` line with the panic and its two top frames.
+- **Installing the `.rpm` on a current Fedora.** The `.rpm` is unsigned and recent rpm
+  refuses such a package (`does not verify: no signature`), which also failed the Fedora
+  install check of the release workflow. The check and `docs/install.md` now use
+  `rpm -i --nosignature` (verify the file against `SHA256SUMS`).
+
+- **Direct-only server reloads fall back safely.** Adding servers when explicit direct accounts leave no in-place route table now restarts the listener on `ErrReconfigureUnsupported`; server transaction errors still remain visible without a restart.
+
+- Account commands no longer write a configuration that the next load refuses (account add init).
+
+- **A busy angel is no longer taken for a dead one.** `status`, `down` and `up`
+  asked the control channel once and, when the answer took longer than 2 s (an
+  angel busy restarting its core), deleted the state file of the live angel:
+  from then on `status` said "not running", `down` could not find it and `up`
+  started a second angel. A slow answer now ends in `ANGEL_NOT_RESPONDING`
+  (exit 1, retry in a moment) and changes nothing; only a refused connection or
+  another pid answering still clears a stale state file.
+
+- **A TCP and a UDP server may share a port number.** The port conflict check of
+  `server add` and of the configuration is now per transport: Trojan on TCP 443 and
+  Hysteria2 on UDP 443 can coexist, and a UDP server may use the proxy port; two
+  servers of the same transport on overlapping binds are still refused
+  (`PORT_IN_USE`).
+
 ### Security
 
 - Subscription URLs and `--via` proxies are never printed or logged.
@@ -812,9 +804,10 @@ withdrawn pre-releases.
 
 - `use`, `node test` and `schema` are described in
   [`docs/cli.md`](docs/cli.md) but not implemented yet.
-- Command results are documents only (Ktav by default, JSON with `--json`);
-  there is no table view for people yet. Help (`netivri help`) is the one text
-  output.
+- Command results are documents (Ktav by default, JSON with `--json`); there is
+  no table view. The text outputs are `netivri help`, `netivri logs --follow`,
+  `netivri status --watch` and the interactive shell (`netivri -i`).
+- `--quiet` and `--no-color` are accepted and change nothing.
 - No TUN mode and no change of the system proxy settings; these are non-goals
   for the 0.x line.
 - `go install` does not work, because `go.mod` uses a `replace` directive for

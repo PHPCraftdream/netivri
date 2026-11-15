@@ -104,7 +104,7 @@ Both installers take the same options (POSIX names / PowerShell parameters):
 
 | install.sh | install.ps1 | Env variable | Default | Meaning |
 |---|---|---|---|---|
-| `--version X.Y.Z` | `-Version X.Y.Z` | `NETIVRI_VERSION` | latest release | Version to install (no leading `v`). |
+| `--version X.Y.Z` | `-Version X.Y.Z` | `NETIVRI_VERSION` | latest release | Version to install (`0.1.0`; a leading `v` is dropped). |
 | `--dir {DIR}` | `-InstallDir {DIR}` | `NETIVRI_INSTALL_DIR` | `~/.netivri/bin` / `%LOCALAPPDATA%\netivri\bin` | Install directory. |
 | `--base-url {URL}` | `-BaseUrl {URL}` | `NETIVRI_BASE_URL` | GitHub releases | Download base URL (see below). |
 | `--from-dir {DIR}` | `-FromDir {DIR}` | `NETIVRI_FROM_DIR` | — | Install from a local directory instead of downloading (see below). |
@@ -176,7 +176,7 @@ covers the download. Two layouts are accepted:
 - **npm platform package layout** — `{DIR}/bin/` holds the binary;
   `LICENSE` and `THIRD_PARTY_LICENSES/` sit in `{DIR}`.
 
-The binary and the library must exist (the install fails otherwise);
+The binary must exist (the install fails otherwise);
 `LICENSE` and `THIRD_PARTY_LICENSES/` are copied when present and silently
 skipped otherwise. `--from-dir` cannot be combined with `--version` or
 `--base-url` (or their env variables) — that is a usage error. In this
@@ -211,10 +211,11 @@ Checksum verification is mandatory and cannot be skipped by any flag
 {DIR}/../share/netivri/THIRD_PARTY_LICENSES/
 ```
 
-The library must sit next to the binary under its canonical name — netivri
-resolves it there and refuses to download it from the network (see
-[docs/design/config-ktav.md](design/config-ktav.md)). The licenses are
-installed one level up under `share/netivri/`. Re-running the installer
+The binary is the whole program: it loads no native library and downloads
+nothing at run time (see [docs/design/config-ktav.md](design/config-ktav.md)).
+The licenses are installed one level up under `share/netivri/`. A
+`libktav_cabi` / `ktav_cabi.dll` left next to the binary by a development
+build of an earlier version is removed. Re-running the installer
 upgrades in place; it does not remove anything else in the directory.
 
 ## PATH
@@ -249,5 +250,7 @@ sh install.sh --uninstall
 powershell -ExecutionPolicy Bypass -File install.ps1 -Uninstall
 ```
 
-Removes exactly what the installer put there — the binary, the Ktav
-library and `share/netivri/` — and nothing else.
+Removes exactly what the installer put there — the binary and
+`share/netivri/` (and a leftover Ktav library of an earlier build) — and
+nothing else. The state directory (configuration, subscriptions,
+statistics) stays; delete it by hand if you no longer need it.

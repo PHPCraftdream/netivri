@@ -1196,9 +1196,15 @@ var helpTopics = []helpTopic{
 			"auth.login), accounts.password (init or an argon2id hash), and optional accounts.provider (a " +
 			"comma-separated list of subscription names in priority order), accounts.exit_country (a " +
 			"comma-separated list of two-letter country codes, * allowed), accounts.exit (route by default or direct, requiring empty provider/country; direct rejects explicitly configured account pre-proxy, ignores inherited pre-proxy, and may use effective post-proxy directly) and accounts.allowed_clients (the " +
-			"account's own client-address rule). selection.node, selection.country and selection.mode (manual, " +
+			"account's own client-address rule). servers is an array of inbound server listeners, each with " +
+			"servers.name, servers.protocol (one of netivri server protocols), servers.port, servers.accounts (* or " +
+			"a comma-separated list of logins), optional servers.bind (default 0.0.0.0), servers.public_host (the " +
+			"host of the client links), servers.default and the protocol's own parameters as further keys; their " +
+			"credentials live in server-secrets.ktav next to the file, never in it (netivri help server add). " +
+			"selection.node, selection.country and selection.mode (manual, " +
 			"fastest or auto; " +
-			"default manual) set the preferred exit.\n\n" +
+			"default manual) are reserved for a planned node selection: they are validated, but nothing reads " +
+			"them yet.\n\n" +
 			"`chain.pre_socks5` and `chain.post_socks5` are ordered candidate arrays at global, provider and account levels; `accounts.pre_socks5` and `accounts.post_socks5` are the accepted account field keys, represented per row as `accounts[].pre_socks5` and `accounts[].post_socks5`; `subscriptions[].pre_socks5` and `subscriptions[].post_socks5` configure per-subscription chains. Each side supports up to 16 candidates. Legacy scalar Ktav URLs remain singleton lists. The nearest configured list replaces the less-specific list; empty/absent inherits and `none` clears inherited candidates. Candidates are alternatives, not serial hops. Weighted health quarantines failures and probes recovery. A multi-entry global post is a pool for the account routes that inherit it and for connections without an account (the default route and legacy auth); the default route has no pre side. URLs use socks5://, http:// or https:// with required ports, and credentials are never printed.\n\n" +
 			"listen.allowed_clients and accounts[].allowed_clients are a comma-separated list of rules; spaces " +
 			"around a comma are ignored. The rules: * (every address), loopback (127.0.0.0/8 and ::1), an exact " +
@@ -1325,7 +1331,8 @@ var helpTopics = []helpTopic{
 			{"Full reference", "https://github.com/PHPCraftdream/netivri/blob/main/docs/cli.md"},
 		},
 		Notes: []string{
-			"status: angel, foreground, pid, listen, protocols, auth, allowed_clients, accounts[] (login, " +
+			"status: angel, foreground, pid, home and home_source (the state directory and how it was chosen), " +
+				"listen, protocols, auth, allowed_clients, accounts[] (login, " +
 				"provider, exit_country, exit, allowed_clients, and hop_pools[] when a role has several hops: role, " +
 				"hop_count, active_count, quarantined_count, unpersistable_count and hops[] with id, state, trips, " +
 				"next_revival_seconds), route, started_at, uptime_seconds, version, " +
@@ -1334,7 +1341,10 @@ var helpTopics = []helpTopic{
 				"counters), warm (alive = nodes whose last probe succeeded, total = the number of nodes, " +
 				"probes = probes sent so far, probe_failures = failed probes), refresh (interval_seconds = 0 " +
 				"when the refresh is off, ok, failed, last_at, last_error) and reload (count = core restarts " +
-				"caused by a changed configuration, last_at, last_error). Timestamps are RFC3339 UTC. --full " +
+				"caused by a changed configuration, last_at, last_error), hop_pools[] (the pool of the default route, " +
+				"the fields of accounts[].hop_pools, only when a global post list has several hops) and servers[] " +
+				"(only while server listeners run: name, protocol, listen, accounts, connections, " +
+				"dropped_clients). Timestamps are RFC3339 UTC. --full " +
 				"adds the complete warm with nodes[] (name = the internal proxy name, alive, delay_ms, 0 until " +
 				"a probe succeeded, label, provider, country, node_name), stats (path, dropped = samples lost " +
 				"to a full write queue) and affinity (bindings = current site-to-node bindings held, rebinds = " +

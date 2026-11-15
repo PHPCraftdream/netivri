@@ -65,7 +65,7 @@ documented exit codes and machine-readable errors. See [`AGENTS.md`](AGENTS.md) 
   `netivri sub -i`, `netivri account -i`, `netivri server -i`); it requires
   terminal stdin/stdout. See [`interactive shell`](docs/cli.md#interactive-shell).
   The screen has a fixed layout: a header (angel state, listen address,
-  uptime), a tab line (Providers, Accounts, Servers, Service), and from 100 columns a
+  uptime), a tab line (Providers, Accounts, Servers, Service, Logs, Stats, Settings), and from 100 columns a
   list pane on the left with the selected item's card on the right; below
   that, a single pane that drills down. Arrows and Tab/Shift-Tab move, Enter
   opens, Esc goes back, `a` adds, `d` removes, `r` refreshes, `R` refreshes
@@ -129,19 +129,6 @@ directive.
 ## Quick start
 
 ```sh
-netivri -i
-```
-
-The shell starts on Accounts; use `netivri sub -i` for Providers and `netivri server -i` for Servers. It requires terminal stdin and stdout. `?` opens the key help inside the shell; `q` quits.
-
-Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires empty provider and country. With explicit-direct-only accounts, a server update restarts the listener if the core cannot reconfigure it in place; other server transaction errors leave the running configuration unchanged.
-
-```sh
-# Optional: create an account with an explicit direct exit
-netivri account add {ACCOUNT} --exit direct
-```
-
-```sh
 # 1. Add a subscription (the URL is a credential; keep it private)
 netivri sub add https://provider.example/sub/{TOKEN} --name main
 
@@ -164,6 +151,20 @@ curl -x socks5h://alice:choose-a-password@127.0.0.1:7890 https://example.org
 `netivri down` stops the angel. A running angel picks up changes to
 accounts and subscriptions by itself within a few seconds, and re-fetches
 every subscription once an hour (`fetch.update_interval`).
+
+The same in the interactive shell:
+
+```sh
+netivri -i
+```
+
+The shell starts on Accounts; use `netivri sub -i` for Providers and `netivri server -i` for Servers. It requires terminal stdin and stdout. `?` opens the key help inside the shell; `q` quits.
+
+Direct egress is available when you intentionally want to bypass VPN nodes. It exposes this machine's address and requires an empty provider and country:
+
+```sh
+netivri account add {ACCOUNT} --exit direct
+```
 
 ### Run your own server
 
@@ -268,25 +269,12 @@ netivri sub set work --url https://provider.example/sub/{TOKEN}   # a new link; 
 netivri sub set work --via none                     # drop the reserve proxy of this provider
 ```
 
-## SOCKS5 chain scope
+#### How the lists cascade
 
-The documented global/provider/account cascade applies to account routes: an
-account can inherit global candidates, provider candidates replace global,
-and account candidates replace provider. Lists are full replacement and never
-merged. These repeated examples set alternative candidates; candidates are not
-serial hops:
-
-```sh
-netivri sub add https://provider.example/sub/{TOKEN} --name main \
-  --pre-socks5 socks5://pre.example:1080 --pre-socks5 https://backup-pre.example:443 \
-  --post-socks5 http://exit.example:8080 --post-socks5 socks5://backup-exit.example:1080
-netivri sub set-socks5 main --pre socks5://pre.example:1080 --pre https://backup-pre.example:443
-netivri account add {ACCOUNT} --provider {SUBSCRIPTION} \
-  --pre-socks5 http://pre.example:8080 --pre-socks5 socks5://backup-pre.example:1080 \
-  --post-socks5 socks5://exit.example:1080 --post-socks5 https://backup-exit.example:443
-netivri account set-socks5 {ACCOUNT} --post none
-netivri account set-socks5 {ACCOUNT} --post inherit
-```
+The global/provider/account cascade applies to account routes: an account can
+inherit global candidates, provider candidates replace global, and account
+candidates replace provider. Lists are full replacement and never merged;
+candidates are alternatives, not serial hops.
 
 | Global candidates | Provider candidates | Account candidates | Effective |
 | --- | --- | --- | --- |

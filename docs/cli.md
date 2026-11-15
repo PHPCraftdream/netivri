@@ -1,24 +1,23 @@
 # CLI contract
 
 This document is the contract between `netivri` and its callers (humans,
-scripts, AI agents). Breaking changes normally bump `schema_version`. The
-unreleased SOCKS5-chain JSON shape change is intentionally breaking and is
-explicitly documented without a schema-version bump.
+scripts, AI agents). Breaking changes bump `schema_version` (1 in this
+release); while the version is 0.x every change of the contract is also listed
+in the changelog.
 
 ## Global flags
 
 | Flag | Meaning |
 |---|---|
 | `--json` | Write results and errors as JSON instead of Ktav, the default (see [Output](#output)). Env: `NETIVRI_OUTPUT=json`. |
-| `--home {DIR}` | State directory. Default: a `.netivri` directory in the current directory if there is one, else `$NETIVRI_HOME`, else `%APPDATA%\netivri` / `$XDG_CONFIG_HOME/netivri`. See [Separate state directories](#separate-state-directories). |
+| `--home {DIR}` | State directory. Default: a `.netivri` directory in the current directory if there is one, else `$NETIVRI_HOME`, else the user config directory (`%APPDATA%\netivri` on Windows, `$XDG_CONFIG_HOME/netivri` or `~/.config/netivri` on Linux, `~/Library/Application Support/netivri` on macOS). See [Separate state directories](#separate-state-directories). |
 | `--local` | Use `./.netivri` in the current directory as the state directory, creating it. Cannot be combined with `--home`. |
-| `--quiet` | No human-oriented output on stderr. |
-| `--no-color` | No ANSI. Implied when not a TTY or `NO_COLOR` is set. |
+| `--quiet` | Accepted for compatibility; changes nothing today. |
+| `--no-color` | Accepted for compatibility; command output has no color. The interactive shell does not accept it and honors `NO_COLOR` instead. |
 | `-h`, `--help` | Help for the command; see [`help`](#help). |
 | `-i`, `--interactive[={BOOL}]` | Open the interactive terminal shell (also `sub -i`, `account -i`, `server -i`); requires terminal stdin and stdout and cannot be combined with JSON output. `=true` enables, `=false` disables. |
 
-Commands never prompt. Anything that would need confirmation takes a flag
-instead (`--yes`). The explicit exception is the interactive terminal shell,
+Commands never prompt and never ask for a confirmation. The explicit exception is the interactive terminal shell,
 which handles interaction locally and does not change command behavior.
 
 ## Interactive shell
@@ -225,9 +224,10 @@ shows one command: usage, description, flags, examples with comments, the
 errors it can return with their exit codes, and related commands. A command
 with subcommands (`sub`, `node`, `account`, `diag`) lists them.
 
-Besides commands, `netivri help` has three concept topics, listed in the
+Besides commands, `netivri help` has four concept topics, listed in the
 overview under the group "Concepts" and available as `netivri help
-{config|routing|output}` and with `--json`: `config` (the `config.ktav`
+{interactive|config|routing|output}` and with `--json`: `interactive` (the
+screens and keys of the shell), `config` (the `config.ktav`
 file, where it lives and every key it accepts), `routing` (route tiers,
 the `*` country, sticky bindings, the `init` claim and the
 `allowed_clients` cascade) and `output` (the fields each command prints).
@@ -258,7 +258,7 @@ These are the `data.help` values for the overview and for a topic;
 An unknown topic (`netivri help nope`) and an unknown flag after `help` are
 `USAGE` errors (exit 2) with the hint `run: netivri help`; so is an unknown
 command (`netivri frobnicate`). A command that is described in this document
-but not implemented yet (`use`, `logs`, ...) is an unknown command.
+but not implemented yet (`use`, `node test`, `schema`) is an unknown command.
 
 ### `sub countries`
 
