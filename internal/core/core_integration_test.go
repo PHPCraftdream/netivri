@@ -131,7 +131,7 @@ func socks5ConnectRequest(t *testing.T, c net.Conn, target string) {
 	} else {
 		t.Fatalf("target %q is not an IPv4 literal", target)
 	}
-	req[8], req[9] = toByte(t, port>>8), toByte(t, port)
+	req[8], req[9] = toByte(t, port>>8), toByte(t, port&0xff)
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("socks5 request write: %v", err)
 	}
@@ -174,7 +174,7 @@ func socks5ConnectNoAuth(t *testing.T, proxyAddr, target string) net.Conn {
 func socks4Connect(t *testing.T, proxyAddr, targetIP, targetHost string, port int, user string) (net.Conn, byte) {
 	t.Helper()
 	c := dialProxy(t, proxyAddr)
-	req := []byte{4, 1, toByte(t, port>>8), toByte(t, port), 0, 0, 0, 0}
+	req := []byte{4, 1, toByte(t, port>>8), toByte(t, port&0xff), 0, 0, 0, 0}
 	if targetHost != "" {
 		req[4], req[5], req[6], req[7] = 0, 0, 0, 1
 	} else {

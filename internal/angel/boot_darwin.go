@@ -13,5 +13,5 @@ func osBootTime() (time.Time, bool) {
 	if err != nil || tv.Sec <= 0 {
 		return time.Time{}, false
 	}
-	return time.Unix(int64(tv.Sec), int64(tv.Usec)*1000).UTC(), true
+	return time.Unix(tv.Sec, int64(tv.Usec)*1000).UTC(), true
 }

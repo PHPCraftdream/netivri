@@ -1140,7 +1140,7 @@ func (l *liveAngel) startRetry(parent context.Context) {
 		l.mu.Unlock()
 		return
 	}
-	ctx, cancel := context.WithCancel(parent)
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent)) // the recovery loop outlives the reload that starts it; only close stops it
 	l.retryCancel = cancel
 	l.retryRunning.Add(1)
 	go l.retryLoop(ctx)

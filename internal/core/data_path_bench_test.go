@@ -268,7 +268,7 @@ func benchSocksConnect(addr, target, user, pass string, deadline time.Time) (net
 		_ = c.Close()
 		return nil, io.ErrUnexpectedEOF
 	}
-	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], mustByte(port >> 8), mustByte(port)}
+	req := []byte{5, 1, 0, 1, ip[0], ip[1], ip[2], ip[3], mustByte(port >> 8), mustByte(port & 0xff)}
 	if _, err := c.Write(req); err != nil {
 		_ = c.Close()
 		return nil, err

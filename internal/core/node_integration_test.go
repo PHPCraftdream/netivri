@@ -246,7 +246,7 @@ func socks5ConnectDomain(t *testing.T, proxyAddr, domain string, port int) net.C
 	req := make([]byte, 0, 5+len(domain)+2)
 	req = append(req, 5, 1, 0, 3, toByte(t, len(domain)))
 	req = append(req, domain...)
-	req = append(req, toByte(t, port>>8), toByte(t, port))
+	req = append(req, toByte(t, port>>8), toByte(t, port&0xff))
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("socks5 request write: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestNodeNoDirectFallback(t *testing.T) {
 	}
 	// The target is the real echo server, so a direct fallback would be
 	// observable as an accepted connection there.
-	req := []byte{5, 1, 0, 1, 127, 0, 0, 1, mustByte(port >> 8), mustByte(port)}
+	req := []byte{5, 1, 0, 1, 127, 0, 0, 1, mustByte(port >> 8), mustByte(port & 0xff)}
 	if _, err := c.Write(req); err != nil {
 		t.Fatalf("request write: %v", err)
 	}

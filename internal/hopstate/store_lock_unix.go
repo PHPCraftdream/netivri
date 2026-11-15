@@ -26,7 +26,7 @@ func unlockStoreFile(file *os.File) {
 
 func flockRetry(file *os.File, operation int) error {
 	for {
-		err := unix.Flock(int(file.Fd()), operation)
+		err := unix.Flock(int(file.Fd()), operation) //nolint:gosec // G115: a file descriptor always fits an int
 		if !errors.Is(err, unix.EINTR) {
 			return err
 		}
