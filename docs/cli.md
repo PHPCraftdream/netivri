@@ -504,8 +504,13 @@ right after the computer woke up). When the computer slept during the hour the s
 covers instead of `last hour`, since the angel is frozen while it sleeps and the figures are those of the
 time before: `account alice: since 2026-11-13T12:50:18Z, not counting 26h21m38s asleep: 169 connections ended, ...`
 (`since ...Z, the computer slept in between` when the sleep has not been noticed yet). A previous angel that
-did not stop cleanly is named at the next start in one `INFO` line that says it was killed, or the computer
-restarted or lost power (Windows ends a running angel when it restarts), and that there is no crash dump.
+did not stop cleanly is named at the next start in one `INFO` line and there is no crash dump. When the
+computer booted after that angel had started, the line says so with the boot time (`the computer booted at
+2026-11-14T15:38:02Z, after that angel started at 2026-11-13T09:00:00Z, so it ended with a restart or a power
+loss`); otherwise it says the angel was killed, or the computer restarted or lost power (Windows ends a running
+angel when it restarts). The boot time comes from the system (`btime` of `/proc/stat`, `kern.boottime`, the
+uptime on Windows); with Fast Startup a Windows shutdown followed by a start keeps the uptime, so only a restart
+moves it and the general wording stays.
 Every line is `{TIME} {LEVEL} {MESSAGE}` with the time in UTC (RFC 3339) and the
 level `DEBUG`, `INFO`, `WARN` or `ERROR`. Lines of the older log format are read
 as `INFO`, and a line that is not an entry (a panic trace) belongs to the entry

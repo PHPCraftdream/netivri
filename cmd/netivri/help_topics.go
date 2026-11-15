@@ -1008,7 +1008,7 @@ var helpTopics = []helpTopic{
 		},
 		Notes: []string{
 			"The log is moved to netivri.log.1 when it grows past 8 MiB at the next start; 'logs' reads the current file only.",
-			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start (it says the angel was killed, or the computer restarted or lost power).",
+			"A crash of the angel also writes the traceback of all goroutines to run/crash/ in the state directory; the next start keeps it as crash-{TIME}-{PID}.txt and logs one ERROR line with its name (the 10 newest are kept). A killed angel leaves no traceback, only an INFO line at the next start. When the computer booted after that angel had started, the line gives the boot time and says it ended with a restart or a power loss; otherwise it says the angel was killed, or the computer restarted or lost power (the boot time is read from the system, and Windows with Fast Startup keeps it across a shutdown).",
 			"A panic inside the protocol layer of one connection does not stop the angel: that connection is closed and a WARN line says which node, what panicked and where.",
 		},
 		SeeAlso: []string{"status", "stats"},

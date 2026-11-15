@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,4 +103,54 @@ func pendingDumps(t *testing.T, dir string) []string {
 		}
 	}
 	return out
+}
+
+// An unclean stop of an angel that started before the computer booted is told as
+// a restart or a power loss with the boot time; one that started after the boot
+// keeps the general wording. The start times are far from any real boot, so the
+// real boot time of the machine decides the same way everywhere.
+func TestArmCrashDumpNamesARestartByTheBootTime(t *testing.T) {
+	switch runtime.GOOS {
+	case "linux", "darwin", "windows":
+	default:
+		t.Skip("no boot time on " + runtime.GOOS)
+	}
+	home := t.TempDir()
+	dir := angel.CrashDir(home)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, started := range map[string]string{
+		"crash-20000101T000000Z-501.pending": "2000-01-01T00:00:00Z",
+		"crash-21000101T000000Z-502.pending": "2100-01-01T00:00:00Z",
+	} {
+		pid := name[len(name)-len("501.pending") : len(name)-len(".pending")]
+		body := "netivri angel crash dump\nstarted: " + started + "\npid: " + pid + "\nversion: 0.9.0\n\n"
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var infos []string
+	record := func(format string, args ...any) { infos = append(infos, fmt.Sprintf(format, args...)) }
+	noop := func(string, ...any) {}
+	armCrashDump(home, record, noop, noop)()
+
+	byPID := map[string]string{}
+	for _, line := range infos {
+		for _, pid := range []string{"pid 501,", "pid 502,"} {
+			if strings.Contains(line, pid) {
+				byPID[pid] = line
+			}
+		}
+	}
+	restart := byPID["pid 501,"]
+	for _, want := range []string{"did not stop cleanly: the computer booted at ", ", after that angel started at 2000-01-01T00:00:00Z, so it ended with a restart or a power loss"} {
+		if !strings.Contains(restart, want) {
+			t.Errorf("angel started before the boot: %q lacks %q", restart, want)
+		}
+	}
+	if general := byPID["pid 502,"]; !strings.Contains(general, "it was killed, or the computer restarted or lost power") || strings.Contains(general, "booted at") {
+		t.Errorf("angel started after the boot: %q", general)
+	}
 }
